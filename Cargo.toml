@@ -1,0 +1,54 @@
+[package]
+name = "chess"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+warnings = "deny"
+unreachable_pub = "deny"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+allow_attributes = "deny"
+cast_lossless = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+expect_used = "deny"
+implicit_clone = "deny"
+inefficient_to_string = "deny"
+large_futures = "deny"
+large_stack_arrays = "deny"
+let_underscore_must_use = "deny"
+map_err_ignore = "deny"
+mem_forget = "deny"
+mutex_atomic = "deny"
+option_option = "deny"
+panic = "deny"
+rc_mutex = "deny"
+redundant_clone = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+wildcard_enum_match_arm = "deny"
+wildcard_imports = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "line-tables-only"
+overflow-checks = true
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
