@@ -120,6 +120,18 @@ impl BoardPosition {
         self.chess.is_check()
     }
 
+    pub fn halfmoves(&self) -> u32 {
+        self.chess.halfmoves()
+    }
+
+    pub fn is_checkmate(&self) -> bool {
+        self.chess.is_checkmate()
+    }
+
+    pub fn is_stalemate(&self) -> bool {
+        self.chess.is_stalemate()
+    }
+
     pub(super) fn from_chess(
         chess: Chess,
         variant: BoardEnumVariant,

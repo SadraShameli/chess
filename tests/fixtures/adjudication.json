@@ -1,0 +1,26 @@
+[
+  {
+    "name": "checkmate overrides seventy-five moves",
+    "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 150 76",
+    "proof": "possible",
+    "reason": "checkmate"
+  },
+  {
+    "name": "stalemate",
+    "fen": "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+    "proof": "possible",
+    "reason": "stalemate"
+  },
+  {
+    "name": "automatic seventy-five moves",
+    "fen": "7k/8/5K2/8/8/8/8/R7 w - - 150 76",
+    "proof": "possible",
+    "reason": "seventy_five_move"
+  },
+  {
+    "name": "proven dead position",
+    "fen": "7k/8/5K2/8/8/8/8/8 w - - 0 1",
+    "proof": "impossible",
+    "reason": "dead_position"
+  }
+]

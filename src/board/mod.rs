@@ -4,3 +4,4 @@ pub mod notation;
 pub mod piece;
 pub mod position;
 pub mod square;
+pub mod start;

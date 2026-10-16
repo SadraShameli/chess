@@ -1,0 +1,313 @@
+use std::collections::{HashMap, HashSet};
+
+use thiserror::Error;
+
+use crate::board::r#move::{BoardMove, BoardMoveError};
+use crate::board::position::BoardPosition;
+use crate::clock::state::ClockStateSnapshot;
+use crate::game::adjudication::GameAdjudicationCandidate;
+use crate::game::enums::GameMoveId;
+use crate::game::move_node::{GameMoveNode, GameMoveNodeAnnotations};
+
+#[derive(Debug, Error)]
+pub enum GameTreeError {
+    #[error("The selected move node does not exist")]
+    UnknownNode,
+    #[error("The supplied move identity already identifies a different node")]
+    DuplicateIdentity,
+    #[error("The immutable root cannot be removed or replaced as a move")]
+    ImmutableRoot,
+    #[error("The resolved move belongs to a different immutable parent position")]
+    WrongParent,
+    #[error("The move tree contains a broken parent or child relationship")]
+    BrokenRelationship,
+    #[error(transparent)]
+    Move(#[from] BoardMoveError),
+}
+
+#[derive(Debug, Clone)]
+pub struct GameTree {
+    root: GameMoveId,
+    nodes: Vec<GameMoveNode>,
+    indices: HashMap<GameMoveId, usize>,
+}
+
+struct GameTreeResolvedMove {
+    parent: GameMoveId,
+    id: GameMoveId,
+    movement: BoardMove,
+    position: BoardPosition,
+    clock: Option<ClockStateSnapshot>,
+}
+
+enum GameTreeEnumInsertion {
+    Insert { parent_index: usize },
+    Reuse { index: usize },
+}
+
+pub(crate) struct GameTreePreparedMove<'a> {
+    tree: &'a mut GameTree,
+    insertion: GameTreeEnumInsertion,
+    node: GameMoveNode,
+}
+
+impl GameTreePreparedMove<'_> {
+    pub(crate) fn id(&self) -> GameMoveId {
+        self.node.id()
+    }
+
+    pub(crate) fn commit(self) -> GameMoveNode {
+        match self.insertion {
+            GameTreeEnumInsertion::Insert { parent_index } => {
+                let receipt = self.node.clone();
+                self.tree.nodes[parent_index]
+                    .children_mut()
+                    .push(self.node.id());
+                self.tree
+                    .indices
+                    .insert(self.node.id(), self.tree.nodes.len());
+                self.tree.nodes.push(self.node);
+                receipt
+            }
+            GameTreeEnumInsertion::Reuse { index } => {
+                self.tree.nodes[index].set_clock(self.node.clock().cloned());
+                self.node
+            }
+        }
+    }
+}
+
+impl GameTree {
+    pub fn new(
+        root: GameMoveId,
+        initial: BoardPosition,
+        clock: Option<ClockStateSnapshot>,
+    ) -> Self {
+        Self {
+            root,
+            nodes: vec![GameMoveNode::root(root, initial, clock)],
+            indices: HashMap::from([(root, 0)]),
+        }
+    }
+
+    pub fn root(&self) -> GameMoveId {
+        self.root
+    }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn node(&self, id: GameMoveId) -> Result<&GameMoveNode, GameTreeError> {
+        self.indices
+            .get(&id)
+            .and_then(|index| self.nodes.get(*index))
+            .ok_or(GameTreeError::UnknownNode)
+    }
+
+    pub fn append(
+        &mut self,
+        parent: GameMoveId,
+        id: GameMoveId,
+        movement: BoardMove,
+        clock: Option<ClockStateSnapshot>,
+    ) -> Result<GameMoveId, GameTreeError> {
+        let position = self.node(parent)?.position().play(movement)?;
+        self.prepare_resolved(GameTreeResolvedMove {
+            parent,
+            id,
+            movement,
+            position,
+            clock,
+        })
+        .map(|prepared| prepared.commit().id())
+    }
+
+    pub(crate) fn prepare_candidate(
+        &mut self,
+        parent: GameMoveId,
+        id: GameMoveId,
+        candidate: &GameAdjudicationCandidate,
+        clock: Option<ClockStateSnapshot>,
+    ) -> Result<GameTreePreparedMove<'_>, GameTreeError> {
+        if self.node(parent)?.position() != candidate.previous_position() {
+            return Err(GameTreeError::WrongParent);
+        }
+        self.prepare_resolved(GameTreeResolvedMove {
+            parent,
+            id,
+            movement: candidate.movement(),
+            position: candidate.position().clone(),
+            clock,
+        })
+    }
+
+    fn prepare_resolved(
+        &mut self,
+        resolved: GameTreeResolvedMove,
+    ) -> Result<GameTreePreparedMove<'_>, GameTreeError> {
+        let parent_index = *self
+            .indices
+            .get(&resolved.parent)
+            .ok_or(GameTreeError::UnknownNode)?;
+        let parent = self
+            .nodes
+            .get(parent_index)
+            .ok_or(GameTreeError::BrokenRelationship)?;
+        let mut matching = None;
+        for child in parent.children() {
+            let node = self.node(*child)?;
+            if node.movement() == Some(resolved.movement) {
+                matching = Some(
+                    *self
+                        .indices
+                        .get(child)
+                        .ok_or(GameTreeError::BrokenRelationship)?,
+                );
+                break;
+            }
+        }
+        if let Some(existing) = self.indices.get(&resolved.id)
+            && Some(*existing) != matching
+        {
+            return Err(GameTreeError::DuplicateIdentity);
+        }
+        let (insertion, node) = match matching {
+            Some(index) => {
+                let mut node = self.nodes[index].clone();
+                node.set_clock(resolved.clock);
+                (GameTreeEnumInsertion::Reuse { index }, node)
+            }
+            None => {
+                let san = parent
+                    .position()
+                    .san(&resolved.movement.uci(parent.position().variant()))?;
+                let mut node = GameMoveNode::child(
+                    resolved.id,
+                    resolved.parent,
+                    resolved.movement,
+                    san,
+                    resolved.position,
+                );
+                node.set_clock(resolved.clock);
+                (GameTreeEnumInsertion::Insert { parent_index }, node)
+            }
+        };
+        Ok(GameTreePreparedMove {
+            tree: self,
+            insertion,
+            node,
+        })
+    }
+
+    pub fn set_annotations(
+        &mut self,
+        id: GameMoveId,
+        annotations: GameMoveNodeAnnotations,
+    ) -> Result<(), GameTreeError> {
+        let index = *self.indices.get(&id).ok_or(GameTreeError::UnknownNode)?;
+        let node = self
+            .nodes
+            .get_mut(index)
+            .ok_or(GameTreeError::BrokenRelationship)?;
+        node.set_annotations(annotations);
+        Ok(())
+    }
+
+    pub fn path_to(&self, id: GameMoveId) -> Result<Vec<GameMoveId>, GameTreeError> {
+        let mut path = Vec::new();
+        let mut current = Some(id);
+        while let Some(id) = current {
+            if path.len() >= self.nodes.len() {
+                return Err(GameTreeError::BrokenRelationship);
+            }
+            let node = self.node(id)?;
+            path.push(id);
+            current = node.parent();
+        }
+        path.reverse();
+        if path.first() != Some(&self.root) {
+            return Err(GameTreeError::BrokenRelationship);
+        }
+        Ok(path)
+    }
+
+    pub fn delete_branch(&mut self, id: GameMoveId) -> Result<usize, GameTreeError> {
+        let parent = self
+            .node(id)?
+            .parent()
+            .ok_or(GameTreeError::ImmutableRoot)?;
+        let parent_index = *self
+            .indices
+            .get(&parent)
+            .ok_or(GameTreeError::BrokenRelationship)?;
+        let removed = self.subtree(id)?;
+        self.nodes[parent_index]
+            .children_mut()
+            .retain(|child| *child != id);
+        self.remove_nodes(&removed);
+        Ok(removed.len())
+    }
+
+    pub fn replace_branch(
+        &mut self,
+        id: GameMoveId,
+        replacement: GameMoveId,
+        movement: BoardMove,
+    ) -> Result<GameMoveId, GameTreeError> {
+        let parent = self
+            .node(id)?
+            .parent()
+            .ok_or(GameTreeError::ImmutableRoot)?;
+        let parent_index = *self
+            .indices
+            .get(&parent)
+            .ok_or(GameTreeError::BrokenRelationship)?;
+        let parent_node = self.node(parent)?;
+        let position = parent_node.position().play(movement)?;
+        let san = parent_node
+            .position()
+            .san(&movement.uci(parent_node.position().variant()))?;
+        let child_index = parent_node
+            .children()
+            .iter()
+            .position(|child| *child == id)
+            .ok_or(GameTreeError::BrokenRelationship)?;
+        let removed = self.subtree(id)?;
+        if self.indices.contains_key(&replacement) && !removed.contains(&replacement) {
+            return Err(GameTreeError::DuplicateIdentity);
+        }
+        let node = GameMoveNode::child(replacement, parent, movement, san, position);
+        self.nodes[parent_index].children_mut()[child_index] = replacement;
+        self.remove_nodes(&removed);
+        self.indices.insert(replacement, self.nodes.len());
+        self.nodes.push(node);
+        Ok(replacement)
+    }
+
+    fn subtree(&self, id: GameMoveId) -> Result<HashSet<GameMoveId>, GameTreeError> {
+        let mut pending = vec![id];
+        let mut removed = HashSet::new();
+        while let Some(id) = pending.pop() {
+            if !removed.insert(id) {
+                return Err(GameTreeError::BrokenRelationship);
+            }
+            pending.extend_from_slice(self.node(id)?.children());
+        }
+        Ok(removed)
+    }
+
+    fn remove_nodes(&mut self, removed: &HashSet<GameMoveId>) {
+        self.nodes.retain(|node| !removed.contains(&node.id()));
+        self.indices = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id(), index))
+            .collect();
+    }
+}

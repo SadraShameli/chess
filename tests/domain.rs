@@ -6,6 +6,15 @@ mod clock_state;
 #[path = "clock/time.rs"]
 mod clock_time;
 
+#[path = "game/premove.rs"]
+mod game_premove;
+#[path = "game/rules.rs"]
+mod game_rules;
+#[path = "game/session.rs"]
+mod game_session;
+#[path = "game/tree.rs"]
+mod game_tree;
+
 #[path = "capacity/budget.rs"]
 mod capacity_budget;
 #[path = "capacity/native_partition.rs"]
