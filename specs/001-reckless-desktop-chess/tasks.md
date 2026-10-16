@@ -156,7 +156,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 - [X] T066 [US1] Implement manual pause/resume and mode-specific takebacks in `src/game/pause.rs` and `src/game/takeback.rs`, preserving prior-human-turn versus one-local-move targets, clock snapshots, local consent/default/no expiry, cancel-on-move/result and retained/reused variations.
 - [ ] T067 [US1] Implement one disabled-by-default queued premove in `src/game/premove.rs`, with preselected promotion, replacement/cancel, actual elapsed charge, legality revalidation and clearing on pause/takeback/fault/relaunch. Exact model constraints: "one queued premove, configurable and initially disabled"; "Choose promotion before queueing."
 - [ ] T068 [US1] Implement game create/start/play/navigate/branch/finish/pause/resume/undo handlers and typed native messages in `src/desktop/game_commands.rs`, wired through `src/desktop/bootstrap.rs` with typed revisions and no presentation adjudication.
-- [ ] T069 [US1] Implement New Game controls, all selected presets/defaults and start-position selectors in `src/presentation/game/new_game.rs` and `src/presentation/game/configuration.rs`, with initial White/Standard/10+5 and a distinct configurable 3-second untimed engine budget. Exact model constraints: "Presets are Untimed, 1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, and 30+0"; "Untimed engine play uses a configurable default of 3 seconds per engine move".
+- [X] T069 [US1] Implement New Game controls, all selected presets/defaults and start-position selectors in `src/presentation/game/new_game.rs` and `src/presentation/game/configuration.rs`, with initial White/Standard/10+5 and a distinct configurable 3-second untimed engine budget. Exact model constraints: "Presets are Untimed, 1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, and 30+0"; "Untimed engine play uses a configurable default of 3 seconds per engine move".
 - [ ] T070 [US1] Implement live board input, four-choice promotion, player bars/clocks, low-time state, premove feedback, explicit draw claims, immediate revision-checked engine takebacks without a dialog, configured local takeback consent, always-confirmed resignation and Return to Live in `src/presentation/game/play.rs` and `src/presentation/game/controller.rs`; retain stop-before-mutation barriers, display tenths below 10 seconds and preserve clock precision.
 - [ ] T071 [US1] Exercise spec story 1 scenarios 1 through 8, the adversarial rules corpus and a real-engine offline game; register tests in `tests/domain.rs` and `tests/engine.rs` and record unresolved proof coverage honestly in `specs/001-reckless-desktop-chess/evidence/us1.md`.
 
@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 8 live-game tasks completed and 243 pending.
+**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 13 live-game tasks completed and 238 pending.
 **Active parallel tasks**: 43 across disjoint contract-test files; three additional
 `[P]` markers belong to historical completed rows. No native task is accepted
 merely by this generation.
