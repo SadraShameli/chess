@@ -8,7 +8,7 @@ mod engine;
 
 #[derive(Debug, Error)]
 enum ToolsCommandError {
-    #[error("Usage: chess-tools schema | schema-fixture | engine-build")]
+    #[error("Usage: chess-tools schema | schema-fixture | engine-build | engine-check")]
     Usage,
 }
 
@@ -16,6 +16,7 @@ enum ToolsEnumCommand {
     Schema,
     SchemaFixture,
     EngineBuild,
+    EngineCheck,
 }
 
 impl ToolsEnumCommand {
@@ -27,6 +28,7 @@ impl ToolsEnumCommand {
                 Ok(Self::SchemaFixture)
             }
             (Some(command), None) if command == OsStr::new("engine-build") => Ok(Self::EngineBuild),
+            (Some(command), None) if command == OsStr::new("engine-check") => Ok(Self::EngineCheck),
             _ => Err(ToolsCommandError::Usage),
         }
     }
@@ -56,6 +58,12 @@ impl ToolsEnumCommand {
                     .build()?;
                 runtime.block_on(build.run())?;
                 temporary.close()?;
+            }
+            Self::EngineCheck => {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(engine::ToolsEngineCheck::run())?;
             }
         }
         Ok(())

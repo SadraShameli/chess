@@ -25,7 +25,7 @@ Source: [tagged UCI implementation](https://github.com/codedeliveryservice/Reckl
 | OPT-04 | `Minimal` | false | Full live output or final-report output | Both modes complete with valid results |
 | OPT-05 | `Clear Hash` | Button, no value | Idle-only maintenance action | Correct wire command and unchanged game |
 | OPT-06 | `UCI_Chess960` | false | Derived from selected variant | Standard/FRC/DFRC castling corpus |
-| OPT-07 | `MultiPV` | 1; 1..218, capped by legal root moves in search | Candidate count in analysis | Ranks and legal lines at 1/multiple/root limit |
+| OPT-07 | `MultiPV` | 1; 1..256, capped by legal root moves in search | Candidate count in analysis | Ranks and legal lines at 1/multiple/root limit |
 | OPT-08 | `SyzygyPath` | Empty; only with Syzygy feature | Validated local tablebase paths | Loaded cardinality, valid/invalid/no-space alias cases |
 
 Application defaults may override upstream defaults explicitly, especially

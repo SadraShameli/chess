@@ -34,6 +34,7 @@ Syzygy, empty binaries, duplicate packages and noncanonical checksums. One
 tool-publication test passed; it was observed failing on an empty copied binary
 before correcting the shared file offset after hashing.
 
-Windows/Linux compilation, minimum-hardware execution, complete UCI readiness
-and the capability inventory are subsequent acceptance work. Network terms
+Current-host UCI readiness is recorded in [engine startup](engine-startup.md).
+Windows/Linux compilation, minimum-hardware execution and the full capability
+inventory remain subsequent acceptance work. Network terms
 for external distribution remain the release gate recorded in research.
