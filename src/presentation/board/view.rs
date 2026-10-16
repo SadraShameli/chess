@@ -6,9 +6,14 @@ use thiserror::Error;
 use crate::board::square::BoardSquare;
 use crate::desktop::dto::DesktopBoardSnapshot;
 use crate::desktop::identity::DesktopRequestId;
-use crate::presentation::board::enums::PresentationBoardEnumInputSource;
+use crate::game::premove::GamePremoveIntent;
+use crate::presentation::board::enums::{
+    PresentationBoardEnumInputSource, PresentationBoardEnumPremoveSquare,
+};
 use crate::presentation::board::scene::PresentationBoardScene;
-use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+use crate::presentation::board::semantic_grid::{
+    PresentationBoardSemanticGrid, PresentationBoardSemanticGridFeedback,
+};
 use crate::scene::enums::SceneEnumLifecycle;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport, ScenePickingViewportError};
 use crate::scene::renderer::{SceneRendererError, SceneRendererGeneration};
@@ -60,6 +65,7 @@ pub struct PresentationBoardViewInput<'a, P: PresentationBoardPickingProvider> {
     scene: Option<&'a PresentationBoardScene>,
     picker: &'a mut P,
     enabled: bool,
+    pending_move: Option<GamePremoveIntent>,
     render_scale: f32,
 }
 
@@ -74,12 +80,18 @@ impl<'a, P: PresentationBoardPickingProvider> PresentationBoardViewInput<'a, P> 
             scene,
             picker,
             enabled: true,
+            pending_move: None,
             render_scale: 1.0,
         }
     }
 
     pub const fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    pub const fn with_pending_move(mut self, pending_move: Option<GamePremoveIntent>) -> Self {
+        self.pending_move = pending_move;
         self
     }
 
@@ -92,6 +104,7 @@ impl<'a, P: PresentationBoardPickingProvider> PresentationBoardViewInput<'a, P> 
 pub struct PresentationBoardViewFrame {
     viewport: ScenePickingViewport,
     actions: Vec<PresentationBoardAction>,
+    has_semantic_grid: bool,
 }
 
 impl PresentationBoardViewFrame {
@@ -101,6 +114,10 @@ impl PresentationBoardViewFrame {
 
     pub fn actions(&self) -> &[PresentationBoardAction] {
         &self.actions
+    }
+
+    pub(crate) const fn has_semantic_grid(&self) -> bool {
+        self.has_semantic_grid
     }
 }
 
@@ -231,6 +248,7 @@ impl PresentationBoardView {
         let mut output = PresentationBoardViewFrame {
             viewport,
             actions: Vec::new(),
+            has_semantic_grid: false,
         };
         let Some(scene) = input.scene else {
             self.discard_gesture_input(ui);
@@ -252,12 +270,15 @@ impl PresentationBoardView {
             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
-        if scene.viewport() != viewport
-            || scene.lifecycle() != SceneEnumLifecycle::Ready
-            || !input.enabled
-        {
+        if scene.viewport() != viewport || scene.lifecycle() != SceneEnumLifecycle::Ready {
             self.discard_gesture_input(ui);
             return Ok(output);
+        }
+        if let Some(intent) = input.pending_move {
+            Self::show_pending_move(ui, scene, intent);
+        }
+        if !input.enabled {
+            self.discard_gesture_input(ui);
         }
         let response = ui.interact(rect, egui::Id::new(Self::ID), Sense::click_and_drag());
         let frame = ui.ctx().cumulative_frame_nr();
@@ -272,7 +293,8 @@ impl PresentationBoardView {
         if escape {
             self.cancel_gesture();
         }
-        if pressed
+        if input.enabled
+            && pressed
             && response.contains_pointer()
             && let Some(point) = point
             && viewport.to_physical(point).is_some()
@@ -281,7 +303,7 @@ impl PresentationBoardView {
         {
             picking.press(scene.generation(), square);
         }
-        if released {
+        if input.enabled && released {
             let square = match point {
                 Some(point) if viewport.to_physical(point).is_some() => input.picker.pick(point)?,
                 Some(_) | None => None,
@@ -303,19 +325,20 @@ impl PresentationBoardView {
                 output.actions.push(action);
             }
         }
-        let process_keyboard = self.keyboard_frame != Some(frame);
+        let process_keyboard = input.enabled && self.keyboard_frame != Some(frame);
         self.keyboard_frame = Some(frame);
         for action in PresentationBoardSemanticGrid::show(
             ui,
             scene,
             input.snapshot,
-            self.selected,
+            PresentationBoardSemanticGridFeedback::new(self.selected, input.pending_move),
             process_keyboard,
         ) {
             if let Some(action) = self.activate(frame, action.square(), action.source(), None) {
                 output.actions.push(action);
             }
         }
+        output.has_semantic_grid = true;
         if let Some(square) = self.selected
             && let Some(rect) = PresentationBoardSemanticGrid::square_rect(square, scene)
         {
@@ -327,5 +350,32 @@ impl PresentationBoardView {
             );
         }
         Ok(output)
+    }
+
+    fn show_pending_move(ui: &Ui, scene: &PresentationBoardScene, intent: GamePremoveIntent) {
+        let painter = ui
+            .painter()
+            .with_clip_rect(scene.viewport().image().intersect(ui.clip_rect()));
+        for role in PresentationBoardEnumPremoveSquare::ALL {
+            let Some(rect) = PresentationBoardSemanticGrid::square_rect(role.square(intent), scene)
+            else {
+                continue;
+            };
+            let color = role.color(ui.visuals());
+            painter.rect_stroke(
+                rect.shrink(3.0),
+                3.0,
+                egui::Stroke::new(3.0, color),
+                egui::StrokeKind::Inside,
+            );
+            let galley = painter.layout_no_wrap(
+                role.label().to_owned(),
+                egui::TextStyle::Small.resolve(ui.style()),
+                color,
+            );
+            let label = Rect::from_min_size(rect.min, galley.size());
+            painter.rect_filled(label.expand(2.0), 3.0, ui.visuals().window_fill);
+            painter.galley(label.min, galley, color);
+        }
     }
 }

@@ -4,8 +4,10 @@ use bevy_egui::egui::{self, Id, Key, Rect, Sense, Ui, UiBuilder, accesskit};
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind};
 use crate::board::square::BoardSquare;
 use crate::desktop::dto::DesktopBoardSnapshot;
+use crate::game::premove::GamePremoveIntent;
 use crate::presentation::board::enums::{
     PresentationBoardEnumDirection, PresentationBoardEnumInputSource,
+    PresentationBoardEnumPremoveSquare,
 };
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::scene::picking::ScenePicking;
@@ -26,6 +28,24 @@ impl PresentationBoardSemanticAction {
 }
 
 pub struct PresentationBoardSemanticGrid;
+
+#[derive(Clone, Copy)]
+pub struct PresentationBoardSemanticGridFeedback {
+    selected: Option<BoardSquare>,
+    pending_move: Option<GamePremoveIntent>,
+}
+
+impl PresentationBoardSemanticGridFeedback {
+    pub const fn new(
+        selected: Option<BoardSquare>,
+        pending_move: Option<GamePremoveIntent>,
+    ) -> Self {
+        Self {
+            selected,
+            pending_move,
+        }
+    }
+}
 
 impl PresentationBoardSemanticGrid {
     const ID: &'static str = "chess.board.semantic";
@@ -64,7 +84,7 @@ impl PresentationBoardSemanticGrid {
     pub fn label(
         square: BoardSquare,
         snapshot: &DesktopBoardSnapshot,
-        selected: Option<BoardSquare>,
+        feedback: PresentationBoardSemanticGridFeedback,
     ) -> String {
         let mut label = match snapshot
             .pieces()
@@ -78,16 +98,22 @@ impl PresentationBoardSemanticGrid {
             ),
             None => format!("{square}: empty"),
         };
-        if selected == Some(square) {
+        if feedback.selected == Some(square) {
             label.push_str(", selected");
         }
-        if selected.is_some()
-            && snapshot
-                .legal_moves()
-                .iter()
-                .any(|movement| movement.origin() == selected && movement.destination() == square)
+        if feedback.selected.is_some()
+            && snapshot.legal_moves().iter().any(|movement| {
+                movement.origin() == feedback.selected && movement.destination() == square
+            })
         {
             label.push_str(", legal destination");
+        }
+        if let Some(intent) = feedback.pending_move {
+            for role in PresentationBoardEnumPremoveSquare::ALL {
+                if role.square(intent) == square {
+                    label.push_str(role.semantic_label());
+                }
+            }
         }
         label
     }
@@ -143,7 +169,7 @@ impl PresentationBoardSemanticGrid {
         ui: &mut Ui,
         scene: &PresentationBoardScene,
         snapshot: &DesktopBoardSnapshot,
-        selected: Option<BoardSquare>,
+        feedback: PresentationBoardSemanticGridFeedback,
         process_keyboard: bool,
     ) -> Vec<PresentationBoardSemanticAction> {
         let mut actions = Vec::new();
@@ -164,18 +190,22 @@ impl PresentationBoardSemanticGrid {
                     };
                     let id = Self::square_id(square);
                     let response = ui.interact(rect, id, Sense::focusable_noninteractive());
-                    let label = Self::label(square, snapshot, selected);
+                    let label = Self::label(square, snapshot, feedback);
                     ui.ctx().accesskit_node_builder(id, |node| {
                         node.set_role(accesskit::Role::GridCell);
                         node.set_label(label);
                         node.set_row_index(usize::from(u8::from(square) / ScenePicking::FILES));
                         node.set_column_index(usize::from(u8::from(square) % ScenePicking::FILES));
-                        node.set_selected(selected == Some(square));
+                        node.set_selected(feedback.selected == Some(square));
                         node.add_action(accesskit::Action::Click);
                     });
-                    let count = ui.ctx().input(|input| {
-                        input.num_accesskit_action_requests(id, accesskit::Action::Click)
-                    });
+                    let count = if process_keyboard && response.enabled() {
+                        ui.ctx().input(|input| {
+                            input.num_accesskit_action_requests(id, accesskit::Action::Click)
+                        })
+                    } else {
+                        0
+                    };
                     for occurrence in 0..count {
                         actions.push(PresentationBoardSemanticAction {
                             square,

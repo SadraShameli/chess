@@ -14,6 +14,8 @@ use crate::game::enums::{
     GameEnumPhase, GameEnumSeat, GameId, GameIdentityError, GameMoveId, GameRevision,
 };
 use crate::game::premove::{GamePremoveError, GamePremoveIntent};
+use crate::presentation::board::scene::PresentationBoardScene;
+use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 
 #[derive(Debug, Error)]
 pub enum PresentationGameControllerError {
@@ -138,6 +140,7 @@ struct PresentationGameControllerPromotion {
     request_id: DesktopRequestId,
     movement: PresentationGameControllerMove,
     choices: Vec<BoardEnumPieceKind>,
+    is_focus_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +171,7 @@ pub struct PresentationGameController {
     context: Option<PresentationGameControllerContext>,
     selected: Option<BoardSquare>,
     promotion: Option<PresentationGameControllerPromotion>,
+    focus_return: Option<BoardSquare>,
     seen: HashMap<DesktopRequestId, PresentationGameControllerEnumInput>,
     submitted: Option<(DesktopRequestId, PresentationGameControllerEnumInput)>,
     pending_result: Option<DesktopRequestId>,
@@ -204,6 +208,24 @@ impl PresentationGameController {
 
     pub fn feedback(&self) -> Option<&str> {
         self.feedback.as_deref()
+    }
+
+    pub(crate) fn restore_board_focus(
+        &mut self,
+        context: &egui::Context,
+        scene: &PresentationBoardScene,
+    ) {
+        if let Some(origin) = self.focus_return {
+            let id = PresentationBoardSemanticGrid::square_id(origin);
+            if PresentationBoardSemanticGrid::square_rect(origin, scene).is_some()
+                && context
+                    .read_response(id)
+                    .is_some_and(|response| response.enabled())
+            {
+                context.memory_mut(|memory| memory.request_focus(id));
+                self.focus_return = None;
+            }
+        }
     }
 
     pub fn select(
@@ -322,10 +344,6 @@ impl PresentationGameController {
         if !promotion.choices.contains(&kind) {
             return Err(PresentationGameControllerError::InvalidPromotion);
         }
-        let promotion = self
-            .promotion
-            .take()
-            .ok_or(PresentationGameControllerError::NoPromotion)?;
         let mut movement = promotion.movement;
         movement.promotion = Some(kind);
         let action = Self::move_action(promotion.request_id, movement)?;
@@ -345,21 +363,63 @@ impl PresentationGameController {
         }
         let mut selected = None;
         let mut is_cancelled = false;
-        if let Some(promotion) = &self.promotion {
-            ui.group(|ui| {
-                ui.strong("Choose Promotion");
-                ui.horizontal_wrapped(|ui| {
-                    for kind in &promotion.choices {
-                        if ui
-                            .add_enabled(!is_busy, egui::Button::new(Self::promotion_label(*kind)))
-                            .clicked()
-                        {
-                            selected = Some(*kind);
+        if let Some(promotion) = &mut self.promotion {
+            let modal = egui::Modal::new(egui::Id::new(("chess.game.promotion", snapshot.id())))
+                .show(ui.ctx(), |ui| {
+                    let can_focus = ui.memory(|memory| memory.is_above_modal_layer(ui.layer_id()));
+                    ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
+                        node.set_role(egui::accesskit::Role::Dialog);
+                        node.set_label("Choose Promotion");
+                        node.set_modal();
+                    });
+                    let mut focusable = Vec::with_capacity(promotion.choices.len() + 1);
+                    if can_focus && ui.input(|input| input.key_pressed(egui::Key::Tab)) {
+                        ui.ctx()
+                            .memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+                    }
+                    ui.heading("Choose Promotion");
+                    ui.horizontal_wrapped(|ui| {
+                        for kind in &promotion.choices {
+                            let button = ui.add_enabled(
+                                !is_busy,
+                                egui::Button::new(Self::promotion_label(*kind)),
+                            );
+                            if button.enabled() {
+                                focusable.push(button.id);
+                            }
+                            if promotion.is_focus_pending
+                                && can_focus
+                                && button.enabled()
+                                && !ui.is_sizing_pass()
+                            {
+                                button.request_focus();
+                                promotion.is_focus_pending = false;
+                            }
+                            if button.clicked() {
+                                selected = Some(*kind);
+                            }
                         }
+                    });
+                    let cancel = ui.button("Cancel Promotion");
+                    focusable.push(cancel.id);
+                    is_cancelled = cancel.clicked();
+                    if can_focus && !ui.is_sizing_pass() {
+                        Self::contain_promotion_focus(ui.ctx(), &focusable);
                     }
                 });
-                is_cancelled = ui.button("Cancel Promotion").clicked();
-            });
+            if modal.is_top_modal && !is_busy {
+                for kind in &promotion.choices {
+                    if let Some(key) = Self::promotion_key(*kind)
+                        && ui
+                            .ctx()
+                            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, key))
+                    {
+                        selected = Some(*kind);
+                        break;
+                    }
+                }
+            }
+            is_cancelled |= modal.should_close();
         }
         if is_cancelled {
             self.clear_selection();
@@ -404,7 +464,9 @@ impl PresentationGameController {
 
     fn clear_selection(&mut self) {
         self.selected = None;
-        self.promotion = None;
+        if let Some(promotion) = self.promotion.take() {
+            self.focus_return = Some(promotion.movement.origin);
+        }
     }
 
     fn record(
@@ -501,6 +563,7 @@ impl PresentationGameController {
                 request_id: identity,
                 movement,
                 choices,
+                is_focus_pending: true,
             });
             return Ok(None);
         }
@@ -615,6 +678,41 @@ impl PresentationGameController {
             BoardEnumPieceKind::Bishop => "Promote to Bishop",
             BoardEnumPieceKind::Knight => "Promote to Knight",
             BoardEnumPieceKind::Pawn | BoardEnumPieceKind::King => "Unavailable Promotion",
+        }
+    }
+
+    fn contain_promotion_focus(context: &egui::Context, focusable: &[egui::Id]) {
+        let Some(first) = focusable.first().copied() else {
+            return;
+        };
+        let focused = context.memory(|memory| memory.focused());
+        let index = focused.and_then(|focused| focusable.iter().position(|id| *id == focused));
+        let offset = context.input_mut(|input| {
+            if input.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab) {
+                Some(focusable.len() - 1)
+            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
+                Some(1)
+            } else {
+                None
+            }
+        });
+        let target = match (index, offset) {
+            (Some(index), Some(offset)) => focusable[(index + offset) % focusable.len()],
+            (Some(index), None) => focusable[index],
+            (None, Some(_) | None) => first,
+        };
+        if focused != Some(target) {
+            context.memory_mut(|memory| memory.request_focus(target));
+        }
+    }
+
+    const fn promotion_key(kind: BoardEnumPieceKind) -> Option<egui::Key> {
+        match kind {
+            BoardEnumPieceKind::Queen => Some(egui::Key::Q),
+            BoardEnumPieceKind::Rook => Some(egui::Key::R),
+            BoardEnumPieceKind::Bishop => Some(egui::Key::B),
+            BoardEnumPieceKind::Knight => Some(egui::Key::N),
+            BoardEnumPieceKind::Pawn | BoardEnumPieceKind::King => None,
         }
     }
 }

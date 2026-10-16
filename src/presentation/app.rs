@@ -192,6 +192,7 @@ pub struct PresentationApp {
     game_retained: HashMap<DesktopRequestId, PresentationAppGameRetained>,
     game_pending: Vec<PresentationAppGamePending>,
     input_frame: Option<u64>,
+    promotion_frame: Option<u64>,
     input_identities: HashMap<PresentationAppEnumInput, DesktopRequestId>,
     new_game_toggle_frame: Option<u64>,
     stream: Option<PresentationAppStream>,
@@ -234,6 +235,7 @@ impl PresentationApp {
             game_retained: HashMap::new(),
             game_pending: Vec::new(),
             input_frame: None,
+            promotion_frame: None,
             input_identities: HashMap::new(),
             new_game_toggle_frame: None,
             stream: None,
@@ -954,6 +956,15 @@ impl PresentationApp {
             }
         }
         let frame = ui.ctx().cumulative_frame_nr();
+        let promotion_owns_input = self.promotion_frame == Some(frame)
+            || self.games.iter().any(|game| {
+                Some(game.snapshot.id()) == self.selected_game
+                    && game.controller.is_promotion_pending()
+            });
+        if promotion_owns_input {
+            self.promotion_frame = Some(frame);
+            ui.disable();
+        }
         let mut configuration = None;
         let mut game_intent = None;
         let mut controller_intent = None;
@@ -1170,6 +1181,14 @@ impl PresentationApp {
                 && (snapshot.seats().seat(snapshot.live_turn()) == GameEnumSeat::Human
                     || snapshot.are_premoves_enabled())
         });
+        let pending_move = self
+            .game_snapshot()
+            .filter(|game| {
+                game.is_viewing_live()
+                    && game.phase() == GameEnumPhase::Active
+                    && !game.is_save_required()
+            })
+            .and_then(DesktopGameSnapshot::premove);
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1192,13 +1211,16 @@ impl PresentationApp {
                         .board
                         .show(
                             ui,
-                            PresentationBoardViewInput::new(snapshot, scene, picker).with_enabled(
-                                !self.quit_confirmation
-                                    && can_enter_moves
-                                    && !is_busy
-                                    && self.new_game.is_none()
-                                    && !self.settings_open,
-                            ),
+                            PresentationBoardViewInput::new(snapshot, scene, picker)
+                                .with_pending_move(pending_move)
+                                .with_enabled(
+                                    !self.quit_confirmation
+                                        && !promotion_owns_input
+                                        && can_enter_moves
+                                        && !is_busy
+                                        && self.new_game.is_none()
+                                        && !self.settings_open,
+                                ),
                         )
                         .map(Some),
                     None => {
@@ -1304,7 +1326,11 @@ impl PresentationApp {
         {
             self.failure = Some(error.to_string());
         }
-        if !self.quit_confirmation && !self.settings_open && self.new_game.is_none() {
+        if !promotion_owns_input
+            && !self.quit_confirmation
+            && !self.settings_open
+            && self.new_game.is_none()
+        {
             let is_escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
             if let Some(id) = self.selected_game
                 && !self.is_game_busy(id)
@@ -1358,6 +1384,19 @@ impl PresentationApp {
             .find(|game| Some(game.snapshot.id()) == self.selected_game)
         {
             self.board.set_selected(game.controller.selected());
+        }
+        if let (Some(board_frame), Some(scene)) = (&board_frame, scene)
+            && board_frame.has_semantic_grid()
+            && !promotion_owns_input
+            && !self.settings_open
+            && self.new_game.is_none()
+            && !self.quit_confirmation
+            && let Some(game) = self
+                .games
+                .iter_mut()
+                .find(|game| Some(game.snapshot.id()) == self.selected_game)
+        {
+            game.controller.restore_board_focus(ui.ctx(), scene);
         }
         Ok(PresentationAppFrame {
             viewport: board_frame.as_ref().map(|frame| frame.viewport()),

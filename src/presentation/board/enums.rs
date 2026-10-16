@@ -1,8 +1,51 @@
+use bevy_egui::egui::{Color32, Key, Vec2, Visuals};
+
+use crate::board::square::BoardSquare;
+use crate::game::premove::GamePremoveIntent;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PresentationBoardEnumInputSource {
     Pointer,
     Keyboard,
     Accessibility { occurrence: usize },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PresentationBoardEnumPremoveSquare {
+    Source,
+    Destination,
+}
+
+impl PresentationBoardEnumPremoveSquare {
+    pub(crate) const ALL: [Self; 2] = [Self::Source, Self::Destination];
+
+    pub(crate) const fn square(self, intent: GamePremoveIntent) -> BoardSquare {
+        match self {
+            Self::Source => intent.origin(),
+            Self::Destination => intent.destination(),
+        }
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Source => "Premove from",
+            Self::Destination => "Premove to",
+        }
+    }
+
+    pub(crate) const fn semantic_label(self) -> &'static str {
+        match self {
+            Self::Source => ", queued premove source",
+            Self::Destination => ", queued premove destination",
+        }
+    }
+
+    pub(crate) fn color(self, visuals: &Visuals) -> Color32 {
+        match self {
+            Self::Source => visuals.selection.stroke.color,
+            Self::Destination => visuals.warn_fg_color,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +59,6 @@ pub enum PresentationBoardEnumCameraAction {
     Reset,
     Flip,
 }
-use bevy_egui::egui::{Key, Vec2};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentationBoardEnumDirection {

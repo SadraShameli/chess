@@ -10,7 +10,9 @@ use chess::presentation::accessibility::{
     PresentationAccessibilityError, PresentationAccessibilityInput,
 };
 use chess::presentation::board::scene::PresentationBoardScene;
-use chess::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+use chess::presentation::board::semantic_grid::{
+    PresentationBoardSemanticGrid, PresentationBoardSemanticGridFeedback,
+};
 use chess::presentation::board::view::{
     PresentationBoardAction, PresentationBoardView, PresentationBoardViewInput,
 };
@@ -175,7 +177,14 @@ fn semantic_board_exposes_all_named_visible_focusable_squares_with_stable_ids()
         assert!(node.bounds().is_some());
         assert_eq!(
             node.label(),
-            Some(PresentationBoardSemanticGrid::label(square, &fixture.snapshot, None).as_str())
+            Some(
+                PresentationBoardSemanticGrid::label(
+                    square,
+                    &fixture.snapshot,
+                    PresentationBoardSemanticGridFeedback::new(None, None)
+                )
+                .as_str()
+            )
         );
         assert_eq!(
             PresentationBoardSemanticGrid::square_for_accessibility_target(id),

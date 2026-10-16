@@ -68,6 +68,14 @@ impl GameTransitionFixture {
         control: ClockTimeControl,
         engine: Option<BoardEnumColor>,
     ) -> Result<GameSession, Box<dyn std::error::Error>> {
+        Self::session_with_start(control, engine, BoardStart::standard())
+    }
+
+    pub(crate) fn session_with_start(
+        control: ClockTimeControl,
+        engine: Option<BoardEnumColor>,
+        start: BoardStart,
+    ) -> Result<GameSession, Box<dyn std::error::Error>> {
         let seat = |color| {
             if engine == Some(color) {
                 GameEnumSeat::Reckless
@@ -82,13 +90,13 @@ impl GameTransitionFixture {
         let mut session = GameSession::new(GameSessionOptions {
             id: "123e4567-e89b-42d3-a456-426614174000".parse()?,
             root: Self::id(1)?,
-            start: BoardStart::standard(),
+            clock: ClockState::new(control, start.position().turn()),
+            start,
             seats: GameSeats::new(
                 mode,
                 seat(BoardEnumColor::White),
                 seat(BoardEnumColor::Black),
             )?,
-            clock: ClockState::new(control, BoardEnumColor::White),
             metadata: GameMetadata::default(),
         })?;
         session.start(

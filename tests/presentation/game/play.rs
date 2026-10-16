@@ -157,8 +157,17 @@ impl PresentationGamePlayFixture {
         session: &GameSession,
         millis: u64,
     ) -> Result<Harness<'static, Self>, Box<dyn std::error::Error>> {
+        let mut harness = Self::build_harness(session, millis)?;
+        harness.run_ok().ok_or("Game panel did not settle")?;
+        Ok(harness)
+    }
+
+    fn build_harness(
+        session: &GameSession,
+        millis: u64,
+    ) -> Result<Harness<'static, Self>, Box<dyn std::error::Error>> {
         let now = ClockInstant::from_millis(millis)?;
-        let mut harness = Harness::builder()
+        Ok(Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .build_ui_state(
                 Self::show,
@@ -171,9 +180,7 @@ impl PresentationGamePlayFixture {
                     submissions: Vec::new(),
                     failures: Vec::new(),
                 },
-            );
-        harness.run_ok().ok_or("Game panel did not settle")?;
-        Ok(harness)
+            ))
     }
 }
 
@@ -653,5 +660,36 @@ fn pause_resume_and_busy_controls_submit_only_explicit_intentions() -> Presentat
         harness.state().submissions[1].operation(),
         PresentationGamePlayEnumOperation::Resume
     );
+    Ok(())
+}
+
+#[test]
+fn player_bars_show_tenths_and_non_color_low_time_without_changing_clock_precision()
+-> PresentationGamePlayTestResult {
+    let session = GameTransitionFixture::session(
+        ClockTimeControl::sudden_death(ClockDuration::from_millis(10_000)?)?,
+        None,
+    )?;
+    let clock = session.clock().clone();
+    let mut harness = PresentationGamePlayFixture::build_harness(&session, 1000)?;
+    harness.run_steps(3);
+    harness.get_by_label("0:09.0");
+    harness.get_by_label("0:10");
+    harness.get_by_label("Low time");
+    let now = ClockInstant::from_nanos(1_000_000_001);
+    harness.state_mut().now = now;
+    harness.run_steps(1);
+    harness.get_by_label("0:09.0");
+    assert_eq!(session.clock(), &clock);
+    assert_eq!(
+        session
+            .clock()
+            .view(now)?
+            .side(BoardEnumColor::White)
+            .displayed(),
+        Some(ClockDuration::from_nanos(8_999_999_999))
+    );
+    assert!(harness.state().submissions.is_empty());
+    assert!(harness.state().failures.is_empty());
     Ok(())
 }
