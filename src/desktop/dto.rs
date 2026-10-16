@@ -125,10 +125,15 @@ pub enum DesktopEnumValue {
     FileSelect(Option<DesktopFileHandleId>),
     StreamSubscribe {
         subscription_id: DesktopRequestId,
+        sequence: DesktopRevision,
         snapshot: DesktopBootstrapSnapshot,
     },
     StreamAcknowledge,
-    StreamResync,
+    StreamResync {
+        subscription_id: DesktopRequestId,
+        sequence: DesktopRevision,
+        snapshot: DesktopBootstrapSnapshot,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

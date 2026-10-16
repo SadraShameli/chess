@@ -29,6 +29,8 @@ class DesktopContractGenerator {
       "export type DesktopResponse = FromSchema<typeof desktopWireSchema.properties.response>;",
       "export type DesktopEvent = FromSchema<typeof desktopWireSchema.properties.event>;",
       'export type DesktopBootstrap = Extract<Extract<DesktopResponse["result"], {status: "success"}>["value"], {operation: "bootstrap"}>["value"];',
+      'export type DesktopStreamSnapshot = Extract<Extract<DesktopResponse["result"], {status: "success"}>["value"], {operation: "stream_subscribe"}>["value"];',
+      "export const desktopProtocolVersion = desktopWireSchema.properties.request.properties.protocol_version.const;",
     ].join("\n");
     const configuration = await resolveConfig(
       fileURLToPath(new URL("../.prettierrc.json", import.meta.url)),
