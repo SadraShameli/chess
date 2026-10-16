@@ -58,6 +58,8 @@ pub enum WorkbenchJobError {
 #[derive(Debug, Error)]
 pub enum WorkbenchJobFailure {
     #[error(transparent)]
+    Session(#[from] crate::engine::session::EngineSessionError),
+    #[error(transparent)]
     Process(#[from] EngineProcessError),
     #[error(transparent)]
     Analysis(#[from] EngineAnalysisError),
@@ -72,6 +74,12 @@ pub enum WorkbenchJobFailure {
         #[source]
         operation: Box<Self>,
         cleanup: EngineProcessError,
+    },
+    #[error("The diagnostic failed ({operation}) and session cleanup also failed ({cleanup})")]
+    SessionCleanup {
+        #[source]
+        operation: Box<Self>,
+        cleanup: Box<crate::engine::session::EngineSessionError>,
     },
 }
 
@@ -357,8 +365,17 @@ impl WorkbenchJob {
         line: &EngineProcessLine,
         now: ClockInstant,
     ) -> Result<(), WorkbenchJobError> {
-        self.validate(id, now, WorkbenchEnumTransition::Record)?;
+        self.observe(id, now)?;
         self.diagnostics.record(line);
+        Ok(())
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        id: WorkbenchJobId,
+        now: ClockInstant,
+    ) -> Result<(), WorkbenchJobError> {
+        self.validate(id, now, WorkbenchEnumTransition::Record)?;
         self.observed_at = now;
         Ok(())
     }
@@ -375,6 +392,17 @@ impl WorkbenchJob {
             WorkbenchEnumCancellation::User
         };
         self.request_cancellation(reason, now, WorkbenchEnumTransition::Cancel)
+    }
+
+    pub(super) fn retain_diagnostics(
+        &mut self,
+        id: WorkbenchJobId,
+        diagnostics: EngineDiagnostics,
+        now: ClockInstant,
+    ) -> Result<(), WorkbenchJobError> {
+        self.observe(id, now)?;
+        self.diagnostics = diagnostics;
+        Ok(())
     }
 
     pub fn expire(

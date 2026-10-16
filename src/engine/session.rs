@@ -10,6 +10,7 @@ use crate::board::r#move::BoardMoveError;
 
 use crate::engine::analysis::{EngineAnalysis, EngineAnalysisError};
 use crate::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError, EngineIdentity};
+use crate::engine::diagnostic::EngineDiagnosticEnumCommand;
 use crate::engine::diagnostics::EngineDiagnostics;
 use crate::engine::options::{
     EngineOptionsApplied, EngineOptionsEnumAcknowledgment, EngineOptionsEnumOutcome,
@@ -249,6 +250,14 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             result
         }
     }
+
+    pub(crate) async fn terminate_retained(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<(), EngineSessionError> {
+        self.state = EngineSessionStartupEnumState::Closing;
+        self.shutdown_retained(deadline).await
+    }
 }
 
 pub struct EngineSession<P: EngineProcess> {
@@ -304,6 +313,52 @@ impl<P: EngineProcess> EngineSession<P> {
 
     pub fn identity(&self) -> &EngineIdentity {
         &self.identity
+    }
+
+    pub(crate) async fn begin_diagnostic(
+        &mut self,
+        command: EngineDiagnosticEnumCommand<'_>,
+    ) -> Result<(), EngineSessionError> {
+        self.require_idle()?;
+        if let Some(position) = command.position() {
+            let setting = EngineOptionsSetting::new(
+                EngineOptionsEnumValue::Chess960(position.current().variant()),
+                self.identity.capabilities(),
+            )?;
+            self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+            self.configure_variant(&setting).await?;
+            self.process_mut()?.send(position.command()).await?;
+        }
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        self.process_mut()?.send(&command.command()).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn terminate_retained(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<(), EngineSessionError> {
+        if self.process.is_some() {
+            self.shutdown = EngineSessionEnumShutdown::Forced;
+        }
+        self.shutdown_retained(deadline).await
+    }
+
+    pub(crate) async fn receive_diagnostic(
+        &mut self,
+    ) -> Result<EngineProcessLine, EngineSessionError> {
+        if !matches!(self.lifecycle, EngineSessionEnumLifecycle::Preparing) {
+            return Err(EngineSessionError::State(self.state()));
+        }
+        Ok(self.receive_line().await?)
+    }
+
+    pub(crate) fn complete_diagnostic(&mut self) -> Result<(), EngineSessionError> {
+        if !matches!(self.lifecycle, EngineSessionEnumLifecycle::Preparing) {
+            return Err(EngineSessionError::State(self.state()));
+        }
+        self.lifecycle = EngineSessionEnumLifecycle::Idle;
+        Ok(())
     }
 
     pub fn package(&self) -> &EnginePackageSelected {

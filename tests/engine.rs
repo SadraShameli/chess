@@ -32,5 +32,7 @@ mod desktop_game_supervisor_storage;
 
 #[path = "engine/search_session.rs"]
 mod engine_search_session;
+#[path = "workbench/executor.rs"]
+mod workbench_executor;
 #[path = "workbench/job.rs"]
 mod workbench_job;
