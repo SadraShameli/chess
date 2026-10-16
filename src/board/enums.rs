@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use shakmaty::{CastlingMode, Color};
+use shakmaty::{CastlingMode, Color, Role};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +47,36 @@ impl From<BoardEnumColor> for Color {
         match color {
             BoardEnumColor::White => Self::White,
             BoardEnumColor::Black => Self::Black,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardEnumPieceKind {
+    Pawn,
+    Knight,
+    Bishop,
+    Rook,
+    Queen,
+    King,
+}
+
+impl BoardEnumPieceKind {
+    pub const fn is_promotion(self) -> bool {
+        matches!(self, Self::Knight | Self::Bishop | Self::Rook | Self::Queen)
+    }
+}
+
+impl From<Role> for BoardEnumPieceKind {
+    fn from(role: Role) -> Self {
+        match role {
+            Role::Pawn => Self::Pawn,
+            Role::Knight => Self::Knight,
+            Role::Bishop => Self::Bishop,
+            Role::Rook => Self::Rook,
+            Role::Queen => Self::Queen,
+            Role::King => Self::King,
         }
     }
 }

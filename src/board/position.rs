@@ -72,7 +72,7 @@ impl BoardPosition {
         let chess: Chess = parsed
             .into_position(variant.castling_mode())
             .map_err(|error| BoardPositionError::IllegalPosition(error.kinds()))?;
-        Ok(Self { chess, variant })
+        Self::from_chess(chess, variant)
     }
 
     pub fn variant(&self) -> BoardEnumVariant {
@@ -84,7 +84,12 @@ impl BoardPosition {
     }
 
     pub fn fen(&self) -> String {
-        Fen::from_position(&self.chess, EnPassantMode::Always).to_string()
+        match self.variant {
+            BoardEnumVariant::Standard => {
+                Fen::from_position(&self.chess, EnPassantMode::Always).to_string()
+            }
+            BoardEnumVariant::Chess960 => self.shredder_fen(),
+        }
     }
 
     pub fn placement(&self) -> String {
@@ -103,6 +108,14 @@ impl BoardPosition {
 
     pub fn is_check(&self) -> bool {
         self.chess.is_check()
+    }
+
+    pub(super) fn from_chess(
+        chess: Chess,
+        variant: BoardEnumVariant,
+    ) -> Result<Self, BoardPositionError> {
+        Self::validate_counters(chess.halfmoves(), chess.fullmoves().get())?;
+        Ok(Self { chess, variant })
     }
 
     fn validate_counters(halfmove: u32, fullmove: u32) -> Result<(), BoardPositionError> {

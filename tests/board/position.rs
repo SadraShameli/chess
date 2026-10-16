@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 use std::hash::{BuildHasherDefault, Hasher};
 
+use chess::board::enums::BoardEnumPieceKind;
 use chess::board::enums::BoardEnumVariant;
 use chess::board::position::BoardPosition;
+use chess::board::square::BoardSquare;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -117,5 +119,74 @@ fn maps_castling_to_the_selected_uci_convention() -> Result<(), Box<dyn std::err
     );
     assert_eq!(standard.san("e1g1")?, "O-O");
     assert_eq!(randomized.san("e1h1")?, "O-O");
+    Ok(())
+}
+
+#[test]
+fn promotions_require_an_explicit_valid_piece() -> Result<(), Box<dyn std::error::Error>> {
+    let position =
+        BoardPosition::from_fen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", BoardEnumVariant::Standard)?;
+    let from: BoardSquare = "a7".parse()?;
+    let to: BoardSquare = "a8".parse()?;
+    assert!(position.move_intent(from, to, None).is_err());
+    assert!(
+        position
+            .move_intent(from, to, Some(BoardEnumPieceKind::King))
+            .is_err()
+    );
+    for kind in [
+        BoardEnumPieceKind::Knight,
+        BoardEnumPieceKind::Bishop,
+        BoardEnumPieceKind::Rook,
+        BoardEnumPieceKind::Queen,
+    ] {
+        let movement = position.move_intent(from, to, Some(kind))?;
+        assert_eq!(movement.promotion(), Some(kind));
+        let notation = position.san(&movement.uci(position.variant()))?;
+        assert_eq!(position.parse_san(&notation)?, movement);
+        assert_ne!(position.play(movement)?.placement(), position.placement());
+    }
+    Ok(())
+}
+
+#[test]
+fn en_passant_and_stationary_king_castling_use_authoritative_rules()
+-> Result<(), Box<dyn std::error::Error>> {
+    let position = BoardPosition::from_fen(
+        "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        BoardEnumVariant::Standard,
+    )?;
+    assert_eq!(
+        position.play_uci("e5d6")?.placement(),
+        "4k3/8/3P4/8/8/8/8/4K3"
+    );
+    let randomized =
+        BoardPosition::from_fen("4k3/8/8/8/8/8/8/6KR w H - 0 1", BoardEnumVariant::Chess960)?;
+    assert_eq!(
+        randomized.play_uci("g1h1")?.placement(),
+        "4k3/8/8/8/8/8/8/5RK1"
+    );
+    assert_eq!(randomized.fen(), randomized.shredder_fen());
+    let round_trip = BoardPosition::from_fen(&randomized.fen(), BoardEnumVariant::Chess960)?;
+    assert_eq!(round_trip.identity(), randomized.identity());
+    Ok(())
+}
+
+#[test]
+fn refuses_invalid_square_variant_move_and_counter_boundaries()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert!(serde_json::from_str::<BoardSquare>("64").is_err());
+    assert!(serde_json::from_str::<BoardEnumVariant>("\"atomic\"").is_err());
+    let position = BoardPosition::standard();
+    assert!(position.parse_uci("0000").is_err());
+    assert!(position.parse_uci("P@e4").is_err());
+    assert!(position.parse_san("e4+").is_err());
+    let maximum = BoardPosition::from_fen(
+        "4k3/8/8/8/8/8/8/4K3 b - - 0 1000000",
+        BoardEnumVariant::Standard,
+    )?;
+    assert!(maximum.play_uci("e8e7").is_err());
+    let oversized = " ".repeat(BoardPosition::MAX_FEN_BYTES + 1);
+    assert!(BoardPosition::from_fen(&oversized, BoardEnumVariant::Standard).is_err());
     Ok(())
 }
