@@ -1,12 +1,12 @@
-use chess::engine::package::digest::EnginePackageDigest;
 use chess::engine::package::manifest::{
     EnginePackageEntry, EnginePackageEnumTarget, EnginePackageManifest,
 };
+use chess::package::digest::PackageDigest;
 
 #[test]
 fn deserialization_cannot_bypass_engine_provenance_or_package_constraints()
 -> Result<(), Box<dyn std::error::Error>> {
-    let digest = EnginePackageDigest::read(&b"engine fixture"[..])?;
+    let digest = PackageDigest::read(&b"engine fixture"[..])?;
     let entry = EnginePackageEntry::portable(
         EnginePackageEnumTarget::MacosArm,
         14,
@@ -37,7 +37,7 @@ fn deserialization_cannot_bypass_engine_provenance_or_package_constraints()
 #[test]
 fn duplicate_packages_and_noncanonical_checksums_are_refused()
 -> Result<(), Box<dyn std::error::Error>> {
-    let digest = EnginePackageDigest::read(&b"fixture"[..])?;
+    let digest = PackageDigest::read(&b"fixture"[..])?;
     let entry = EnginePackageEntry::portable(
         EnginePackageEnumTarget::LinuxX64,
         7,
@@ -52,7 +52,7 @@ fn duplicate_packages_and_noncanonical_checksums_are_refused()
         .ok_or("missing package array")?
         .push(duplicate);
     assert!(serde_json::from_value::<EnginePackageManifest>(value).is_err());
-    assert!("A".repeat(64).parse::<EnginePackageDigest>().is_err());
-    assert!("0".repeat(63).parse::<EnginePackageDigest>().is_err());
+    assert!("A".repeat(64).parse::<PackageDigest>().is_err());
+    assert!("0".repeat(63).parse::<PackageDigest>().is_err());
     Ok(())
 }

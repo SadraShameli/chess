@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use chess::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use chess::capacity::executor::{CapacityExecutor, CapacityExecutorError};
-use chess::engine::package::digest::{EnginePackageDigest, EnginePackageDigestError};
 use chess::engine::package::manifest::{
     EnginePackageEntry, EnginePackageEnumTarget, EnginePackageManifest, EnginePackageManifestError,
 };
+use chess::package::digest::{PackageDigest, PackageDigestError};
 use chess::storage::atomic_file::{
     StorageAtomicFileError, StorageAtomicFileStage, StorageAtomicFileTarget,
 };
@@ -25,7 +25,7 @@ pub(crate) enum ToolsEngineBuildError {
     #[error(transparent)]
     Manifest(#[from] EnginePackageManifestError),
     #[error(transparent)]
-    Digest(#[from] EnginePackageDigestError),
+    Digest(#[from] PackageDigestError),
     #[error(transparent)]
     File(#[from] StorageAtomicFileError),
     #[error("Engine build I/O failed: {0}")]
@@ -276,7 +276,7 @@ impl ToolsEngineBuild {
     fn verify_network(path: &Path) -> Result<(), ToolsEngineBuildError> {
         let file = std::fs::File::open(path)?;
         if file.metadata()?.len() != EnginePackageManifest::NETWORK_BYTES
-            || EnginePackageDigest::read(file)?.to_string() != EnginePackageManifest::NETWORK_SHA256
+            || PackageDigest::read(file)?.to_string() != EnginePackageManifest::NETWORK_SHA256
         {
             return Err(ToolsEngineBuildError::NetworkMismatch);
         }
@@ -337,7 +337,7 @@ impl ToolsEngineBuild {
         std::fs::create_dir_all(directory.join("bin"))?;
         let mut file = std::fs::File::open(built)?;
         let bytes = file.metadata()?.len();
-        let digest = EnginePackageDigest::read(file.try_clone()?)?;
+        let digest = PackageDigest::read(file.try_clone()?)?;
         file.rewind()?;
         let entry = EnginePackageEntry::portable(target, bytes, digest, compiler)?;
         let manifest_path = directory.join("manifest.json");

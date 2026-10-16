@@ -31,7 +31,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use serde::Deserialize;
 use thiserror::Error;
 
-use chess::engine::package::digest::{EnginePackageDigest, EnginePackageDigestError};
+use chess::package::digest::{PackageDigest, PackageDigestError};
 
 use crate::presentation_font::PresentationFontFixture;
 use crate::scene_task_pools::SceneTaskPoolFixture;
@@ -43,7 +43,7 @@ pub(super) enum NativeCompatibilityError {
     #[error("Native compatibility asset provenance is invalid: {0}")]
     Provenance(#[from] serde_json::Error),
     #[error("Native compatibility asset checksum is invalid: {0}")]
-    Digest(#[from] EnginePackageDigestError),
+    Digest(#[from] PackageDigestError),
     #[error("The native compatibility asset directory is not valid UTF-8")]
     AssetPath,
     #[error("The original piece GLB does not match its declared checksum or size")]
@@ -313,8 +313,8 @@ impl NativeCompatibilityHarness {
         let manifest: NativeCompatibilityAssetManifest =
             serde_json::from_str(include_str!("../../resources/pieces/provenance.json"))?;
         if bytes.len() != manifest.asset.bytes
-            || EnginePackageDigest::read(bytes.as_slice())?
-                != manifest.asset.sha256.parse::<EnginePackageDigest>()?
+            || PackageDigest::read(bytes.as_slice())?
+                != manifest.asset.sha256.parse::<PackageDigest>()?
         {
             return Err(NativeCompatibilityError::AssetIntegrity);
         }

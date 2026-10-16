@@ -3,19 +3,19 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::engine::package::digest::{EnginePackageDigest, EnginePackageDigestError};
 use crate::engine::package::host::EnginePackageHost;
 use crate::engine::package::manifest::{
     EnginePackageEnumProfile, EnginePackageEnumTarget, EnginePackageManifest,
     EnginePackageManifestError,
 };
+use crate::package::digest::{PackageDigest, PackageDigestError};
 
 #[derive(Debug, Error)]
 pub enum EnginePackageSelectorError {
     #[error(transparent)]
     Manifest(#[from] EnginePackageManifestError),
     #[error(transparent)]
-    Digest(#[from] EnginePackageDigestError),
+    Digest(#[from] PackageDigestError),
     #[error("The packaged engine is unavailable: {0}")]
     Io(#[from] std::io::Error),
     #[error("No compatible engine package exists for this host")]
@@ -33,7 +33,7 @@ pub struct EnginePackageSelected {
     executable: PathBuf,
     target: EnginePackageEnumTarget,
     profile: EnginePackageEnumProfile,
-    digest: EnginePackageDigest,
+    digest: PackageDigest,
 }
 
 impl EnginePackageSelected {
@@ -46,7 +46,7 @@ impl EnginePackageSelected {
     pub fn profile(&self) -> EnginePackageEnumProfile {
         self.profile
     }
-    pub fn digest(&self) -> EnginePackageDigest {
+    pub fn digest(&self) -> PackageDigest {
         self.digest
     }
 }
@@ -101,7 +101,7 @@ impl EnginePackageSelector {
                 return Err(EnginePackageSelectorError::InvalidExecutable);
             }
         }
-        if metadata.len() != entry.bytes() || EnginePackageDigest::read(file)? != entry.sha256() {
+        if metadata.len() != entry.bytes() || PackageDigest::read(file)? != entry.sha256() {
             return Err(EnginePackageSelectorError::ChecksumMismatch);
         }
         Ok(EnginePackageSelected {

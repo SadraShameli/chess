@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::engine::package::digest::{EnginePackageDigest, EnginePackageDigestError};
+use crate::package::digest::{PackageDigest, PackageDigestError};
 
 #[derive(Debug, Error)]
 pub enum EnginePackageManifestError {
@@ -16,7 +16,7 @@ pub enum EnginePackageManifestError {
     #[error("Cannot decode the engine manifest: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
-    Digest(#[from] EnginePackageDigestError),
+    Digest(#[from] PackageDigestError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,7 +81,7 @@ pub struct EnginePackageEntry {
     profile: EnginePackageEnumProfile,
     executable: PathBuf,
     bytes: u64,
-    sha256: EnginePackageDigest,
+    sha256: PackageDigest,
     compiler: String,
     syzygy: bool,
 }
@@ -90,7 +90,7 @@ impl EnginePackageEntry {
     pub fn portable(
         target: EnginePackageEnumTarget,
         bytes: u64,
-        sha256: EnginePackageDigest,
+        sha256: PackageDigest,
         compiler: String,
     ) -> Result<Self, EnginePackageManifestError> {
         let entry = Self {
@@ -118,7 +118,7 @@ impl EnginePackageEntry {
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
-    pub fn sha256(&self) -> EnginePackageDigest {
+    pub fn sha256(&self) -> PackageDigest {
         self.sha256
     }
     pub fn has_syzygy(&self) -> bool {
@@ -161,7 +161,7 @@ pub struct EnginePackageManifest {
     source_commit: String,
     network_name: String,
     network_bytes: u64,
-    network_sha256: EnginePackageDigest,
+    network_sha256: PackageDigest,
     packages: Vec<EnginePackageEntry>,
 }
 

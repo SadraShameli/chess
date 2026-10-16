@@ -7,19 +7,19 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum EnginePackageDigestError {
+pub enum PackageDigestError {
     #[error("SHA-256 identities must contain exactly 64 lowercase hexadecimal characters")]
     Invalid,
-    #[error("Cannot read the engine artifact: {0}")]
+    #[error("Cannot read the package artifact: {0}")]
     Io(#[from] std::io::Error),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct EnginePackageDigest([u8; 32]);
+pub struct PackageDigest([u8; 32]);
 
-impl EnginePackageDigest {
-    pub fn read(mut reader: impl Read) -> Result<Self, EnginePackageDigestError> {
+impl PackageDigest {
+    pub fn read(mut reader: impl Read) -> Result<Self, PackageDigestError> {
         let mut digest = Sha256::new();
         let mut buffer = vec![0; 64 * 1024];
         loop {
@@ -32,8 +32,8 @@ impl EnginePackageDigest {
     }
 }
 
-impl FromStr for EnginePackageDigest {
-    type Err = EnginePackageDigestError;
+impl FromStr for PackageDigest {
+    type Err = PackageDigestError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         if value.len() != 64
@@ -41,32 +41,32 @@ impl FromStr for EnginePackageDigest {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
-            return Err(EnginePackageDigestError::Invalid);
+            return Err(PackageDigestError::Invalid);
         }
         let mut digest = [0; 32];
         for (index, byte) in digest.iter_mut().enumerate() {
             let start = index * 2;
             *byte = u8::from_str_radix(&value[start..start + 2], 16)
-                .map_err(|_error| EnginePackageDigestError::Invalid)?;
+                .map_err(|_error| PackageDigestError::Invalid)?;
         }
         Ok(Self(digest))
     }
 }
 
-impl TryFrom<String> for EnginePackageDigest {
-    type Error = EnginePackageDigestError;
+impl TryFrom<String> for PackageDigest {
+    type Error = PackageDigestError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
         value.parse()
     }
 }
 
-impl From<EnginePackageDigest> for String {
-    fn from(value: EnginePackageDigest) -> Self {
+impl From<PackageDigest> for String {
+    fn from(value: PackageDigest) -> Self {
         value.to_string()
     }
 }
 
-impl Display for EnginePackageDigest {
+impl Display for PackageDigest {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         for byte in self.0 {
             write!(formatter, "{byte:02x}")?;

@@ -1,9 +1,9 @@
-use chess::engine::package::digest::EnginePackageDigest;
 use chess::engine::package::host::EnginePackageHost;
 use chess::engine::package::manifest::{
     EnginePackageEntry, EnginePackageEnumTarget, EnginePackageManifest,
 };
 use chess::engine::package::selector::{EnginePackageSelector, EnginePackageSelectorError};
+use chess::package::digest::PackageDigest;
 
 #[test]
 fn host_policy_rejects_old_unknown_and_incompatible_targets()
@@ -52,7 +52,7 @@ impl EnginePackageFixture {
         let entry = EnginePackageEntry::portable(
             target,
             u64::try_from(bytes.len())?,
-            EnginePackageDigest::read(&bytes[..])?,
+            PackageDigest::read(&bytes[..])?,
             "fixture compiler".to_owned(),
         )?;
         Ok(Self {
