@@ -345,7 +345,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 - [ ] T178 [P] [US8] Add bounded puzzle durability lag/failure/focus scenarios in `tests/puzzle/checkpoint.rs`: request checkpoint every 250 ms with at most one pending/coalesced snapshot, freeze countdown before it advances over one second past durable state, fail save with Retry Save and explicit Resume; minimize/hide the puzzle window even while another app window has focus must pause/hide it.
 - [ ] T179 [P] [US8] Add persisted shuffle/history, zero-denominator rates, confirmed deletion/recomputed summaries and active-run deletion refusal tests in `tests/puzzle/history.rs`.
 - [ ] T180 [US8] Add native presentation acceptance of hidden pause content, explicit Resume/Next, timer-mode exclusivity, unlisted wording and history outcomes in `tests/presentation/puzzle.rs`.
-- [ ] T181 [US8] Implement `PuzzleDefinition` identity/position/validated solution-tree/difficulty/theme model in `src/puzzle/definition.rs`; preserve "Starting position and accepted solution tree, with source identity" and missing optional metadata as unavailable.
+- [X] T181 [US8] Implement `PuzzleDefinition` identity/position/validated solution-tree/difficulty/theme model in `src/puzzle/definition.rs`; preserve "Starting position and accepted solution tree, with source identity" and missing optional metadata as unavailable. Accepted evidence: [puzzle definition boundary](evidence/puzzle-definition.md).
 - [ ] T182 [US8] Implement `PuzzleSession`/attempt/outcome state in `src/puzzle/session.rs` and `src/puzzle/enums.rs`, preserving "Each timed run uses exactly one countdown mode" with 5-minute session/60-second puzzle defaults and no player rating or points. Exact model constraints: "attempted moves and progression/completion state"; "configurable 5-minute sessions and 60-second puzzles".
 - [ ] T183 [US8] Implement listed-line progression, legal-unlisted versus illegal feedback, progressive hints and practice retries in `src/puzzle/solution.rs`, marking whole-attempt assistance and retaining original failed primary outcomes. Exact model constraints: "source square, destination square, and next-move reveal"; "Hint stages restart per player move, retaining attempt-wide assistance."
 - [ ] T184 [US8] Implement native session/per-puzzle countdown ownership and active-time accounting in `src/puzzle/timer.rs`, starting only when board ready/visible/interactive, charging replies/animations/hints/retries and excluding pause/review/exhaustion time.
@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 7 analysis tasks completed and 226 pending.
+**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 7 analysis tasks completed, 1 puzzle task completed and 225 pending.
 **Active parallel tasks**: 43 across disjoint contract-test files; three additional
 `[P]` markers belong to historical completed rows. No native task is accepted
 merely by this generation.

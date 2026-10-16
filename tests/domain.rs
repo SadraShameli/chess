@@ -35,6 +35,9 @@ mod game_transition_fixture;
 #[path = "game/tree.rs"]
 mod game_tree;
 
+#[path = "puzzle/definition.rs"]
+mod puzzle_definition;
+
 #[path = "capacity/budget.rs"]
 mod capacity_budget;
 #[path = "capacity/native_partition.rs"]

@@ -6,6 +6,7 @@ pub mod engine;
 pub mod game;
 pub mod package;
 pub mod presentation;
+pub mod puzzle;
 pub mod scene;
 pub mod storage;
 pub mod workbench;
