@@ -1,6 +1,8 @@
 use std::future::{Future, poll_fn};
 use std::num::{NonZeroU64, NonZeroUsize};
+use std::pin::Pin;
 use std::task::Poll;
+use std::time::Duration;
 
 use chess::board::position::BoardPosition;
 use chess::capacity::budget::CapacityBudget;
@@ -14,8 +16,9 @@ use chess::puzzle::enums::PuzzleEnumCountdownMode;
 use chess::puzzle::identity::PuzzleDefinitionIdentity;
 use chess::puzzle::metadata::PuzzleDefinitionMetadata;
 use chess::puzzle::persistence::{
-    PuzzlePersistenceEnumCommand, PuzzlePersistenceRun, PuzzlePersistenceSaveRequest,
-    PuzzlePersistenceSnapshot, PuzzlePersistenceStorageRevision,
+    PuzzlePersistenceCodec, PuzzlePersistenceEnumCommand, PuzzlePersistenceReceipt,
+    PuzzlePersistenceRun, PuzzlePersistenceSaveRequest, PuzzlePersistenceSnapshot,
+    PuzzlePersistenceStorageRevision,
 };
 use chess::puzzle::random_provider::PuzzleRandomProviderSeeded;
 use chess::puzzle::run::{PuzzleRunEnumContent, PuzzleRunEnumStatus};
@@ -23,13 +26,41 @@ use chess::puzzle::selection::PuzzleSelectionFilter;
 use chess::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
 use chess::puzzle::storage_repository::PuzzleStorageDriver;
 use chess::puzzle::timer::PuzzleTimerEnumReadiness;
-use chess::storage::document_store::StorageDocumentStore;
+use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use chess::storage::puzzle_repository::{StoragePuzzleError, StoragePuzzleRepository};
+use uuid::Uuid;
 
 struct StoragePuzzleFixture;
 
 impl StoragePuzzleFixture {
+    const INVALID_DECIMALS: &[&str] = &[
+        "",
+        "0",
+        "01",
+        "+1",
+        "-1",
+        "1.0",
+        " 1",
+        "1 ",
+        "18446744073709551616",
+        "111111111111111111111",
+        "９",
+        "\0",
+    ];
+
     fn owner() -> Result<PuzzlePersistenceRun, Box<dyn std::error::Error>> {
+        Self::owner_with_id(PuzzleSessionId::new(NonZeroU64::MIN))
+    }
+
+    fn id(value: u64) -> Result<PuzzleSessionId, Box<dyn std::error::Error>> {
+        Ok(PuzzleSessionId::new(
+            NonZeroU64::new(value).ok_or("zero fixture identity")?,
+        ))
+    }
+
+    fn owner_with_id(
+        id: PuzzleSessionId,
+    ) -> Result<PuzzlePersistenceRun, Box<dyn std::error::Error>> {
         let initial = BoardPosition::standard();
         let movement = initial.parse_uci("e2e4")?;
         let definition = PuzzleDefinition::new(
@@ -39,12 +70,36 @@ impl StoragePuzzleFixture {
             PuzzleDefinitionMetadata::default(),
         )?;
         Ok(PuzzlePersistenceRun::new(
-            PuzzleSessionId::new(NonZeroU64::MIN),
+            id,
             PuzzleSessionConfig::defaults(PuzzleEnumCountdownMode::Session),
             vec![definition],
             PuzzleSelectionFilter::default(),
             PuzzleRandomProviderSeeded::new(100),
         )?)
+    }
+
+    async fn save_initial(
+        repository: &StoragePuzzleRepository,
+        id: PuzzleSessionId,
+    ) -> Result<PuzzlePersistenceReceipt, Box<dyn std::error::Error>> {
+        let mut owner = Self::owner_with_id(id)?;
+        Ok(repository
+            .begin_save(Self::request(
+                &mut owner,
+                ClockInstant::from_nanos(0),
+                PuzzlePersistenceStorageRevision::INITIAL,
+                0,
+            )?)?
+            .wait()
+            .await?)
+    }
+
+    async fn assert_pending<F: Future>(mut future: Pin<&mut F>) {
+        poll_fn(|context| {
+            assert!(future.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
     }
 
     fn snapshot(
@@ -767,5 +822,450 @@ async fn invalid_journal_proof_metadata_is_rejected_on_read_and_write()
         Err(StoragePuzzleError::CollectionConflict)
     ));
     store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_is_durable_and_isolated_from_game_documents_and_detached_collections()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let empty = repository.inventory(None).await?;
+    assert!(empty.entries().is_empty());
+    assert_eq!(empty.next_cursor(), None);
+    let game = Uuid::from_u128(1);
+    store.client().save(game, 0, "{}".into()).await?;
+    assert!(repository.inventory(None).await?.entries().is_empty());
+    let id = StoragePuzzleFixture::id(1)?;
+    let receipt = StoragePuzzleFixture::save_initial(&repository, id).await?;
+    let mut owner = StoragePuzzleFixture::owner_with_id(id)?;
+    repository
+        .begin_save(StoragePuzzleFixture::request(
+            &mut owner,
+            ClockInstant::from_nanos(0),
+            receipt.storage_revision(),
+            receipt.event_count(),
+        )?)?
+        .wait()
+        .await?;
+    let connection = rusqlite::Connection::open(&path)?;
+    connection.execute("INSERT INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT 'detached', schema_version, digest, body FROM puzzle_collections WHERE collection_id = '1'", [])?;
+    let page = repository.inventory(None).await?;
+    assert_eq!(page.entries().len(), 1);
+    let entry = page.entries()[0];
+    assert_eq!(entry.id(), id);
+    assert_eq!(entry.storage_revision().value(), 2);
+    assert_eq!(entry.persisted_event_count(), 0);
+    assert_eq!(page.next_cursor(), None);
+    assert!(repository.inventory(Some(id)).await?.entries().is_empty());
+    let games = store.client().inventory(None).await?;
+    assert_eq!(games.len(), 1);
+    assert_eq!(games[0].id(), game);
+    store.close().await?;
+    assert!(matches!(
+        repository.inventory(None).await,
+        Err(StoragePuzzleError::Document(StorageDocumentError::Closed))
+    ));
+    let reopened = StorageDocumentStore::open(path, CapacityBudget::discover()?).await?;
+    let restored = StoragePuzzleRepository::new(reopened.client())
+        .inventory(None)
+        .await?;
+    assert_eq!(restored.entries(), page.entries());
+    reopened.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_has_bounded_numeric_pages_and_stable_exclusive_cursors()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let store = StorageDocumentStore::open(
+        directory.path().join("puzzles.sqlite3"),
+        CapacityBudget::discover()?,
+    )
+    .await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let total = StoragePuzzleRepository::INVENTORY_PAGE_SIZE * 2 + 1;
+    for index in (1..=total).rev() {
+        StoragePuzzleFixture::save_initial(
+            &repository,
+            StoragePuzzleFixture::id(u64::try_from(index * 2)?)?,
+        )
+        .await?;
+    }
+    let first = repository.inventory(None).await?;
+    assert_eq!(
+        first.entries().len(),
+        StoragePuzzleRepository::INVENTORY_PAGE_SIZE
+    );
+    for (index, entry) in first.entries().iter().enumerate() {
+        assert_eq!(entry.id().value().get(), u64::try_from((index + 1) * 2)?);
+    }
+    assert_eq!(repository.inventory(None).await?.entries(), first.entries());
+    let cursor = first.next_cursor().ok_or("missing full-page cursor")?;
+    StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(1)?).await?;
+    let second = repository.inventory(Some(cursor)).await?;
+    assert_eq!(
+        second.entries().len(),
+        StoragePuzzleRepository::INVENTORY_PAGE_SIZE
+    );
+    for (index, entry) in second.entries().iter().enumerate() {
+        assert_eq!(
+            entry.id().value().get(),
+            cursor.value().get() + u64::try_from((index + 1) * 2)?
+        );
+    }
+    let third = repository.inventory(second.next_cursor()).await?;
+    assert_eq!(third.entries().len(), 1);
+    assert_eq!(
+        third.entries()[0].id().value().get(),
+        u64::try_from(total * 2)?
+    );
+    assert_eq!(third.next_cursor(), None);
+    let absent_cursor = repository
+        .inventory(Some(StoragePuzzleFixture::id(5)?))
+        .await?;
+    assert_eq!(
+        absent_cursor.entries()[0].id(),
+        StoragePuzzleFixture::id(6)?
+    );
+    assert!(
+        repository
+            .inventory(Some(third.entries()[0].id()))
+            .await?
+            .entries()
+            .is_empty()
+    );
+    let last_full = repository
+        .inventory(Some(StoragePuzzleFixture::id(u64::try_from(
+            (total - StoragePuzzleRepository::INVENTORY_PAGE_SIZE) * 2,
+        )?)?))
+        .await?;
+    assert_eq!(
+        last_full.entries().len(),
+        StoragePuzzleRepository::INVENTORY_PAGE_SIZE
+    );
+    let final_cursor = last_full
+        .next_cursor()
+        .ok_or("missing final full-page cursor")?;
+    assert_eq!(final_cursor, third.entries()[0].id());
+    let exhausted = repository.inventory(Some(final_cursor)).await?;
+    assert!(exhausted.entries().is_empty());
+    assert_eq!(exhausted.next_cursor(), None);
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_orders_unsigned_identities_and_preserves_maximum_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let signed_maximum = u64::try_from(i64::MAX)?;
+    let ids = [
+        1,
+        9,
+        10,
+        signed_maximum,
+        signed_maximum + 1,
+        signed_maximum + 2,
+        u64::MAX - 1,
+        u64::MAX,
+    ];
+    for value in ids.into_iter().rev() {
+        StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(value)?).await?;
+    }
+    let connection = rusqlite::Connection::open(path)?;
+    connection.execute(
+        "UPDATE puzzle_runs SET storage_revision = ?1 WHERE run_id = ?1",
+        [u64::MAX.to_string()],
+    )?;
+    let page = repository.inventory(None).await?;
+    let actual: Vec<u64> = page
+        .entries()
+        .iter()
+        .map(|entry| entry.id().value().get())
+        .collect();
+    assert_eq!(actual, ids);
+    assert_eq!(
+        page.entries()
+            .last()
+            .ok_or("missing maximum identity")?
+            .storage_revision()
+            .value(),
+        u64::MAX
+    );
+    let after = repository
+        .inventory(Some(StoragePuzzleFixture::id(signed_maximum + 1)?))
+        .await?;
+    assert_eq!(
+        after
+            .entries()
+            .iter()
+            .map(|entry| entry.id().value().get())
+            .collect::<Vec<_>>(),
+        ids[5..]
+    );
+    assert!(
+        repository
+            .inventory(Some(StoragePuzzleFixture::id(u64::MAX)?))
+            .await?
+            .entries()
+            .is_empty()
+    );
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_refuses_noncanonical_identities()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(1)?).await?;
+    let connection = rusqlite::Connection::open(path)?;
+    for invalid in StoragePuzzleFixture::INVALID_DECIMALS {
+        connection.execute("INSERT INTO puzzle_runs (run_id, collection_id, storage_revision, event_count, journal_version, journal_digest) SELECT ?1, collection_id, storage_revision, event_count, journal_version, journal_digest FROM puzzle_runs WHERE run_id = '1'", [invalid])?;
+        connection.execute("INSERT INTO puzzle_checkpoints (run_id, body) SELECT ?1, body FROM puzzle_checkpoints WHERE run_id = '1'", [invalid])?;
+        assert!(
+            matches!(
+                repository.inventory(None).await,
+                Err(StoragePuzzleError::Corrupt)
+            ),
+            "accepted identity {invalid:?}"
+        );
+        connection.execute(
+            "DELETE FROM puzzle_checkpoints WHERE run_id = ?1",
+            [invalid],
+        )?;
+        connection.execute("DELETE FROM puzzle_runs WHERE run_id = ?1", [invalid])?;
+    }
+    assert_eq!(repository.inventory(None).await?.entries().len(), 1);
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_refuses_malformed_revisions_without_partial_success()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    for value in [1, 2] {
+        StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(value)?).await?;
+    }
+    let connection = rusqlite::Connection::open(path)?;
+    for invalid in StoragePuzzleFixture::INVALID_DECIMALS {
+        connection.execute(
+            "UPDATE puzzle_runs SET storage_revision = ?1 WHERE run_id = '2'",
+            [invalid],
+        )?;
+        assert!(
+            matches!(
+                repository.inventory(None).await,
+                Err(StoragePuzzleError::Corrupt)
+            ),
+            "accepted revision {invalid:?}"
+        );
+    }
+    connection.execute(
+        "UPDATE puzzle_runs SET storage_revision = '1' WHERE run_id = '2'",
+        [],
+    )?;
+    assert_eq!(repository.inventory(None).await?.entries().len(), 2);
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_exposes_bounded_event_metadata_without_proving_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let id = StoragePuzzleFixture::id(1)?;
+    StoragePuzzleFixture::save_initial(&repository, id).await?;
+    let connection = rusqlite::Connection::open(path)?;
+    for count in [-1, i64::try_from(PuzzlePersistenceCodec::MAX_EVENTS)? + 1] {
+        assert!(matches!(
+            connection.execute("UPDATE puzzle_runs SET event_count = ?1", [count]),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::ConstraintViolation
+        ));
+    }
+    connection.execute(
+        "UPDATE puzzle_runs SET event_count = ?1",
+        [i64::try_from(PuzzlePersistenceCodec::MAX_EVENTS)?],
+    )?;
+    assert_eq!(
+        repository.inventory(None).await?.entries()[0].persisted_event_count(),
+        PuzzlePersistenceCodec::MAX_EVENTS
+    );
+    assert!(matches!(
+        repository.load(id).await,
+        Err(StoragePuzzleError::Corrupt)
+    ));
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_refuses_missing_collection_and_checkpoint_rows()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(1)?).await?;
+    let connection = rusqlite::Connection::open(path)?;
+    connection.pragma_update(None, "foreign_keys", "OFF")?;
+    connection.execute("UPDATE puzzle_runs SET collection_id = 'missing'", [])?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    assert!(connection.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))?);
+    assert!(matches!(
+        repository.inventory(None).await,
+        Err(StoragePuzzleError::Corrupt)
+    ));
+    connection.execute("UPDATE puzzle_runs SET collection_id = '1'", [])?;
+    assert_eq!(repository.inventory(None).await?.entries().len(), 1);
+    connection.execute("DELETE FROM puzzle_checkpoints", [])?;
+    assert!(matches!(
+        repository.inventory(None).await,
+        Err(StoragePuzzleError::Corrupt)
+    ));
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_does_not_decode_collection_checkpoint_or_journal_bodies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("puzzles.sqlite3");
+    let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let mut owner = StoragePuzzleFixture::owner()?;
+    owner.execute(
+        PuzzlePersistenceEnumCommand::Pause(
+            chess::puzzle::timer::PuzzleTimerEnumPauseReason::Manual,
+        ),
+        ClockInstant::from_nanos(0),
+    )?;
+    repository
+        .begin_save(StoragePuzzleFixture::request(
+            &mut owner,
+            ClockInstant::from_nanos(0),
+            PuzzlePersistenceStorageRevision::INITIAL,
+            0,
+        )?)?
+        .wait()
+        .await?;
+    let id = owner.run().context().session_id();
+    assert!(repository.load(id).await?.is_some());
+    let original = repository.inventory(None).await?;
+    assert_eq!(original.entries()[0].persisted_event_count(), 1);
+    let connection = rusqlite::Connection::open(path)?;
+    let journal: String =
+        connection.query_row("SELECT body FROM puzzle_events", [], |row| row.get(0))?;
+    let checkpoint: String =
+        connection.query_row("SELECT body FROM puzzle_checkpoints", [], |row| row.get(0))?;
+    let collection: String =
+        connection.query_row("SELECT body FROM puzzle_collections", [], |row| row.get(0))?;
+    for (damage, restore, body) in [
+        (
+            "INSERT OR REPLACE INTO puzzle_events (run_id, ordinal, body) SELECT run_id, ordinal, '{}' FROM puzzle_events",
+            "INSERT OR REPLACE INTO puzzle_events (run_id, ordinal, body) SELECT run_id, ordinal, ?1 FROM puzzle_events",
+            journal,
+        ),
+        (
+            "UPDATE puzzle_checkpoints SET body = '{}'",
+            "UPDATE puzzle_checkpoints SET body = ?1",
+            checkpoint,
+        ),
+        (
+            "INSERT OR REPLACE INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT collection_id, schema_version, digest, '{}' FROM puzzle_collections",
+            "INSERT OR REPLACE INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT collection_id, schema_version, digest, ?1 FROM puzzle_collections",
+            collection,
+        ),
+    ] {
+        assert_eq!(connection.execute(damage, [])?, 1);
+        assert_eq!(
+            repository.inventory(None).await?.entries(),
+            original.entries()
+        );
+        assert!(repository.load(id).await.is_err());
+        assert_eq!(connection.execute(restore, [&body])?, 1);
+        assert!(repository.load(id).await?.is_some());
+    }
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_keeps_accepted_admission_bounded_after_caller_cancellation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
+    let store =
+        StorageDocumentStore::open(directory.path().join("puzzles.sqlite3"), budget.clone())
+            .await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let held = budget.try_lease(1)?;
+    let mut waiting = Vec::new();
+    for _ in 0..StorageDocumentStore::QUEUE_CAPACITY {
+        let mut request = Box::pin(repository.inventory(None));
+        StoragePuzzleFixture::assert_pending(request.as_mut()).await;
+        waiting.push(request);
+    }
+    drop(waiting.pop().ok_or("missing accepted inventory request")?);
+    assert!(matches!(
+        repository.inventory(None).await,
+        Err(StoragePuzzleError::Document(
+            StorageDocumentError::Saturated
+        ))
+    ));
+    drop(held);
+    for request in waiting {
+        assert!(request.await?.entries().is_empty());
+    }
+    assert!(repository.inventory(None).await?.entries().is_empty());
+    assert_eq!(budget.available(), 1);
+    store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_run_inventory_borrowed_wait_allows_shutdown_and_preserves_accepted_reply()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
+    let store =
+        StorageDocumentStore::open(directory.path().join("puzzles.sqlite3"), budget.clone())
+            .await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let held = budget.try_lease(1)?;
+    let mut waiting = Box::pin(repository.inventory(None));
+    StoragePuzzleFixture::assert_pending(waiting.as_mut()).await;
+    let mut closing = Box::pin(store.close());
+    StoragePuzzleFixture::assert_pending(closing.as_mut()).await;
+    assert!(matches!(
+        repository.inventory(None).await,
+        Err(StoragePuzzleError::Document(StorageDocumentError::Closed))
+    ));
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(3), closing).await??;
+    assert!(waiting.await?.entries().is_empty());
+    assert!(matches!(
+        repository.inventory(None).await,
+        Err(StoragePuzzleError::Document(StorageDocumentError::Closed))
+    ));
     Ok(())
 }

@@ -266,6 +266,42 @@ fn immutable_snapshots_reuse_unchanged_entities_and_offscreen_images()
 }
 
 #[test]
+fn clearing_a_hidden_board_removes_piece_identity_and_rebuilds_the_same_position()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = SceneRendererFixture::new()?;
+    let mut renderer = fixture.spawn()?;
+    let empty_entities = fixture.scene_entity_count();
+    let initial = BoardPosition::standard();
+    renderer.apply_position(&mut fixture.world, &initial)?;
+    let square = "e2".parse()?;
+    let previous = renderer.piece_root(square).ok_or("missing e2 pawn")?;
+    let descendants = renderer
+        .piece_entities(square)
+        .ok_or("missing e2 descendants")?
+        .to_vec();
+    let generation = renderer.generation();
+    let image = renderer.image().id();
+    assert!(renderer.clear_position(&mut fixture.world)?);
+    assert_ne!(renderer.generation(), generation);
+    assert_eq!(renderer.image().id(), image);
+    assert_eq!(fixture.scene_entity_count(), empty_entities);
+    assert!(renderer.piece_root(square).is_none());
+    for entity in descendants {
+        assert!(renderer.square_for_entity(entity).is_none());
+        assert!(fixture.world.get_entity(entity).is_err());
+    }
+    let cleared = renderer.generation();
+    assert!(!renderer.clear_position(&mut fixture.world)?);
+    assert_eq!(renderer.generation(), cleared);
+    assert!(renderer.apply_position(&mut fixture.world, &initial)?);
+    assert_ne!(renderer.piece_root(square), Some(previous));
+    assert!(renderer.piece_root(square).is_some());
+    renderer.despawn(&mut fixture.world)?;
+    assert_eq!(fixture.scene_entity_count(), 0);
+    Ok(())
+}
+
+#[test]
 fn viewport_dpi_clip_and_camera_changes_invalidate_geometry_and_recreate_sized_targets()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut fixture = SceneRendererFixture::new()?;

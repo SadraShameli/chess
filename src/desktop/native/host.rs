@@ -1239,13 +1239,13 @@ impl DesktopNativeHost {
         );
         let viewport = ScenePickingViewport::new(rectangle, rectangle, 1.0, 1.0)?;
         let mut renderer = SceneRenderer::spawn(world, templates, viewport, state.camera)?;
-        let snapshot = state
-            .presentation
-            .board_snapshot()
-            .ok_or(DesktopNativeHostError::MissingState)?;
-        let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
-        renderer.apply_position(world, &position)?;
-        state.rendered_board = Some(snapshot.clone());
+        if let Some(snapshot) = state.presentation.board_snapshot() {
+            let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
+            renderer.apply_position(world, &position)?;
+            state.rendered_board = Some(snapshot.clone());
+        } else {
+            state.rendered_board = None;
+        }
         world.insert_resource(renderer);
         Ok(())
     }
@@ -1279,14 +1279,17 @@ impl DesktopNativeHost {
         if !state.ready {
             world.insert_resource(WinitSettings::continuous());
         }
-        if let Some(snapshot) = state.presentation.board_snapshot()
-            && !state.rendered_board.as_ref().is_some_and(|previous| {
+        if let Some(snapshot) = state.presentation.board_snapshot() {
+            if !state.rendered_board.as_ref().is_some_and(|previous| {
                 previous.fen() == snapshot.fen() && previous.variant() == snapshot.variant()
-            })
-        {
-            let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
-            renderer.apply_position(world, &position)?;
-            state.rendered_board = Some(snapshot.clone());
+            }) {
+                let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
+                renderer.apply_position(world, &position)?;
+                state.rendered_board = Some(snapshot.clone());
+            }
+        } else if state.rendered_board.is_some() {
+            renderer.clear_position(world)?;
+            state.rendered_board = None;
         }
         if state.ready {
             return Ok(());

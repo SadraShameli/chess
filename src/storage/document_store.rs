@@ -16,7 +16,8 @@ use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSave
 use crate::puzzle::session::PuzzleSessionId;
 use crate::storage::migration::StorageMigration;
 use crate::storage::puzzle_repository::{
-    StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleTransaction, StoragePuzzleWrite,
+    StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
+    StoragePuzzleWrite,
 };
 
 #[derive(Debug, Error)]
@@ -88,6 +89,12 @@ impl StorageDocumentReceipt {
 }
 
 enum StorageDocumentEnumCommand {
+    PuzzleInventory {
+        after: Option<PuzzleSessionId>,
+        memory_reservation: OwnedSemaphorePermit,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<StoragePuzzleRunPage, StoragePuzzleError>>,
+    },
     PuzzleSave {
         request: Box<PuzzlePersistenceSaveRequest>,
         _memory_reservation: OwnedSemaphorePermit,
@@ -244,6 +251,23 @@ impl StorageDocumentStore {
 }
 
 impl StorageDocumentClient {
+    pub(crate) async fn inventory_puzzle_runs(
+        &self,
+        after: Option<PuzzleSessionId>,
+    ) -> Result<StoragePuzzleRunPage, StoragePuzzleError> {
+        let admission = self.admit()?;
+        let memory_reservation =
+            Self::reserve_memory(&self.memory, StoragePuzzleRunPage::memory_bytes())?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::PuzzleInventory {
+            after,
+            memory_reservation,
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub(crate) fn begin_puzzle_save(
         &self,
         request: PuzzlePersistenceSaveRequest,
@@ -385,6 +409,22 @@ impl StorageDocumentActor {
         while let Some(command) = receiver.blocking_recv() {
             let lease = self.runtime.block_on(self.budget.lease(1))?;
             match command {
+                StorageDocumentEnumCommand::PuzzleInventory {
+                    after,
+                    memory_reservation,
+                    _admission,
+                    result,
+                } => {
+                    let outcome = StoragePuzzleTransaction::inventory(
+                        &self.connection,
+                        after,
+                        memory_reservation,
+                    );
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
                 StorageDocumentEnumCommand::PuzzleSave {
                     request,
                     _memory_reservation,

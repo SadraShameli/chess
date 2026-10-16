@@ -1,4 +1,4 @@
-use std::num::TryFromIntError;
+use std::num::{NonZeroU64, TryFromIntError};
 use std::sync::Arc;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -13,7 +13,9 @@ use crate::puzzle::persistence::{
 };
 use crate::puzzle::session::PuzzleSessionId;
 use crate::puzzle::storage_repository::{PuzzleStorageRepository, PuzzleStorageWrite};
-use crate::storage::document_store::{StorageDocumentClient, StorageDocumentError};
+use crate::storage::document_store::{
+    StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
+};
 
 #[derive(Debug, Error)]
 pub enum StoragePuzzleError {
@@ -87,12 +89,93 @@ impl StoragePuzzleRecovered {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoragePuzzleRunMetadata {
+    id: PuzzleSessionId,
+    storage_revision: PuzzlePersistenceStorageRevision,
+    persisted_event_count: usize,
+}
+
+impl StoragePuzzleRunMetadata {
+    const MAX_DECIMAL_BYTES: usize = 20;
+
+    pub const fn id(&self) -> PuzzleSessionId {
+        self.id
+    }
+
+    pub const fn storage_revision(&self) -> PuzzlePersistenceStorageRevision {
+        self.storage_revision
+    }
+
+    pub const fn persisted_event_count(&self) -> usize {
+        self.persisted_event_count
+    }
+
+    fn canonical_decimal(value: Option<String>) -> Result<NonZeroU64, StoragePuzzleError> {
+        let value = value.ok_or(StoragePuzzleError::Corrupt)?;
+        let parsed: NonZeroU64 = value
+            .parse()
+            .map_err(|_error| StoragePuzzleError::Corrupt)?;
+        if parsed.to_string() != value {
+            return Err(StoragePuzzleError::Corrupt);
+        }
+        Ok(parsed)
+    }
+
+    fn read(row: &rusqlite::Row<'_>) -> Result<Self, StoragePuzzleError> {
+        let id = PuzzleSessionId::new(Self::canonical_decimal(row.get(0)?)?);
+        let storage_revision =
+            PuzzlePersistenceStorageRevision::new(Self::canonical_decimal(row.get(1)?)?.get());
+        let persisted_event_count =
+            usize::try_from(row.get::<_, i64>(2)?).map_err(|_error| StoragePuzzleError::Corrupt)?;
+        let has_collection: bool = row.get(3)?;
+        let has_checkpoint: bool = row.get(4)?;
+        if persisted_event_count > PuzzlePersistenceCodec::MAX_EVENTS
+            || !has_collection
+            || !has_checkpoint
+        {
+            return Err(StoragePuzzleError::Corrupt);
+        }
+        Ok(Self {
+            id,
+            storage_revision,
+            persisted_event_count,
+        })
+    }
+}
+
+pub struct StoragePuzzleRunPage {
+    entries: Vec<StoragePuzzleRunMetadata>,
+    _memory_reservation: OwnedSemaphorePermit,
+}
+
+impl StoragePuzzleRunPage {
+    pub fn entries(&self) -> &[StoragePuzzleRunMetadata] {
+        &self.entries
+    }
+
+    pub fn next_cursor(&self) -> Option<PuzzleSessionId> {
+        if self.entries.len() == StoragePuzzleRepository::INVENTORY_PAGE_SIZE {
+            self.entries.last().map(StoragePuzzleRunMetadata::id)
+        } else {
+            None
+        }
+    }
+
+    pub(super) const fn memory_bytes() -> usize {
+        StoragePuzzleRepository::INVENTORY_PAGE_SIZE
+            * std::mem::size_of::<StoragePuzzleRunMetadata>()
+    }
+}
+
 #[derive(Clone)]
 pub struct StoragePuzzleRepository {
     client: StorageDocumentClient,
 }
 
 impl StoragePuzzleRepository {
+    pub const INVENTORY_PAGE_SIZE: usize = StorageDocumentStore::INVENTORY_PAGE_SIZE;
+
     pub const fn new(client: StorageDocumentClient) -> Self {
         Self { client }
     }
@@ -109,6 +192,13 @@ impl StoragePuzzleRepository {
         id: PuzzleSessionId,
     ) -> Result<Option<StoragePuzzleRecovered>, StoragePuzzleError> {
         self.client.read_puzzle(id).await
+    }
+
+    pub async fn inventory(
+        &self,
+        after: Option<PuzzleSessionId>,
+    ) -> Result<StoragePuzzleRunPage, StoragePuzzleError> {
+        self.client.inventory_puzzle_runs(after).await
     }
 }
 
@@ -185,6 +275,30 @@ struct StoragePuzzleStoredRun {
 pub(super) struct StoragePuzzleTransaction;
 
 impl StoragePuzzleTransaction {
+    pub(super) fn inventory(
+        connection: &Connection,
+        after: Option<PuzzleSessionId>,
+        memory_reservation: OwnedSemaphorePermit,
+    ) -> Result<StoragePuzzleRunPage, StoragePuzzleError> {
+        let mut statement = connection.prepare_cached(
+            "SELECT CASE WHEN length(CAST(r.run_id AS BLOB)) <= ?3 THEN r.run_id END, CASE WHEN length(CAST(r.storage_revision AS BLOB)) <= ?3 THEN r.storage_revision END, r.event_count, EXISTS(SELECT 1 FROM puzzle_collections c WHERE c.collection_id = r.collection_id), EXISTS(SELECT 1 FROM puzzle_checkpoints p WHERE p.run_id = r.run_id) FROM puzzle_runs r WHERE ?1 IS NULL OR (length(r.run_id), r.run_id COLLATE BINARY) > (length(?1), ?1 COLLATE BINARY) ORDER BY length(r.run_id), r.run_id COLLATE BINARY LIMIT ?2",
+        )?;
+        let cursor = after.map(|id| id.value().get().to_string());
+        let mut rows = statement.query(params![
+            cursor,
+            i64::try_from(StoragePuzzleRepository::INVENTORY_PAGE_SIZE)?,
+            i64::try_from(StoragePuzzleRunMetadata::MAX_DECIMAL_BYTES)?,
+        ])?;
+        let mut entries = Vec::with_capacity(StoragePuzzleRepository::INVENTORY_PAGE_SIZE);
+        while let Some(row) = rows.next()? {
+            entries.push(StoragePuzzleRunMetadata::read(row)?);
+        }
+        Ok(StoragePuzzleRunPage {
+            entries,
+            _memory_reservation: memory_reservation,
+        })
+    }
+
     pub(super) fn save(
         connection: &mut Connection,
         request: PuzzlePersistenceSaveRequest,

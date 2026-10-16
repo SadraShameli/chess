@@ -90,6 +90,42 @@ actual acquisition, licensing, preparation, indexes, integrity and version
 leases. T187/T190 and remaining native/presentation/history acceptance stay
 open. All thirteen journeys remain first-release scope.
 
+## Saved-run inventory and scene preparation
+
+The [saved-run inventory](puzzle-run-inventory.md) now supplies bounded metadata
+pages without decoding definitions or replaying journals. Its ten new cases and
+complete 52-case storage suite passed in the isolated lane, followed by clean
+all-feature library/storage Clippy. Independent source review found no concrete
+blocker in unsigned pagination, canonical row validation, related-row corruption
+checks or admission/memory/close ownership.
+
+The parent merged that patch and added scene clearing for a hidden board. The
+renderer removes all piece entities and picking identities while retaining its
+offscreen image, invalidates the generation and can reconstruct the same position
+when shown again. Native scene creation accepts an absent board snapshot. The
+new check was authored before this new method; no missing-API compile failure is
+presented as a semantic regression. All 12 scene and 52 storage cases passed on
+the merged source, and the combined all-feature library/scene/storage Clippy
+selection passed without warnings. Canonical `make verify` then passed 1,102
+tests with zero failures, ignored cases or filtered cases, all three Clippy
+selections and both optimized builds. All-target release took 4 minutes 43
+seconds; the separately selected native harness build took 46.99 seconds.
+The existing debug linker warning remains visible. Native execution was not
+part of these commands.
+
+| Log | SHA-256 |
+| --- | --- |
+| `puzzle-inventory-scene-tests.log` | `bc63ac946fde22956a7befc124e81447b3cde368bba1d5d0d4fbe043f9c63120` |
+| `puzzle-inventory-scene-clippy.log` | `cb52eb13077ce43bd992f472492b83531fb7cc0aeb5e87b6fd5d948bc1d8482f` |
+| `puzzle-inventory-make-verify.log` | `d4d0e7278c456d8b85003a43f9c28f4eab4b76bddd0bff4eeb3345daaab5454a` |
+
+The [collection-scale proposal](puzzle-collection-scale-design.md) records the
+separate immutable catalog, pinned references, bounded recovery and retained
+history work. Review required preserving unique legacy recovery material in
+backups and permitting confirmed End when future catalog data is unavailable.
+Both are now explicit, with pure unavailable-run state separated from persistence
+proof metadata. It changes no production format or implemented acceptance gate.
+
 ## Tooling worktree cleanup
 
 After tooling commit `10169bd` was pushed and remote-verified, both completed
@@ -97,4 +133,12 @@ tool worktrees and their local branches were removed. Full worktree and Git
 metadata archives, staged/unstaged diffs and verified content manifests remain
 under `.git/parallel-patches/completed-tool-worktrees-20261016T224137Z/`.
 The two archives were verified against 472 and 473 file/link entries before
-removal. The three puzzle worktrees were retained for integration.
+removal.
+
+After puzzle checkpoint `d703763` was pushed and remote-verified, the three
+completed puzzle worktrees and their local branches were also removed. Their
+full worktree and Git metadata archives, staged/unstaged diffs and verified
+content manifests are under
+`.git/parallel-patches/completed-puzzle-worktrees-20261016T230152Z/`. Verification
+covered 498, 504 and 504 file/link entries before removal. Active inventory,
+collection-design and recovery-service worktrees remain separate.

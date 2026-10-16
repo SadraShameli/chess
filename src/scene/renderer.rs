@@ -307,14 +307,7 @@ impl SceneRenderer {
             })
             .collect::<Vec<_>>();
         for square in removed {
-            if let Some(piece) = self.pieces.remove(&square) {
-                for entity in piece.entities {
-                    self.entity_squares.remove(&entity);
-                }
-                if !world.despawn(piece.root) {
-                    return Err(SceneRendererError::MissingEntity(piece.root));
-                }
-            }
+            self.remove_piece(world, square)?;
         }
         for (square, piece) in position.pieces() {
             if self.pieces.contains_key(&square) {
@@ -354,6 +347,38 @@ impl SceneRenderer {
         self.generation = generation;
         self.request_frame(world)?;
         Ok(true)
+    }
+
+    pub fn clear_position(&mut self, world: &mut World) -> Result<bool, SceneRendererError> {
+        self.require_renderable()?;
+        if self.snapshot.is_none() && self.pieces.is_empty() {
+            return Ok(false);
+        }
+        let generation = self.generation.next()?;
+        let removed = self.pieces.keys().copied().collect::<Vec<_>>();
+        for square in removed {
+            self.remove_piece(world, square)?;
+        }
+        self.snapshot = None;
+        self.generation = generation;
+        self.request_frame(world)?;
+        Ok(true)
+    }
+
+    fn remove_piece(
+        &mut self,
+        world: &mut World,
+        square: BoardSquare,
+    ) -> Result<(), SceneRendererError> {
+        if let Some(piece) = self.pieces.remove(&square) {
+            for entity in piece.entities {
+                self.entity_squares.remove(&entity);
+            }
+            if !world.despawn(piece.root) {
+                return Err(SceneRendererError::MissingEntity(piece.root));
+            }
+        }
+        Ok(())
     }
 
     pub fn pick(
