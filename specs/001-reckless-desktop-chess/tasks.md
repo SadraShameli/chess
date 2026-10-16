@@ -75,7 +75,7 @@ is reported as outstanding, never as a passing test or a reason to remove a feat
 - [X] T006 Define least-privilege release capabilities and local-only CSP in `capabilities/main.json` and `tauri.conf.json`, excluding generic shell/filesystem access, remote executable content and test listeners.
 - [X] T007 Configure Vitest 5.0.5 browser tests, matching browser-playwright provider, Playwright 1.64.1 and Vue Test Utils 2.5.1 in `ui/vitest.config.ts` and `ui/package.json`; retain stable compatible exact resolution.
 - [X] T008 Configure WebdriverIO 9.31.9, @wdio/tauri-service 1.5.0 and the stable test-only native WebDriver feature in `ui/wdio.conf.ts`, `Cargo.toml` and `capabilities/test.json`, ensuring release selection excludes all automation permissions/plugins.
-- [ ] T009 Extend `Makefile` and `ui/package.json` with sequential formatter, vue-tsc, ESLint, Rust, browser-test and optimized-build gates; make `make run` launch the optimized desktop app with application arguments forwarded only when supplied. T023 connects schema-drift checking when the authoritative DTO schema exists.
+- [X] T009 Extend `Makefile` and `ui/package.json` with sequential formatter, vue-tsc, ESLint, Rust, browser-test and optimized-build gates; make `make run` launch the optimized desktop app with application arguments forwarded only when supplied. T023 connects schema-drift checking when the authoritative DTO schema exists.
 - [ ] T010 Record actual resolved dependency versions, Bun compatibility and local prerequisites in `specs/001-reckless-desktop-chess/evidence/toolchain.md`, including Linux updated WebKitGTK and native Fathom/Clang prerequisites.
 
 **Checkpoint**: Pinned local toolchain and project entry points are usable.
