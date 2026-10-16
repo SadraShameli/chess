@@ -1,7 +1,7 @@
 # Implementation worktree ledger
 
 Last reconciled: 2026-10-16. Integration branch:
-`001-reckless-desktop-chess`. Last pushed checkpoint: `ff20477`.
+`001-reckless-desktop-chess`. Last pushed checkpoint: `ec355b3`.
 
 The coordinator owns registrations, integration, verification, task markers,
 commits and pushes. Agent branches deliver explicit-path staged binary patches.
@@ -16,9 +16,9 @@ All worktree paths below are relative to
 
 | Agent | Worktree | Branch | Current ownership | State |
 | --- | --- | --- | --- | --- |
-| `plan_review` | `engine-lifecycle` | `work/001-engine-lifecycle` | Desktop game supervisor, lifecycle and save scheduling | Tests integrated; corrected source pending |
-| `selection_review` | `profile-foundation` | `work/001-profile-foundation` | Board input controller, native game application UI | Controller patches delivered; application mounting in progress |
-| `story_coverage` | `native-harness` | `work/001-native-harness` | Reckless resource configuration and exact option acknowledgments | Resource tests delivered; source in progress |
+| `plan_review` | `engine-lifecycle` | `work/001-engine-lifecycle` | Desktop game supervisor and registry lifecycle | Supervisor/start activation integrated; shutdown review fixes in progress |
+| `selection_review` | `profile-foundation` | `work/001-profile-foundation` | Retained native engine allocation/start/refresh and regressions | UI/controller patches integrated; registry review and inactive-worktree audit delivered; adapter follow-up in progress |
+| `story_coverage` | `native-harness` | `work/001-native-harness` | Shared engine resource allocator and retained allocation/refresh | Resource configuration/factory integrated; allocator tests delivered; allocator source in progress |
 
 The main checkout at `/Users/sadrashameli/Personal/chess` owns the native game
 bridge, coordinator, composition root, scene synchronization and integration.
@@ -30,33 +30,41 @@ assignments.
 
 | Worktree | Branch | Recorded base | State |
 | --- | --- | --- | --- |
-| `activation-foundation` | `work/001-activation-foundation` | `945c863` | Dirty; preserve and compare before cleanup |
-| `board` | `work/001-board-split` | `7de3a7b` | Dirty; preserve and compare before cleanup |
-| `bootstrap` | `work/001-bootstrap` | `ce2bb9d` | Dirty; preserve and compare before cleanup |
-| `bootstrap-validation` | `work/001-bootstrap-validation` | `6bb1434` | Dirty; preserve and compare before cleanup |
+| `activation-foundation` | `work/001-activation-foundation` | `945c863` | Dirty; audited; no unique useful integration candidates |
+| `board` | `work/001-board-split` | `7de3a7b` | Dirty; audited; historical web-shell state |
+| `bootstrap` | `work/001-bootstrap` | `ce2bb9d` | Dirty; audited; integrated foundations and historical artifacts |
+| `bootstrap-validation` | `work/001-bootstrap-validation` | `6bb1434` | Dirty; audited; historical web-shell state |
 
-These directories contain historical work, including files from the removed
-web frontend. Their contents have not been fully reconciled against current
-native implementation. A dirty file count does not establish unique unfinished
-work because many earlier patches were integrated without advancing the agent
-branch. No inactive worktree has been deleted or declared fully integrated.
+Read-only reconciliation against `ec355b3` and the current integration checkout
+found all four branch heads are ancestors, with zero unique committed changes.
+Their dirty patches contain previously integrated or superseded foundations,
+older alternatives, removed web-shell files and generated artifacts. Package and
+activation work is preserved in `75d219f`, `9345071` and `f7c3901`; historical
+board/bootstrap work is preserved in `945c863` and its obsolete web shell was
+deliberately removed in `cf03da8`. No uniquely unintegrated useful implementation
+was found. No inactive worktree has been reset or deleted.
 
 ## Pending integration queue
 
 | Delivery | Integration | Verification |
 | --- | --- | --- |
-| Game supervisor | Tests present; corrected source awaited | Pending assembled desktop checks |
-| Immutable game snapshots and reducer | Source/tests present; reducer registration pending | Snapshot extensions and reducer pending |
-| Native input controller | Tests/source delivered | Pending |
-| Application game UI | Tests delivered; source pending | Pending |
-| Reckless resource configuration | Tests delivered; source pending | Pending |
-| Sibling continuation reuse regression | Tests/source delivered | Red-first check pending |
-| Save capacity waiting | Executor integrated; repository patch pending | Executor tests passed; repository integration pending |
+| Game supervisor, save receipts and responsive resource waits | Source/tests integrated | Pending assembled desktop checks |
+| Game registry Create activation | Source/tests integrated | Pending; reviewed shutdown races have separate fixes in progress |
+| Immutable game snapshots and reducer | Source/tests/registrations integrated | Save-failure snapshot regression observed red; fix awaiting green |
+| Native input controller and mounted game UI | Source/tests/registrations integrated | Selection and stream-retry regressions observed red; fixes awaiting green |
+| Reckless resource configuration and native factory | Source/tests/registrations integrated | Exact acknowledgment and retained cleanup checks pending |
+| Shared engine resource allocator | Tests delivered; source pending | Not yet registered or run |
+| Sibling continuation reuse regression | Source/tests integrated | Two failures observed before source fix; green pending |
+| Save capacity waiting | Executor/repository source and tests integrated | Executor tests passed; assembled repository checks pending |
+| Quit after committed game response | Coordinator regression and fix integrated | Red observed; green pending |
 
 ## Verification boundary
 
 The last recorded focused green run preceded the newest bridge/coordinator
 changes: 28 library, 164 domain and 32 presentation tests. The current assembled
-working changes have not yet passed verification. Production playable wiring is
-still in progress. Task completion remains governed by `../tasks.md`, not agent
-delivery or the existence of a source file.
+working changes have not yet passed verification. The latest debug attempt stopped
+at compilation; the registry async receiver and test deadline type corrections
+are now integrated. Native adapter resource refresh is still awaited before the
+next assembled check. Production playable composition remains unfinished. Task
+completion remains governed by `../tasks.md`, not agent delivery or the existence
+of a source file.
