@@ -44,3 +44,5 @@ mod workbench_export;
 
 #[path = "desktop/workbench_commands.rs"]
 mod desktop_workbench_commands;
+#[path = "engine/coverage.rs"]
+mod engine_coverage;

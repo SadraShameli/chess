@@ -13,6 +13,7 @@ format:
 
 lint:
 	cargo fmt --all --check
+	cargo clippy --locked --bin chess-tools -- -D warnings
 	cargo clippy --locked --all-targets --all-features -- -D warnings
 	cargo clippy --locked --test native --all-features -- -D warnings
 

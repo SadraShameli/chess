@@ -1,0 +1,542 @@
+{
+  "schema_version": 1,
+  "registry_version": 1,
+  "inventory_sha256": "1f7b19acdffd1925b18312f0f797810e3de2e8a4191391892063d9e45b25eb3b",
+  "context": {
+    "target": "aarch64-apple-darwin",
+    "profile": "portable",
+    "package_sha256": "ab4128cd33149b14713475e049db8ddaff702ee79bfb412ecfbde91655273689",
+    "source_commit": "0e92358f5acd66e5ac77b1bf558202e47c515435",
+    "model_sha256": "5478683cb1bababde29ae8f29468a99846726548fc6a0ed54cac40ab6d38efbf"
+  },
+  "rows": [
+    {
+      "id": "OPT-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `Hash`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Range rejection, applied value, memory-pressure test."
+      }
+    },
+    {
+      "id": "OPT-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `Threads`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Discover dynamic range; one/max-worker test."
+      }
+    },
+    {
+      "id": "OPT-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `MoveOverhead`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Zero/upper bound and clock-boundary fixture."
+      }
+    },
+    {
+      "id": "OPT-04",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `Minimal`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Both modes complete with valid results."
+      }
+    },
+    {
+      "id": "OPT-05",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `Clear Hash`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Correct wire command and unchanged game."
+      }
+    },
+    {
+      "id": "OPT-06",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `UCI_Chess960`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Standard/FRC/DFRC castling corpus."
+      }
+    },
+    {
+      "id": "OPT-07",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `MultiPV`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Ranks and legal lines at 1/multiple/root limit."
+      }
+    },
+    {
+      "id": "OPT-08",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "authentic_tablebases",
+        "detail": "Authentic Syzygy tables and positive native load/probe evidence are not supplied by this fixture.",
+        "next_action": "Provide authentic local WDL and DTZ fixtures, verify cardinality and rule-50 context, then retain the native output and fixture hashes."
+      }
+    },
+    {
+      "id": "PRO-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `uci`, identity, option discovery, `uciok`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Startup identity and option inventory; timeout/mismatch fixtures."
+      }
+    },
+    {
+      "id": "PRO-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `isready` / `readyok`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Startup/configuration readiness, including proof it is not search completion."
+      }
+    },
+    {
+      "id": "PRO-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `ucinewgame`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Reset histories/hash between games; replay position afterward."
+      }
+    },
+    {
+      "id": "PRO-04",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `position startpos [moves ...]`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Standard-game initial position and full move-history replay."
+      }
+    },
+    {
+      "id": "PRO-05",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `position fen ... [moves ...]`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Imported/custom positions and every FRC/DFRC game."
+      }
+    },
+    {
+      "id": "PRO-06",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Normal Stop requires real telemetry. The pinned listener has an immediate go/stop race before queued go resets RUNNING; T091/T092 remain open.",
+        "next_action": "Exercise normal telemetry-acknowledged Stop, immediate go/stop and the original two-second escalation, recording final bestmove, process reaping and stale-result prevention."
+      }
+    },
+    {
+      "id": "PRO-07",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `quit`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Bounded graceful shutdown, EOF and process reaping."
+      }
+    },
+    {
+      "id": "SRC-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `go infinite`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Continuous analysis; exact one-token mode; explicit stop."
+      }
+    },
+    {
+      "id": "SRC-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `go depth N`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Positive validated depth, natural completion."
+      }
+    },
+    {
+      "id": "SRC-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `go nodes N`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Positive validated node budget, natural completion; report actual nodes."
+      }
+    },
+    {
+      "id": "SRC-04",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `go movetime N`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Positive move milliseconds, completion and overrun measurement."
+      }
+    },
+    {
+      "id": "SRC-05",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for Clock `go`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: `wtime`, `btime`, `winc`, `binc`, optional `movestogo`; sudden death, increment, staged controls."
+      }
+    },
+    {
+      "id": "OUT-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `bestmove`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Validate legal move against originating search; no unsupported ponder suffix."
+      }
+    },
+    {
+      "id": "OUT-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `depth`, `seldepth`, `multipv`, `pv`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Candidate rows and legal continuation with proper ranks."
+      }
+    },
+    {
+      "id": "OUT-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `score cp`, `score mate`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Typed scores, side/perspective normalization, signed mate values."
+      }
+    },
+    {
+      "id": "OUT-04",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `lowerbound`, `upperbound`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Display bounds correctly, including inversion with perspective."
+      }
+    },
+    {
+      "id": "OUT-05",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `nodes`, `time`, `nps`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Search statistics without invented values or JavaScript integer truncation."
+      }
+    },
+    {
+      "id": "OUT-06",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `hashfull`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Occupancy in per-mille units, display converted deliberately."
+      }
+    },
+    {
+      "id": "OUT-07",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "authentic_tablebases",
+        "detail": "Authentic Syzygy tables and positive native load/probe evidence are not supplied by this fixture.",
+        "next_action": "Provide authentic local WDL and DTZ fixtures, verify cardinality and rule-50 context, then retain the native output and fixture hashes."
+      }
+    },
+    {
+      "id": "OUT-08",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for Identity, informational text, option/error diagnostics.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Bounded diagnostic view and typed recognized statuses; unknown text preserved safely."
+      }
+    },
+    {
+      "id": "CHS-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for Standard chess.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Full play, analysis, legal history, special moves."
+      }
+    },
+    {
+      "id": "CHS-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for Chess960/FRC.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Indexed/random/imported start, FEN, king-to-rook UCI castling."
+      }
+    },
+    {
+      "id": "CHS-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for DFRC positions.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Independent validated back ranks; same Chess960 option and FEN path."
+      }
+    },
+    {
+      "id": "EVA-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for Embedded threat-aware NNUE.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Pinned model provenance, offline execution, build identity."
+      }
+    },
+    {
+      "id": "CPU-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "other_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "native_target",
+        "detail": "This Apple Silicon package cannot establish the native target evidence for Scalar/x86 baseline.",
+        "next_action": "Build the required compatible target/profile, run on authentic hardware and retain source, model, binary, fixture and output identities."
+      }
+    },
+    {
+      "id": "CPU-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "other_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "native_target",
+        "detail": "This Apple Silicon package cannot establish the native target evidence for AVX2 path.",
+        "next_action": "Build the required compatible target/profile, run on authentic hardware and retain source, model, binary, fixture and output identities."
+      }
+    },
+    {
+      "id": "CPU-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "other_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "native_target",
+        "detail": "This Apple Silicon package cannot establish the native target evidence for AVX512 path.",
+        "next_action": "Build the required compatible target/profile, run on authentic hardware and retain source, model, binary, fixture and output identities."
+      }
+    },
+    {
+      "id": "CPU-04",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "cpu_profile",
+        "detail": "Real pinned-engine acceptance has not been captured for AArch64 NEON path.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Controlled Apple Silicon build and execution; Linux ARM64 is outside release scope."
+      }
+    },
+    {
+      "id": "CPU-05",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "parallel_scaling",
+        "detail": "One-worker and detected-maximum-worker optimized runs under the shared capacity budget have not been measured here.",
+        "next_action": "Execute repeated fixed-corpus comparisons at one and available maximum capacity and retain configuration, throughput and behavior results."
+      }
+    },
+    {
+      "id": "TB-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "authentic_tablebases",
+        "detail": "Authentic Syzygy tables and positive native load/probe evidence are not supplied by this fixture.",
+        "next_action": "Provide authentic local WDL and DTZ fixtures, verify cardinality and rule-50 context, then retain the native output and fixture hashes."
+      }
+    },
+    {
+      "id": "TB-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "authentic_tablebases",
+        "detail": "Authentic Syzygy tables and positive native load/probe evidence are not supplied by this fixture.",
+        "next_action": "Provide authentic local WDL and DTZ fixtures, verify cardinality and rule-50 context, then retain the native output and fixture hashes."
+      }
+    },
+    {
+      "id": "NUM-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "other_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "native_target",
+        "detail": "This Apple Silicon package cannot establish the native target evidence for Optional NUMA build.",
+        "next_action": "Build the required compatible target/profile, run on authentic hardware and retain source, model, binary, fixture and output identities."
+      }
+    },
+    {
+      "id": "DEV-01",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `d`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Workbench ASCII/FEN inspector; compare to domain position."
+      }
+    },
+    {
+      "id": "DEV-02",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `eval`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Workbench raw White-perspective static NNUE integer; never label search cp."
+      }
+    },
+    {
+      "id": "DEV-03",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `compiler`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Build diagnostics: compiler, target, target features."
+      }
+    },
+    {
+      "id": "DEV-04",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `perft depth`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Validated depth at least 1, root counts/totals/time/NPS; isolated cancellable child."
+      }
+    },
+    {
+      "id": "DEV-05",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for `bench [hash [threads [depth]]]`.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Built-in 45-position benchmark; defaults 16 MiB/1 thread/depth 12; explicit shared budget."
+      }
+    },
+    {
+      "id": "DEV-06",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "application_workflow",
+        "detail": "Real pinned-engine acceptance has not been captured for CLI queued-command mode.",
+        "next_action": "Execute the existing owning workflow against the selected package and retain fixture and result hashes: Document each process argument as a complete command string; test auto-exit and UCI transition."
+      }
+    },
+    {
+      "id": "DEV-07",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "pgo_execution",
+        "detail": "No instrument/train/merge/rebuild execution or behavior comparison is asserted by this schema fixture.",
+        "next_action": "Execute the T087 controlled PGO workflow and retain compiler, fixed corpus, profile data, both package hashes and behavior comparison."
+      }
+    },
+    {
+      "id": "DEV-08",
+      "context_sha256": "cdf5b720c2d1475191f5dd6fbaa5733687e5d26a2d94af4be4b124052a6580d6",
+      "applicability": "current_target",
+      "outcome": {
+        "status": "outstanding",
+        "prerequisite": "spsa_compile_check",
+        "detail": "Source research suspects missing generated functions; a controlled pinned compile result is required before upstream unavailability.",
+        "next_action": "Execute the T087 controlled compile check without vendor edits and retain exact source and compiler-output hashes."
+      }
+    }
+  ]
+}
