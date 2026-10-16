@@ -38,6 +38,12 @@ struct GameTreeResolvedMove {
     movement: BoardMove,
     position: BoardPosition,
     clock: Option<ClockStateSnapshot>,
+    before_clock: Option<ClockStateSnapshot>,
+}
+
+pub(super) struct GameTreeCandidateClock {
+    pub before: ClockStateSnapshot,
+    pub after: ClockStateSnapshot,
 }
 
 enum GameTreeEnumInsertion {
@@ -71,6 +77,7 @@ impl GameTreePreparedMove<'_> {
             }
             GameTreeEnumInsertion::Reuse { index } => {
                 self.tree.nodes[index].set_clock(self.node.clock().cloned());
+                self.tree.nodes[index].set_before_clock(self.node.before_clock().cloned());
                 self.node
             }
         }
@@ -123,16 +130,17 @@ impl GameTree {
             movement,
             position,
             clock,
+            before_clock: None,
         })
         .map(|prepared| prepared.commit().id())
     }
 
-    pub(crate) fn prepare_candidate(
+    pub(super) fn prepare_candidate(
         &mut self,
         parent: GameMoveId,
         id: GameMoveId,
         candidate: &GameAdjudicationCandidate,
-        clock: Option<ClockStateSnapshot>,
+        clock: GameTreeCandidateClock,
     ) -> Result<GameTreePreparedMove<'_>, GameTreeError> {
         if self.node(parent)?.position() != candidate.previous_position() {
             return Err(GameTreeError::WrongParent);
@@ -142,7 +150,8 @@ impl GameTree {
             id,
             movement: candidate.movement(),
             position: candidate.position().clone(),
-            clock,
+            clock: Some(clock.after),
+            before_clock: Some(clock.before),
         })
     }
 
@@ -180,6 +189,7 @@ impl GameTree {
             Some(index) => {
                 let mut node = self.nodes[index].clone();
                 node.set_clock(resolved.clock);
+                node.set_before_clock(resolved.before_clock);
                 (GameTreeEnumInsertion::Reuse { index }, node)
             }
             None => {
@@ -194,6 +204,7 @@ impl GameTree {
                     resolved.position,
                 );
                 node.set_clock(resolved.clock);
+                node.set_before_clock(resolved.before_clock);
                 (GameTreeEnumInsertion::Insert { parent_index }, node)
             }
         };

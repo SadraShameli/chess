@@ -10,12 +10,18 @@ mod clock_time;
 
 #[path = "game/mate_proof.rs"]
 mod game_mate_proof;
+#[path = "game/pause.rs"]
+mod game_pause;
 #[path = "game/premove.rs"]
 mod game_premove;
 #[path = "game/rules.rs"]
 mod game_rules;
 #[path = "game/session.rs"]
 mod game_session;
+#[path = "game/takeback.rs"]
+mod game_takeback;
+#[path = "game/transition_fixture.rs"]
+mod game_transition_fixture;
 #[path = "game/tree.rs"]
 mod game_tree;
 

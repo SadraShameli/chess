@@ -5,6 +5,8 @@ pub mod enums;
 pub mod mate_proof;
 pub mod move_node;
 pub mod outcome;
+pub mod pause;
 pub mod premove;
 pub mod session;
+pub mod takeback;
 pub mod tree;

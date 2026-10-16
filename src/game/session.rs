@@ -19,13 +19,27 @@ use crate::game::draw_claim::{
     GameDrawClaimEnumAvailability, GameDrawClaimEnumIntent, GameDrawClaimEnumKind,
     GameDrawClaimError,
 };
+use crate::game::engine_provider::{
+    GameEngineContext, GameEngineRequest, GameEngineRequestError, GameEngineSearchConfig,
+};
 use crate::game::enums::{
     GameEnumEngineReadiness, GameEnumMode, GameEnumPhase, GameEnumResult, GameEnumSeat,
     GameEnumTransitionKind, GameId, GameMoveId, GameRevision, GameRevisionError,
 };
 use crate::game::move_node::GameMoveNode;
 use crate::game::outcome::{GameOutcome, GameOutcomeError};
-use crate::game::tree::{GameTree, GameTreeError};
+use crate::game::pause::{
+    GamePauseEnumCause, GamePauseEnumFault, GamePauseError, GamePauseRequest, GameResumeRequest,
+};
+use crate::game::premove::{
+    GamePremove, GamePremoveEnumClearReason, GamePremoveEnumResolution, GamePremoveError,
+    GamePremoveIntent,
+};
+use crate::game::takeback::{
+    GameTakeback, GameTakebackEnumConsent, GameTakebackEnumResponse, GameTakebackError,
+    GameTakebackPending, GameTakebackRequest, GameTakebackResponseRequest,
+};
+use crate::game::tree::{GameTree, GameTreeCandidateClock, GameTreeError};
 
 #[derive(Debug, Error)]
 pub enum GameMetadataError {
@@ -273,25 +287,21 @@ impl GameSeats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GameSessionInterruption {
-    question: GameAdjudicationEnumMateQuestion,
-    cause: GameAdjudicationEnumInterruption,
+pub enum GameSessionEnumInterruption {
+    Adjudication {
+        question: GameAdjudicationEnumMateQuestion,
+        cause: GameAdjudicationEnumInterruption,
+    },
+    Paused(GamePauseEnumCause),
+    RecoveryRequired(GamePauseEnumFault),
+    Recovered(GamePauseEnumFault),
 }
 
-impl GameSessionInterruption {
-    pub fn question(self) -> GameAdjudicationEnumMateQuestion {
-        self.question
-    }
-    pub fn cause(self) -> GameAdjudicationEnumInterruption {
-        self.cause
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum GameSessionEnumState {
     Setup,
     Active,
-    Interrupted(GameSessionInterruption),
+    Interrupted(GameSessionEnumInterruption),
     Completed(GameOutcome),
     Analysis(Option<GameOutcome>),
 }
@@ -306,12 +316,9 @@ impl GameSessionEnumState {
             GameAdjudicationEnumDecision::Complete { result, reason } => {
                 Ok(Self::Completed(GameOutcome::new(result, reason, origin)?))
             }
-            GameAdjudicationEnumDecision::Interrupted { question, cause } => {
-                Ok(Self::Interrupted(GameSessionInterruption {
-                    question,
-                    cause,
-                }))
-            }
+            GameAdjudicationEnumDecision::Interrupted { question, cause } => Ok(Self::Interrupted(
+                GameSessionEnumInterruption::Adjudication { question, cause },
+            )),
         }
     }
 
@@ -332,7 +339,7 @@ impl GameSessionEnumState {
         }
     }
 
-    fn interruption(&self) -> Option<GameSessionInterruption> {
+    fn interruption(&self) -> Option<GameSessionEnumInterruption> {
         match self {
             Self::Interrupted(interruption) => Some(*interruption),
             Self::Setup | Self::Active | Self::Completed(_) | Self::Analysis(_) => None,
@@ -367,7 +374,7 @@ pub struct GameSessionTransition {
     live: GameMoveId,
     phase: GameEnumPhase,
     outcome: Option<GameOutcome>,
-    interruption: Option<GameSessionInterruption>,
+    interruption: Option<GameSessionEnumInterruption>,
     clock: ClockStateSnapshot,
     before_clock: Option<ClockStateSnapshot>,
     accepted_node: Option<GameMoveNode>,
@@ -395,7 +402,7 @@ impl GameSessionTransition {
     pub fn outcome(&self) -> Option<GameOutcome> {
         self.outcome
     }
-    pub fn interruption(&self) -> Option<GameSessionInterruption> {
+    pub fn interruption(&self) -> Option<GameSessionEnumInterruption> {
         self.interruption
     }
     pub fn clock(&self) -> &ClockStateSnapshot {
@@ -437,6 +444,14 @@ pub enum GameSessionError {
     Claim(#[from] GameDrawClaimError),
     #[error(transparent)]
     Outcome(#[from] GameOutcomeError),
+    #[error(transparent)]
+    Pause(#[from] GamePauseError),
+    #[error(transparent)]
+    Takeback(#[from] GameTakebackError),
+    #[error(transparent)]
+    Premove(#[from] GamePremoveError),
+    #[error(transparent)]
+    EngineRequest(#[from] GameEngineRequestError),
 }
 
 struct GameSessionDecisionTransition {
@@ -444,6 +459,14 @@ struct GameSessionDecisionTransition {
     kind: GameEnumTransitionKind,
     clock: ClockState,
     decision: GameAdjudicationEnumDecision,
+    now: ClockInstant,
+}
+
+struct GameSessionStateTransition {
+    revision: GameRevision,
+    kind: GameEnumTransitionKind,
+    clock: ClockState,
+    state: GameSessionEnumState,
     now: ClockInstant,
 }
 
@@ -459,6 +482,8 @@ pub struct GameSession {
     state: GameSessionEnumState,
     metadata: GameMetadata,
     history: GameAdjudicationHistory,
+    premove: GamePremove,
+    takeback: GameTakeback,
 }
 
 impl GameSession {
@@ -488,6 +513,8 @@ impl GameSession {
             clock: options.clock,
             metadata: options.metadata,
             state: GameSessionEnumState::Setup,
+            premove: GamePremove::default(),
+            takeback: GameTakeback::default(),
         })
     }
 
@@ -521,11 +548,409 @@ impl GameSession {
     pub fn outcome(&self) -> Option<GameOutcome> {
         self.state.outcome()
     }
-    pub fn interruption(&self) -> Option<GameSessionInterruption> {
+    pub fn interruption(&self) -> Option<GameSessionEnumInterruption> {
         self.state.interruption()
     }
     pub fn metadata(&self) -> &GameMetadata {
         &self.metadata
+    }
+
+    pub fn premove(&self) -> &GamePremove {
+        &self.premove
+    }
+
+    pub fn set_premoves_enabled(&mut self, enabled: bool) {
+        self.premove.set_enabled(enabled);
+    }
+
+    fn human_color(&self) -> Result<BoardEnumColor, GameTakebackError> {
+        match self.seats.mode() {
+            GameEnumMode::HumanVersusEngine => Ok(
+                if self.seats.seat(BoardEnumColor::White) == GameEnumSeat::Human {
+                    BoardEnumColor::White
+                } else {
+                    BoardEnumColor::Black
+                },
+            ),
+            GameEnumMode::LocalTwoPlayer => Err(GameTakebackError::HumanRequired),
+        }
+    }
+
+    pub fn queue_premove(
+        &mut self,
+        expected: GameRevision,
+        intent: GamePremoveIntent,
+    ) -> Result<Option<GamePremoveIntent>, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        if self.phase() != GameEnumPhase::Active {
+            return Err(GameSessionError::WrongPhase(self.phase()));
+        }
+        let human = self.human_color()?;
+        Ok(self
+            .premove
+            .queue(self.history.position(), self.seats.mode(), human, intent)?)
+    }
+
+    pub fn clear_premove(
+        &mut self,
+        expected: GameRevision,
+        reason: GamePremoveEnumClearReason,
+    ) -> Result<Option<GamePremoveIntent>, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        Ok(self.premove.clear(reason))
+    }
+
+    pub fn resolve_premove(
+        &mut self,
+        expected: GameRevision,
+    ) -> Result<GamePremoveEnumResolution, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        if self.phase() != GameEnumPhase::Active {
+            return Err(GameSessionError::WrongPhase(self.phase()));
+        }
+        let human = self.human_color()?;
+        Ok(self.premove.resolve(self.history.position(), human)?)
+    }
+
+    pub fn engine_request(
+        &self,
+        config: GameEngineSearchConfig,
+    ) -> Result<GameEngineRequest, GameSessionError> {
+        if self.phase() != GameEnumPhase::Active {
+            return Err(GameSessionError::WrongPhase(self.phase()));
+        }
+        if self.seats.seat(self.history.position().turn()) != GameEnumSeat::Reckless {
+            return Err(GameSessionError::WrongSeat);
+        }
+        Ok(GameEngineRequest::new(
+            GameEngineContext::new(self.id, self.revision),
+            self.start.position().clone(),
+            self.live_moves()?,
+            self.clock.clone(),
+            config,
+        )?)
+    }
+
+    pub fn takeback(&self) -> &GameTakeback {
+        &self.takeback
+    }
+
+    pub fn configure_takeback_consent(
+        &mut self,
+        expected: GameRevision,
+        consent: GameTakebackEnumConsent,
+    ) -> Result<GameRevision, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        match self.phase() {
+            GameEnumPhase::Setup | GameEnumPhase::Active | GameEnumPhase::Interrupted => {}
+            GameEnumPhase::Completed | GameEnumPhase::Analysis => {
+                return Err(GameSessionError::WrongPhase(self.phase()));
+            }
+        }
+        let revision = self.revision.next()?;
+        self.takeback.configure(consent);
+        self.revision = revision;
+        Ok(revision)
+    }
+
+    pub fn pause<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GamePauseRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        if self.phase() != GameEnumPhase::Active {
+            return Err(GameSessionError::WrongPhase(self.phase()));
+        }
+        request.engine.validate(
+            self.id,
+            self.revision,
+            self.seats.mode(),
+            Some(request.cause),
+        )?;
+        let revision = self.revision.next()?;
+        let mut clock = self.clock.clone();
+        let update = clock.pause(request.received_at)?;
+        if let ClockStateEnumStatus::Flagged(flagged) = update.view().status() {
+            return self.finish_decision(GameSessionDecisionTransition {
+                revision,
+                kind: GameEnumTransitionKind::FlagFall,
+                clock,
+                decision: self.history.flag_fall(flagged, proof),
+                now: request.received_at,
+            });
+        }
+        let interruption = match request.cause {
+            GamePauseEnumCause::Fault(fault) => {
+                GameSessionEnumInterruption::RecoveryRequired(fault)
+            }
+            cause @ (GamePauseEnumCause::Manual
+            | GamePauseEnumCause::ComputerSleep
+            | GamePauseEnumCause::Relaunch
+            | GamePauseEnumCause::TabClosed
+            | GamePauseEnumCause::ApplicationQuit
+            | GamePauseEnumCause::UpdateInstall) => GameSessionEnumInterruption::Paused(cause),
+        };
+        self.finish_state(GameSessionStateTransition {
+            revision,
+            kind: GameEnumTransitionKind::Interrupted,
+            clock,
+            state: GameSessionEnumState::Interrupted(interruption),
+            now: request.received_at,
+        })
+    }
+
+    pub fn mark_recovered(
+        &mut self,
+        expected: GameRevision,
+        fault: GamePauseEnumFault,
+        now: ClockInstant,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        if self.interruption() != Some(GameSessionEnumInterruption::RecoveryRequired(fault)) {
+            return Err(GamePauseError::WrongRecovery.into());
+        }
+        let revision = self.revision.next()?;
+        self.finish_state(GameSessionStateTransition {
+            revision,
+            kind: GameEnumTransitionKind::RecoveryAccepted,
+            clock: self.clock.clone(),
+            state: GameSessionEnumState::Interrupted(GameSessionEnumInterruption::Recovered(fault)),
+            now,
+        })
+    }
+
+    pub fn resume<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameResumeRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        let Some(interruption) = self.interruption() else {
+            return Err(GameSessionError::WrongPhase(self.phase()));
+        };
+        if let GameSessionEnumInterruption::RecoveryRequired(fault) = interruption {
+            return Err(GamePauseError::RecoveryRequired(fault).into());
+        }
+        self.seats.validate_readiness(request.readiness)?;
+        let revision = self.revision.next()?;
+        let decision = match self.clock.status() {
+            ClockStateEnumStatus::Flagged(flagged) => self.history.flag_fall(flagged, proof),
+            ClockStateEnumStatus::Paused => self.claim_for_reckless(
+                self.history.adjudicate(proof),
+                self.history.claimable(),
+                self.history.position().turn(),
+            ),
+            ClockStateEnumStatus::Running => {
+                return Err(GameSessionError::WrongPhase(self.phase()));
+            }
+        };
+        let state = GameSessionEnumState::from_decision(decision, self.live)?;
+        let mut clock = self.clock.clone();
+        if state.phase() == GameEnumPhase::Active {
+            clock.resume(request.received_at)?;
+        }
+        self.finish_state(GameSessionStateTransition {
+            revision,
+            kind: GameEnumTransitionKind::Resumed,
+            clock,
+            state,
+            now: request.received_at,
+        })
+    }
+
+    fn validate_takeback_phase(&self) -> Result<(), GameSessionError> {
+        match self.state {
+            GameSessionEnumState::Active => Ok(()),
+            GameSessionEnumState::Interrupted(
+                GameSessionEnumInterruption::Paused(_) | GameSessionEnumInterruption::Recovered(_),
+            ) => Ok(()),
+            GameSessionEnumState::Interrupted(GameSessionEnumInterruption::RecoveryRequired(
+                fault,
+            )) => Err(GamePauseError::RecoveryRequired(fault).into()),
+            GameSessionEnumState::Setup
+            | GameSessionEnumState::Interrupted(GameSessionEnumInterruption::Adjudication {
+                ..
+            })
+            | GameSessionEnumState::Completed(_)
+            | GameSessionEnumState::Analysis(_) => Err(GameSessionError::WrongPhase(self.phase())),
+        }
+    }
+
+    pub fn takeback_target(&self) -> Result<GameMoveId, GameSessionError> {
+        self.validate_takeback_phase()?;
+        let mut parent = self.tree.node(self.live)?.parent();
+        while let Some(id) = parent {
+            let node = self.tree.node(id)?;
+            if self.seats.mode() == GameEnumMode::LocalTwoPlayer
+                || self.seats.seat(node.position().turn()) == GameEnumSeat::Human
+            {
+                return Ok(id);
+            }
+            parent = node.parent();
+        }
+        Err(GameTakebackError::NoTarget.into())
+    }
+
+    fn takeback_clock(&self, target: GameMoveId) -> Result<ClockStateSnapshot, GameSessionError> {
+        let path = self.tree.path_to(self.live)?;
+        let index = path
+            .iter()
+            .position(|id| *id == target)
+            .and_then(|index| index.checked_add(1))
+            .ok_or(GameTakebackError::NoTarget)?;
+        let undone = path.get(index).ok_or(GameTakebackError::NoTarget)?;
+        self.tree
+            .node(*undone)?
+            .before_clock()
+            .cloned()
+            .ok_or_else(|| GameTakebackError::MissingClockSnapshot.into())
+    }
+
+    fn observed_takeback_clock<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        now: ClockInstant,
+        proof: &P,
+    ) -> Result<Result<ClockState, GameSessionTransition>, GameSessionError> {
+        let mut clock = self.clock.clone();
+        let update = clock.poll(now)?;
+        if let ClockStateEnumStatus::Flagged(flagged) = update.view().status() {
+            let revision = self.revision.next()?;
+            return Ok(Err(self.finish_decision(
+                GameSessionDecisionTransition {
+                    revision,
+                    kind: GameEnumTransitionKind::FlagFall,
+                    clock,
+                    decision: self.history.flag_fall(flagged, proof),
+                    now,
+                },
+            )?));
+        }
+        Ok(Ok(clock))
+    }
+
+    pub fn request_takeback<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameTakebackRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        self.validate_takeback_phase()?;
+        if self.seats.seat(request.requester) != GameEnumSeat::Human {
+            return Err(GameTakebackError::HumanRequired.into());
+        }
+        if self.takeback.pending().is_some() {
+            return Err(GameTakebackError::AlreadyPending.into());
+        }
+        let target = self.takeback_target()?;
+        request
+            .engine
+            .validate(self.id, self.revision, self.seats.mode(), None)?;
+        let clock = match self.observed_takeback_clock(request.received_at, proof)? {
+            Ok(clock) => clock,
+            Err(transition) => return Ok(transition),
+        };
+        let revision = self.revision.next()?;
+        if self.seats.mode() == GameEnumMode::LocalTwoPlayer
+            && self.takeback.consent() == GameTakebackEnumConsent::Required
+        {
+            let transition = self.finish_state(GameSessionStateTransition {
+                revision,
+                kind: GameEnumTransitionKind::TakebackRequested,
+                clock,
+                state: self.state,
+                now: request.received_at,
+            })?;
+            self.takeback.request(GameTakebackPending::new(
+                request.requester,
+                self.live,
+                target,
+                revision,
+            ));
+            return Ok(transition);
+        }
+        self.apply_takeback(target, clock, request.received_at)
+    }
+
+    pub fn respond_takeback<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameTakebackResponseRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        self.validate_takeback_phase()?;
+        let pending = self
+            .takeback
+            .pending()
+            .ok_or(GameTakebackError::NotPending)?;
+        if pending.revision() != self.revision || pending.live() != self.live {
+            return Err(GameTakebackError::StaleRequest.into());
+        }
+        pending.validate_response(request.responder, request.response)?;
+        let clock = match self.observed_takeback_clock(request.received_at, proof)? {
+            Ok(clock) => clock,
+            Err(transition) => return Ok(transition),
+        };
+        match request.response {
+            GameTakebackEnumResponse::Accept => {
+                self.apply_takeback(pending.target(), clock, request.received_at)
+            }
+            GameTakebackEnumResponse::Decline | GameTakebackEnumResponse::Cancel => {
+                let kind = match request.response {
+                    GameTakebackEnumResponse::Decline => GameEnumTransitionKind::TakebackDeclined,
+                    GameTakebackEnumResponse::Cancel => GameEnumTransitionKind::TakebackCancelled,
+                    GameTakebackEnumResponse::Accept => {
+                        return Err(GameTakebackError::StaleRequest.into());
+                    }
+                };
+                self.finish_state(GameSessionStateTransition {
+                    revision: self.revision.next()?,
+                    kind,
+                    clock,
+                    state: self.state,
+                    now: request.received_at,
+                })
+            }
+        }
+    }
+
+    fn apply_takeback(
+        &mut self,
+        target: GameMoveId,
+        mut clock: ClockState,
+        now: ClockInstant,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        let revision = self.revision.next()?;
+        let before = self.takeback_clock(target)?;
+        let movements = self
+            .tree
+            .path_to(target)?
+            .into_iter()
+            .filter_map(|id| self.tree.node(id).map(|node| node.movement()).transpose())
+            .collect::<Result<Vec<_>, _>>()?;
+        let history =
+            GameAdjudicationHistory::from_moves(self.start.position().clone(), movements)?;
+        clock.restore(&before)?;
+        if self.phase() == GameEnumPhase::Active {
+            clock.resume(now)?;
+        }
+        let snapshot = clock.snapshot(now)?;
+        let mut transition = self.transition(
+            revision,
+            GameEnumTransitionKind::TakebackAccepted,
+            &self.state,
+            snapshot,
+        );
+        transition.live = target;
+        transition.before_clock = Some(before);
+        self.history = history;
+        self.live = target;
+        self.view = target;
+        self.clock = clock;
+        self.revision = revision;
+        self.takeback.clear();
+        self.premove.clear(GamePremoveEnumClearReason::Takeback);
+        Ok(transition)
     }
 
     pub fn live_moves(&self) -> Result<Vec<BoardMove>, GameSessionError> {
@@ -637,7 +1062,10 @@ impl GameSession {
             self.live,
             request.node,
             &candidate,
-            Some(snapshot.clone()),
+            GameTreeCandidateClock {
+                before: receipt.before().clone(),
+                after: snapshot.clone(),
+            },
         )?;
         let accepted_id = insertion.id();
         if accepted_id != origin {
@@ -654,6 +1082,10 @@ impl GameSession {
         self.clock = clock;
         self.state = state;
         self.revision = revision;
+        self.takeback.clear();
+        if self.phase() != GameEnumPhase::Active {
+            self.premove.clear(GamePremoveEnumClearReason::Fault);
+        }
         Ok(GameSessionTransition {
             game: self.id,
             previous_revision,
@@ -748,11 +1180,33 @@ impl GameSession {
             now,
         } = transition;
         let state = GameSessionEnumState::from_decision(decision, self.live)?;
+        self.finish_state(GameSessionStateTransition {
+            revision,
+            kind,
+            clock,
+            state,
+            now,
+        })
+    }
+
+    fn finish_state(
+        &mut self,
+        transition: GameSessionStateTransition,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        let GameSessionStateTransition {
+            revision,
+            kind,
+            clock,
+            state,
+            now,
+        } = transition;
         let snapshot = clock.snapshot(now)?;
         let transition = self.transition(revision, kind, &state, snapshot);
         self.clock = clock;
         self.state = state;
         self.revision = revision;
+        self.takeback.clear();
+        self.premove.clear(GamePremoveEnumClearReason::Fault);
         Ok(transition)
     }
 

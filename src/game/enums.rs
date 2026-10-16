@@ -246,6 +246,11 @@ pub enum GameEnumTransitionKind {
     Interrupted,
     Resumed,
     AnalysisStarted,
+    RecoveryAccepted,
+    TakebackRequested,
+    TakebackAccepted,
+    TakebackDeclined,
+    TakebackCancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

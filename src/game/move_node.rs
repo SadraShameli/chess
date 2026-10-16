@@ -140,6 +140,7 @@ pub struct GameMoveNode {
     children: Vec<GameMoveId>,
     annotations: GameMoveNodeAnnotations,
     clock: Option<ClockStateSnapshot>,
+    before_clock: Option<ClockStateSnapshot>,
 }
 
 impl GameMoveNode {
@@ -155,6 +156,7 @@ impl GameMoveNode {
             children: Vec::new(),
             annotations: GameMoveNodeAnnotations::default(),
             clock,
+            before_clock: None,
         }
     }
 
@@ -176,6 +178,7 @@ impl GameMoveNode {
             children: Vec::new(),
             annotations: GameMoveNodeAnnotations::default(),
             clock: None,
+            before_clock: None,
         }
     }
 
@@ -220,12 +223,20 @@ impl GameMoveNode {
         self.clock.as_ref()
     }
 
+    pub fn before_clock(&self) -> Option<&ClockStateSnapshot> {
+        self.before_clock.as_ref()
+    }
+
     pub(crate) fn children_mut(&mut self) -> &mut Vec<GameMoveId> {
         &mut self.children
     }
 
     pub(crate) fn set_clock(&mut self, clock: Option<ClockStateSnapshot>) {
         self.clock = clock;
+    }
+
+    pub(crate) fn set_before_clock(&mut self, clock: Option<ClockStateSnapshot>) {
+        self.before_clock = clock;
     }
 
     pub(crate) fn set_annotations(&mut self, annotations: GameMoveNodeAnnotations) {
