@@ -1985,6 +1985,7 @@ dependencies = [
  "egui_kittest",
  "exacl",
  "gltf-json",
+ "hashbrown 0.16.1",
  "interprocess",
  "muda",
  "pgn-reader",

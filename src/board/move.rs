@@ -1,6 +1,8 @@
 use shakmaty::san::{SanError, SanPlus};
 use shakmaty::uci::{ParseUciMoveError, UciMove};
-use shakmaty::{CastlingSide, Color, Move, Position};
+use std::num::NonZeroU32;
+
+use shakmaty::{CastlingSide, Chess, Color, EnPassantMode, FromSetup, Move, Position};
 use thiserror::Error;
 
 use crate::board::enums::{BoardEnumPieceKind, BoardEnumVariant};
@@ -135,19 +137,34 @@ impl BoardPosition {
     }
 
     pub fn play(&self, movement: BoardMove) -> Result<Self, BoardMoveError> {
-        if movement.side != self.chess.turn() {
-            return Err(BoardMoveError::IllegalMove);
-        }
-        let chess = self
-            .chess
-            .clone()
-            .play(movement.inner)
-            .map_err(|_error| BoardMoveError::IllegalMove)?;
-        Ok(Self::from_chess(chess, self.variant())?)
+        Ok(Self::from_chess(
+            self.played_chess(movement)?,
+            self.variant(),
+        )?)
     }
 
     pub fn play_uci(&self, value: &str) -> Result<Self, BoardMoveError> {
         self.play(self.parse_uci(value)?)
+    }
+
+    pub fn play_for_mate_proof(&self, movement: BoardMove) -> Result<Self, BoardMoveError> {
+        let chess = self.played_chess(movement)?;
+        let mut setup = chess.to_setup(EnPassantMode::Always);
+        setup.halfmoves = 0;
+        setup.fullmoves = NonZeroU32::MIN;
+        let normalized = Chess::from_setup(setup, self.variant().castling_mode())
+            .map_err(|error| BoardPositionError::IllegalPosition(error.kinds()))?;
+        Ok(Self::from_chess(normalized, self.variant())?)
+    }
+
+    fn played_chess(&self, movement: BoardMove) -> Result<Chess, BoardMoveError> {
+        if movement.side != self.chess.turn() {
+            return Err(BoardMoveError::IllegalMove);
+        }
+        self.chess
+            .clone()
+            .play(movement.inner)
+            .map_err(|_error| BoardMoveError::IllegalMove)
     }
 
     pub fn san(&self, value: &str) -> Result<String, BoardMoveError> {

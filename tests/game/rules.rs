@@ -14,6 +14,7 @@ use chess::game::adjudication::{
 };
 use chess::game::draw_claim::{GameDrawClaimEnumIntent, GameDrawClaimEnumKind, GameDrawClaimError};
 use chess::game::enums::{GameEnumOutcomeReason, GameEnumResult};
+use chess::game::mate_proof::{GameMateProof, GameMateProofBudget, GameMateProofControl};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use serde::Deserialize;
@@ -61,11 +62,62 @@ impl GameRulesEnumFixtureProof {
 }
 
 #[derive(Debug, Deserialize)]
-struct GameRulesFixture {
+struct GameRulesOutcomeFixture {
     name: String,
     fen: String,
     proof: GameRulesEnumFixtureProof,
     reason: GameEnumOutcomeReason,
+}
+
+#[derive(Debug, Deserialize)]
+struct GameRulesLegalMoveFixture {
+    name: String,
+    fen: String,
+    variant: BoardEnumVariant,
+    movement: String,
+    placement: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GameRulesIllegalMoveFixture {
+    name: String,
+    fen: String,
+    variant: BoardEnumVariant,
+    movement: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GameRulesFlagfallFixture {
+    name: String,
+    fen: String,
+    flagged: BoardEnumColor,
+    result: GameEnumResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct GameRulesFixtures {
+    outcomes: Vec<GameRulesOutcomeFixture>,
+    legal_moves: Vec<GameRulesLegalMoveFixture>,
+    illegal_moves: Vec<GameRulesIllegalMoveFixture>,
+    flagfall: Vec<GameRulesFlagfallFixture>,
+}
+
+impl GameRulesFixtures {
+    fn read() -> Result<Self, serde_json::Error> {
+        serde_json::from_str(include_str!("../fixtures/adjudication.json"))
+    }
+}
+
+struct GameRulesProofControl;
+
+impl GameMateProofControl for GameRulesProofControl {
+    fn now(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 struct GameRulesHistory;
@@ -218,8 +270,7 @@ fn start_round_trip_keeps_indexes_and_fen_and_rejects_conflicting_record()
 
 #[test]
 fn mandatory_results_follow_the_adversarial_fixture() -> Result<(), Box<dyn Error>> {
-    let fixtures: Vec<GameRulesFixture> =
-        serde_json::from_str(include_str!("../fixtures/adjudication.json"))?;
+    let fixtures = GameRulesFixtures::read()?.outcomes;
     assert!(!fixtures.is_empty());
     for fixture in fixtures {
         let history = GameRulesHistory::from_fen(&fixture.fen)?;
@@ -239,6 +290,94 @@ fn mandatory_results_follow_the_adversarial_fixture() -> Result<(), Box<dyn Erro
             "{}",
             fixture.name
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn legal_special_move_fixtures_commit_the_exact_native_board_position() -> Result<(), Box<dyn Error>>
+{
+    let fixtures = GameRulesFixtures::read()?.legal_moves;
+    assert!(!fixtures.is_empty());
+    for fixture in fixtures {
+        let position = BoardPosition::from_fen(&fixture.fen, fixture.variant)?;
+        let mut history = GameAdjudicationHistory::new(position);
+        GameRulesHistory::play(&mut history, &fixture.movement)?;
+        assert_eq!(
+            history.position().placement(),
+            fixture.placement,
+            "{}",
+            fixture.name
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn illegal_special_move_fixtures_preserve_the_authoritative_position() -> Result<(), Box<dyn Error>>
+{
+    let fixtures = GameRulesFixtures::read()?.illegal_moves;
+    assert!(!fixtures.is_empty());
+    for fixture in fixtures {
+        let position = BoardPosition::from_fen(&fixture.fen, fixture.variant)?;
+        let mut history = GameAdjudicationHistory::new(position.clone());
+        assert!(
+            GameRulesHistory::play(&mut history, &fixture.movement).is_err(),
+            "{}",
+            fixture.name
+        );
+        assert_eq!(history.position(), &position, "{}", fixture.name);
+        assert_eq!(history.occurrences(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn side_specific_flagfall_fixtures_use_real_proof_certificates() -> Result<(), Box<dyn Error>> {
+    let fixtures = GameRulesFixtures::read()?.flagfall;
+    assert!(!fixtures.is_empty());
+    let proof = GameMateProof::new(GameMateProofBudget::default(), GameRulesProofControl);
+    for fixture in fixtures {
+        let history = GameRulesHistory::from_fen(&fixture.fen)?;
+        assert_eq!(
+            history.flag_fall(fixture.flagged, &proof),
+            GameAdjudicationEnumDecision::Complete {
+                result: fixture.result,
+                reason: GameEnumOutcomeReason::Flagfall
+            },
+            "{}",
+            fixture.name
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn intended_pawn_moves_and_captures_reset_the_fifty_move_counter() -> Result<(), Box<dyn Error>> {
+    for (fen, movement) in [
+        ("7k/8/5K2/8/8/8/P7/R7 w - - 99 51", "a2a3"),
+        ("7k/8/5K2/8/8/8/p7/R7 w - - 99 51", "a1a2"),
+    ] {
+        let history = GameRulesHistory::from_fen(fen)?;
+        let movement = history.position().parse_uci(movement)?;
+        let candidate = history.prepare(movement)?;
+        assert_eq!(candidate.position().halfmoves(), 0);
+        assert!(
+            !candidate
+                .claimable()
+                .contains(GameDrawClaimEnumKind::FiftyMove)
+        );
+        assert!(matches!(
+            history.claim(
+                BoardEnumColor::White,
+                GameDrawClaimEnumKind::FiftyMove,
+                GameDrawClaimEnumIntent::Intended(movement)
+            ),
+            Err(GameDrawClaimError::Unavailable(
+                GameDrawClaimEnumKind::FiftyMove
+            ))
+        ));
+        assert_eq!(history.position().halfmoves(), 99);
     }
     Ok(())
 }

@@ -6,6 +6,8 @@ mod clock_state;
 #[path = "clock/time.rs"]
 mod clock_time;
 
+#[path = "game/mate_proof.rs"]
+mod game_mate_proof;
 #[path = "game/premove.rs"]
 mod game_premove;
 #[path = "game/rules.rs"]

@@ -139,7 +139,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 
 **Independent Test**: From an offline current-host package, play either color; cover all special moves/results, precise clocks, claims, takebacks and premoves with controlled time and the pinned engine.
 
-- [ ] T052 [P] [US1] Add standard/FRC/DFRC legality, special-move, result/claim, intended-move claim and dead-position/side-specific flag-fall fixtures in `tests/game/rules.rs` and `tests/fixtures/adjudication.json`.
+- [X] T052 [P] [US1] Add standard/FRC/DFRC legality, special-move, result/claim, intended-move claim and dead-position/side-specific flag-fall fixtures in `tests/game/rules.rs` and `tests/fixtures/adjudication.json`.
 - [X] T053 [P] [US1] Add all time-control families, stage/refund boundaries, exact-deadline moves, snapshot takebacks and once-used low-time alert fixtures in `tests/clock/state.rs`.
 - [X] T054 [P] [US1] Add pinned-engine game sequencing, illegal/late bestmove, premove cancellation and stop-before-takeback tests in `tests/engine/live_game.rs`.
 - [ ] T055 [US1] Add native game-control acceptance in `tests/presentation/game/play.rs` for request deduplication, rejected/accepted feedback, all four promotion pieces, premove queue/replace/cancel, explicit draw claims, immediate single engine-takeback submission without a confirmation dialog, configured local consent, always-confirmed resignation, precise clock presentation and Return to Live. Repeated egui passes cannot duplicate requests; canceled resignation submits no mutation; preserve engine stop-before-mutation barriers and authoritative game/clock state outside egui.

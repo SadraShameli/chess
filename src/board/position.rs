@@ -120,6 +120,10 @@ impl BoardPosition {
         self.chess.is_check()
     }
 
+    pub fn has_insufficient_mating_material(&self, color: BoardEnumColor) -> bool {
+        self.chess.has_insufficient_material(color.into())
+    }
+
     pub fn halfmoves(&self) -> u32 {
         self.chess.halfmoves()
     }
