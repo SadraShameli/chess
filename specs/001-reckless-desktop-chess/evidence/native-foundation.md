@@ -30,3 +30,43 @@ feature branch with three-way patch integration and explicit module registration
 These deterministic fixtures use controlled process ports and paused Tokio time.
 They do not claim complete engine-option UI, production scheduling or live-game
 integration, which remain later tasks.
+
+## Profile, owner-record and activation cores
+
+The profile core retains one un-cloned permanent OS lock handle and validates
+canonical directory identity, ownership, permissions, supported local filesystem
+and private control objects. Existing profile IDs survive a new launch proposal;
+aliases contend on the same anchor. macOS extended ACL checks reject unsafe
+grants even when Unix mode bits remain private. These checks use safe exacl
+path queries bracketed by held-file identity checks because that library exposes
+no public descriptor-based ACL query. This does not prove resistance to every
+same-user pathname race.
+
+Owner metadata is bounded/versioned and published only with a bound-endpoint
+proof and the original lease. Its phases and canceled-shutdown restoration keep
+that lease. Control-record writes synchronize bytes, atomically replace the
+record and synchronize the held control directory on Unix. Installation-intent
+inspection permits ordinary startup only when no intent exists; even a recorded
+successful installation still needs explicit installed-package/schema validation.
+The shared validated PackageDigest now owns package checksums for engines and
+installation records without compatibility aliases.
+
+Activation framing accepts only bounded versioned Activate/response/receipt
+messages with canonical profile, owner-generation and request identities. It
+authenticates before reading trusted bytes and retains absolute deadlines. A
+deterministic regression failed when a response became ready exactly at expiry;
+deadline-priority selection plus checks between exchange steps corrected it.
+
+Current-host debug verification passed 11 library tests, 49 desktop tests and
+23 engine tests. The final integrated desktop run passed all 49 cases in
+0.24 seconds after a 2.14-second incremental debug build; targeted library and
+desktop Clippy passed without warnings. The first-launch race test initially failed: concurrent
+nonexclusive create/open returned ENOENT on this macOS/APFS host. An isolated
+probe using only pinned rustix reproduced it. Exclusive first creation followed
+only on EEXIST by opening the existing anchor fixed the regression, without
+retrying admission, truncating/unlinking the anchor or taking over ownership.
+
+These are component-level results. Production startup still uses the retained
+legacy shell, so T032 through T038 remain unchecked until the native root,
+real endpoint transports, secondary-process admission and installation barriers
+are integrated. Windows and Linux filesystem/security execution is outstanding.

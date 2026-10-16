@@ -365,15 +365,19 @@ impl DesktopProfileActivationExchange {
             .checked_add(Self::CONNECTION_DEADLINE)
             .ok_or(DesktopProfileActivationError::DeadlineOverflow)?;
         Self::check_deadline(deadline)?;
-        tokio::time::timeout_at(deadline, async {
+        Self::before_deadline(deadline, async {
             stream.authenticate().await?;
+            Self::check_deadline(deadline)?;
             let request = DesktopProfileActivationCodec::read_request(&mut stream).await?;
             request.check_binding(binding)?;
             Self::check_deadline(deadline)?;
             let response =
                 DesktopProfileActivationResponse::new(request, window.request_activation()?);
+            Self::check_deadline(deadline)?;
             DesktopProfileActivationCodec::write_response(&mut stream, response).await?;
+            Self::check_deadline(deadline)?;
             let receipt = DesktopProfileActivationCodec::read_receipt(&mut stream).await?;
+            Self::check_deadline(deadline)?;
             if receipt != request {
                 return Err(DesktopProfileActivationError::BindingMismatch);
             }
@@ -381,7 +385,6 @@ impl DesktopProfileActivationExchange {
             Ok(response.result())
         })
         .await
-        .map_err(|_elapsed| DesktopProfileActivationError::Deadline)?
     }
 
     pub async fn activate<S>(
@@ -393,17 +396,35 @@ impl DesktopProfileActivationExchange {
         S: AsyncRead + AsyncWrite + Unpin + DesktopProfileActivationPeer,
     {
         Self::check_deadline(attempt_deadline)?;
-        tokio::time::timeout_at(attempt_deadline, async {
+        Self::before_deadline(attempt_deadline, async {
             stream.authenticate().await?;
             Self::check_deadline(attempt_deadline)?;
             DesktopProfileActivationCodec::write_request(&mut stream, &request).await?;
+            Self::check_deadline(attempt_deadline)?;
             let response = DesktopProfileActivationCodec::read_response(&mut stream).await?;
+            Self::check_deadline(attempt_deadline)?;
             response.check_request(request)?;
             DesktopProfileActivationCodec::write_receipt(&mut stream, response).await?;
             Ok(response.result())
         })
         .await
-        .map_err(|_elapsed| DesktopProfileActivationError::Deadline)?
+    }
+
+    async fn before_deadline<T>(
+        deadline: tokio::time::Instant,
+        operation: impl Future<Output = Result<T, DesktopProfileActivationError>>,
+    ) -> Result<T, DesktopProfileActivationError> {
+        Self::check_deadline(deadline)?;
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => {
+                Err(DesktopProfileActivationError::Deadline)
+            }
+            result = operation => {
+                Self::check_deadline(deadline)?;
+                result
+            }
+        }
     }
 
     fn check_deadline(deadline: tokio::time::Instant) -> Result<(), DesktopProfileActivationError> {

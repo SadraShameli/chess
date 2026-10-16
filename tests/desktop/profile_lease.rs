@@ -157,14 +157,12 @@ fn simultaneous_first_launch_admits_exactly_one_owner() -> Result<(), Box<dyn st
         handles
             .into_iter()
             .map(|handle| {
-                handle
+                let outcome = handle
                     .join()
-                    .map_err(|payload| {
-                        std::io::Error::other(DesktopProfileLeaseThreadError { payload })
-                    })?
-                    .map_err(std::io::Error::other)
+                    .map_err(|payload| DesktopProfileLeaseThreadError { payload })?;
+                Ok(outcome?)
             })
-            .collect::<Result<Vec<_>, std::io::Error>>()
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()
     })?;
     assert_eq!(outcomes.into_iter().filter(|owned| *owned).count(), 1);
     Ok(())
