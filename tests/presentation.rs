@@ -8,3 +8,5 @@ mod presentation_board;
 
 #[path = "presentation/action/registry.rs"]
 mod presentation_action_registry;
+#[path = "presentation/game/new_game.rs"]
+mod presentation_game_new_game;

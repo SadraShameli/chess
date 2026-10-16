@@ -8,6 +8,8 @@ mod clock_state;
 #[path = "clock/time.rs"]
 mod clock_time;
 
+#[path = "game/configuration.rs"]
+mod game_configuration;
 #[path = "game/mate_proof.rs"]
 mod game_mate_proof;
 #[path = "game/pause.rs"]

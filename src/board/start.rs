@@ -19,7 +19,7 @@ impl BoardStartIndex {
         self.0
     }
 
-    fn sample<R: Rng + ?Sized>(random: &mut R) -> Self {
+    pub fn random<R: Rng + ?Sized>(random: &mut R) -> Self {
         Self(random.random_range(Self::MIN..=Self::MAX))
     }
 }
@@ -115,13 +115,13 @@ impl BoardStart {
     }
 
     pub fn random_chess960<R: Rng + ?Sized>(random: &mut R) -> Result<Self, BoardStartError> {
-        Self::chess960(BoardStartIndex::sample(random))
+        Self::chess960(BoardStartIndex::random(random))
     }
 
     pub fn random_dfrc<R: Rng + ?Sized>(random: &mut R) -> Result<Self, BoardStartError> {
         Self::dfrc(
-            BoardStartIndex::sample(random),
-            BoardStartIndex::sample(random),
+            BoardStartIndex::random(random),
+            BoardStartIndex::random(random),
         )
     }
 
