@@ -94,7 +94,7 @@ All foundation tasks block story integration. Complete this phase before beginni
 
 - [X] T011 [P] Add authoritative-position, castling-encoding, full-identity collision and invalid-FEN contract fixtures in `tests/board/position.rs` and `tests/fixtures/positions.json`.
 - [X] T012 [P] Add envelope/version, unsigned-counter precision, stale revision, idempotency, queue saturation and event-resync fixtures in `tests/desktop/envelope.rs`.
-- [ ] T013 [P] Add transactional-save, migration-failure, durable-receipt and missing-fixture checks in `tests/storage/document_store.rs`.
+- [X] T013 [P] Add transactional-save, migration-failure, durable-receipt and missing-fixture checks in `tests/storage/document_store.rs`.
 
 ### Implementation
 
