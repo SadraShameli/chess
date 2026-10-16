@@ -67,7 +67,7 @@ async fn failed_migration_rolls_back_the_complete_batch() -> Result<(), Box<dyn 
             .is_err()
     );
     let connection = rusqlite::Connection::open(path)?;
-    let count: u64 = connection.query_row(
+    let count: i64 = connection.query_row(
         "SELECT count(*) FROM sqlite_master WHERE name = 'should_rollback'",
         [],
         |row| row.get(0),
