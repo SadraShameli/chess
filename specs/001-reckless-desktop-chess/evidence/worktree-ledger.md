@@ -1,7 +1,7 @@
 # Implementation worktree ledger
 
 Last reconciled: 2026-10-16. Integration branch:
-`001-reckless-desktop-chess`. Last pushed checkpoint: `ec355b3`.
+`001-reckless-desktop-chess`. Last pushed checkpoint: `abaff93`.
 
 The coordinator owns registrations, integration, verification, task markers,
 commits and pushes. Agent branches deliver explicit-path staged binary patches.
@@ -16,9 +16,9 @@ All worktree paths below are relative to
 
 | Agent | Worktree | Branch | Current ownership | State |
 | --- | --- | --- | --- | --- |
-| `plan_review` | `engine-lifecycle` | `work/001-engine-lifecycle` | Desktop game supervisor and registry lifecycle | Supervisor/start activation integrated; shutdown review fixes in progress |
-| `selection_review` | `profile-foundation` | `work/001-profile-foundation` | Retained native engine allocation/start/refresh and regressions | UI/controller patches integrated; registry review and inactive-worktree audit delivered; adapter follow-up in progress |
-| `story_coverage` | `native-harness` | `work/001-native-harness` | Shared engine resource allocator and retained allocation/refresh | Resource configuration/factory integrated; allocator tests delivered; allocator source in progress |
+| `plan_review` | `engine-lifecycle` | `work/001-engine-lifecycle` | Supervisor/registry cleanup and capacity teardown | Runtime tests and terminal admission integrated; retained Quit admission fix awaiting green |
+| `selection_review` | `profile-foundation` | `work/001-profile-foundation` | Host preparation, graphics interruption and confirmed Quit boundary | Geometry regression observed red; fix integrated; graphics cause and teardown patches in progress |
+| `story_coverage` | `native-harness` | `work/001-native-harness` | Saved per-game search budget and Auto-flip | Allocator integrated; US1 gap review delivered; configuration persistence regression queued |
 
 The main checkout at `/Users/sadrashameli/Personal/chess` owns the native game
 bridge, coordinator, composition root, scene synchronization and integration.
@@ -48,23 +48,32 @@ was found. No inactive worktree has been reset or deleted.
 
 | Delivery | Integration | Verification |
 | --- | --- | --- |
-| Game supervisor, save receipts and responsive resource waits | Source/tests integrated | Pending assembled desktop checks |
-| Game registry Create activation | Source/tests integrated | Pending; reviewed shutdown races have separate fixes in progress |
-| Immutable game snapshots and reducer | Source/tests/registrations integrated | Save-failure snapshot regression observed red; fix awaiting green |
-| Native input controller and mounted game UI | Source/tests/registrations integrated | Selection and stream-retry regressions observed red; fixes awaiting green |
-| Reckless resource configuration and native factory | Source/tests/registrations integrated | Exact acknowledgment and retained cleanup checks pending |
-| Shared engine resource allocator | Tests delivered; source pending | Not yet registered or run |
-| Sibling continuation reuse regression | Source/tests integrated | Two failures observed before source fix; green pending |
-| Save capacity waiting | Executor/repository source and tests integrated | Executor tests passed; assembled repository checks pending |
-| Quit after committed game response | Coordinator regression and fix integrated | Red observed; green pending |
+| Game supervisor, save receipts and responsive resource waits | Source/tests integrated | Existing desktop regressions passed; new runtime retry race observed red |
+| Game registry Create activation | Source/tests integrated | Create and prior shutdown regressions passed; retained Quit fix awaiting green |
+| Immutable game snapshots and reducer | Source/tests/registrations integrated | Save-failure snapshot regression passed in 172-test desktop run |
+| Native input controller and mounted game UI | Source/tests/registrations integrated | New presentation verification pending after engine-suite interruption |
+| Reckless resource configuration and native factory | Source/tests/registrations integrated | 71 engine tests passed; corrected Chess960 fixture still awaiting green |
+| Shared engine resource allocator | Source/tests/registrations integrated | 14 allocator tests passed |
+| Sibling continuation reuse regression | Source/tests integrated | Both regressions passed within 167-test domain run |
+| Save capacity waiting | Executor/repository source and tests integrated | Executor tests passed; new inventory/storage checks pending |
+| Quit after committed game response | Coordinator regression and fix integrated | Regression passed in assembled desktop suite |
+| Retained native runtime and shared fixtures | Source/tests/registrations integrated | Two new runtime checks passed; cleanup retry check exposed Busy race |
+| Terminal capacity teardown | Source/tests integrated | Fixture borrow correction integrated; behavioral checks pending |
+| Native host geometry preparation | Red regression and fix integrated | Readiness overwrite observed red; green pending |
+| Configuration persistence | Regression integrated | Behavioral red queued; source not yet delivered |
 
 ## Verification boundary
 
-The last recorded focused green run preceded the newest bridge/coordinator
-changes: 28 library, 164 domain and 32 presentation tests. The current assembled
-working changes have not yet passed verification. The latest debug attempt stopped
-at compilation; the registry async receiver and test deadline type corrections
-are now integrated. Native adapter resource refresh is still awaited before the
-next assembled check. Production playable composition remains unfinished. Task
-completion remains governed by `../tasks.md`, not agent delivery or the existence
-of a source file.
+The previous assembled run recorded 28 library, 172 desktop and 167 domain
+passes, followed by 71 engine passes and one incorrect Chess960 fixture failure.
+Its fixture correction is integrated. A subsequent desktop run with runtime tests
+recorded 175 passes and one cleanup retry failure. The new reserved Quit admission
+fix is integrated and awaits green. Focused Clippy passed before the newest
+runtime/host/teardown changes. The macOS debug linker still reports an oversized
+unwind-section warning. No optimized or cross-platform acceptance is claimed.
+
+Production playable composition remains unfinished. The coordinator is wiring
+the native runtime into startup and restoring unfinished games through bounded
+document inventory. The custom search budget/Auto-flip persistence and
+intended-move draw-claim UI are known US1 gaps. Task completion remains governed
+by `../tasks.md`, not agent delivery or the existence of a source file.
