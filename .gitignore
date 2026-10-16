@@ -6,6 +6,7 @@ node_modules/
 /ui/coverage/
 /ui/test-results/
 /ui/playwright-report/
+/ui/.vitest/
 *.rs.bk
 *.rlib
 *.profraw
