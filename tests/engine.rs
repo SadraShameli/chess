@@ -24,6 +24,8 @@ mod engine_retained_shutdown;
 mod engine_retained_startup;
 #[path = "engine/startup.rs"]
 mod engine_startup;
+#[path = "engine/tablebase.rs"]
+mod engine_tablebase;
 
 #[path = "desktop/game_supervisor_storage.rs"]
 mod desktop_game_supervisor_storage;
