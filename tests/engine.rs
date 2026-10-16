@@ -36,3 +36,6 @@ mod engine_search_session;
 mod workbench_executor;
 #[path = "workbench/job.rs"]
 mod workbench_job;
+
+#[path = "workbench/export.rs"]
+mod workbench_export;

@@ -318,7 +318,7 @@ impl<P: EngineProcess> EngineSession<P> {
     pub(crate) async fn begin_diagnostic(
         &mut self,
         command: EngineDiagnosticEnumCommand<'_>,
-    ) -> Result<(), EngineSessionError> {
+    ) -> Result<EngineOptionsApplied, EngineSessionError> {
         self.require_idle()?;
         if let Some(position) = command.position() {
             let setting = EngineOptionsSetting::new(
@@ -331,7 +331,7 @@ impl<P: EngineProcess> EngineSession<P> {
         }
         self.lifecycle = EngineSessionEnumLifecycle::Preparing;
         self.process_mut()?.send(&command.command()).await?;
-        Ok(())
+        Ok(self.applied.clone())
     }
 
     pub(crate) async fn terminate_retained(

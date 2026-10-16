@@ -5,11 +5,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chess::board::enums::BoardEnumVariant;
 use chess::board::position::BoardPosition;
 use chess::capacity::budget::CapacityBudget;
 use chess::clock::duration::ClockInstant;
 use chess::engine::capabilities::{EngineCapabilities, EngineIdentity};
-use chess::engine::enums::EngineEnumOption;
+use chess::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use chess::engine::package::selector::EnginePackageSelected;
 use chess::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
@@ -20,7 +21,7 @@ use chess::workbench::enums::{
     WorkbenchEnumJobState, WorkbenchEnumOperation, WorkbenchEnumOutcome, WorkbenchEnumParameters,
     WorkbenchEnumResult,
 };
-use chess::workbench::executor::WorkbenchExecutor;
+use chess::workbench::executor::{WorkbenchExecutor, WorkbenchExecutorObservation};
 use chess::workbench::job::{WorkbenchJob, WorkbenchJobDeadline, WorkbenchJobId};
 use chess::workbench::parameters::{
     WorkbenchBenchParameters, WorkbenchPerftDepth, WorkbenchPerftParameters,
@@ -36,6 +37,8 @@ struct WorkbenchExecutorFixture {
 }
 
 impl WorkbenchExecutorFixture {
+    const THREADS_DESCRIPTOR: &str = "spin default 1 min 1 max 1024";
+
     fn new() -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             package: EnginePackageFixture::new()?,
@@ -83,13 +86,33 @@ impl WorkbenchExecutorFixture {
         })
     }
 
+    fn chess960_parameters() -> Result<WorkbenchEnumParameters, Box<dyn Error>> {
+        Ok(WorkbenchEnumParameters::RawEvaluation(
+            EngineSearchPosition::new(
+                BoardPosition::from_fen(
+                    &BoardPosition::standard().fen(),
+                    BoardEnumVariant::Chess960,
+                )?,
+                std::iter::empty::<&str>(),
+            )?,
+        ))
+    }
+
     fn executor(
         &self,
         operation: WorkbenchEnumOperation,
     ) -> Result<WorkbenchExecutor<WorkbenchExecutorProcess>, Box<dyn Error>> {
+        self.executor_with_parameters(1, Self::parameters(operation)?)
+    }
+
+    fn executor_with_parameters(
+        &self,
+        id: u128,
+        parameters: WorkbenchEnumParameters,
+    ) -> Result<WorkbenchExecutor<WorkbenchExecutorProcess>, Box<dyn Error>> {
         let mut job = WorkbenchJob::new(
-            WorkbenchJobId::try_from(Uuid::from_u128(1))?,
-            Self::parameters(operation)?,
+            WorkbenchJobId::try_from(Uuid::from_u128(id))?,
+            parameters,
             self.package.select()?,
             WorkbenchJobDeadline::default(),
             ClockInstant::from_nanos(0),
@@ -100,6 +123,33 @@ impl WorkbenchExecutorFixture {
             ClockInstant::from_nanos(0),
         )?;
         Ok(WorkbenchExecutor::new(job, ClockInstant::from_nanos(0))?)
+    }
+
+    fn assert_observation_preserved(
+        executor: &WorkbenchExecutor<WorkbenchExecutorProcess>,
+        expected: &WorkbenchExecutorObservation,
+    ) -> Result<(), Box<dyn Error>> {
+        let actual = executor.observation().ok_or("missing observation")?;
+        assert_eq!(actual.job_id(), executor.job().id());
+        assert_eq!(actual.job_id(), expected.job_id());
+        assert_eq!(
+            actual.package().executable(),
+            expected.package().executable()
+        );
+        assert_eq!(actual.package().target(), expected.package().target());
+        assert_eq!(actual.package().profile(), expected.package().profile());
+        assert_eq!(actual.package().digest(), expected.package().digest());
+        assert_eq!(actual.identity().name(), expected.identity().name());
+        assert_eq!(actual.identity().author(), expected.identity().author());
+        for option in EngineEnumOption::ALL {
+            assert_eq!(
+                actual.identity().capabilities().descriptor(option),
+                expected.identity().capabilities().descriptor(option)
+            );
+        }
+        assert_eq!(actual.applied_options(), expected.applied_options());
+        assert_eq!(actual.generation(), expected.generation());
+        Ok(())
     }
 
     fn transcript(operation: WorkbenchEnumOperation) -> Result<Vec<String>, Box<dyn Error>> {
@@ -187,7 +237,28 @@ struct WorkbenchExecutorProvider {
     spawned: Arc<AtomicUsize>,
     eof: bool,
     block_command: Option<String>,
+    fail_command: Option<String>,
+    block_response: Option<WorkbenchExecutorResponseGate>,
     fail_spawn: bool,
+}
+
+#[derive(Clone)]
+struct WorkbenchExecutorResponseGate {
+    line: &'static str,
+    skip: usize,
+}
+
+impl WorkbenchExecutorResponseGate {
+    fn is_blocked(&mut self, line: &str) -> bool {
+        if line != self.line {
+            return false;
+        }
+        if self.skip == 0 {
+            return true;
+        }
+        self.skip -= 1;
+        false
+    }
 }
 
 impl WorkbenchExecutorProvider {
@@ -200,6 +271,8 @@ impl WorkbenchExecutorProvider {
             spawned: Arc::default(),
             eof: false,
             block_command: None,
+            fail_command: None,
+            block_response: None,
             fail_spawn: false,
         }
     }
@@ -231,6 +304,8 @@ impl EngineProcessProvider for WorkbenchExecutorProvider {
             eof: self.eof,
             package: package.clone(),
             block_command: self.block_command.clone(),
+            fail_command: self.fail_command.clone(),
+            block_response: self.block_response.clone(),
         })
     }
 }
@@ -245,6 +320,8 @@ struct WorkbenchExecutorProcess {
     eof: bool,
     package: EnginePackageSelected,
     block_command: Option<String>,
+    fail_command: Option<String>,
+    block_response: Option<WorkbenchExecutorResponseGate>,
 }
 
 impl WorkbenchExecutorProcess {
@@ -274,6 +351,9 @@ impl EngineProcess for WorkbenchExecutorProcess {
         if self.block_command.as_deref() == Some(command) {
             std::future::pending::<()>().await;
         }
+        if self.fail_command.as_deref() == Some(command) {
+            return Err(std::io::Error::other("fixture command failed").into());
+        }
         match command {
             "uci" => {
                 self.lines.extend([
@@ -281,7 +361,12 @@ impl EngineProcess for WorkbenchExecutorProcess {
                     format!("id author {}", EngineIdentity::AUTHOR),
                 ]);
                 self.lines.extend(EngineEnumOption::ALL.map(|option| {
-                    format!("option name {} type {}", option.name(), option.descriptor())
+                    let descriptor = if option == EngineEnumOption::Threads {
+                        WorkbenchExecutorFixture::THREADS_DESCRIPTOR.to_owned()
+                    } else {
+                        option.descriptor()
+                    };
+                    format!("option name {} type {descriptor}", option.name())
                 }));
                 self.lines.push_back("uciok".to_owned());
             }
@@ -304,6 +389,9 @@ impl EngineProcess for WorkbenchExecutorProcess {
             "setoption name UCI_Chess960 value false" => self
                 .lines
                 .push_back("info string set UCI_Chess960 to false".to_owned()),
+            "setoption name UCI_Chess960 value true" => self
+                .lines
+                .push_back("info string set UCI_Chess960 to true".to_owned()),
             "d" | "eval" | "compiler" | "perft 1" | "bench 16 1 12" | "bench 32 2 1" => {
                 self.lines.extend(self.transcript.iter().cloned())
             }
@@ -313,6 +401,12 @@ impl EngineProcess for WorkbenchExecutorProcess {
     }
 
     async fn receive(&mut self) -> Result<EngineProcessLine, EngineProcessError> {
+        if let Some(gate) = &mut self.block_response
+            && let Some(line) = self.lines.front()
+            && gate.is_blocked(line)
+        {
+            return std::future::pending().await;
+        }
         match self.lines.pop_front() {
             Some(text) => EngineProcessLine::new(EngineProcessEnumPipe::Stdout, text),
             None if self.eof => Err(EngineProcessError::Closed(EngineProcessEnumPipe::Stdout)),
@@ -338,13 +432,42 @@ impl EngineProcess for WorkbenchExecutorProcess {
 async fn all_operations_parse_pinned_transcripts_and_recover_the_exact_lease()
 -> Result<(), Box<dyn Error>> {
     let fixture = WorkbenchExecutorFixture::new()?;
+    let mut previous_generation = None;
     for operation in WorkbenchEnumOperation::ALL {
         let provider =
             WorkbenchExecutorProvider::new(WorkbenchExecutorFixture::transcript(operation)?);
         let mut executor = fixture.executor(operation)?;
+        assert!(executor.observation().is_none());
         executor.start(&provider).await?;
+        let observation = executor.observation().ok_or("missing observation")?.clone();
+        let package = executor.job().package();
+        assert_eq!(observation.job_id(), executor.job().id());
+        assert_eq!(observation.package().executable(), package.executable());
+        assert_eq!(observation.package().target(), package.target());
+        assert_eq!(observation.package().profile(), package.profile());
+        assert_eq!(observation.package().digest(), package.digest());
+        assert_eq!(observation.identity().name(), "Reckless 0.9.0");
+        assert_eq!(observation.identity().author(), EngineIdentity::AUTHOR);
+        let Some(EngineOptionEnumDescriptor::Spin(threads)) = observation
+            .identity()
+            .capabilities()
+            .descriptor(EngineEnumOption::Threads)
+        else {
+            return Err("missing observed Threads descriptor".into());
+        };
+        assert_eq!(threads.maximum(), 1024);
+        let applied = observation.applied_options();
+        let resources = applied.resources().ok_or("missing applied resources")?;
+        assert_eq!(resources.threads(), 1);
+        assert_eq!(resources.hash_mib(), 16);
+        assert_eq!(resources.move_overhead().as_millis(), 100);
+        assert_eq!(applied.variant(), BoardEnumVariant::Standard);
+        assert!(!observation.generation().value().is_nil());
+        assert_ne!(Some(observation.generation()), previous_generation);
+        previous_generation = Some(observation.generation());
         assert_eq!(fixture.budget.available(), 1);
         executor.run().await?;
+        WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
         assert_eq!(executor.job().state(), WorkbenchEnumJobState::Succeeded);
         assert_eq!(fixture.budget.available(), 2);
         let Some(WorkbenchEnumOutcome::Succeeded(result)) = executor.job().outcome() else {
@@ -424,7 +547,9 @@ async fn malformed_oversized_partial_and_eof_output_cannot_succeed() -> Result<(
             provider.eof = true;
             let mut executor = fixture.executor(operation)?;
             executor.start(&provider).await?;
+            let observation = executor.observation().ok_or("missing observation")?.clone();
             executor.run().await?;
+            WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
             assert_eq!(executor.job().state(), WorkbenchEnumJobState::Failed);
             assert_eq!(fixture.budget.available(), 2);
         }
@@ -507,11 +632,13 @@ async fn blocked_output_deadline_and_cancel_force_termination_without_stdin_stop
             let provider = WorkbenchExecutorProvider::new(Vec::new());
             let mut executor = fixture.executor(operation)?;
             executor.start(&provider).await?;
+            let observation = executor.observation().ok_or("missing observation")?.clone();
             if cancel {
                 executor.cancel(executor.job().id()).await?;
             } else {
                 executor.run().await?;
             }
+            WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
             assert_eq!(
                 executor.job().state(),
                 if cancel {
@@ -540,6 +667,7 @@ async fn dropped_run_cancel_and_failed_cleanup_keep_the_owner_and_lease()
     let provider = WorkbenchExecutorProvider::new(Vec::new());
     let mut executor = fixture.executor(WorkbenchEnumOperation::Perft)?;
     executor.start(&provider).await?;
+    let observation = executor.observation().ok_or("missing observation")?.clone();
     assert!(
         tokio::time::timeout(Duration::from_millis(1), executor.run())
             .await
@@ -555,6 +683,7 @@ async fn dropped_run_cancel_and_failed_cleanup_keep_the_owner_and_lease()
         .is_err()
     );
     assert_eq!(fixture.budget.available(), 1);
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
     assert_eq!(executor.job().state(), WorkbenchEnumJobState::Cancelling);
     assert!(
         tokio::time::timeout(
@@ -565,6 +694,7 @@ async fn dropped_run_cancel_and_failed_cleanup_keep_the_owner_and_lease()
         .is_err()
     );
     assert_eq!(fixture.budget.available(), 1);
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
     provider.blocked_cleanup.store(false, Ordering::SeqCst);
     provider.fail_cleanup.store(true, Ordering::SeqCst);
     assert!(
@@ -579,6 +709,7 @@ async fn dropped_run_cancel_and_failed_cleanup_keep_the_owner_and_lease()
         .await?;
     assert_eq!(fixture.budget.available(), 2);
     assert!(format!("{:?}", executor.job().outcome()).contains("Failed"));
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
     Ok(())
 }
 
@@ -605,17 +736,27 @@ async fn an_isolated_job_never_commands_the_live_session() -> Result<(), Box<dyn
 async fn dropped_setup_at_handshake_configuration_and_delivery_retains_cleanup()
 -> Result<(), Box<dyn Error>> {
     let fixture = WorkbenchExecutorFixture::new()?;
-    for command in ["uci", "setoption name Threads value 1", "perft 1"] {
+    for command in [
+        "uci",
+        "setoption name Threads value 1",
+        "setoption name Hash value 16",
+        "setoption name MoveOverhead value 100",
+        "setoption name UCI_Chess960 value false",
+        "perft 1",
+    ] {
         let mut provider = WorkbenchExecutorProvider::new(Vec::new());
         provider.block_command = Some(command.to_owned());
         let mut executor = fixture.executor(WorkbenchEnumOperation::Perft)?;
+        assert!(executor.observation().is_none());
         assert!(
             tokio::time::timeout(Duration::from_millis(1), executor.start(&provider))
                 .await
                 .is_err()
         );
+        assert!(executor.observation().is_none());
         assert_eq!(fixture.budget.available(), 1);
         executor.cancel(executor.job().id()).await?;
+        assert!(executor.observation().is_none());
         assert!(executor.is_shutdown_complete());
         assert_eq!(executor.job().state(), WorkbenchEnumJobState::Cancelled);
         assert_eq!(fixture.budget.available(), 2);
@@ -628,6 +769,109 @@ async fn dropped_setup_at_handshake_configuration_and_delivery_retains_cleanup()
 }
 
 #[tokio::test(start_paused = true)]
+async fn observation_captures_the_acknowledged_chess960_variant_before_cleanup()
+-> Result<(), Box<dyn Error>> {
+    let fixture = WorkbenchExecutorFixture::new()?;
+    let provider = WorkbenchExecutorProvider::new(WorkbenchExecutorFixture::transcript(
+        WorkbenchEnumOperation::RawEvaluation,
+    )?);
+    let mut executor =
+        fixture.executor_with_parameters(4, WorkbenchExecutorFixture::chess960_parameters()?)?;
+    assert!(executor.observation().is_none());
+    executor.start(&provider).await?;
+    let observation = executor.observation().ok_or("missing observation")?.clone();
+    assert_eq!(observation.job_id().value(), Uuid::from_u128(4));
+    assert_eq!(
+        observation.applied_options().variant(),
+        BoardEnumVariant::Chess960
+    );
+    let commands = provider.commands()?;
+    let variant = commands
+        .iter()
+        .position(|command| command == "setoption name UCI_Chess960 value true")
+        .ok_or("missing Chess960 configuration")?;
+    assert_eq!(
+        commands.get(variant + 1).map(String::as_str),
+        Some("isready")
+    );
+    assert_eq!(commands.last().map(String::as_str), Some("eval"));
+    executor.run().await?;
+    assert_eq!(executor.job().state(), WorkbenchEnumJobState::Succeeded);
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropped_option_acknowledgments_and_readiness_never_publish_an_observation()
+-> Result<(), Box<dyn Error>> {
+    let fixture = WorkbenchExecutorFixture::new()?;
+    for (line, skip) in [
+        ("info string set Threads to 1", 0),
+        ("info string set Hash to 16 MB", 0),
+        ("info string set MoveOverhead to 100 ms", 0),
+        ("readyok", 1),
+        ("info string set UCI_Chess960 to true", 0),
+        ("readyok", 2),
+    ] {
+        let mut provider = WorkbenchExecutorProvider::new(Vec::new());
+        provider.block_response = Some(WorkbenchExecutorResponseGate { line, skip });
+        let mut executor = fixture
+            .executor_with_parameters(4, WorkbenchExecutorFixture::chess960_parameters()?)?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), executor.start(&provider))
+                .await
+                .is_err()
+        );
+        assert!(executor.observation().is_none());
+        assert!(!provider.commands()?.iter().any(|command| command == "eval"));
+        executor.cancel(executor.job().id()).await?;
+        assert!(executor.observation().is_none());
+        assert!(executor.is_shutdown_complete());
+        assert_eq!(executor.job().state(), WorkbenchEnumJobState::Cancelled);
+        assert_eq!(fixture.budget.available(), fixture.budget.workers());
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_configuration_and_diagnostic_delivery_never_fabricate_an_observation()
+-> Result<(), Box<dyn Error>> {
+    let fixture = WorkbenchExecutorFixture::new()?;
+    for command in [
+        "uci",
+        "setoption name Threads value 1",
+        "setoption name Hash value 16",
+        "setoption name MoveOverhead value 100",
+        "setoption name UCI_Chess960 value true",
+        "eval",
+    ] {
+        let mut provider = WorkbenchExecutorProvider::new(Vec::new());
+        provider.fail_command = Some(command.to_owned());
+        let mut executor = fixture
+            .executor_with_parameters(4, WorkbenchExecutorFixture::chess960_parameters()?)?;
+        executor.start(&provider).await?;
+        assert!(executor.observation().is_none());
+        assert!(executor.is_shutdown_complete());
+        assert_eq!(executor.job().state(), WorkbenchEnumJobState::Failed);
+        assert_eq!(fixture.budget.available(), fixture.budget.workers());
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancellation_before_setup_keeps_observation_unavailable() -> Result<(), Box<dyn Error>> {
+    let fixture = WorkbenchExecutorFixture::new()?;
+    let mut executor = fixture.executor(WorkbenchEnumOperation::Compiler)?;
+    assert!(executor.observation().is_none());
+    executor.cancel(executor.job().id()).await?;
+    assert!(executor.observation().is_none());
+    assert!(executor.is_shutdown_complete());
+    assert_eq!(executor.job().state(), WorkbenchEnumJobState::Cancelled);
+    assert_eq!(fixture.budget.available(), fixture.budget.workers());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn deadline_includes_admitted_queue_time_and_expiry_spawns_nothing()
 -> Result<(), Box<dyn Error>> {
     let fixture = WorkbenchExecutorFixture::new()?;
@@ -635,6 +879,7 @@ async fn deadline_includes_admitted_queue_time_and_expiry_spawns_nothing()
     let mut executor = fixture.executor(WorkbenchEnumOperation::Compiler)?;
     tokio::time::advance(Duration::from_secs(60)).await;
     executor.start(&provider).await?;
+    assert!(executor.observation().is_none());
     assert_eq!(executor.job().state(), WorkbenchEnumJobState::TimedOut);
     assert_eq!(provider.spawned.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.budget.available(), 2);
@@ -651,6 +896,7 @@ async fn setup_deadline_and_spawn_failure_recover_only_after_observed_cleanup()
         provider.block_command = Some("uci".to_owned());
         let mut executor = fixture.executor(WorkbenchEnumOperation::Compiler)?;
         executor.start(&provider).await?;
+        assert!(executor.observation().is_none());
         assert!(executor.is_shutdown_complete());
         assert_eq!(executor.job().state(), WorkbenchEnumJobState::Failed);
         assert_eq!(fixture.budget.available(), 2);
@@ -665,12 +911,15 @@ async fn operation_and_cleanup_failures_both_survive_retained_retry() -> Result<
     let provider = WorkbenchExecutorProvider::new(vec!["invalid raw evaluation".to_owned()]);
     let mut executor = fixture.executor(WorkbenchEnumOperation::RawEvaluation)?;
     executor.start(&provider).await?;
+    let observation = executor.observation().ok_or("missing observation")?.clone();
     provider.fail_cleanup.store(true, Ordering::SeqCst);
     assert!(executor.run().await.is_err());
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
     assert_eq!(fixture.budget.available(), 1);
     executor
         .shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
         .await?;
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
     let Some(WorkbenchEnumOutcome::Failed(
         chess::workbench::job::WorkbenchJobFailure::SessionCleanup { operation, .. },
     )) = executor.job().outcome()
@@ -729,23 +978,21 @@ async fn explicit_bench_resources_match_the_admitted_workers_hash_and_command()
         ))?;
     }
     let parameters = WorkbenchBenchParameters::new(&capabilities, Some(32), Some(2), Some(1))?;
-    let mut job = WorkbenchJob::new(
-        WorkbenchJobId::try_from(Uuid::from_u128(2))?,
-        WorkbenchEnumParameters::Bench(parameters),
-        fixture.package.select()?,
-        WorkbenchJobDeadline::default(),
-        ClockInstant::from_nanos(0),
-    )?;
-    job.admit(
-        job.id(),
-        fixture.budget.try_lease(2)?,
-        ClockInstant::from_nanos(0),
-    )?;
     let provider = WorkbenchExecutorProvider::new(WorkbenchExecutorFixture::transcript(
         WorkbenchEnumOperation::Bench,
     )?);
-    let mut executor = WorkbenchExecutor::new(job, ClockInstant::from_nanos(0))?;
+    let mut executor =
+        fixture.executor_with_parameters(2, WorkbenchEnumParameters::Bench(parameters))?;
     executor.start(&provider).await?;
+    let observation = executor.observation().ok_or("missing observation")?.clone();
+    assert_eq!(observation.job_id().value(), Uuid::from_u128(2));
+    let resources = observation
+        .applied_options()
+        .resources()
+        .ok_or("missing applied resources")?;
+    assert_eq!(resources.threads(), 2);
+    assert_eq!(resources.hash_mib(), 32);
+    assert_eq!(resources.move_overhead().as_millis(), 100);
     assert_eq!(fixture.budget.available(), 0);
     assert!(fixture.budget.try_lease(1).is_err());
     let commands = provider.commands()?;
@@ -757,6 +1004,7 @@ async fn explicit_bench_resources_match_the_admitted_workers_hash_and_command()
         assert!(commands.iter().any(|actual| actual == command));
     }
     executor.run().await?;
+    WorkbenchExecutorFixture::assert_observation_preserved(&executor, &observation)?;
     assert_eq!(executor.job().state(), WorkbenchEnumJobState::Succeeded);
     assert_eq!(fixture.budget.available(), 2);
     Ok(())
@@ -840,6 +1088,7 @@ async fn absolute_job_deadline_also_interrupts_setup_and_preserves_its_cleanup()
     )?;
     let mut executor = WorkbenchExecutor::new(job, ClockInstant::from_nanos(0))?;
     executor.start(&provider).await?;
+    assert!(executor.observation().is_none());
     assert_eq!(executor.job().state(), WorkbenchEnumJobState::TimedOut);
     assert!(executor.is_shutdown_complete());
     assert_eq!(fixture.budget.available(), 2);

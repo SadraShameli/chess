@@ -4,13 +4,17 @@ use thiserror::Error;
 use tokio::time::{Instant, timeout_at};
 
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
+use crate::engine::capabilities::EngineIdentity;
 use crate::engine::diagnostic::EngineDiagnosticEnumCommand;
 use crate::engine::diagnostics::EngineDiagnostics;
 use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
+use crate::engine::options::EngineOptionsApplied;
+use crate::engine::package::selector::EnginePackageSelected;
 use crate::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessLimits, EngineProcessProvider,
 };
 use crate::engine::resource_config::EngineResourceConfig;
+use crate::engine::search::identity::EngineSearchGeneration;
 use crate::engine::session::{EngineSession, EngineSessionError, EngineSessionStartup};
 use crate::workbench::enums::{
     WorkbenchEnumCompletion, WorkbenchEnumJobState, WorkbenchEnumParameters,
@@ -45,6 +49,37 @@ enum WorkbenchExecutorEnumState {
     Finished,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkbenchExecutorObservation {
+    job_id: WorkbenchJobId,
+    package: EnginePackageSelected,
+    identity: EngineIdentity,
+    applied_options: EngineOptionsApplied,
+    generation: EngineSearchGeneration,
+}
+
+impl WorkbenchExecutorObservation {
+    pub const fn job_id(&self) -> WorkbenchJobId {
+        self.job_id
+    }
+
+    pub fn package(&self) -> &EnginePackageSelected {
+        &self.package
+    }
+
+    pub fn identity(&self) -> &EngineIdentity {
+        &self.identity
+    }
+
+    pub fn applied_options(&self) -> &EngineOptionsApplied {
+        &self.applied_options
+    }
+
+    pub const fn generation(&self) -> EngineSearchGeneration {
+        self.generation
+    }
+}
+
 pub struct WorkbenchExecutor<P: EngineProcess> {
     job: WorkbenchJob,
     child: WorkbenchExecutorEnumChild<P>,
@@ -55,6 +90,7 @@ pub struct WorkbenchExecutor<P: EngineProcess> {
     output: WorkbenchOutput,
     completion: Option<WorkbenchEnumCompletion>,
     cleanup_failure: Option<Arc<EngineSessionError>>,
+    observation: Option<WorkbenchExecutorObservation>,
 }
 
 impl<P: EngineProcess> WorkbenchExecutor<P> {
@@ -79,11 +115,16 @@ impl<P: EngineProcess> WorkbenchExecutor<P> {
             output: WorkbenchOutput::default(),
             completion: None,
             cleanup_failure: None,
+            observation: None,
         })
     }
 
     pub fn job(&self) -> &WorkbenchJob {
         &self.job
+    }
+
+    pub fn observation(&self) -> Option<&WorkbenchExecutorObservation> {
+        self.observation.as_ref()
     }
 
     pub fn diagnostics(&self) -> &EngineDiagnostics {
@@ -190,7 +231,15 @@ impl<P: EngineProcess> WorkbenchExecutor<P> {
                 depth: parameters.depth(),
             },
         };
-        session.begin_diagnostic(command).await
+        let applied_options = session.begin_diagnostic(command).await?;
+        self.observation = Some(WorkbenchExecutorObservation {
+            job_id: self.job.id(),
+            package: session.package().clone(),
+            identity: session.identity().clone(),
+            applied_options,
+            generation: session.generation(),
+        });
+        Ok(())
     }
 
     fn default_resource(
