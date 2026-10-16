@@ -65,4 +65,46 @@ describe("Accessible 3D board surface", () => {
       view.unmount();
     }
   });
+
+  it("fits the viewport and canvas into a constrained parent before and after resizing", async () => {
+    const host = document.createElement("div");
+    host.style.width = "800px";
+    host.style.height = "360px";
+    document.body.append(host);
+    const view = mount(BoardView, {
+      props: { snapshot: fixture.snapshot },
+      attachTo: host,
+    });
+    try {
+      const container = host.firstElementChild;
+      if (!(container instanceof HTMLElement)) {
+        throw new Error("Missing mounted board container");
+      }
+      container.style.height = "100%";
+      await vi.waitFor(() => {
+        expect(view.emitted("ready")).toEqual([[]]);
+      });
+      const canvas = view.get("[data-board-canvas]").element;
+      const viewport = canvas.parentElement;
+      if (!viewport) {
+        throw new Error("Missing board viewport");
+      }
+      const initialHeight = viewport.getBoundingClientRect().height;
+      expect(initialHeight).toBeGreaterThan(240);
+      expect(initialHeight).toBeLessThan(360);
+      expect(canvas.getBoundingClientRect().height).toBe(initialHeight);
+      expect(canvas.getBoundingClientRect().width).toBe(800);
+      host.style.height = "240px";
+      await vi.waitFor(() => {
+        const height = viewport.getBoundingClientRect().height;
+        expect(height).toBeGreaterThan(120);
+        expect(height).toBeLessThan(initialHeight);
+        expect(canvas.getBoundingClientRect().height).toBe(height);
+        expect(container.getBoundingClientRect().height).toBe(240);
+      });
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
 });
