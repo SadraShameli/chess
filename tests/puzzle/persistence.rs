@@ -12,9 +12,56 @@ use chess::puzzle::random_provider::PuzzleRandomProviderSeeded;
 use chess::puzzle::run::PuzzleRunEnumStatus;
 use chess::puzzle::selection::PuzzleSelectionFilter;
 use chess::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
-use chess::puzzle::timer::PuzzleTimerEnumReadiness;
+use chess::puzzle::timer::{PuzzleTimerEnumPauseReason, PuzzleTimerEnumReadiness};
 
 use crate::puzzle_fixture::PuzzleFixture;
+
+#[test]
+fn save_backpressure_codec_replays_the_typed_pause_without_charging_downtime()
+-> Result<(), Box<dyn std::error::Error>> {
+    let definition = PuzzleFixture::definition(BoardPosition::standard(), &[&["e2e4"]])?;
+    let mut owner = PuzzlePersistenceRun::new(
+        PuzzleSessionId::new(NonZeroU64::MIN),
+        PuzzleSessionConfig::defaults(PuzzleEnumCountdownMode::Session),
+        vec![definition],
+        PuzzleSelectionFilter::default(),
+        PuzzleRandomProviderSeeded::new(8),
+    )?;
+    owner.execute(
+        PuzzlePersistenceEnumCommand::Readiness(PuzzleTimerEnumReadiness::Ready),
+        ClockInstant::from_nanos(0),
+    )?;
+    let events = owner.event_count();
+    owner.poll(ClockInstant::from_nanos(100))?;
+    assert_eq!(owner.event_count(), events);
+    assert!(!owner.execute_transition(
+        PuzzlePersistenceEnumCommand::Readiness(PuzzleTimerEnumReadiness::Ready),
+        ClockInstant::from_nanos(100),
+    )?);
+    assert_eq!(owner.event_count(), events);
+    owner.execute(
+        PuzzlePersistenceEnumCommand::Pause(PuzzleTimerEnumPauseReason::SaveBackpressure),
+        ClockInstant::from_nanos(100),
+    )?;
+    let bytes =
+        PuzzlePersistenceCodec::encode(&owner.capture(ClockInstant::from_nanos(10000), 0)?)?;
+    assert!(std::str::from_utf8(&bytes)?.contains("save_backpressure"));
+    let restored = PuzzlePersistenceCodec::decode(&bytes)?;
+    assert_eq!(
+        restored
+            .run()
+            .view(ClockInstant::from_nanos(0))?
+            .timer()
+            .elapsed()
+            .as_nanos(),
+        100
+    );
+    assert!(matches!(
+        restored.run().view(ClockInstant::from_nanos(0))?.status(),
+        PuzzleRunEnumStatus::Paused { .. }
+    ));
+    Ok(())
+}
 
 #[test]
 fn canonical_roundtrip_preserves_failed_primary_and_requires_resume()

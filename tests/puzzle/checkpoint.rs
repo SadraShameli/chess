@@ -797,3 +797,63 @@ fn only_committed_actual_elapsed_rebases_the_next_durability_boundary()
     assert_eq!(freeze.pause_at(), PuzzleCheckpointFixture::time(1250));
     Ok(())
 }
+
+#[test]
+fn scheduling_deadlines_share_cadence_and_the_committed_lag_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut checkpoint = PuzzleCheckpointFixture::active()?;
+    assert_eq!(
+        checkpoint.next_deadline()?,
+        Some(PuzzleCheckpointFixture::time(250))
+    );
+    for millis in [250, 500, 750] {
+        checkpoint.record(
+            PuzzleCheckpointFixture::snapshot(millis, millis, 1, PuzzleRunEnumStatus::Active)?,
+            PuzzleCheckpointEnumTrigger::Countdown,
+        )?;
+        if millis == 750 {
+            checkpoint.record(
+                PuzzleCheckpointFixture::snapshot(760, 760, 2, PuzzleRunEnumStatus::Active)?,
+                PuzzleCheckpointEnumTrigger::AcceptedTransition,
+            )?;
+            assert_eq!(
+                checkpoint.next_deadline()?,
+                Some(PuzzleCheckpointFixture::time(1000))
+            );
+        }
+    }
+    checkpoint.before_advance(PuzzleCheckpointFixture::time(1000))?;
+    assert_eq!(checkpoint.next_deadline()?, None);
+    Ok(())
+}
+
+#[test]
+fn fresh_initial_release_requires_the_latest_inactive_commit_and_never_opens_a_pause()
+-> Result<(), Box<dyn std::error::Error>> {
+    let zero = PuzzleCheckpointFixture::time(0);
+    let mut checkpoint = PuzzleCheckpoint::new(PuzzleCheckpointFixture::snapshot(
+        0,
+        0,
+        0,
+        PuzzleRunEnumStatus::AwaitingReadiness,
+    )?)?;
+    checkpoint.before_advance(zero)?;
+    assert!(checkpoint.release_initial(zero).is_err());
+    let token = checkpoint.begin_write(zero)?;
+    checkpoint.complete(zero, &token, PuzzleCheckpointEnumCompletion::Committed)?;
+    checkpoint.release_initial(zero)?;
+    assert_eq!(checkpoint.status(), PuzzleCheckpointEnumStatus::Open);
+    assert_eq!(checkpoint.next_deadline()?, None);
+    let mut paused = PuzzleCheckpoint::new(PuzzleCheckpointFixture::snapshot(
+        0,
+        0,
+        0,
+        PuzzleCheckpointFixture::paused(),
+    )?)?;
+    paused.before_advance(zero)?;
+    let token = paused.begin_write(zero)?;
+    paused.complete(zero, &token, PuzzleCheckpointEnumCompletion::Committed)?;
+    assert!(paused.release_initial(zero).is_err());
+    paused.resume(zero)?;
+    Ok(())
+}

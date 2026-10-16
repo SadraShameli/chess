@@ -290,6 +290,25 @@ impl<S> PuzzleCheckpoint<S> {
         self.status
     }
 
+    pub const fn observation(&self) -> &PuzzleCheckpointObservation {
+        &self.observed
+    }
+
+    pub const fn has_queued_write(&self) -> bool {
+        matches!(self.write, PuzzleCheckpointEnumWrite::Queued(_))
+    }
+
+    pub fn next_deadline(&self) -> Result<Option<ClockInstant>, PuzzleCheckpointError> {
+        if self.status.freeze().is_some() || self.observed.status != PuzzleRunEnumStatus::Active {
+            return Ok(None);
+        }
+        let cadence = self.observed.observed_at.checked_add(Self::CADENCE)?;
+        Ok(Some(match self.durability_deadline()? {
+            Some(durability) => cadence.min(durability),
+            None => self.observed.observed_at,
+        }))
+    }
+
     pub fn pending(&self) -> Option<&PuzzleCheckpointSnapshot<S>> {
         self.write.snapshot()
     }
@@ -446,18 +465,48 @@ impl<S> PuzzleCheckpoint<S> {
     }
 
     pub fn resume(&mut self, now: ClockInstant) -> Result<(), PuzzleCheckpointError> {
+        self.ensure_can_resume(now)?;
+        self.open(now);
+        Ok(())
+    }
+
+    pub fn ensure_can_resume(&self, now: ClockInstant) -> Result<(), PuzzleCheckpointError> {
         self.validate_event_time(now)?;
         if !matches!(self.status, PuzzleCheckpointEnumStatus::AwaitingResume(_))
             || !matches!(self.observed.status, PuzzleRunEnumStatus::Paused { .. })
-            || self.write.snapshot().is_some()
-            || self.coalesced.is_some()
-            || self.durable.as_ref() != Some(&self.observed)
+            || !self.is_latest_durable()
         {
             return Err(PuzzleCheckpointError::ResumeUnavailable);
         }
+        Ok(())
+    }
+
+    pub fn release_initial(&mut self, now: ClockInstant) -> Result<(), PuzzleCheckpointError> {
+        self.validate_event_time(now)?;
+        if !matches!(
+            self.status,
+            PuzzleCheckpointEnumStatus::AwaitingResume(PuzzleCheckpointFreeze {
+                cause: PuzzleCheckpointEnumFreezeCause::InitialSaveRequired,
+                ..
+            })
+        ) || self.observed.status != PuzzleRunEnumStatus::AwaitingReadiness
+            || !self.is_latest_durable()
+        {
+            return Err(PuzzleCheckpointError::ResumeUnavailable);
+        }
+        self.open(now);
+        Ok(())
+    }
+
+    fn is_latest_durable(&self) -> bool {
+        self.write.snapshot().is_none()
+            && self.coalesced.is_none()
+            && self.durable.as_ref() == Some(&self.observed)
+    }
+
+    fn open(&mut self, now: ClockInstant) {
         self.status = PuzzleCheckpointEnumStatus::Open;
         self.last_event_at = now;
-        Ok(())
     }
 
     fn validate_event_time(&self, now: ClockInstant) -> Result<(), PuzzleCheckpointError> {
@@ -526,11 +575,21 @@ impl<S> PuzzleCheckpoint<S> {
         if self.observed.status != PuzzleRunEnumStatus::Active {
             return Ok(None);
         }
-        let Some(durable) = &self.durable else {
+        let Some(deadline) = self.durability_deadline()? else {
             return Ok(Some(PuzzleCheckpointFreeze {
                 cause: PuzzleCheckpointEnumFreezeCause::InitialSaveRequired,
                 pause_at: self.observed.observed_at,
             }));
+        };
+        Ok(now.has_reached(deadline).then_some(PuzzleCheckpointFreeze {
+            cause: PuzzleCheckpointEnumFreezeCause::DurableLag,
+            pause_at: deadline,
+        }))
+    }
+
+    fn durability_deadline(&self) -> Result<Option<ClockInstant>, PuzzleCheckpointError> {
+        let Some(durable) = &self.durable else {
+            return Ok(None);
         };
         let lag = self
             .observed
@@ -538,10 +597,7 @@ impl<S> PuzzleCheckpoint<S> {
             .checked_sub(durable.elapsed_active)?;
         let remaining = Self::MAX_DURABLE_LAG.checked_sub(lag)?;
         let deadline = self.observed.observed_at.checked_add(remaining)?;
-        Ok(now.has_reached(deadline).then_some(PuzzleCheckpointFreeze {
-            cause: PuzzleCheckpointEnumFreezeCause::DurableLag,
-            pause_at: deadline,
-        }))
+        Ok(Some(deadline))
     }
 
     fn next_token(

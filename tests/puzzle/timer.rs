@@ -18,6 +18,41 @@ use chess::puzzle::timer::{
     PuzzleTimerSnapshot, PuzzleTimerSnapshotOptions,
 };
 
+#[test]
+fn save_backpressure_is_a_distinct_persistable_pause_and_requires_explicit_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut timer = PuzzleTimerFixture::running(PuzzleEnumCountdownMode::Session)?;
+    timer.pause(
+        ClockInstant::from_nanos(20),
+        PuzzleTimerEnumPauseReason::SaveBackpressure,
+    )?;
+    let snapshot = timer.snapshot(ClockInstant::from_nanos(1000))?;
+    let validated = PuzzleTimerSnapshot::from_persisted(snapshot.persisted())?;
+    assert_eq!(validated, snapshot);
+    assert_eq!(snapshot.persisted().elapsed, ClockDuration::from_nanos(10));
+    assert!(matches!(
+        snapshot.persisted().status,
+        PuzzleTimerEnumStatus::Paused {
+            reason: PuzzleTimerEnumPauseReason::SaveBackpressure,
+            phase: PuzzleTimerEnumPhase::Active,
+        }
+    ));
+    timer.update_readiness(
+        ClockInstant::from_nanos(2000),
+        PuzzleTimerEnumReadiness::Ready,
+    )?;
+    assert_eq!(timer.snapshot(ClockInstant::from_nanos(2000))?, snapshot);
+    timer.resume(
+        ClockInstant::from_nanos(2000),
+        PuzzleTimerEnumReadiness::Ready,
+    )?;
+    assert_eq!(
+        timer.view(ClockInstant::from_nanos(2001))?.elapsed(),
+        ClockDuration::from_nanos(11)
+    );
+    Ok(())
+}
+
 struct PuzzleTimerFixture;
 
 impl PuzzleTimerFixture {

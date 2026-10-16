@@ -19,6 +19,7 @@ pub enum PuzzleTimerEnumPauseReason {
     WindowHidden,
     Sleep,
     Recovery,
+    SaveBackpressure,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

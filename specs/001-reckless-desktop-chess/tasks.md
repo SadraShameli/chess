@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 12 analysis tasks completed, 7 puzzle tasks completed and 214 pending.
+**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 7 puzzle tasks completed and 212 pending.
 **Active parallel tasks**: 43 across disjoint contract-test files; three additional
 `[P]` markers belong to historical completed rows. No native task is accepted
 merely by this generation.

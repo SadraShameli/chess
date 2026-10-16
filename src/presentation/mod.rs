@@ -5,5 +5,6 @@ pub mod app;
 pub mod board;
 pub mod engine_panels;
 pub mod game;
+pub mod puzzle;
 pub mod theme;
 pub mod workbench;

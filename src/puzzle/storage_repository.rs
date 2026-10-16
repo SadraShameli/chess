@@ -96,6 +96,10 @@ impl<R: PuzzleStorageRepository> PuzzleStorageDriver<R> {
         self.persisted_event_count
     }
 
+    pub const fn has_retained_write(&self) -> bool {
+        self.in_flight.is_some() || self.committed.is_some() || self.failure.is_some()
+    }
+
     pub fn before_advance(
         &mut self,
         now: ClockInstant,
@@ -276,6 +280,14 @@ impl<R: PuzzleStorageRepository> PuzzleStorageDriver<R> {
 
     pub fn resume(&mut self, now: ClockInstant) -> Result<(), PuzzleStorageDriverError<R::Error>> {
         self.checkpoint.resume(now)?;
+        Ok(())
+    }
+
+    pub fn release_initial(
+        &mut self,
+        now: ClockInstant,
+    ) -> Result<(), PuzzleStorageDriverError<R::Error>> {
+        self.checkpoint.release_initial(now)?;
         Ok(())
     }
 }

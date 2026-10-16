@@ -327,6 +327,7 @@ enum PuzzlePersistenceEnumPauseReason {
     WindowHidden,
     Sleep,
     Recovery,
+    SaveBackpressure,
 }
 
 impl PuzzlePersistenceEnumPauseReason {
@@ -337,6 +338,7 @@ impl PuzzlePersistenceEnumPauseReason {
             PuzzleTimerEnumPauseReason::WindowHidden => Self::WindowHidden,
             PuzzleTimerEnumPauseReason::Sleep => Self::Sleep,
             PuzzleTimerEnumPauseReason::Recovery => Self::Recovery,
+            PuzzleTimerEnumPauseReason::SaveBackpressure => Self::SaveBackpressure,
         }
     }
     const fn domain(self) -> PuzzleTimerEnumPauseReason {
@@ -346,6 +348,7 @@ impl PuzzlePersistenceEnumPauseReason {
             Self::WindowHidden => PuzzleTimerEnumPauseReason::WindowHidden,
             Self::Sleep => PuzzleTimerEnumPauseReason::Sleep,
             Self::Recovery => PuzzleTimerEnumPauseReason::Recovery,
+            Self::SaveBackpressure => PuzzleTimerEnumPauseReason::SaveBackpressure,
         }
     }
 }
@@ -783,6 +786,11 @@ impl PuzzlePersistenceRun {
     pub const fn run(&self) -> &PuzzleRun<PuzzleRandomProviderSeeded> {
         &self.run
     }
+
+    pub fn config(&self) -> PuzzleSessionConfig {
+        self.run.persistence_session().config()
+    }
+
     pub(crate) fn attempt_rows(&self) -> Result<Vec<(u64, String)>, PuzzlePersistenceError> {
         let mut attempts = std::collections::BTreeMap::new();
         for entry in self.run.previous_attempts() {
@@ -808,6 +816,24 @@ impl PuzzlePersistenceRun {
         command: PuzzlePersistenceEnumCommand,
         now: ClockInstant,
     ) -> Result<(), PuzzlePersistenceError> {
+        self.execute_recording(command, now, true)?;
+        Ok(())
+    }
+
+    pub fn execute_transition(
+        &mut self,
+        command: PuzzlePersistenceEnumCommand,
+        now: ClockInstant,
+    ) -> Result<bool, PuzzlePersistenceError> {
+        self.execute_recording(command, now, false)
+    }
+
+    fn execute_recording(
+        &mut self,
+        command: PuzzlePersistenceEnumCommand,
+        now: ClockInstant,
+        retain_unchanged: bool,
+    ) -> Result<bool, PuzzlePersistenceError> {
         let operation = match command {
             PuzzlePersistenceEnumCommand::Readiness(value) => {
                 PuzzlePersistenceEnumOperation::Readiness(PuzzlePersistenceEnumReadiness::capture(
@@ -847,14 +873,15 @@ impl PuzzlePersistenceRun {
             }
             PuzzlePersistenceEnumCommand::Poll => PuzzlePersistenceEnumOperation::Poll,
         };
-        self.apply_and_record(operation, now)
+        self.apply_recording(operation, now, retain_unchanged)
     }
 
-    fn apply_and_record(
+    fn apply_recording(
         &mut self,
         operation: PuzzlePersistenceEnumOperation,
         now: ClockInstant,
-    ) -> Result<(), PuzzlePersistenceError> {
+        retain_unchanged: bool,
+    ) -> Result<bool, PuzzlePersistenceError> {
         let reserved_events = if operation == PuzzlePersistenceEnumOperation::Recover {
             1
         } else {
@@ -863,10 +890,14 @@ impl PuzzlePersistenceRun {
         self.reserve_event(reserved_events)?;
         let elapsed_nanos = self.run.view(now)?.timer().elapsed().as_nanos();
         let previous_count = self.run.previous_attempts().len();
+        let before = self.run.context();
         self.apply(&operation, now)?;
+        if !retain_unchanged && before == self.run.context() {
+            return Ok(false);
+        }
         let event = self.event_after(operation, elapsed_nanos, now, previous_count)?;
         self.append_event(&event)?;
-        Ok(())
+        Ok(true)
     }
 
     fn reserve_event(&self, reserved_events: usize) -> Result<(), PuzzlePersistenceError> {
@@ -1050,6 +1081,24 @@ impl PuzzlePersistenceRun {
         if base_event_count > self.events.len() {
             return Err(PuzzlePersistenceError::InvalidPrefix);
         }
+        self.poll(now)?;
+        let checkpoint = self.projection(now, self.events.len())?;
+        Ok(PuzzlePersistenceSnapshot {
+            collection: Arc::clone(&self.collection),
+            collection_digest: self.collection_digest,
+            events: self.events[base_event_count..]
+                .iter()
+                .map(Arc::clone)
+                .collect(),
+            base_event_count,
+            base_journal_proof: self.journal_proof_at(base_event_count)?,
+            checkpoint: PuzzlePersistenceCodec::bounded_json(&checkpoint)?,
+            context: self.run.context(),
+            elapsed_nanos: checkpoint.elapsed_nanos,
+        })
+    }
+
+    pub fn poll(&mut self, now: ClockInstant) -> Result<(), PuzzlePersistenceError> {
         let before = self.run.context();
         let timer = self.run.view(now)?.timer();
         if matches!(
@@ -1072,20 +1121,7 @@ impl PuzzlePersistenceRun {
                 self.event_after(operation, timer.elapsed().as_nanos(), now, previous_count)?;
             self.append_event(&event)?;
         }
-        let checkpoint = self.projection(now, self.events.len())?;
-        Ok(PuzzlePersistenceSnapshot {
-            collection: Arc::clone(&self.collection),
-            collection_digest: self.collection_digest,
-            events: self.events[base_event_count..]
-                .iter()
-                .map(Arc::clone)
-                .collect(),
-            base_event_count,
-            base_journal_proof: self.journal_proof_at(base_event_count)?,
-            checkpoint: PuzzlePersistenceCodec::bounded_json(&checkpoint)?,
-            context: self.run.context(),
-            elapsed_nanos: checkpoint.elapsed_nanos,
-        })
+        Ok(())
     }
 }
 
@@ -1260,7 +1296,7 @@ impl PuzzlePersistenceCodec {
         if owner.projection(now, owner.events.len())? != document.checkpoint {
             return Err(PuzzlePersistenceError::ReplayMismatch);
         }
-        owner.apply_and_record(PuzzlePersistenceEnumOperation::Recover, now)?;
+        owner.apply_recording(PuzzlePersistenceEnumOperation::Recover, now, true)?;
         Ok(owner)
     }
 }
