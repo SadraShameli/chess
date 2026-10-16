@@ -1,6 +1,6 @@
 # Feature Specification: Reckless Desktop Chess
 
-**Feature Branch**: `release`
+**Feature Branch**: `001-reckless-desktop-chess`
 
 **Feature ID**: `001-reckless-desktop-chess`
 

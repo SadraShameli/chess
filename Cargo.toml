@@ -3,8 +3,28 @@ name = "chess"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
+default-run = "chess"
 
 [dependencies]
+pgn-reader = "=0.29.1"
+rayon = "=1.12.0"
+rusqlite = { version = "=0.40.2", features = ["backup", "bundled"] }
+schemars = { version = "=1.2.3", features = ["uuid1"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+shakmaty = "=0.30.2"
+tauri = "=2.12.4"
+tauri-plugin-dialog = "=2.8.3"
+thiserror = "=2.0.21"
+tokio = { version = "=1.53.3", features = ["fs", "io-util", "macros", "process", "sync", "time"] }
+uuid = { version = "=1.28.0", features = ["serde", "v4"] }
+
+[build-dependencies]
+tauri-build = "=2.7.3"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
 
 [lints.rust]
 unsafe_code = "forbid"

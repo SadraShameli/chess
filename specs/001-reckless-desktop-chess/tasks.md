@@ -2,7 +2,7 @@
 
 **Input**: Design documents from `specs/001-reckless-desktop-chess/`.
 
-**Branch**: `release` | **Created**: 2026-10-16 | **Status**: Generated, unexecuted.
+**Branch**: `001-reckless-desktop-chess` | **Created**: 2026-10-16 | **Status**: Implementation in progress.
 
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [decisions.md](decisions.md),
 [data-model.md](data-model.md), [research.md](research.md),
@@ -50,12 +50,12 @@ Load the [constitution](../../.specify/memory/constitution.md) and applicable
 [verification/authorization](../../.specify/rules/verification.md) files remain
 the policy owners. Apply them to the concrete components here.
 
-This task-generation invocation creates documentation only. Credentials,
-workflow activation, publication, external conveyance, commits and pushes retain
-their existing authorization boundaries. The conditional workflow-activation
-task stays unchecked until its actual prerequisites pass. An unavailable native
-host or unresolved release gate is reported as outstanding, never as a passing
-test or a reason to remove a feature. No new branch or release is created here.
+The owner authorized implementation on this new feature branch with a separate
+commit and push for each completed task. Credentials, workflow activation,
+publication and external conveyance retain their existing authorization
+boundaries. The conditional workflow-activation task stays unchecked until its
+actual prerequisites pass. An unavailable native host or unresolved release gate
+is reported as outstanding, never as a passing test or a reason to remove a feature.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
@@ -67,7 +67,7 @@ test or a reason to remove a feature. No new branch or release is created here.
 
 ### Implementation
 
-- [ ] T001 Resolve the selected stable Rust-side dependencies and actual APIs from `specs/001-reckless-desktop-chess/research.md#final-resolution-research` in `Cargo.toml` and `Cargo.lock`, preserving Rust 1.99.0, edition 2024, root-package layout and existing strict lint/profile settings.
+- [X] T001 Resolve the selected stable Rust-side dependencies and actual APIs from `specs/001-reckless-desktop-chess/research.md#final-resolution-research` in `Cargo.toml` and `Cargo.lock`, preserving Rust 1.99.0, edition 2024, root-package layout and existing strict lint/profile settings.
 - [ ] T002 Initialize the Vue 3.5.44, TypeScript 6.0.3, Vite 8.3.4, Three.js 0.186.1 and Bun 1.4.3 frontend in `ui/package.json`, `ui/bun.lock`, `ui/tsconfig.json` and `ui/vite.config.ts`; resolve compatible stable supporting pins and configure project aliases.
 - [ ] T003 Configure Tailwind 4.3.3 through its official Vite plugin and shadcn-vue/Reka UI in `ui/components.json` and `ui/src/theme/tokens.css`, with one token owner and local bundled assets.
 - [ ] T004 Configure Vue-aware type-checked ESLint 10.12.0, typescript-eslint 8.71.2, Prettier 3.9.10 and Tailwind class ordering in `ui/eslint.config.ts`, `ui/.prettierrc.json` and `ui/package.json`; exercise these selected tools on Bun.
@@ -817,5 +817,5 @@ passed. Update the release evidence rather than silently reducing the scope.
 | polish | 14 | T242..T255 |
 
 **Total**: 255 tasks. **Parallel markers**: 37 independent test-authoring tasks.
-All task checkboxes are intentionally unchecked. No implementation, runtime test,
-workflow activation or release readiness is claimed by task generation.
+Checked tasks record completed implementation work. Unchecked tasks remain
+outstanding; workflow activation and release readiness require their own evidence.

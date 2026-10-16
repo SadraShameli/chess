@@ -1,6 +1,6 @@
 # Implementation Plan: Reckless Desktop Chess
 
-**Branch**: `release` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
+**Branch**: `001-reckless-desktop-chess` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
 **Feature**: `001-reckless-desktop-chess`
 
@@ -27,8 +27,9 @@ contracts refer to it rather than reopening questionnaires. Policy remains in
 
 Keep private personal use, no application license-file change and no payments
 for signing, CI, hosting, datasets or assets. No credentials, workflows, releases,
-commits or pushes are created by planning. Git remains on release; Spec Kit's
-feature identifier is not a request to create another Git branch.
+commits or pushes are created by planning. The subsequent owner instruction
+authorizes implementation on `001-reckless-desktop-chess`, with one commit and
+push per completed task.
 
 ## Technical Context
 
