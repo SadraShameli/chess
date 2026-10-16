@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use chess::board::enums::BoardEnumColor;
 use chess::board::position::BoardPosition;
 use chess::board::start::BoardStart;
@@ -5,8 +7,8 @@ use chess::clock::duration::ClockInstant;
 use chess::clock::state::ClockState;
 use chess::clock::time_control::ClockTimeControl;
 use chess::game::adjudication::{
-    GameAdjudicationEnumMateProof, GameAdjudicationEnumMateQuestion,
-    GameAdjudicationMateProofProvider,
+    GameAdjudicationEnumInterruption, GameAdjudicationEnumMateProof,
+    GameAdjudicationEnumMateQuestion, GameAdjudicationMateProofProvider,
 };
 use chess::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat, GameMoveId};
 use chess::game::session::{
@@ -22,6 +24,36 @@ impl GameAdjudicationMateProofProvider for GameTransitionFixtureProof {
         _question: GameAdjudicationEnumMateQuestion,
     ) -> GameAdjudicationEnumMateProof {
         GameAdjudicationEnumMateProof::Possible
+    }
+}
+
+pub(crate) struct GameTransitionFixtureUnresolvedProof {
+    question: GameAdjudicationEnumMateQuestion,
+    calls: AtomicUsize,
+}
+
+impl GameTransitionFixtureUnresolvedProof {
+    pub(crate) fn new(question: GameAdjudicationEnumMateQuestion) -> Self {
+        Self {
+            question,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    pub(crate) fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl GameAdjudicationMateProofProvider for GameTransitionFixtureUnresolvedProof {
+    fn prove(
+        &self,
+        _position: &BoardPosition,
+        question: GameAdjudicationEnumMateQuestion,
+    ) -> GameAdjudicationEnumMateProof {
+        assert_eq!(question, self.question);
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        GameAdjudicationEnumMateProof::Unknown(GameAdjudicationEnumInterruption::Unresolved)
     }
 }
 
@@ -74,6 +106,16 @@ impl GameTransitionFixture {
         uci: &str,
         millis: u64,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::play_with_proof(session, id, uci, millis, &GameTransitionFixtureProof)
+    }
+
+    pub(crate) fn play_with_proof<P: GameAdjudicationMateProofProvider>(
+        session: &mut GameSession,
+        id: u128,
+        uci: &str,
+        millis: u64,
+        proof: &P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let position = session.tree().node(session.live())?.position();
         let request = GameSessionMoveRequest {
             expected_revision: session.revision(),
@@ -83,7 +125,7 @@ impl GameTransitionFixture {
             movement: position.parse_uci(uci)?,
             received_at: ClockInstant::from_millis(millis)?,
         };
-        session.accept_move(request, &GameTransitionFixtureProof)?;
+        session.accept_move(request, proof)?;
         Ok(())
     }
 }

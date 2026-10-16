@@ -616,6 +616,127 @@ fn game_requests_retain_identity_and_accept_only_native_snapshots() -> Presentat
 }
 
 #[test]
+fn mounted_retry_adjudication_dispatches_once_per_click_and_preserves_unknown_state()
+-> PresentationAppTestResult {
+    use crate::game_transition_fixture::{
+        GameTransitionFixture, GameTransitionFixtureUnresolvedProof,
+    };
+    use chess::clock::state::ClockStateEnumStatus;
+    use chess::clock::time_control::ClockTimeControl;
+    use chess::desktop::game_bridge::DesktopGameBridgeEnumOperation;
+    use chess::desktop::game_commands::{
+        DesktopGameCommandsEnumAction, DesktopGameCommandsRequest,
+    };
+    use chess::desktop::game_snapshot::DesktopGameSnapshot;
+    use chess::desktop::game_transition::{
+        DesktopGameTransition, DesktopGameTransitionEnumEffect, DesktopGameTransitionOptions,
+    };
+    use chess::desktop::identity::DesktopRevision;
+    use chess::game::adjudication::GameAdjudicationEnumMateQuestion;
+    use chess::game::enums::{GameEnumEngineReadiness, GameEnumPhase};
+    use chess::game::pause::GamePauseEnumEngineBarrier;
+    use chess::game::session::GameSessionEnumInterruption;
+
+    let mut fixture = PresentationAppFixture::new();
+    let proof =
+        GameTransitionFixtureUnresolvedProof::new(GameAdjudicationEnumMateQuestion::AnySide);
+    let mut session = GameTransitionFixture::session(ClockTimeControl::initial_default(), None)?;
+    GameTransitionFixture::play_with_proof(&mut session, 2, "e2e4", 0, &proof)?;
+    let before = DesktopGameSnapshot::capture(&session, ClockInstant::from_nanos(0))?;
+    assert!(fixture.presentation.accept_game_snapshot(before.clone()));
+    fixture.context.on_end_pass(
+        "retry adjudication repeated passes",
+        Arc::new(|context| {
+            if context.current_pass_index() == 0 {
+                context.request_discard("exercise retained adjudication retry");
+            }
+        }),
+    );
+    let mut last_request = None;
+    for attempt in 1..=2 {
+        let revision = session.revision();
+        let (output, _) = fixture.frame(None, Vec::new())?;
+        let passes = fixture.context.cumulative_pass_nr();
+        fixture.click(&output, "Retry Adjudication")?;
+        assert!(fixture.context.cumulative_pass_nr() - passes > 1);
+        let work = fixture
+            .application
+            .try_next()?
+            .ok_or("Retry Adjudication did not submit a native request")?;
+        let DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Session {
+            game,
+            revision: requested_revision,
+            action,
+        }) = work.request().command().operation()
+        else {
+            return Err("Retry Adjudication submitted a different operation".into());
+        };
+        assert_eq!(*game, session.id());
+        assert_eq!(*requested_revision, revision);
+        assert_eq!(*action, DesktopGameCommandsEnumAction::Resume);
+        assert_eq!(
+            work.request().command().expected_revision(),
+            Some(DesktopRevision::for_game(revision))
+        );
+        assert_ne!(Some(work.request().request_id()), last_request);
+        last_request = Some(work.request().request_id());
+        for _ in 0..8 {
+            fixture.frame(None, Vec::new())?;
+            assert!(fixture.application.try_next()?.is_none());
+        }
+        fixture.application.begin_commit(&work)?;
+        assert_eq!(
+            DesktopGameTransition::apply(
+                &mut session,
+                DesktopGameTransitionOptions {
+                    request: DesktopGameCommandsRequest {
+                        request_id: work.request().request_id(),
+                        expected_revision: *requested_revision,
+                        received_at: work.receipt().received_at(),
+                        action: action.clone(),
+                    },
+                    engine: GamePauseEnumEngineBarrier::NoEngine,
+                    readiness: GameEnumEngineReadiness::NotRequired,
+                },
+                &proof,
+            )?,
+            DesktopGameTransitionEnumEffect::Autosave
+        );
+        assert_eq!(proof.calls(), attempt + 1);
+        assert_eq!(session.revision(), revision.next()?);
+        let accepted = DesktopGameSnapshot::capture(&session, ClockInstant::from_nanos(0))?;
+        fixture.application.complete_value(
+            &work,
+            DesktopEnumValue::Game(Box::new(accepted)),
+            None,
+        )?;
+        for _ in 0..8 {
+            fixture.frame(None, Vec::new())?;
+            assert!(fixture.application.try_next()?.is_none());
+        }
+        let retained = fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing native adjudication snapshot")?;
+        assert_eq!(retained.revision(), session.revision());
+        assert_eq!(retained.phase(), GameEnumPhase::Interrupted);
+        assert!(matches!(
+            retained.interruption(),
+            Some(GameSessionEnumInterruption::Adjudication { .. })
+        ));
+        assert_eq!(retained.board().fen(), before.board().fen());
+        assert_eq!(retained.live(), before.live());
+        assert_eq!(retained.view(), before.view());
+        assert_eq!(retained.clock(), before.clock());
+        assert_eq!(retained.clock().status(), ClockStateEnumStatus::Paused);
+        assert!(retained.outcome().is_none());
+        assert!(fixture.presentation.failure().is_none());
+        assert!(!fixture.presentation.has_pending_work());
+    }
+    Ok(())
+}
+
+#[test]
 fn unsolicited_game_events_are_acknowledged_once_and_update_the_mounted_board()
 -> PresentationAppTestResult {
     use crate::game_transition_fixture::GameTransitionFixture;

@@ -605,6 +605,116 @@ async fn preparation_control_remains_admissible_while_a_save_waits_for_cpu_capac
 }
 
 #[tokio::test]
+async fn adjudication_retry_is_revision_checked_and_durably_preserves_unknown_state()
+-> DesktopGameSupervisorTestResult {
+    use crate::game_transition_fixture::{
+        GameTransitionFixture, GameTransitionFixtureUnresolvedProof,
+    };
+    use chess::clock::state::ClockStateEnumStatus;
+    use chess::desktop::game_snapshot::DesktopGameSnapshot;
+
+    let fixture = DesktopGameSupervisorFixtureStorage::new(2).await?;
+    let proof = Arc::new(GameTransitionFixtureUnresolvedProof::new(
+        GameAdjudicationEnumMateQuestion::AnySide,
+    ));
+    let mut session = GameTransitionFixture::session(ClockTimeControl::initial_default(), None)?;
+    GameTransitionFixture::play_with_proof(&mut session, 2, "e2e4", 0, proof.as_ref())?;
+    let before = DesktopGameSnapshot::capture(&session, ClockInstant::from_nanos(0))?;
+    let (mut supervisor, port) = DesktopGameSupervisor::new(DesktopGameSupervisorOptions {
+        session,
+        storage_revision: GameStorageRevision::INITIAL,
+        storage: fixture.store.client(),
+        executor: Arc::clone(&fixture.executor),
+        clock: Arc::new(DesktopGameSupervisorFixtureClock::default()),
+        proof: Arc::clone(&proof),
+        factory: DesktopGameSupervisorFixtureFactory,
+        search_config: GameEngineSearchConfig::initial_default(),
+    })
+    .await?;
+    let worker = tokio::spawn(async move {
+        let result = supervisor.run().await;
+        (supervisor, result)
+    });
+    for attempt in 2..=3 {
+        let revision = port.snapshot().snapshot.revision();
+        let retried = port
+            .try_submit(DesktopGameSupervisorFixture::request(
+                revision,
+                0,
+                DesktopGameCommandsEnumAction::Resume,
+            ))?
+            .wait()
+            .await?;
+        assert_eq!(proof.calls(), attempt);
+        assert_eq!(retried.revision(), revision.next()?);
+        assert_eq!(retried.phase(), GameEnumPhase::Interrupted);
+        assert_eq!(retried.interruption(), before.interruption());
+        assert_eq!(retried.outcome(), None);
+        assert_eq!(retried.board().fen(), before.board().fen());
+        assert_eq!(retried.live(), before.live());
+        assert_eq!(retried.view(), before.view());
+        assert_eq!(retried.clock(), before.clock());
+        assert_eq!(retried.clock().status(), ClockStateEnumStatus::Paused);
+        assert!(!retried.is_save_required());
+        let error = port
+            .try_submit(DesktopGameSupervisorFixture::request(
+                revision,
+                0,
+                DesktopGameCommandsEnumAction::Resume,
+            ))?
+            .wait()
+            .await
+            .err()
+            .ok_or("stale adjudication retry was accepted")?;
+        assert!(matches!(
+            error.as_ref(),
+            DesktopGameSupervisorError::Revision(_)
+        ));
+        assert_eq!(proof.calls(), attempt);
+        assert_eq!(port.snapshot().snapshot.revision(), retried.revision());
+    }
+    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let restored = repository
+        .load(before.id())
+        .await?
+        .ok_or("missing saved adjudication retry")?;
+    assert_eq!(
+        restored.session().revision(),
+        port.snapshot().snapshot.revision()
+    );
+    assert_eq!(restored.session().live(), before.live());
+    assert_eq!(
+        restored
+            .session()
+            .clock()
+            .snapshot(ClockInstant::from_nanos(0))?,
+        before.clock().snapshot(ClockInstant::from_nanos(0))?
+    );
+    assert_eq!(
+        restored
+            .session()
+            .tree()
+            .node(restored.session().live())?
+            .position()
+            .fen(),
+        before.board().fen()
+    );
+    assert_eq!(restored.session().outcome(), None);
+    port.try_submit(DesktopGameSupervisorFixture::request(
+        port.snapshot().snapshot.revision(),
+        0,
+        DesktopGameCommandsEnumAction::Quit,
+    ))?
+    .wait()
+    .await?;
+    let (supervisor, result) = worker.await?;
+    result?;
+    assert!(supervisor.is_shutdown_complete());
+    drop((supervisor, port, repository));
+    fixture.close().await
+}
+
+#[tokio::test]
 async fn stale_queued_mutation_cannot_replay_after_an_earlier_revision_is_saved()
 -> DesktopGameSupervisorTestResult {
     let fixture = DesktopGameSupervisorFixtureStorage::new(2).await?;

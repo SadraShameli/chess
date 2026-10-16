@@ -361,6 +361,78 @@ fn stop_pause_resume_and_quit_preserve_explicit_native_transitions()
 }
 
 #[test]
+fn adjudication_retry_rechecks_flagfall_and_rejects_stale_revisions_without_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::game_transition_fixture::GameTransitionFixtureUnresolvedProof;
+    use chess::clock::state::ClockStateEnumStatus;
+    use chess::desktop::game_transition::DesktopGameTransitionError;
+    use chess::game::enums::{GameEnumOutcomeReason, GameEnumResult};
+
+    let proof = GameTransitionFixtureUnresolvedProof::new(GameAdjudicationEnumMateQuestion::Side(
+        BoardEnumColor::Black,
+    ));
+    let mut session = DesktopGameTransitionFixture::session(false)?;
+    session.poll_deadline(
+        session.revision(),
+        ClockInstant::from_millis(60_000)?,
+        &proof,
+    )?;
+    let before = DesktopGameSnapshot::capture(&session, ClockInstant::from_millis(60_000)?)?;
+    assert_eq!(
+        before.clock().status(),
+        ClockStateEnumStatus::Flagged(BoardEnumColor::White)
+    );
+    let options = |expected_revision, received_at| DesktopGameTransitionOptions {
+        request: DesktopGameCommandsRequest {
+            request_id: chess::desktop::identity::DesktopRequestId::new(),
+            expected_revision,
+            received_at,
+            action: DesktopGameCommandsEnumAction::Resume,
+        },
+        engine: GamePauseEnumEngineBarrier::NoEngine,
+        readiness: GameEnumEngineReadiness::NotRequired,
+    };
+    for (attempt, millis) in [(2, 120_000), (3, 180_000)] {
+        let revision = session.revision();
+        let now = ClockInstant::from_millis(millis)?;
+        assert_eq!(
+            DesktopGameTransition::apply(&mut session, options(revision, now), &proof)?,
+            DesktopGameTransitionEnumEffect::Autosave
+        );
+        assert_eq!(session.revision(), revision.next()?);
+        assert_eq!(session.phase(), GameEnumPhase::Interrupted);
+        assert_eq!(session.interruption(), before.interruption());
+        assert_eq!(session.outcome(), None);
+        assert_eq!(session.live(), before.live());
+        assert_eq!(
+            session.tree().node(session.live())?.position().fen(),
+            before.board().fen()
+        );
+        assert_eq!(session.clock(), before.clock());
+        assert!(matches!(
+            DesktopGameTransition::apply(&mut session, options(revision, now), &proof),
+            Err(DesktopGameTransitionError::Revision(_))
+        ));
+        assert_eq!(proof.calls(), attempt);
+        assert_eq!(session.revision(), revision.next()?);
+    }
+    DesktopGameTransitionFixture::submit(
+        &mut session,
+        DesktopGameCommandsEnumAction::Resume,
+        240_000,
+    )?;
+    assert_eq!(session.phase(), GameEnumPhase::Completed);
+    let outcome = session.outcome().ok_or("missing proven flagfall result")?;
+    assert_eq!(
+        outcome.result(),
+        GameEnumResult::Victory(BoardEnumColor::Black)
+    );
+    assert_eq!(outcome.reason(), GameEnumOutcomeReason::Flagfall);
+    assert_eq!(session.clock(), before.clock());
+    Ok(())
+}
+
+#[test]
 fn retry_save_requests_persistence_without_clearing_gate_or_resuming()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut session = DesktopGameTransitionFixture::session(false)?;

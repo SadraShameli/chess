@@ -73,6 +73,37 @@ rejection, old messages, fresh completion, repaired dependencies and retained
 failure causes. Actual repaired glTF loading through the GPU renderer is not
 verified.
 
+## Adjudication retry
+
+At `5b25fda`, the mounted application's real Retry Adjudication control emitted
+an intent that the application rejected as unsupported. Before the mapping fix,
+`cargo test --locked --test presentation mounted_retry_adjudication_dispatches_once_per_click_and_preserves_unknown_state -- --nocapture`
+failed with 0 passed and 1 failed: "Retry Adjudication did not submit a native
+request".
+
+The application now maps adjudication Retry to the existing typed Resume action.
+That action already checks the native game revision and readiness, dispatches
+through the supervisor and transition owner, and rechecks proof in the domain.
+No additional command or mutation path is needed. Engine, graphics and save
+recovery mappings and their stop barriers are unchanged.
+
+Four added regressions cover the mounted AccessKit click with forced repeated
+egui passes, a fresh explicit retry after another Unknown, domain transition
+revisions, stale-request rejection before proof, exact position and frozen clock
+preservation, side-specific flagfall rechecking, eventual proof resolution, and
+real supervisor saving/restoration through temporary SQLite storage. Unknown
+never invents a result or starts clocks. The controlled proof provider validates
+the requested mating question and counts actual attempts.
+
+`cargo test --locked --lib --test domain --test desktop --test presentation`
+passes 473 debug tests: 44 library, 201 desktop, 173 domain and 55 presentation.
+`cargo fmt --all --check` and
+`cargo clippy --locked --lib --test domain --test desktop --test presentation -- -D warnings`
+pass. The existing macOS oversized-unwind linker warning remains. This targeted
+run does not repeat the other suites from the prior 569-test checkpoint. No
+release build, GPU interaction, full real-engine composition acceptance or
+other-platform acceptance was performed. T062, T070 and T071 remain incomplete.
+
 ## Verification boundary
 
 These checks use debug builds and hermetic egui/application tests on the current

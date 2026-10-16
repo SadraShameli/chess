@@ -811,10 +811,12 @@ impl PresentationApp {
                         Some(GameSessionEnumInterruption::RecoveryRequired(
                             GamePauseEnumFault::Save,
                         )) => DesktopGameCommandsEnumAction::RetrySave,
+                        Some(GameSessionEnumInterruption::Adjudication { .. }) => {
+                            DesktopGameCommandsEnumAction::Resume
+                        }
                         Some(GameSessionEnumInterruption::RecoveryRequired(
                             GamePauseEnumFault::Graphics,
                         ))
-                        | Some(GameSessionEnumInterruption::Adjudication { .. })
                         | Some(GameSessionEnumInterruption::Recovered(_))
                         | Some(GameSessionEnumInterruption::Paused(_))
                         | None => return Err(PresentationAppError::UnsupportedRecovery),
