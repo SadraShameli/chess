@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "version": "0.9.0",
+  "source_commit": "0e92358f5acd66e5ac77b1bf558202e47c515435",
+  "network_name": "v54-5478683c.nnue",
+  "network_bytes": 63266880,
+  "network_sha256": "5478683cb1bababde29ae8f29468a99846726548fc6a0ed54cac40ab6d38efbf",
+  "packages": [
+    {
+      "target": "aarch64-apple-darwin",
+      "profile": "portable",
+      "executable": "bin/reckless-aarch64-apple-darwin",
+      "bytes": 65383664,
+      "sha256": "ab4128cd33149b14713475e049db8ddaff702ee79bfb412ecfbde91655273689",
+      "compiler": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+      "syzygy": true
+    }
+  ]
+}

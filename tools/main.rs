@@ -4,15 +4,18 @@ use std::io::Write;
 use chess::desktop::schema::DesktopSchema;
 use thiserror::Error;
 
+mod engine;
+
 #[derive(Debug, Error)]
 enum ToolsCommandError {
-    #[error("Usage: chess-tools schema | schema-fixture")]
+    #[error("Usage: chess-tools schema | schema-fixture | engine-build")]
     Usage,
 }
 
 enum ToolsEnumCommand {
     Schema,
     SchemaFixture,
+    EngineBuild,
 }
 
 impl ToolsEnumCommand {
@@ -23,6 +26,7 @@ impl ToolsEnumCommand {
             (Some(command), None) if command == OsStr::new("schema-fixture") => {
                 Ok(Self::SchemaFixture)
             }
+            (Some(command), None) if command == OsStr::new("engine-build") => Ok(Self::EngineBuild),
             _ => Err(ToolsCommandError::Usage),
         }
     }
@@ -38,6 +42,20 @@ impl ToolsEnumCommand {
                 let mut output = std::io::stdout().lock();
                 serde_json::to_writer_pretty(&mut output, &DesktopSchema::fixture()?)?;
                 writeln!(output)?;
+            }
+            Self::EngineBuild => {
+                let temporary = tempfile::tempdir()?;
+                let budget = chess::capacity::budget::CapacityBudget::discover()?;
+                let build = engine::ToolsEngineBuild::new(
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+                    temporary.path().join("Reckless"),
+                    budget,
+                )?;
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(build.run())?;
+                temporary.close()?;
             }
         }
         Ok(())
