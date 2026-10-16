@@ -36,6 +36,9 @@ use chess::package::digest::{PackageDigest, PackageDigestError};
 use crate::scene_task_pools::SceneTaskPoolFixture;
 use chess::presentation::theme::font::PresentationThemeFont;
 
+#[path = "asset_comparison.rs"]
+mod asset_comparison;
+
 #[derive(Debug, Error)]
 pub(super) enum NativeCompatibilityError {
     #[error("Native compatibility fixture I/O failed: {0}")]
@@ -237,14 +240,22 @@ impl NativeCompatibilityHarness {
     pub(super) fn run() -> Result<(), NativeCompatibilityError> {
         Self::validate_pixel_classifier()?;
         let fixture = tempfile::tempdir()?;
-        let required_nodes = Self::prepare_asset(fixture.path())?;
+        let required_nodes = Self::prepare_asset(
+            fixture.path(),
+            include_bytes!("../../resources/pieces/chess.glb"),
+            include_str!("../../resources/pieces/provenance.json"),
+        )?;
         let asset_path = fixture
             .path()
             .to_str()
             .ok_or(NativeCompatibilityError::AssetPath)?
             .to_owned();
         let (sender, receiver) = sync_channel(1);
-        let mut app = App::new();
+        let mut app = Self::host(
+            asset_path,
+            Self::TITLE,
+            (Self::WINDOW_WIDTH, Self::WINDOW_HEIGHT),
+        );
         app.insert_resource(NativeCompatibilityState {
             started: Instant::now(),
             main_thread: thread::current().id(),
@@ -266,32 +277,6 @@ impl NativeCompatibilityHarness {
             capture_dimensions: None,
         })
         .insert_resource(ClearColor(Color::BLACK))
-        .add_plugins(
-            DefaultPlugins
-                .set::<TaskPoolPlugin>(SceneTaskPoolFixture::plugin())
-                .set(AssetPlugin {
-                    file_path: asset_path,
-                    watch_for_changes_override: Some(false),
-                    ..AssetPlugin::default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: Self::TITLE.to_owned(),
-                        resolution: (Self::WINDOW_WIDTH, Self::WINDOW_HEIGHT).into(),
-                        ..Window::default()
-                    }),
-                    ..WindowPlugin::default()
-                })
-                .set(WinitPlugin {
-                    run_on_any_thread: false,
-                })
-                .set(RenderPlugin {
-                    synchronous_pipeline_compilation: true,
-                    ..RenderPlugin::default()
-                })
-                .disable::<PipelinedRenderingPlugin>(),
-        )
-        .add_plugins(Self::egui_plugin())
         .add_systems(Startup, Self::setup)
         .add_systems(Update, Self::probe)
         .add_systems(EguiPrimaryContextPass, Self::show_status)
@@ -308,13 +293,53 @@ impl NativeCompatibilityHarness {
         Ok(())
     }
 
-    fn prepare_asset(destination: &Path) -> Result<Vec<String>, NativeCompatibilityError> {
-        let bytes = include_bytes!("../../resources/pieces/chess.glb");
-        let manifest: NativeCompatibilityAssetManifest =
-            serde_json::from_str(include_str!("../../resources/pieces/provenance.json"))?;
+    pub(super) fn compare_assets(
+        candidate: &Path,
+        output_directory: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        asset_comparison::NativeAssetComparisonHarness::run(candidate, output_directory)?;
+        Ok(())
+    }
+
+    fn host(asset_path: String, title: &str, dimensions: (u32, u32)) -> App {
+        let mut app = App::new();
+        app.add_plugins(
+            DefaultPlugins
+                .set::<TaskPoolPlugin>(SceneTaskPoolFixture::plugin())
+                .set(AssetPlugin {
+                    file_path: asset_path,
+                    watch_for_changes_override: Some(false),
+                    ..AssetPlugin::default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: title.to_owned(),
+                        resolution: dimensions.into(),
+                        ..Window::default()
+                    }),
+                    ..WindowPlugin::default()
+                })
+                .set(WinitPlugin {
+                    run_on_any_thread: false,
+                })
+                .set(RenderPlugin {
+                    synchronous_pipeline_compilation: true,
+                    ..RenderPlugin::default()
+                })
+                .disable::<PipelinedRenderingPlugin>(),
+        )
+        .add_plugins(Self::egui_plugin());
+        app
+    }
+
+    fn prepare_asset(
+        destination: &Path,
+        bytes: &[u8],
+        provenance: &str,
+    ) -> Result<Vec<String>, NativeCompatibilityError> {
+        let manifest: NativeCompatibilityAssetManifest = serde_json::from_str(provenance)?;
         if bytes.len() != manifest.asset.bytes
-            || PackageDigest::read(bytes.as_slice())?
-                != manifest.asset.sha256.parse::<PackageDigest>()?
+            || PackageDigest::read(bytes)? != manifest.asset.sha256.parse::<PackageDigest>()?
         {
             return Err(NativeCompatibilityError::AssetIntegrity);
         }

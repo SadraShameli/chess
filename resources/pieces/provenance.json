@@ -4,14 +4,14 @@
   "authorship": "Original parametric artwork authored for this project. No downloaded models, textures or paid assets.",
   "rights": "Project owner retains rights. Private personal use; no separate application or artwork license is granted.",
   "generator": {
-    "path": "ui/tools/generate-pieces.ts",
-    "sha256": "78910901be4d567f0dbd891a7188ddb112ccb4b59634d570d9170113ed4e5f81",
-    "command": "cd ui && bun run pieces:generate"
+    "path": "tools/assets/pieces.rs",
+    "sha256": "40e919e54df49e437ddbedaec52cbf7d2e2243fffad60b892973fe90b9682722",
+    "command": "cargo run --locked --features asset-tools --bin chess-tools -- assets-generate resources/pieces"
   },
   "asset": {
     "path": "resources/pieces/chess.glb",
-    "sha256": "ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e",
-    "bytes": 1376224,
+    "sha256": "f841223d2270426b26c8da913a175be6a4ee6f674e45fa63737973041efb969d",
+    "bytes": 1499440,
     "format": "glTF 2.0 binary"
   },
   "coordinates": {
@@ -52,18 +52,18 @@
         "white_pawn",
         "black_pawn"
       ],
-      "vertices": 2021,
+      "vertices": 2083,
       "triangles": 4160,
       "bounds": {
         "min": [
-          -0.2549999952316284,
-          0,
-          -0.2549999952316284
+          -0.255,
+          0.0,
+          -0.255
         ],
         "max": [
-          0.2549999952316284,
-          0.6729999780654907,
-          0.2549999952316284
+          0.255,
+          0.67300004,
+          0.255
         ]
       }
     },
@@ -74,18 +74,18 @@
         "white_knight",
         "black_knight"
       ],
-      "vertices": 6466,
+      "vertices": 7686,
       "triangles": 8672,
       "bounds": {
         "min": [
-          -0.28999999165534973,
-          0,
-          -0.3041669726371765
+          -0.29,
+          0.0,
+          -0.30416697
         ],
         "max": [
-          0.28999999165534973,
-          0.990648090839386,
-          0.28999999165534973
+          0.29,
+          0.9906481,
+          0.29
         ]
       }
     },
@@ -96,18 +96,18 @@
         "white_bishop",
         "black_bishop"
       ],
-      "vertices": 2369,
-      "triangles": 4249,
+      "vertices": 2337,
+      "triangles": 4202,
       "bounds": {
         "min": [
-          -0.2849999964237213,
-          0,
-          -0.2849999964237213
+          -0.285,
+          0.0,
+          -0.285
         ],
         "max": [
-          0.2849999964237213,
-          0.9900000095367432,
-          0.2849999964237213
+          0.285,
+          0.99,
+          0.285
         ]
       }
     },
@@ -118,18 +118,18 @@
         "white_rook",
         "black_rook"
       ],
-      "vertices": 10752,
+      "vertices": 14021,
       "triangles": 7848,
       "bounds": {
         "min": [
-          -0.30000001192092896,
-          0,
-          -0.30000001192092896
+          -0.3,
+          0.0,
+          -0.3
         ],
         "max": [
-          0.30000001192092896,
-          0.8034999966621399,
-          0.30000001192092896
+          0.3,
+          0.8035,
+          0.3
         ]
       }
     },
@@ -140,18 +140,18 @@
         "white_queen",
         "black_queen"
       ],
-      "vertices": 9718,
+      "vertices": 10207,
       "triangles": 18624,
       "bounds": {
         "min": [
-          -0.3179999887943268,
-          0,
-          -0.3179999887943268
+          -0.318,
+          0.0,
+          -0.318
         ],
         "max": [
-          0.3179999887943268,
-          1.0529999732971191,
-          0.3179999887943268
+          0.318,
+          1.053,
+          0.318
         ]
       }
     },
@@ -162,47 +162,47 @@
         "white_king",
         "black_king"
       ],
-      "vertices": 2091,
+      "vertices": 2208,
       "triangles": 3772,
       "bounds": {
         "min": [
-          -0.33000001311302185,
-          0,
-          -0.33000001311302185
+          -0.33,
+          0.0,
+          -0.33
         ],
         "max": [
-          0.33000001311302185,
-          1.1990000009536743,
-          0.33000001311302185
+          0.33,
+          1.199,
+          0.33
         ]
       }
     }
   ],
   "dependencies": [
     {
-      "name": "three",
-      "version": "0.186.1",
-      "license": "MIT",
-      "role": "Parametric geometry and linear color conversion"
+      "name": "bevy",
+      "version": "0.20.0",
+      "license": "MIT OR Apache-2.0",
+      "role": "Parametric vector geometry and linear color conversion"
     },
     {
-      "name": "three-bvh-csg",
-      "version": "0.0.18",
-      "license": "MIT",
-      "role": "Bishop mitre slit subtraction"
+      "name": "earcutr",
+      "version": "0.5.0",
+      "license": "ISC",
+      "role": "Beveled silhouette cap triangulation"
     },
     {
-      "name": "three-mesh-bvh",
-      "version": "0.9.7",
-      "license": "MIT",
-      "role": "Pinned compatible CSG spatial index"
+      "name": "boolmesh",
+      "version": "0.2.1",
+      "license": "MPL-2.0",
+      "role": "Bishop mitre slit subtraction in offline asset tooling"
     },
     {
-      "name": "@gltf-transform/core",
-      "version": "4.5.1",
-      "license": "MIT",
-      "role": "Standard GLB serialization"
+      "name": "gltf-json",
+      "version": "1.4.1",
+      "license": "MIT OR Apache-2.0",
+      "role": "Typed validated glTF serialization"
     }
   ],
-  "visualAcceptance": "Six silhouettes and materials are generated and browser-tested. Premium readability across supported views and native WebViews remains a visual acceptance gate."
+  "visualAcceptance": "Native procedural generation retains the original construction. Replacement validation and platform limits are recorded in specs/001-reckless-desktop-chess/evidence/native-assets.md."
 }

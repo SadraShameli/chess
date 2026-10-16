@@ -1,18 +1,22 @@
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::{Duration, Instant};
 
 use bevy::app::{First, Last, OnAppExitSystems, Startup, Update};
-use bevy::asset::{AssetId, AssetPlugin, AssetServer, Assets, Handle, LoadState};
+use bevy::asset::{
+    AssetId, AssetLoadError, AssetPlugin, AssetServer, Assets, Handle, LoadState,
+    RecursiveDependencyLoadState,
+};
 use bevy::ecs::message::Messages;
 use bevy::ecs::system::SystemState;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::pbr::{MeshMaterial3d, PreparedMaterial};
 use bevy::picking::mesh_picking::ray_cast::MeshRayCast;
 use bevy::prelude::{
-    App, AppExit, Camera2d, DefaultPlugins, Entity, IntoScheduleConfigs, Mesh, Mesh3d, PluginGroup,
-    Res, Resource, StandardMaterial, With, World,
+    App, AppExit, ButtonInput, Camera2d, DefaultPlugins, Entity, IntoScheduleConfigs, KeyCode,
+    Mesh, Mesh3d, Or, Plugin, PluginGroup, Res, Resource, StandardMaterial, With, World,
 };
 use bevy::render::erased_render_asset::ErasedRenderAssets;
 use bevy::render::error_handler::{RenderError, RenderErrorHandler, RenderErrorPolicy};
@@ -27,7 +31,9 @@ use bevy::render::renderer::{
 };
 use bevy::render::settings::{RenderCreation, RenderResources};
 use bevy::render::texture::GpuImage;
+use bevy::render::view::window::{ExtractedWindow, SurfaceData};
 use bevy::render::{Render, RenderApp, RenderPlugin, RenderStartup, RenderSystems};
+use bevy::shader::ShaderCacheError;
 use bevy::window::{
     ExitCondition, PrimaryWindow, RawHandleWrapper, Window, WindowCloseRequested, WindowPlugin,
     WindowResizeConstraints,
@@ -62,13 +68,19 @@ use crate::desktop::native::dialogs::{
     DesktopNativeDialogsRfd,
 };
 use crate::desktop::native::event_loop::{DesktopNativeEventLoopError, DesktopNativeEventLoopWake};
+#[cfg(target_os = "macos")]
+use crate::desktop::native::menu::{
+    DesktopNativeMenu, DesktopNativeMenuEnumAction, DesktopNativeMenuError,
+    DesktopNativeMenuRequests,
+};
 use crate::desktop::native::recovery::{
     DesktopNativeRecovery, DesktopNativeRecoveryEnumAction, DesktopNativeRecoveryEnumStage,
     DesktopNativeRecoveryError, DesktopNativeRecoveryFailure, DesktopNativeRecoveryProvider,
 };
 use crate::desktop::native::resources::DesktopNativeResources;
 use crate::desktop::native::task_pools::{DesktopNativeTaskPools, DesktopNativeTaskPoolsError};
-use crate::presentation::app::{PresentationApp, PresentationAppEnumAction, PresentationAppError};
+use crate::presentation::action::registry::PresentationActionEnumId;
+use crate::presentation::app::{PresentationApp, PresentationAppError};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::theme::font::PresentationThemeFont;
@@ -125,7 +137,15 @@ pub enum DesktopNativeHostError {
     #[error("The native host requires initialized rendering resources")]
     MissingRenderer,
     #[error("The piece asset failed to load: {0}")]
-    AssetLoad(String),
+    AssetLoad(#[source] Arc<AssetLoadError>),
+    #[error("Native graphics pipeline compilation failed: {0}")]
+    Pipeline(#[source] Arc<ShaderCacheError>),
+    #[error("Native graphics did not become ready within {budget:?}")]
+    ReadinessTimeout {
+        budget: Duration,
+        #[source]
+        source: Option<tokio::time::error::Elapsed>,
+    },
     #[error("Native graphics failed ({kind:?}): {description}")]
     Graphics {
         kind: bevy::render::error_handler::ErrorType,
@@ -166,6 +186,9 @@ pub enum DesktopNativeHostError {
     System(#[from] bevy::ecs::system::SystemParamValidationError),
     #[error(transparent)]
     Dialogs(#[from] DesktopNativeDialogsError),
+    #[cfg(target_os = "macos")]
+    #[error(transparent)]
+    Menu(#[from] DesktopNativeMenuError),
 }
 
 #[derive(Resource)]
@@ -189,6 +212,7 @@ struct DesktopNativeHostState {
     dialog_ready: bool,
     dialog_admission_closed: bool,
     exit_authorized: bool,
+    readiness: Option<DesktopNativeHostReadiness>,
 }
 
 #[derive(Resource, Clone)]
@@ -198,6 +222,61 @@ struct DesktopNativeHostRenderProbe {
     meshes: Vec<AssetId<Mesh>>,
     materials: Vec<AssetId<StandardMaterial>>,
     ready: Arc<AtomicBool>,
+    failure: Arc<OnceLock<Arc<ShaderCacheError>>>,
+}
+
+impl DesktopNativeHostRenderProbe {
+    fn permanent_pipeline_failure(error: &ShaderCacheError) -> Option<ShaderCacheError> {
+        match error {
+            ShaderCacheError::ProcessShaderError(message) => {
+                Some(ShaderCacheError::ProcessShaderError(message.clone()))
+            }
+            ShaderCacheError::CreateShaderModule(message) => {
+                Some(ShaderCacheError::CreateShaderModule(message.clone()))
+            }
+            ShaderCacheError::ShaderNotLoaded(_)
+            | ShaderCacheError::ShaderImportNotYetAvailable => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DesktopNativeHostReadiness {
+    started: Instant,
+}
+
+impl DesktopNativeHostReadiness {
+    const BUDGET: Duration = Duration::from_secs(10);
+
+    const fn new_at(started: Instant) -> Self {
+        Self { started }
+    }
+
+    fn timed_out(source: Option<tokio::time::error::Elapsed>) -> DesktopNativeHostError {
+        DesktopNativeHostError::ReadinessTimeout {
+            budget: Self::BUDGET,
+            source,
+        }
+    }
+
+    fn remaining_at(self, now: Instant) -> Result<Duration, DesktopNativeHostError> {
+        Self::BUDGET
+            .checked_sub(now.duration_since(self.started))
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| Self::timed_out(None))
+    }
+
+    fn wait<T>(
+        self,
+        runtime: &RuntimeHandle,
+        operation: impl Future<Output = T>,
+    ) -> Result<T, DesktopNativeHostError> {
+        runtime.block_on(async {
+            tokio::time::timeout(self.remaining_at(Instant::now())?, operation)
+                .await
+                .map_err(|source| Self::timed_out(Some(source)))
+        })
+    }
 }
 
 type DesktopNativeHostDialogs =
@@ -207,6 +286,7 @@ pub struct DesktopNativeHost;
 
 impl DesktopNativeHost {
     const TITLE: &str = "Chess";
+    const RECOVERY_TITLE: &str = "Chess: graphics paused. Close window for recovery options";
     const WIDTH: u16 = 1280;
     const HEIGHT: u16 = 800;
     const INITIAL_BOARD_SIZE: f32 = 640.0;
@@ -219,8 +299,16 @@ impl DesktopNativeHost {
     }
 
     pub fn run(services: DesktopNativeHostServices) -> Result<(), DesktopNativeHostError> {
+        Self::run_with_plugin(services, |_app: &mut App| {})
+    }
+
+    pub fn run_with_plugin(
+        services: DesktopNativeHostServices,
+        plugin: impl Plugin,
+    ) -> Result<(), DesktopNativeHostError> {
         let generation = Self::preparing_generation(&services)?;
-        let Some(render_resources) = Self::startup_graphics(&services, generation)? else {
+        let Some((render_resources, readiness)) = Self::startup_graphics(&services, generation)?
+        else {
             return Ok(());
         };
         let asset_path = services
@@ -306,6 +394,7 @@ impl DesktopNativeHost {
             dialog_ready: false,
             dialog_admission_closed: false,
             exit_authorized: false,
+            readiness: Some(readiness),
         });
         let render_app = app
             .get_sub_app_mut(RenderApp)
@@ -318,7 +407,7 @@ impl DesktopNativeHost {
                 Render,
                 Self::observe_render.in_set(RenderSystems::PostCleanup),
             )
-            .add_systems(RenderStartup, Self::reset_egui)
+            .add_systems(RenderStartup, Self::reset_graphics)
             .set_extract(move |main, render| {
                 Self::validate_surface(main, render);
                 if let Some(renderer) = main.get_resource::<SceneRenderer>() {
@@ -346,6 +435,7 @@ impl DesktopNativeHost {
                             meshes,
                             materials,
                             ready: Arc::new(AtomicBool::new(false)),
+                            failure: Arc::new(OnceLock::new()),
                         };
                         main.insert_resource(probe.clone());
                         render.insert_resource(probe);
@@ -353,6 +443,7 @@ impl DesktopNativeHost {
                 }
                 extract(main, render);
             });
+        app.add_plugins(plugin);
         let exit = app.run();
         if exit.is_success() {
             Ok(())
@@ -411,10 +502,11 @@ impl DesktopNativeHost {
     fn startup_graphics(
         services: &DesktopNativeHostServices,
         generation: CapacityPhaseGeneration,
-    ) -> Result<Option<RenderResources>, DesktopNativeHostError> {
+    ) -> Result<Option<(RenderResources, DesktopNativeHostReadiness)>, DesktopNativeHostError> {
         loop {
-            match Self::graphics(&services.runtime, None) {
-                Ok(resources) => return Ok(Some(resources)),
+            let readiness = DesktopNativeHostReadiness::new_at(Instant::now());
+            match Self::graphics(&services.runtime, None, readiness) {
+                Ok(resources) => return Ok(Some((resources, readiness))),
                 Err(source) => {
                     let mut recovery =
                         DesktopNativeRecovery::new(Self::failure(&source), generation);
@@ -469,6 +561,7 @@ impl DesktopNativeHost {
     fn graphics(
         runtime: &RuntimeHandle,
         window: Option<Entity>,
+        readiness: DesktopNativeHostReadiness,
     ) -> Result<RenderResources, DesktopNativeHostError> {
         let backends = wgpu::Backends::PRIMARY & wgpu::Instance::enabled_backend_features();
         if backends.is_empty() {
@@ -479,7 +572,7 @@ impl DesktopNativeHost {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
         let adapter = if let Some(window) = window {
-            let adapters = runtime.block_on(instance.enumerate_adapters(backends));
+            let adapters = readiness.wait(runtime, instance.enumerate_adapters(backends))?;
             WINIT_WINDOWS.with_borrow(|windows| {
                 let window = windows
                     .get_window(window)
@@ -496,13 +589,16 @@ impl DesktopNativeHost {
                     .ok_or(DesktopNativeHostError::IncompatibleSurface)
             })?
         } else {
-            runtime
-                .block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    force_fallback_adapter: false,
-                    compatible_surface: None,
-                    ..wgpu::RequestAdapterOptions::default()
-                }))
+            readiness
+                .wait(
+                    runtime,
+                    instance.request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        force_fallback_adapter: false,
+                        compatible_surface: None,
+                        ..wgpu::RequestAdapterOptions::default()
+                    }),
+                )?
                 .map_err(DesktopNativeHostError::Adapter)?
         };
         let info = adapter.get_info();
@@ -516,8 +612,8 @@ impl DesktopNativeHost {
             required_limits: adapter.limits(),
             ..wgpu::DeviceDescriptor::default()
         };
-        let (device, queue) = runtime
-            .block_on(adapter.request_device(&descriptor))
+        let (device, queue) = readiness
+            .wait(runtime, adapter.request_device(&descriptor))?
             .map_err(DesktopNativeHostError::Device)?;
         Ok(RenderResources(
             RenderDevice::new(device),
@@ -534,7 +630,7 @@ impl DesktopNativeHost {
             |_world, mut state: bevy::prelude::Mut<'_, DesktopNativeHostState>| {
                 let state = &mut *state;
                 state.presentation.activate(
-                    PresentationAppEnumAction::Refresh,
+                    PresentationActionEnumId::Refresh,
                     0,
                     &state.services.port,
                 )
@@ -567,18 +663,42 @@ impl DesktopNativeHost {
     ) -> Result<(), DesktopNativeHostError> {
         state.presentation.poll();
         Self::activate_window(world, state);
-        Self::poll_dialogs(world, state)?;
-        if state.failure.is_some() && state.recovery.is_none() {
-            Self::begin_interruption(world, state)?;
-        }
-        if let Some(mut messages) = world.get_resource_mut::<Messages<WindowCloseRequested>>()
-            && messages.drain().next().is_some()
-        {
-            if state.recovery.take().is_some() {
+        #[cfg(target_os = "macos")]
+        let menu_requests = Self::poll_menu(world, state)?;
+        let close_requested = world
+            .get_resource_mut::<Messages<WindowCloseRequested>>()
+            .is_some_and(|mut messages| messages.drain().next().is_some());
+        let quit_shortcut = world
+            .get_resource::<ButtonInput<KeyCode>>()
+            .is_some_and(Self::is_quit_shortcut);
+        let close_requested = close_requested || quit_shortcut;
+        #[cfg(target_os = "macos")]
+        let close_requested = close_requested
+            || menu_requests.is_requested(DesktopNativeMenuEnumAction::Quit)
+            || menu_requests.is_requested(DesktopNativeMenuEnumAction::Recovery)
+                && state.failure.is_some();
+        if close_requested {
+            if state.failure.is_some() {
+                state.recovery = None;
+                state.readiness = None;
+                state.replacement = None;
+                state.expected_device = None;
                 Self::begin_interruption(world, state)?;
             } else {
                 state.presentation.request_quit();
             }
+        }
+        Self::poll_dialogs(world, state)?;
+        if let Some(readiness) = state.readiness {
+            readiness.remaining_at(Instant::now())?;
+            if let Some(probe) = world.get_resource::<DesktopNativeHostRenderProbe>()
+                && let Some(error) = probe.failure.get()
+            {
+                return Err(DesktopNativeHostError::Pipeline(Arc::clone(error)));
+            }
+        }
+        if state.failure.is_some() && state.recovery.is_none() && state.readiness.is_none() {
+            Self::begin_interruption(world, state)?;
         }
         if let Some((request, receipt)) = &mut state.quit {
             if receipt.is_none() {
@@ -620,6 +740,61 @@ impl DesktopNativeHost {
             outcome?;
         }
         Ok(())
+    }
+
+    const fn quit_modifiers() -> [KeyCode; 2] {
+        if cfg!(target_os = "macos") {
+            [KeyCode::SuperLeft, KeyCode::SuperRight]
+        } else {
+            [KeyCode::ControlLeft, KeyCode::ControlRight]
+        }
+    }
+
+    fn is_quit_shortcut(keys: &ButtonInput<KeyCode>) -> bool {
+        keys.just_pressed(KeyCode::KeyQ)
+            && Self::quit_modifiers()
+                .into_iter()
+                .any(|modifier| keys.pressed(modifier))
+    }
+
+    fn set_window_title(world: &mut World, title: &str) {
+        let mut windows = world.query_filtered::<&mut Window, With<PrimaryWindow>>();
+        if let Ok(mut window) = windows.single_mut(world)
+            && window.title != title
+        {
+            window.title = title.to_owned();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn poll_menu(
+        world: &mut World,
+        state: &DesktopNativeHostState,
+    ) -> Result<DesktopNativeMenuRequests, DesktopNativeHostError> {
+        if world.get_non_send::<DesktopNativeMenu>().is_none() {
+            let mut query = world.query_filtered::<Entity, With<PrimaryWindow>>();
+            let Ok(entity) = query.single(world) else {
+                return Ok(DesktopNativeMenuRequests::default());
+            };
+            if !WINIT_WINDOWS.with_borrow(|windows| windows.get_window(entity).is_some()) {
+                return Ok(DesktopNativeMenuRequests::default());
+            }
+            let mut menu = DesktopNativeMenu::install(Arc::clone(&state.services.wake))?;
+            menu.set_recovery_enabled(state.failure.is_some());
+            world.insert_non_send(menu);
+        }
+        world
+            .get_non_send_mut::<DesktopNativeMenu>()
+            .ok_or(DesktopNativeHostError::MissingState)?
+            .poll()
+            .map_err(DesktopNativeHostError::Menu)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_native_recovery_enabled(world: &mut World, enabled: bool) {
+        if let Some(mut menu) = world.get_non_send_mut::<DesktopNativeMenu>() {
+            menu.set_recovery_enabled(enabled);
+        }
     }
 
     fn poll_dialogs(
@@ -713,10 +888,13 @@ impl DesktopNativeHost {
         state: &DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
         let server = world.resource::<AssetServer>();
-        if let Some(LoadState::Failed(error)) = server.get_load_state(state.asset.id()) {
-            return Err(DesktopNativeHostError::AssetLoad(error.to_string()));
+        let Some((root, _direct, recursive)) = server.get_load_states(state.asset.id()) else {
+            return Ok(());
+        };
+        if let Some(error) = Self::asset_failure(&root, &recursive) {
+            return Err(DesktopNativeHostError::AssetLoad(error));
         }
-        if !server.is_loaded_with_dependencies(state.asset.id()) {
+        if !root.is_loaded() || !recursive.is_loaded() {
             return Ok(());
         }
         let mut assets = SystemState::<(
@@ -753,6 +931,21 @@ impl DesktopNativeHost {
         Ok(())
     }
 
+    fn asset_failure(
+        root: &LoadState,
+        recursive: &RecursiveDependencyLoadState,
+    ) -> Option<Arc<AssetLoadError>> {
+        match root {
+            LoadState::Failed(error) => Some(Arc::clone(error)),
+            LoadState::NotLoaded | LoadState::Loading | LoadState::Loaded => match recursive {
+                RecursiveDependencyLoadState::Failed(error) => Some(Arc::clone(error)),
+                RecursiveDependencyLoadState::NotLoaded
+                | RecursiveDependencyLoadState::Loading
+                | RecursiveDependencyLoadState::Loaded => None,
+            },
+        }
+    }
+
     fn update_scene(
         world: &mut World,
         state: &mut DesktopNativeHostState,
@@ -787,6 +980,11 @@ impl DesktopNativeHost {
             renderer.mark_ready(renderer.generation())?;
             renderer.finish_frame(world)?;
             state.ready = true;
+            state.readiness = None;
+            state.failure = None;
+            Self::set_window_title(world, Self::TITLE);
+            #[cfg(target_os = "macos")]
+            Self::set_native_recovery_enabled(world, false);
             state
                 .services
                 .events
@@ -884,6 +1082,7 @@ impl DesktopNativeHost {
             };
             state.generation = generation;
             state.ready = false;
+            state.readiness = Some(DesktopNativeHostReadiness::new_at(Instant::now()));
             state
                 .services
                 .events
@@ -995,6 +1194,17 @@ impl DesktopNativeHost {
         let Some(probe) = probe else {
             return;
         };
+        if probe.failure.get().is_some() {
+            return;
+        }
+        for pipeline in pipelines.pipelines() {
+            if let CachedPipelineState::Err(error) = &pipeline.state
+                && let Some(error) = DesktopNativeHostRenderProbe::permanent_pipeline_failure(error)
+            {
+                probe.failure.get_or_init(|| Arc::new(error));
+                return;
+            }
+        }
         if images.get(probe.target.id()).is_none()
             || probe.meshes.is_empty()
             || probe.materials.is_empty()
@@ -1016,7 +1226,17 @@ impl DesktopNativeHost {
         }
     }
 
-    fn reset_egui(world: &mut World) {
+    fn reset_graphics(world: &mut World) {
+        let windows = world
+            .query_filtered::<Entity, Or<(With<ExtractedWindow>, With<SurfaceData>)>>()
+            .iter(world)
+            .collect::<Vec<_>>();
+        for window in windows {
+            let mut entity = world.entity_mut(window);
+            entity.remove::<ExtractedWindow>();
+            entity.remove::<SurfaceData>();
+            entity.remove::<RawHandleWrapper>();
+        }
         world.remove_resource::<EguiPipeline>();
         world.remove_resource::<SpecializedRenderPipelines<EguiPipeline>>();
         world.remove_resource::<EguiTransforms>();
@@ -1064,7 +1284,13 @@ impl DesktopNativeHost {
             | DesktopNativeHostError::Position(_)
             | DesktopNativeHostError::Presentation(_)
             | DesktopNativeHostError::System(_) => DesktopNativeRecoveryEnumStage::Renderer,
+            DesktopNativeHostError::Pipeline(_)
+            | DesktopNativeHostError::ReadinessTimeout { .. } => {
+                DesktopNativeRecoveryEnumStage::Renderer
+            }
             DesktopNativeHostError::Dialogs(_) => DesktopNativeRecoveryEnumStage::Renderer,
+            #[cfg(target_os = "macos")]
+            DesktopNativeHostError::Menu(_) => DesktopNativeRecoveryEnumStage::Renderer,
             DesktopNativeHostError::Graphics { .. } => DesktopNativeRecoveryEnumStage::Renderer,
         };
         DesktopNativeRecoveryFailure::new(stage, error.to_string())
@@ -1074,6 +1300,11 @@ impl DesktopNativeHost {
         let Some(mut state) = world.remove_resource::<DesktopNativeHostState>() else {
             return;
         };
+        if state.readiness.take().is_some() {
+            state.recovery = None;
+            state.replacement = None;
+            state.failure = None;
+        }
         if state.failure.is_none() {
             eprintln!("Native host failure: {error}");
             state.failure = Some(error);
@@ -1096,6 +1327,9 @@ impl DesktopNativeHost {
         let Some(error) = state.failure.as_ref() else {
             return Ok(());
         };
+        Self::set_window_title(world, Self::RECOVERY_TITLE);
+        #[cfg(target_os = "macos")]
+        Self::set_native_recovery_enabled(world, true);
         let generation = {
             let Some(mut phase) =
                 Self::capacity_phase(&state.services.capacity, &state.services.port)?
@@ -1179,23 +1413,26 @@ impl DesktopNativeHost {
             }
             DesktopNativeRecoveryEnumAction::Retry => {
                 if state.replacement.is_none() {
+                    let readiness = DesktopNativeHostReadiness::new_at(Instant::now());
                     let mut query = world.query_filtered::<Entity, With<PrimaryWindow>>();
                     let window = query
                         .single(world)
                         .map_err(|_error| DesktopNativeHostError::PrimaryWindow)?;
-                    let replacement = match Self::graphics(&state.services.runtime, Some(window)) {
-                        Ok(replacement) => replacement,
-                        Err(error) => {
-                            state.recovery = Some(DesktopNativeRecovery::new(
-                                Self::failure(&error),
-                                state.generation,
-                            ));
-                            state.failure = Some(error);
-                            state.services.port.rearm_wake()?;
-                            return Ok(());
-                        }
-                    };
+                    let replacement =
+                        match Self::graphics(&state.services.runtime, Some(window), readiness) {
+                            Ok(replacement) => replacement,
+                            Err(error) => {
+                                state.recovery = Some(DesktopNativeRecovery::new(
+                                    Self::failure(&error),
+                                    state.generation,
+                                ));
+                                state.failure = Some(error);
+                                state.services.port.rearm_wake()?;
+                                return Ok(());
+                            }
+                        };
                     state.replacement = Some(replacement);
+                    state.readiness = Some(readiness);
                     if let Some(mut renderer) = world.remove_resource::<SceneRenderer>() {
                         renderer.begin_retry()?;
                         renderer.request_frame(world)?;
@@ -1224,7 +1461,6 @@ impl DesktopNativeHost {
         };
         if let Some(resources) = state.replacement.take() {
             state.recovery = None;
-            state.failure = None;
             state.validated_surface = None;
             state.expected_device = Some(resources.0.clone());
             let mut query = main.query_filtered::<Entity, With<PrimaryWindow>>();
@@ -1254,6 +1490,11 @@ impl DesktopNativeHost {
 mod tests {
     use std::num::NonZeroUsize;
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use bevy::asset::{AssetLoadError, Handle, LoadState, RecursiveDependencyLoadState};
+    use bevy::prelude::{ButtonInput, KeyCode};
+    use bevy::shader::{Shader, ShaderCacheError};
 
     use crate::capacity::budget::CapacityBudget;
     use crate::capacity::phase::CapacityPhase;
@@ -1261,7 +1502,10 @@ mod tests {
     use crate::desktop::application::{DesktopApplication, DesktopApplicationPort};
     use crate::desktop::native::dialogs::DesktopNativeDialogsError;
     use crate::desktop::native::event_loop::DesktopNativeEventLoopWake;
-    use crate::desktop::native::host::{DesktopNativeHost, DesktopNativeHostError};
+    use crate::desktop::native::host::{
+        DesktopNativeHost, DesktopNativeHostError, DesktopNativeHostReadiness,
+        DesktopNativeHostRenderProbe,
+    };
 
     struct DesktopNativeHostFixture {
         wake: Arc<DesktopNativeEventLoopWake>,
@@ -1335,5 +1579,90 @@ mod tests {
         );
         assert!(!fixture.wake.is_pending());
         Ok(())
+    }
+
+    #[test]
+    fn native_host_readiness_expires_at_the_shared_attempt_boundary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let start = Instant::now();
+        let readiness = DesktopNativeHostReadiness::new_at(start);
+        let before = start
+            .checked_add(DesktopNativeHostReadiness::BUDGET - Duration::from_nanos(1))
+            .ok_or("invalid readiness instant")?;
+        let boundary = start
+            .checked_add(DesktopNativeHostReadiness::BUDGET)
+            .ok_or("invalid readiness instant")?;
+        assert_eq!(
+            readiness.remaining_at(start)?,
+            DesktopNativeHostReadiness::BUDGET
+        );
+        assert_eq!(readiness.remaining_at(before)?, Duration::from_nanos(1));
+        assert!(matches!(
+            readiness.remaining_at(boundary),
+            Err(DesktopNativeHostError::ReadinessTimeout { source: None, .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_pipeline_failures_keep_temporary_loads_retryable() {
+        assert!(
+            DesktopNativeHostRenderProbe::permanent_pipeline_failure(
+                &ShaderCacheError::ShaderImportNotYetAvailable
+            )
+            .is_none()
+        );
+        assert!(
+            DesktopNativeHostRenderProbe::permanent_pipeline_failure(
+                &ShaderCacheError::ShaderNotLoaded(Handle::<Shader>::default().id())
+            )
+            .is_none()
+        );
+        for error in [
+            ShaderCacheError::ProcessShaderError("invalid shader expression".to_owned()),
+            ShaderCacheError::CreateShaderModule("unsupported shader instruction".to_owned()),
+        ] {
+            let fatal = DesktopNativeHostRenderProbe::permanent_pipeline_failure(&error);
+            assert_eq!(
+                fatal.as_ref().map(ToString::to_string),
+                Some(error.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn native_host_recursive_asset_failure_preserves_the_dependency_cause()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = Arc::new(AssetLoadError::EmptyPath("".into()));
+        let failure = DesktopNativeHost::asset_failure(
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Failed(Arc::clone(&source)),
+        )
+        .ok_or("missing recursive dependency failure")?;
+        assert!(Arc::ptr_eq(&source, &failure));
+        assert!(
+            DesktopNativeHost::asset_failure(
+                &LoadState::Loaded,
+                &RecursiveDependencyLoadState::Loaded,
+            )
+            .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_quit_shortcut_requires_a_modifier_and_fresh_keypress() {
+        let mut unmodified = ButtonInput::default();
+        unmodified.press(KeyCode::KeyQ);
+        assert!(!DesktopNativeHost::is_quit_shortcut(&unmodified));
+        for modifier in DesktopNativeHost::quit_modifiers() {
+            let mut keys = ButtonInput::default();
+            keys.press(modifier);
+            assert!(!DesktopNativeHost::is_quit_shortcut(&keys));
+            keys.press(KeyCode::KeyQ);
+            assert!(DesktopNativeHost::is_quit_shortcut(&keys));
+            keys.clear();
+            assert!(!DesktopNativeHost::is_quit_shortcut(&keys));
+        }
     }
 }

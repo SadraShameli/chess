@@ -8,3 +8,6 @@ mod storage_schema;
 mod storage_atomic_file;
 #[path = "storage/retained_shutdown.rs"]
 mod storage_retained_shutdown;
+
+#[path = "storage/dataset_package.rs"]
+mod storage_dataset_package;

@@ -29,7 +29,7 @@ struct AssetsPiecesFixture<'a> {
 }
 
 impl<'a> AssetsPiecesFixture<'a> {
-    const ORIGINAL: &'static [u8] = include_bytes!("../../resources/pieces/chess.glb");
+    const ORIGINAL: &'static [u8] = include_bytes!("../fixtures/assets/three-original.glb");
     const BOUNDS_TOLERANCE: f32 = 0.000_01;
     const NORMAL_TOLERANCE: f32 = 0.000_01;
     const FLOAT_BYTES: usize = 4;

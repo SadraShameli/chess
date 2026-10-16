@@ -36,7 +36,7 @@ profile-build:
 	cargo build --locked --profile profiling --test native --all-features
 
 run:
-	bun run --cwd ui tauri dev$(if $(strip $(ARGS)), -- -- $(ARGS))
+	cargo run --locked$(if $(strip $(ARGS)), -- $(ARGS))
 
 native-test-build:
 	cargo test --locked --profile $(NATIVE_PROFILE) --test native --all-features --no-run

@@ -439,7 +439,7 @@ impl ToolsAssetsPieces {
                     role: "Typed validated glTF serialization",
                 },
             ],
-            visual_acceptance: "Rust procedural regeneration preserves the authored construction. Numerical, topology and native visual comparison against the original asset remain acceptance gates before replacement.",
+            visual_acceptance: "Native procedural generation retains the original construction. Replacement validation and platform limits are recorded in specs/001-reckless-desktop-chess/evidence/native-assets.md.",
         };
         let mut provenance = serde_json::to_vec_pretty(&provenance)?;
         provenance.push(b'\n');

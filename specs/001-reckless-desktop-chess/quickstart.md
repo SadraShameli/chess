@@ -1,14 +1,15 @@
 # Validation Guide: Reckless Desktop Chess
 
 **Status**: Bevy + egui architecture selected under owner delegation. Native
-migration tasks are reconciled in [tasks.md](tasks.md); execution remains pending.
+migration tasks are reconciled in [tasks.md](tasks.md); execution is in progress.
 This guide distinguishes
 existing implementation from future native acceptance.
 
 ## Current checkout
 
-The repository has partial Rust/Tauri/Vue implementation, including verified
-engine packaging/startup and original 3D assets. It is no longer Hello World.
+The repository has partial native Rust/Bevy/egui implementation, including
+verified engine packaging/startup and original 3D assets. Legacy Tauri/Vue files
+remain until the native replacement passes its migration gates.
 Tasks T001 through T028 retain their recorded completion. Former T029 staged
 changes and former T030 unstaged preparation remain preserved and unaccepted;
 [the reconciliation table](tasks.md#pending-task-reconciliation) maps their new owners. Existing
@@ -16,8 +17,11 @@ changes and former T030 unstaged preparation remain preserved and unaccepted;
 prove native-egui operation or the full product.
 
 Read [the actual Makefile](../../Makefile) before using commands. At this point
-`make run` still launches the former shell; it does not launch a native-egui
-migration. Do not claim otherwise or change this source/config during planning.
+`make run` now launches the native Bevy/egui executable in debug mode. Its
+current shell is an integration milestone, not a complete playable product.
+`make run ARGS="--help"` lists supported arguments; use
+`make run ARGS="--profile-directory /tmp/chess-development"` for an isolated
+profile. Invalid arguments and help return before opening application services.
 
 ## Prerequisites after migration
 
@@ -55,7 +59,7 @@ The planned `native` target at `tests/native.rs` has `harness = false` and
 `test = false`. Default Cargo tests run the hermetic suites and library
 doctests. Native lint/build checks select this target explicitly in a separate
 invocation, because `--all-targets` does not include it. After migration,
-`make native-test-build` compiles/links the optimized harness without running it;
+`make native-test-build` compiles/links the debug harness without running it;
 `make native-tests` runs it on the OS main thread. Required native prerequisites
 missing from a test machine produce a failed check and an outstanding evidence
 gate. See [the target-selection decision](research.md#native-test-target-selection).

@@ -9,7 +9,6 @@ use crate::desktop::identity::DesktopRequestId;
 use crate::presentation::board::enums::PresentationBoardEnumInputSource;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::scene::enums::SceneEnumLifecycle;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport, ScenePickingViewportError};
 use crate::scene::renderer::{SceneRendererError, SceneRendererGeneration};
@@ -217,13 +216,13 @@ impl PresentationBoardView {
         let Some(scene) = input.scene else {
             self.discard_gesture_input(ui);
             ui.painter()
-                .rect_filled(rect, 12.0, PresentationThemeTokens::SURFACE);
+                .rect_filled(rect, 12.0, ui.visuals().window_fill);
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "Preparing 3D board",
                 egui::FontId::proportional(18.0),
-                PresentationThemeTokens::MUTED,
+                ui.visuals().weak_text_color(),
             );
             return Ok(output);
         };
@@ -303,7 +302,7 @@ impl PresentationBoardView {
             ui.painter().rect_stroke(
                 rect.shrink(1.0),
                 3.0,
-                egui::Stroke::new(2.0, PresentationThemeTokens::ACCENT),
+                egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
                 egui::StrokeKind::Inside,
             );
         }

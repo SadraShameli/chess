@@ -8,7 +8,6 @@ use crate::presentation::board::enums::{
     PresentationBoardEnumDirection, PresentationBoardEnumInputSource,
 };
 use crate::presentation::board::scene::PresentationBoardScene;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::scene::picking::ScenePicking;
 
 pub struct PresentationBoardSemanticAction {
@@ -202,7 +201,7 @@ impl PresentationBoardSemanticGrid {
                         ui.painter().rect_stroke(
                             rect.shrink(2.0),
                             3.0,
-                            egui::Stroke::new(2.0, PresentationThemeTokens::TEXT),
+                            egui::Stroke::new(2.0, ui.visuals().text_color()),
                             egui::StrokeKind::Inside,
                         );
                         for direction in PresentationBoardEnumDirection::ALL {

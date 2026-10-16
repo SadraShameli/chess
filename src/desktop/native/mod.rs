@@ -1,8 +1,11 @@
 pub mod activation;
+pub mod bootstrap;
 pub mod dialogs;
 pub mod dialogs_proxy;
 pub mod event_loop;
 pub mod host;
+#[cfg(target_os = "macos")]
+pub mod menu;
 pub mod recovery;
 pub mod resources;
 pub mod startup;

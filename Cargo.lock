@@ -2245,6 +2245,7 @@ dependencies = [
  "exacl",
  "gltf-json",
  "interprocess",
+ "muda",
  "pgn-reader",
  "rayon",
  "rfd 0.17.2",

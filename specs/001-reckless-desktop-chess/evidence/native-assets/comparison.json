@@ -1,0 +1,29 @@
+{
+  "original_sha256": "ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e",
+  "candidate_sha256": "f841223d2270426b26c8da913a175be6a4ee6f674e45fa63737973041efb969d",
+  "adapter": "Apple M4 Pro",
+  "backend": "Metal",
+  "named_parents_per_source": 12,
+  "captures": [
+    {
+      "filename": "lineup-front.png",
+      "width": 3024,
+      "height": 1722
+    },
+    {
+      "filename": "lineup-rear.png",
+      "width": 3024,
+      "height": 1722
+    },
+    {
+      "filename": "bishops-front.png",
+      "width": 3024,
+      "height": 1722
+    },
+    {
+      "filename": "bishops-side.png",
+      "width": 3024,
+      "height": 1722
+    }
+  ]
+}

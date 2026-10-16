@@ -14,7 +14,9 @@ use chess::desktop::dto::{
 };
 use chess::desktop::error::{DesktopEnumFailureCode, DesktopFailure};
 use chess::desktop::messages::DesktopEnumCommand;
-use chess::presentation::app::{PresentationApp, PresentationAppEnumAction, PresentationAppError};
+use chess::desktop::preferences::DesktopPreferencesEnumTheme;
+use chess::presentation::action::registry::PresentationActionEnumId;
+use chess::presentation::app::{PresentationApp, PresentationAppError};
 use chess::presentation::board::scene::PresentationBoardScene;
 use chess::scene::camera::SceneCamera;
 use chess::scene::enums::SceneEnumLifecycle;
@@ -135,12 +137,12 @@ fn repeated_presentation_actions_keep_one_identity_dispatch_and_authoritative_re
     let port = fixture.application.port();
     let identity = fixture
         .presentation
-        .activate(PresentationAppEnumAction::Refresh, 7, &port)?;
+        .activate(PresentationActionEnumId::Refresh, 7, &port)?;
     for _ in 0..1000 {
         assert_eq!(
             fixture
                 .presentation
-                .activate(PresentationAppEnumAction::Refresh, 7, &port)?,
+                .activate(PresentationActionEnumId::Refresh, 7, &port)?,
             identity
         );
     }
@@ -169,14 +171,14 @@ fn repeated_presentation_actions_keep_one_identity_dispatch_and_authoritative_re
     assert_eq!(
         fixture
             .presentation
-            .activate(PresentationAppEnumAction::Refresh, 7, &port)?,
+            .activate(PresentationActionEnumId::Refresh, 7, &port)?,
         identity
     );
     assert!(fixture.application.try_next()?.is_none());
     assert_ne!(
         fixture
             .presentation
-            .activate(PresentationAppEnumAction::Refresh, 8, &port)?,
+            .activate(PresentationActionEnumId::Refresh, 8, &port)?,
         identity
     );
     assert!(fixture.application.try_next()?.is_some());
@@ -194,7 +196,7 @@ fn an_admission_refusal_preserves_the_original_action_identity_for_the_same_pass
     }
     let identity = match fixture
         .presentation
-        .activate(PresentationAppEnumAction::Refresh, 1, &port)
+        .activate(PresentationActionEnumId::Refresh, 1, &port)
     {
         Err(PresentationAppError::Admission {
             identity,
@@ -216,7 +218,7 @@ fn an_admission_refusal_preserves_the_original_action_identity_for_the_same_pass
     assert_eq!(
         fixture
             .presentation
-            .activate(PresentationAppEnumAction::Refresh, 1, &port)?,
+            .activate(PresentationActionEnumId::Refresh, 1, &port)?,
         identity
     );
     Ok(())
@@ -285,14 +287,13 @@ fn file_selection_is_one_revision_checked_intent_and_failures_remain_visible()
 -> PresentationAppTestResult {
     let mut fixture = PresentationAppFixture::new();
     let port = fixture.application.port();
-    let identity =
-        fixture
-            .presentation
-            .activate(PresentationAppEnumAction::SelectFile, 1, &port)?;
+    let identity = fixture
+        .presentation
+        .activate(PresentationActionEnumId::SelectFile, 1, &port)?;
     assert_eq!(
         fixture
             .presentation
-            .activate(PresentationAppEnumAction::SelectFile, 2, &port)?,
+            .activate(PresentationActionEnumId::SelectFile, 2, &port)?,
         identity
     );
     let work = fixture
@@ -362,7 +363,7 @@ fn pending_quit_shows_updated_failures_and_an_accessible_explicit_retry()
     assert!(port.retry_quit().is_err());
     fixture
         .presentation
-        .activate(PresentationAppEnumAction::ConfirmQuit, 1, &port)?;
+        .activate(PresentationActionEnumId::ConfirmQuit, 1, &port)?;
     let work = fixture
         .application
         .try_next()?
@@ -397,5 +398,68 @@ fn pending_quit_shows_updated_failures_and_an_accessible_explicit_retry()
     fixture.application.complete_control(&work)?;
     fixture.presentation.poll();
     assert!(fixture.presentation.is_quit_ready());
+    Ok(())
+}
+
+#[test]
+fn settings_appearance_changes_are_immediate_and_truthfully_session_scoped()
+-> PresentationAppTestResult {
+    let mut fixture = PresentationAppFixture::new();
+    fixture
+        .presentation
+        .accept_snapshot(PresentationAppFixture::snapshot()?);
+    let (output, _) = fixture.frame(None, Vec::new())?;
+    fixture.click(&output, "Settings")?;
+    assert!(fixture.presentation.is_settings_open());
+    let (output, _) = fixture.frame(None, Vec::new())?;
+    assert!(
+        output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .ok_or("missing Settings semantics")?
+            .nodes
+            .iter()
+            .any(|(_, node)| node
+                .value()
+                .is_some_and(|value| value.contains("for this session")
+                    && value.contains("not available yet")))
+    );
+    fixture.click(&output, "Light")?;
+    fixture.frame(None, Vec::new())?;
+    assert_eq!(
+        fixture.presentation.preferences().theme(),
+        DesktopPreferencesEnumTheme::Light
+    );
+    assert_eq!(fixture.context.theme(), egui::Theme::Light);
+    assert!(!fixture.context.global_style().visuals.dark_mode);
+    let light_fill = fixture.context.global_style().visuals.panel_fill;
+    let (output, _) = fixture.frame(None, Vec::new())?;
+    fixture.click(&output, "Dark")?;
+    fixture.frame(None, Vec::new())?;
+    assert_eq!(
+        fixture.presentation.preferences().theme(),
+        DesktopPreferencesEnumTheme::Dark
+    );
+    assert_eq!(fixture.context.theme(), egui::Theme::Dark);
+    assert!(fixture.context.global_style().visuals.dark_mode);
+    assert_ne!(
+        fixture.context.global_style().visuals.panel_fill,
+        light_fill
+    );
+    assert_eq!(
+        fixture
+            .presentation
+            .snapshot()
+            .ok_or("missing preserved board")?
+            .board()
+            .fen(),
+        BoardPosition::standard().fen()
+    );
+    assert!(fixture.application.try_next()?.is_none());
+    assert_eq!(
+        PresentationApp::new().preferences().theme(),
+        DesktopPreferencesEnumTheme::Dark
+    );
     Ok(())
 }

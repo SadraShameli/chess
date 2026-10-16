@@ -215,3 +215,87 @@ Six focused presentation cases passed, including the accessible explicit Retry
 quit action and replacement of a stale pending notice with a later cleanup
 failure. All development checks used incremental debug builds; native GPU,
 cross-platform, optimized performance and final whole-project gates remain open.
+
+## Native executable integration in debug mode
+
+The executable composition now performs synchronous profile/install admission,
+starts one owned runtime only for the profile owner, serves bounded activation
+while initializing storage and Reckless, and runs Bevy on the OS main thread.
+The original OS lease handle remains outside Bevy through service cleanup.
+Secondary launches only create the bounded activation-client runtime.
+
+An isolated macOS Apple Silicon debug launch created the native Chess window,
+started the packaged Reckless child and published the Ready phase. A second
+process against that profile returned ActivationRequested without starting
+another engine. Required font and named original GLB assets passed the actual
+render-resource/pipeline readiness barrier. This is runtime readiness evidence,
+not visual, interaction, accessibility or optimized performance acceptance.
+OS screen capture could not produce a display image, and System Events refused
+assistive access, so neither was used as visual evidence.
+
+The first smoke process later finished its service cleanup without leaving the
+Reckless child, but returned HostEvents during teardown because the host event
+sender closed before the authoritative host-done flag arrived. The watcher now
+waits for that flag; a later complete native shutdown still needs validation.
+
+Help and invalid-argument paths passed three focused bootstrap tests before
+service creation. `make run` now directly starts the native debug executable;
+its dry run is `cargo run --locked` with no empty separator, and arguments are
+forwarded only when present.
+
+Follow-up checks passed 109 affected debug cases: three process-reader, five
+host, 35 domain, 38 engine, 14 presentation and 14 storage cases. Eight engine
+cases cover retained startup through failed/canceled handshakes. The executor
+result-destruction regression failed before the fix and passed afterward.
+Strict focused Clippy passed. macOS test/binary linking still emits the Apple
+linker warning that the DWARF unwind section exceeds the compact-unwind offset
+range; it is not suppressed and the final zero-warning gate remains open.
+
+GPU generation reset now retires extracted swapchain state and its old surface
+before reconstruction. Typed permanent shader errors, recursive asset failures
+and ten-second readiness boundaries have deterministic fixtures. Actual device
+loss/Retry, native menu/close confirmation, asset visual comparison, installed
+resources and the complete cross-platform foundation gates remain outstanding.
+
+## Native quit lifecycle and shared ports
+
+The full production bootstrap now passes a current-host debug lifecycle harness
+using its normal profile admission, actual Reckless process, SQLite actor,
+capacity partition, native host and retained shutdown owners. The harness waits
+for real graphics readiness, sends a native window-close request, clicks the
+actual Keep open control through egui AccessKit input, checks that bootstrap
+requests still work, and confirms a second close through the real Confirm quit
+control. It never submits Quit directly or writes AppExit.
+
+Successful return is followed by independent checks of exclusive profile
+reacquisition, the ShuttingDown record, removed Unix activation endpoint and
+durable SQLite document reopening. This run completed successfully on macOS
+Apple Silicon. Its test driver schedules continuous frames, so it supplies no
+idle-performance evidence. Bevy logged a skipped Destroyed event during window
+teardown; the bootstrap returned success and left its owned services closed.
+
+The native macOS menu replaces the framework's terminating Quit menu with a
+custom Quit Chess action routed through confirmation. A native graphics-recovery
+item remains usable while graphics are interrupted or retrying. Two deterministic
+menu cases cover coalescing and preserved typed wake failures. Actual OS menu
+interaction remains separate from the programmatically driven window-close run.
+
+The shared action registry now owns the three implemented shell intents. The
+first Settings section changes the real dark/light appearance immediately and
+explicitly identifies its current session-only scope. Persistent Settings remain
+later work. Dataset descriptors expose format, expected checksum, canonical local
+file location and integrity state; verification uses admitted executor work and
+does not claim chess-format semantic validation or installed starter datasets.
+
+One batched debug validation passed 195 cases: 24 library, five asset-generator,
+132 desktop, 16 presentation and 18 storage cases. Strict focused Clippy passed.
+The real GPU asset replacement evidence is recorded in
+[native-assets.md](native-assets.md). The worker-exit regression was observed
+failing before correction; six focused shutdown cases and two private-boundary
+cases then passed, including retained joins after cancellation or deadlines.
+
+Optimized/performance and final whole-project gates are deferred while development
+uses the owner's requested incremental debug checks. Windows/Linux execution,
+actual graphics-loss recovery, native power integration, active native-dialog
+cancellation and complete product stories remain open. The macOS debug-linker
+unwind-table warning remains visible and unresolved.

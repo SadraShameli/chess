@@ -9,12 +9,12 @@ use crate::desktop::application::{
     DesktopApplicationWakeProvider,
 };
 use crate::desktop::dto::{DesktopBootstrapSnapshot, DesktopEnumEngineSnapshot, DesktopEnumValue};
-use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::messages::{
-    DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
-    DesktopRequest,
+    DesktopMessagesEntityId, DesktopMessagesEnumResult, DesktopRequest,
 };
+use crate::desktop::preferences::{DesktopPreferences, DesktopPreferencesEnumSection};
+use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
@@ -38,33 +38,8 @@ pub enum PresentationAppError {
     Board(#[from] PresentationBoardViewError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PresentationAppEnumAction {
-    Refresh,
-    SelectFile,
-    ConfirmQuit,
-}
-
-impl PresentationAppEnumAction {
-    fn command(self, file_owner: DesktopMessagesEntityId) -> DesktopCommand {
-        let operation = match self {
-            Self::Refresh => DesktopEnumCommand::Bootstrap,
-            Self::SelectFile => DesktopEnumCommand::FileSelect {
-                owner: file_owner,
-                purpose: DesktopFileEnumPurpose::ReadFile,
-            },
-            Self::ConfirmQuit => DesktopEnumCommand::Quit,
-        };
-        let revision = match self {
-            Self::SelectFile => Some(crate::desktop::identity::DesktopRevision::ZERO),
-            Self::Refresh | Self::ConfirmQuit => None,
-        };
-        DesktopCommand::new(operation, revision)
-    }
-}
-
 struct PresentationAppPending {
-    action: PresentationAppEnumAction,
+    action: PresentationActionEnumId,
     receipt: DesktopApplicationReceipt,
 }
 
@@ -98,7 +73,7 @@ pub struct PresentationApp {
     board: PresentationBoardView,
     file_owner: DesktopMessagesEntityId,
     action_frame: Option<u64>,
-    retained: HashMap<PresentationAppEnumAction, PresentationAppRetained>,
+    retained: HashMap<PresentationActionEnumId, PresentationAppRetained>,
     pending: Vec<PresentationAppPending>,
     status: String,
     failure: Option<String>,
@@ -107,6 +82,9 @@ pub struct PresentationApp {
     quit_ready: bool,
     quit_retry_frame: Option<u64>,
     theme_initialized: bool,
+    preferences: DesktopPreferences,
+    settings_open: bool,
+    settings_toggle_frame: Option<u64>,
 }
 
 impl Default for PresentationApp {
@@ -131,6 +109,9 @@ impl PresentationApp {
             quit_ready: false,
             quit_retry_frame: None,
             theme_initialized: false,
+            preferences: DesktopPreferences::default(),
+            settings_open: false,
+            settings_toggle_frame: None,
         }
     }
 
@@ -163,6 +144,14 @@ impl PresentationApp {
         !self.pending.is_empty()
     }
 
+    pub const fn preferences(&self) -> &DesktopPreferences {
+        &self.preferences
+    }
+
+    pub const fn is_settings_open(&self) -> bool {
+        self.settings_open
+    }
+
     pub fn request_quit(&mut self) {
         if !self.quit_confirmation {
             self.quit_confirmation = true;
@@ -173,7 +162,7 @@ impl PresentationApp {
 
     pub fn activate<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
         &mut self,
-        action: PresentationAppEnumAction,
+        action: PresentationActionEnumId,
         frame: u64,
         port: &DesktopApplicationPort<C, W>,
     ) -> Result<DesktopRequestId, PresentationAppError> {
@@ -253,7 +242,7 @@ impl PresentationApp {
                     self.status = "Owned work paused".to_owned();
                 }
                 DesktopMessagesEnumResult::QuitReady => {
-                    if action == PresentationAppEnumAction::ConfirmQuit {
+                    if action == PresentationActionEnumId::ConfirmQuit {
                         self.quit_ready = true;
                         self.status = "Application is ready to close".to_owned();
                     } else {
@@ -264,6 +253,27 @@ impl PresentationApp {
                 DesktopMessagesEnumResult::ReconciliationRequired => {
                     self.failure =
                         Some("Refresh local state before retrying this action".to_owned());
+                }
+            }
+        }
+    }
+
+    fn show_settings(&mut self, ui: &mut Ui) {
+        ui.heading("Settings");
+        ui.label("Appearance applies immediately for this session. Saving preferences across launches is not available yet.");
+        for &section in DesktopPreferences::sections() {
+            ui.separator();
+            ui.heading(section.label());
+            match section {
+                DesktopPreferencesEnumSection::Appearance => {
+                    let mut theme = self.preferences.theme();
+                    for &choice in DesktopPreferences::themes() {
+                        ui.radio_value(&mut theme, choice, choice.label());
+                    }
+                    if self.preferences.set_theme(theme) {
+                        PresentationThemeTokens::apply(ui.ctx(), theme);
+                        ui.ctx().request_discard("apply appearance before layout");
+                    }
                 }
             }
         }
@@ -282,7 +292,7 @@ impl PresentationApp {
         P: PresentationBoardPickingProvider,
     {
         if !self.theme_initialized {
-            PresentationThemeTokens::apply(ui.ctx());
+            PresentationThemeTokens::apply(ui.ctx(), self.preferences.theme());
             self.theme_initialized = true;
             ui.ctx()
                 .request_discard("apply initial native theme before layout");
@@ -296,21 +306,32 @@ impl PresentationApp {
                 ui.heading(
                     egui::RichText::new("CHESS")
                         .strong()
-                        .color(PresentationThemeTokens::ACCENT),
+                        .color(ui.visuals().selection.stroke.color),
                 );
                 ui.label(
                     egui::RichText::new("Offline study and play")
-                        .color(PresentationThemeTokens::MUTED),
+                        .color(ui.visuals().weak_text_color()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Quit").clicked() {
                         self.request_quit();
                     }
-                    if ui.button("Refresh state").clicked() {
-                        actions.push(PresentationAppEnumAction::Refresh);
+                    if ui.button("Settings").clicked() && self.settings_toggle_frame != Some(frame)
+                    {
+                        self.settings_open = !self.settings_open;
+                        self.settings_toggle_frame = Some(frame);
+                        self.board.cancel_gesture();
                     }
-                    if ui.button("Select local file").clicked() {
-                        actions.push(PresentationAppEnumAction::SelectFile);
+                    for &action in PresentationActionRegistry::actions() {
+                        match action {
+                            PresentationActionEnumId::Refresh
+                            | PresentationActionEnumId::SelectFile => {
+                                if ui.button(action.label()).clicked() {
+                                    actions.push(action);
+                                }
+                            }
+                            PresentationActionEnumId::ConfirmQuit => {}
+                        }
                     }
                 });
             });
@@ -319,6 +340,10 @@ impl PresentationApp {
             .default_size(PresentationThemeTokens::PANEL_WIDTH)
             .min_size(PresentationThemeTokens::PANEL_WIDTH)
             .show(ui, |ui| {
+                if self.settings_open {
+                    self.show_settings(ui);
+                    return;
+                }
                 ui.heading("Position");
                 if let Some(snapshot) = &self.snapshot {
                     ui.label(format!(
@@ -345,11 +370,11 @@ impl PresentationApp {
                     match snapshot.engine() {
                         DesktopEnumEngineSnapshot::Ready { identity } => {
                             ui.label(identity.name());
-                            ui.label(egui::RichText::new(identity.author()).color(PresentationThemeTokens::MUTED));
+                            ui.label(egui::RichText::new(identity.author()).color(ui.visuals().weak_text_color()));
                             ui.label(format!("{} supported engine options", identity.supported_options().len()));
                         }
                         DesktopEnumEngineSnapshot::Unavailable { message } => {
-                            ui.colored_label(PresentationThemeTokens::WARNING, "Engine unavailable");
+                            ui.colored_label(ui.visuals().warn_fg_color, "Engine unavailable");
                             ui.label(message);
                         }
                     }
@@ -377,13 +402,13 @@ impl PresentationApp {
                     }
                 });
                 ui.separator();
-                ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(PresentationThemeTokens::MUTED));
+                ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(ui.visuals().weak_text_color()));
             });
         let retry_quit = self.failure.is_some()
             && self
                 .pending
                 .iter()
-                .any(|pending| pending.action == PresentationAppEnumAction::ConfirmQuit);
+                .any(|pending| pending.action == PresentationActionEnumId::ConfirmQuit);
         let status = self.failure.as_deref().unwrap_or(&self.status);
         let mut retry = false;
         egui::Panel::bottom("chess.status").show(ui, |ui| {
@@ -405,7 +430,7 @@ impl PresentationApp {
                 ui.horizontal(|ui| {
                     ui.strong("White");
                     ui.label(
-                        egui::RichText::new("No active game").color(PresentationThemeTokens::MUTED),
+                        egui::RichText::new("No active game").color(ui.visuals().weak_text_color()),
                     );
                 });
                 let result = match &self.snapshot {
@@ -439,11 +464,13 @@ impl PresentationApp {
                         self.quit_focus_pending = false;
                     }
                     cancel = button.clicked();
-                    confirm = ui.button("Confirm quit").clicked();
+                    confirm = ui
+                        .button(PresentationActionEnumId::ConfirmQuit.label())
+                        .clicked();
                 });
             });
             if confirm {
-                actions.push(PresentationAppEnumAction::ConfirmQuit);
+                actions.push(PresentationActionEnumId::ConfirmQuit);
             }
             if cancel || confirm || modal.should_close() {
                 self.quit_confirmation = false;

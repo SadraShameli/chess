@@ -25,7 +25,7 @@ asset-tools = ["dep:boolmesh", "dep:earcutr", "dep:gltf-json"]
 native-test = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
 [dependencies]
-bevy = { version = "=0.20.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_gltf", "bevy_pbr", "bevy_winit", "scene", "mesh_picking", "mouse", "keyboard", "reflect_auto_register", "tonemapping_luts", "zstd_rust", "x11", "wayland", "accesskit_unix"] }
+bevy = { version = "=0.20.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_gltf", "bevy_pbr", "bevy_winit", "png", "scene", "mesh_picking", "mouse", "keyboard", "reflect_auto_register", "tonemapping_luts", "zstd_rust", "x11", "wayland", "accesskit_unix"] }
 bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "accesskit", "manage_clipboard"] }
 boolmesh = { version = "=0.2.1", default-features = false, optional = true }
 directories = "=6.0.0"
@@ -67,6 +67,7 @@ rustix = { version = "=1.1.5", default-features = false, features = ["fs", "std"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 exacl = { version = "=0.13.0", default-features = false }
+muda = { version = "=0.20.0", default-features = false }
 
 [dev-dependencies]
 egui_kittest = { version = "=0.36.0", default-features = false }

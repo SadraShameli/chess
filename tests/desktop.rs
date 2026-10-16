@@ -16,6 +16,8 @@ mod desktop_dialogs_proxy;
 mod desktop_identity;
 #[path = "desktop/installation.rs"]
 mod desktop_installation;
+#[path = "desktop/native_bootstrap.rs"]
+mod desktop_native_bootstrap;
 #[path = "desktop/native_host.rs"]
 mod desktop_native_host;
 #[path = "desktop/resources.rs"]
