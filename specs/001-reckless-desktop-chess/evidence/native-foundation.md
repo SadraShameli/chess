@@ -70,3 +70,20 @@ These are component-level results. Production startup still uses the retained
 legacy shell, so T032 through T038 remain unchecked until the native root,
 real endpoint transports, secondary-process admission and installation barriers
 are integrated. Windows and Linux filesystem/security execution is outstanding.
+
+### Activation receipt delivery and bounded server
+
+Source review found that closing a Windows pipe immediately after writing its
+receipt could discard unread receipt bytes when required drop-linger suppression
+was active. A regression observed the old client report success without owner
+acknowledgment. The corrected version-2 protocol follows the
+[activation contract](../contracts/desktop-ipc.md#local-activation-interface);
+the same original deadline covers the acknowledgment and version 1 is rejected
+before window activation. No transport flush or half-close is required.
+
+The server reserves handler capacity before polling accept, retains at most four
+handlers, observes all completions and drains them on shutdown. Malformed clients
+remain individual refusals. Seventeen integrated activation tests passed,
+including missing/wrong/late acknowledgments, excess bytes, capacity, continued
+service after a refused peer and shutdown draining. Targeted strict Clippy for
+the library and affected desktop/domain/presentation/scene suites passed.

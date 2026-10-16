@@ -261,7 +261,8 @@ uncancellable blocking connect. Select `connect_by_path_with_wait_mode` with
 within the overall deadline. Written pipe streams can also create hidden linger
 workers on drop. A narrow stream owner always calls safe `assume_flushed()`
 before dropping, including cancellation; do not start an underlying pipe flush.
-The framed response/receipt exchange establishes consumption. On timeout,
+The [activation protocol](contracts/desktop-ipc.md#local-activation-interface)
+acknowledges receipt consumption before the client closes. On timeout,
 discarding incomplete activation bytes is acceptable and never grants ownership.
 
 Reuse sysinfo 0.39.6's current-process effective-user query for Unix directory

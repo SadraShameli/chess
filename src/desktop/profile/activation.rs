@@ -13,6 +13,8 @@ use crate::desktop::profile::{DesktopProfileError, DesktopProfileId};
 
 #[derive(Debug, Error)]
 pub enum DesktopProfileActivationError {
+    #[error("The activation endpoint is invalid: {0}")]
+    Endpoint(#[from] crate::desktop::profile::owner_record::DesktopProfileOwnerRecordError),
     #[error("The local activation transport failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("The activation frame length {received} is outside 1 through 4096 bytes")]
@@ -182,6 +184,7 @@ enum DesktopProfileActivationEnumWireMessage {
     Activate,
     Response(DesktopProfileActivationEnumResult),
     Receipt,
+    ReceiptAcknowledged,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -195,7 +198,7 @@ struct DesktopProfileActivationWireMessage {
 pub struct DesktopProfileActivationCodec;
 
 impl DesktopProfileActivationCodec {
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
     pub const MAX_FRAME_BYTES: u32 = 4096;
 
     pub async fn read_request<R: AsyncRead + Unpin>(
@@ -205,7 +208,8 @@ impl DesktopProfileActivationCodec {
         match message {
             DesktopProfileActivationEnumWireMessage::Activate => Ok(request),
             DesktopProfileActivationEnumWireMessage::Response(_)
-            | DesktopProfileActivationEnumWireMessage::Receipt => {
+            | DesktopProfileActivationEnumWireMessage::Receipt
+            | DesktopProfileActivationEnumWireMessage::ReceiptAcknowledged => {
                 Err(DesktopProfileActivationError::UnexpectedMessage)
             }
         }
@@ -232,7 +236,8 @@ impl DesktopProfileActivationCodec {
                 Ok(DesktopProfileActivationResponse::new(request, result))
             }
             DesktopProfileActivationEnumWireMessage::Activate
-            | DesktopProfileActivationEnumWireMessage::Receipt => {
+            | DesktopProfileActivationEnumWireMessage::Receipt
+            | DesktopProfileActivationEnumWireMessage::ReceiptAcknowledged => {
                 Err(DesktopProfileActivationError::UnexpectedMessage)
             }
         }
@@ -257,7 +262,8 @@ impl DesktopProfileActivationCodec {
         match message {
             DesktopProfileActivationEnumWireMessage::Receipt => Ok(request),
             DesktopProfileActivationEnumWireMessage::Activate
-            | DesktopProfileActivationEnumWireMessage::Response(_) => {
+            | DesktopProfileActivationEnumWireMessage::Response(_)
+            | DesktopProfileActivationEnumWireMessage::ReceiptAcknowledged => {
                 Err(DesktopProfileActivationError::UnexpectedMessage)
             }
         }
@@ -271,6 +277,32 @@ impl DesktopProfileActivationCodec {
             writer,
             response.request,
             DesktopProfileActivationEnumWireMessage::Receipt,
+        )
+        .await
+    }
+
+    pub async fn read_receipt_acknowledged<R: AsyncRead + Unpin>(
+        reader: &mut R,
+    ) -> Result<DesktopProfileActivationRequest, DesktopProfileActivationError> {
+        let (request, message) = Self::read(reader).await?;
+        match message {
+            DesktopProfileActivationEnumWireMessage::ReceiptAcknowledged => Ok(request),
+            DesktopProfileActivationEnumWireMessage::Activate
+            | DesktopProfileActivationEnumWireMessage::Response(_)
+            | DesktopProfileActivationEnumWireMessage::Receipt => {
+                Err(DesktopProfileActivationError::UnexpectedMessage)
+            }
+        }
+    }
+
+    pub async fn write_receipt_acknowledged<W: AsyncWrite + Unpin>(
+        writer: &mut W,
+        request: DesktopProfileActivationRequest,
+    ) -> Result<(), DesktopProfileActivationError> {
+        Self::write(
+            writer,
+            request,
+            DesktopProfileActivationEnumWireMessage::ReceiptAcknowledged,
         )
         .await
     }
@@ -381,7 +413,10 @@ impl DesktopProfileActivationExchange {
             if receipt != request {
                 return Err(DesktopProfileActivationError::BindingMismatch);
             }
+            DesktopProfileActivationCodec::write_receipt_acknowledged(&mut stream, request).await?;
+            Self::check_deadline(deadline)?;
             DesktopProfileActivationCodec::require_end(&mut stream).await?;
+            Self::check_deadline(deadline)?;
             Ok(response.result())
         })
         .await
@@ -405,6 +440,13 @@ impl DesktopProfileActivationExchange {
             Self::check_deadline(attempt_deadline)?;
             response.check_request(request)?;
             DesktopProfileActivationCodec::write_receipt(&mut stream, response).await?;
+            Self::check_deadline(attempt_deadline)?;
+            let acknowledged =
+                DesktopProfileActivationCodec::read_receipt_acknowledged(&mut stream).await?;
+            Self::check_deadline(attempt_deadline)?;
+            if acknowledged != request {
+                return Err(DesktopProfileActivationError::BindingMismatch);
+            }
             Ok(response.result())
         })
         .await
@@ -435,3 +477,4 @@ impl DesktopProfileActivationExchange {
         }
     }
 }
+pub mod server;

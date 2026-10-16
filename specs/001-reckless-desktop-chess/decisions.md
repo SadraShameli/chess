@@ -460,12 +460,17 @@ the replacement pending instance before returning an accepted stream. Use
 only the application schedules bounded async retry. Do not use the generic
 Windows local-socket connect path. An owned wrapper suppresses dirty-stream
 linger with safe `assume_flushed()` before every drop, including cancellation,
-and never starts an underlying pipe flush. The response/receipt exchange proves
-delivery; timeout discards incomplete bytes without spawning linger workers.
+and never starts an underlying pipe flush. The version-2 exchange adds a
+ReceiptAcknowledged frame: the owner reads the client's matching receipt before
+acknowledging it, then retains the stream until the client reads that acknowledgment
+and closes. This proves consumption of both final frames before either endpoint
+discards bytes, without a pipe write half-close or linger worker. All four steps
+share the original absolute deadlines; version 1 is rejected before activation.
+Timeout discards incomplete bytes without spawning linger workers.
 
 The [activation contract](contracts/desktop-ipc.md#local-activation-interface)
 owns versioned framing and closed operations. Select a 4 KiB maximum frame,
-one activation/response/receipt exchange per connection, at most four in-flight
+one activation/response/receipt/acknowledgment exchange per connection, at most four in-flight
 clients and one coalesced pending window request. The second-launch attempt has a 2-second total deadline,
 including at most four metadata/connect trials while the owner starts; each
 accepted connection has a 1-second read/write deadline. Reject oversized,

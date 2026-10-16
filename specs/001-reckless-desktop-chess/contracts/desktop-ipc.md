@@ -19,11 +19,11 @@ in-process command table below. The
 owns exclusion, authentication, endpoint selection and all connection limits.
 No listener is an HTTP server, public API or generic command executor.
 
-Use a version-1, length-prefixed UTF-8 JSON frame: unsigned 32-bit big-endian
+Use a version-2, length-prefixed UTF-8 JSON frame: unsigned 32-bit big-endian
 byte length, then a bounded validated object. External decoding uses existing
 Serde boundary types; it introduces no UI serialization. Reject unknown fields,
 unknown operations/versions, invalid lengths and extra frames. One connection
-has one request, response and final consumption receipt under the selected
+has one request, response, consumption receipt and receipt acknowledgment under the selected
 deadlines, without subscription or arbitrary launch-argument replay.
 
 | Message | Typed fields and semantics |
@@ -31,6 +31,7 @@ deadlines, without subscription or arbitrary launch-argument replay.
 | Request | Protocol version, destination-local profile ID, current owner generation, request ID, closed Activate variant |
 | Response | Matching version/profile/generation/request ID and closed result: OwnerStarting, Focused, ActivationRequested, Busy or Rejected |
 | Receipt | Matching request/profile/generation identity confirming the response was consumed; no second operation or ownership grant |
+| ReceiptAcknowledged | Matching request/profile/generation identity confirming the owner consumed the receipt; no second operation or ownership grant |
 | Native delivery | At most one coalesced pending window-activation notification, followed by a native event-loop wake; no application mutation command |
 
 Authenticate the local peer before accepting the request, and authenticate the
@@ -44,16 +45,23 @@ for the forthcoming main window. Busy/Rejected and expired connections convey
 no ownership grant. Do not expose a Resume, migration, backup, update-install,
 file-open, shell or credential operation through this protocol.
 
-The second launch exits after acknowledgment, showing manual window-selection
+The second launch exits after the matching ReceiptAcknowledged frame, showing manual window-selection
 guidance if activation is unconfirmed. On unreachable-owner failure it shows
 Busy/recovery guidance without another writable session. A later explicit
 launch retries arbitration; neither timeout nor stale endpoint permits takeover.
 Application lifecycle and install barriers remain in effect while activating.
 On Windows the concrete pipe adapter's owned stream suppresses drop-time linger;
-the final receipt confirms response consumption before server closure. Missing
-receipt/timeout permits closure and a later explicit activation attempt, without
-replaying an app mutation or claiming focus/ownership. Unix and Windows share
-this wire format, not necessarily the same transport constructor.
+the receipt confirms response consumption before server closure. The owner
+consumes and validates Receipt, writes ReceiptAcknowledged, and keeps the stream
+open until the client closes; the client validates that acknowledgment before
+closing. This preserves both final frames without an underlying pipe flush,
+write half-close, or drop-time linger. Every step retains the same absolute
+exchange deadline. A missing, mismatched, unexpected or late acknowledgment
+cannot confirm activation. Version 1 is rejected before requesting window
+activation. Missing receipt/acknowledgment or timeout permits closure and a later
+explicit activation attempt, without replaying an app mutation or claiming
+focus/ownership. Unix and Windows share this wire format, not necessarily the
+same transport constructor.
 
 ## Type ownership and envelopes
 
