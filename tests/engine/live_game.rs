@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -9,11 +10,13 @@ use std::time::Duration;
 use chess::board::enums::{BoardEnumColor, BoardEnumVariant};
 use chess::board::position::BoardPosition;
 use chess::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
-use chess::clock::state::ClockState;
+use chess::clock::stage::{ClockStage, ClockStageEnumBonus, ClockStageEnumQuota};
+use chess::clock::state::{ClockState, ClockStateEnumMoveOutcome};
 use chess::clock::time_control::ClockTimeControl;
 use chess::clock::time_provider::ClockTimeProvider;
-use chess::engine::live_game::{EngineLiveGame, EngineLiveGameSearchPlan};
+use chess::engine::live_game::{EngineLiveGame, EngineLiveGameError, EngineLiveGameSearchPlan};
 use chess::engine::process_provider::EngineProcessLimits;
+use chess::engine::search::limit::{EngineSearchLimit, EngineSearchLimitError};
 use chess::game::engine_provider::{
     GameEngineContext, GameEngineEnumDiscard, GameEngineEnumEvent, GameEngineProvider,
     GameEngineRequest, GameEngineSearchConfig,
@@ -140,6 +143,121 @@ fn timed_planning_uses_both_remaining_clocks_and_the_current_stage_increment()
         "go wtime 599000 btime 600000 winc 5000 binc 5000"
     );
     assert_eq!(plan.deadline(), Some(ClockInstant::from_millis(600_000)?));
+    Ok(())
+}
+
+#[test]
+fn staged_search_limits_keep_independent_side_increments_and_active_moves_to_go()
+-> EngineLiveGameTestResult {
+    let control = ClockTimeControl::staged(vec![
+        ClockStage::new(
+            ClockStageEnumQuota::Moves(NonZeroU32::new(2).ok_or("zero stage quota")?),
+            ClockDuration::from_millis(20_000)?,
+            ClockStageEnumBonus::Fischer(ClockDuration::from_millis(1_000)?),
+        )?,
+        ClockStage::new(
+            ClockStageEnumQuota::Unlimited,
+            ClockDuration::from_millis(30_000)?,
+            ClockStageEnumBonus::None,
+        )?,
+    ])?;
+    let initial = BoardPosition::standard();
+    let mut position = initial.clone();
+    let mut history = Vec::new();
+    let mut clock = ClockState::new(control, BoardEnumColor::White);
+    clock.resume(ClockInstant::from_nanos(0))?;
+    for (uci, millis) in [("e2e4", 1_000), ("e7e5", 2_000), ("g1f3", 3_000)] {
+        let movement = position.parse_uci(uci)?;
+        position = position.play(movement)?;
+        history.push(movement);
+        assert!(matches!(
+            clock.complete_move(ClockInstant::from_millis(millis)?)?,
+            ClockStateEnumMoveOutcome::Accepted(_)
+        ));
+    }
+    let request = GameEngineRequest::new(
+        EngineLiveGameFixture::context(GameRevision::ZERO)?,
+        initial.clone(),
+        history.clone(),
+        clock.clone(),
+        GameEngineSearchConfig::initial_default(),
+    )?;
+    let plan = EngineLiveGameSearchPlan::new(&request, ClockInstant::from_millis(3_500)?)?;
+    assert_eq!(
+        plan.limit().command(),
+        "go wtime 50000 btime 19500 winc 0 binc 1000 movestogo 1"
+    );
+    let movement = position.parse_uci("b8c6")?;
+    history.push(movement);
+    assert!(matches!(
+        clock.complete_move(ClockInstant::from_millis(4_000)?)?,
+        ClockStateEnumMoveOutcome::Accepted(_)
+    ));
+    let request = GameEngineRequest::new(
+        EngineLiveGameFixture::context(GameRevision::ZERO)?,
+        initial,
+        history,
+        clock,
+        GameEngineSearchConfig::initial_default(),
+    )?;
+    let plan = EngineLiveGameSearchPlan::new(&request, ClockInstant::from_millis(4_500)?)?;
+    assert_eq!(
+        plan.limit().command(),
+        "go wtime 49500 btime 50000 winc 0 binc 0"
+    );
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_live_search_budgets_fail_before_any_position_or_configuration_io()
+-> EngineLiveGameTestResult {
+    let fixture = EnginePackageFixture::new()?;
+    let mut provider = EngineLifecycleProvider::new();
+    let session = provider.start(&fixture).await?;
+    let mut engine = EngineLiveGame::new(session, Arc::new(EngineLiveGameFixtureClock::default()));
+    let defaults = GameEngineSearchConfig::initial_default();
+    let overflow = ClockDuration::from_millis(EngineSearchLimit::MAX_NUMBER + 1)?;
+    for (control, config) in [
+        (
+            ClockTimeControl::untimed(),
+            GameEngineSearchConfig::new(
+                ClockDuration::from_nanos(999_999),
+                defaults.move_overhead(),
+            )?,
+        ),
+        (
+            ClockTimeControl::untimed(),
+            GameEngineSearchConfig::new(overflow, defaults.move_overhead())?,
+        ),
+        (ClockTimeControl::sudden_death(overflow)?, defaults),
+        (
+            ClockTimeControl::fischer(ClockDuration::from_millis(10_000)?, overflow)?,
+            defaults,
+        ),
+    ] {
+        let mut clock = ClockState::new(control, BoardEnumColor::White);
+        clock.resume(ClockInstant::from_nanos(0))?;
+        let request = GameEngineRequest::new(
+            EngineLiveGameFixture::context(GameRevision::ZERO)?,
+            BoardPosition::standard(),
+            Vec::new(),
+            clock,
+            config,
+        )?;
+        assert!(matches!(
+            engine.start(request).await,
+            Err(EngineLiveGameError::Limit(
+                EngineSearchLimitError::EmptyBudget | EngineSearchLimitError::NumericRange
+            ))
+        ));
+        assert!(engine.is_idle());
+        provider.assert_no_command();
+    }
+    engine
+        .shutdown_retained((Instant::now() + EngineProcessLimits::SHUTDOWN).into_std())
+        .await?;
+    provider.expect("shutdown").await?;
+    assert!(engine.is_shutdown_complete());
     Ok(())
 }
 

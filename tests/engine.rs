@@ -6,6 +6,8 @@ mod engine_analysis;
 mod engine_lifecycle;
 #[path = "engine/live_game.rs"]
 mod engine_live_game;
+#[path = "engine/options.rs"]
+mod engine_options;
 #[path = "engine/package_manifest.rs"]
 mod engine_package_manifest;
 #[path = "engine/package_selection.rs"]
