@@ -128,3 +128,25 @@ matching offscreen viewport; production rejects input until both geometries matc
 The complete native host, graphics recovery, clock repaint/idle measurement and
 OS accessibility acceptance remain later gates. Headless tests do not establish
 native frame-time, complete-process idle CPU or real assistive-technology behavior.
+
+## Native piece generator candidate
+
+The optional asset-tools feature uses verified stable gltf-json 1.4.1
+(MIT OR Apache-2.0), earcutr 0.5.0 (ISC) and boolmesh 0.2.1 (MPL-2.0).
+These libraries remain authoring dependencies rather than application runtime
+requirements. The adapted Three.js bevel algorithm retains its MIT notice under
+resources/licenses. Generator work and serialization use the injected CPU
+executor; admitted asynchronous writes start after CPU leases are released.
+
+Five debug asset tests passed in 0.89 seconds, and targeted tool/asset Clippy
+passed without warnings. CLI generation and a separate check invocation passed.
+Tests validate named hierarchy/materials, original-compatible bounds within
+0.00001 square units, normal directions, the actual bishop slit, exact
+one-worker/maximum-worker output and file preservation after detected drift.
+
+The generated candidate is 1,499,440 bytes with SHA-256
+f841223d2270426b26c8da913a175be6a4ee6f674e45fa63737973041efb969d.
+Original bytes/provenance remain unchanged at 1,376,224 bytes and SHA-256
+ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e.
+The CSG topology and exact deduplication differ; native loader and visual
+comparison remain required before adoption and final T047 acceptance.
