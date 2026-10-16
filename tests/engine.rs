@@ -6,5 +6,7 @@ mod engine_package_manifest;
 mod engine_package_selection;
 #[path = "engine/retained_shutdown.rs"]
 mod engine_retained_shutdown;
+#[path = "engine/retained_startup.rs"]
+mod engine_retained_startup;
 #[path = "engine/startup.rs"]
 mod engine_startup;

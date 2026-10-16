@@ -62,6 +62,17 @@ pub enum EngineSessionError {
     ShutdownUnobserved,
     #[error("Engine session shutdown previously failed: {0}")]
     ShutdownFailed(#[source] Arc<Self>),
+    #[error("Engine initialization already started or its process was transferred or closed")]
+    StartupUnavailable,
+}
+
+impl EngineSessionError {
+    fn shutdown_result(failure: Option<&Arc<Self>>) -> Result<(), Self> {
+        match failure {
+            Some(error) => Err(Self::ShutdownFailed(Arc::clone(error))),
+            None => Ok(()),
+        }
+    }
 }
 
 struct EngineSessionSearch {
@@ -95,6 +106,94 @@ enum EngineSessionEnumShutdown {
     Complete,
 }
 
+enum EngineSessionStartupEnumState {
+    Ready,
+    Initializing,
+    Closing,
+    Transferred,
+}
+
+struct EngineSessionStartupProcess<P: EngineProcess> {
+    process: P,
+    package: EnginePackageSelected,
+}
+
+pub struct EngineSessionStartup<P: EngineProcess> {
+    resources: Option<EngineSessionStartupProcess<P>>,
+    state: EngineSessionStartupEnumState,
+    shutdown_failure: Option<Arc<EngineSessionError>>,
+}
+
+impl<P: EngineProcess> EngineSessionStartup<P> {
+    pub fn new(
+        provider: &impl EngineProcessProvider<Process = P>,
+        package: EnginePackageSelected,
+    ) -> Result<Self, EngineSessionError> {
+        let process = provider.spawn(&package)?;
+        Ok(Self {
+            resources: Some(EngineSessionStartupProcess { process, package }),
+            state: EngineSessionStartupEnumState::Ready,
+            shutdown_failure: None,
+        })
+    }
+
+    pub async fn initialize(&mut self) -> Result<EngineSession<P>, EngineSessionError> {
+        if !matches!(self.state, EngineSessionStartupEnumState::Ready) {
+            return Err(EngineSessionError::StartupUnavailable);
+        }
+        self.state = EngineSessionStartupEnumState::Initializing;
+        let identity = EngineSession::<P>::handshake(self.process_mut()?).await?;
+        let resources = self
+            .resources
+            .take()
+            .ok_or(EngineSessionError::StartupUnavailable)?;
+        self.state = EngineSessionStartupEnumState::Transferred;
+        Ok(EngineSession {
+            process: Some(resources.process),
+            identity,
+            package: resources.package,
+            generation: EngineSearchGeneration::fresh(),
+            variant: BoardEnumVariant::Standard,
+            lifecycle: EngineSessionEnumLifecycle::Idle,
+            shutdown: EngineSessionEnumShutdown::Running,
+            shutdown_failure: None,
+        })
+    }
+
+    pub fn is_shutdown_complete(&self) -> bool {
+        self.resources
+            .as_ref()
+            .is_none_or(|resources| resources.process.is_shutdown_complete())
+    }
+
+    pub async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineSessionError> {
+        if self.resources.is_none() {
+            return EngineSessionError::shutdown_result(self.shutdown_failure.as_ref());
+        }
+        let graceful = matches!(
+            self.state,
+            EngineSessionStartupEnumState::Ready | EngineSessionStartupEnumState::Initializing
+        );
+        self.state = EngineSessionStartupEnumState::Closing;
+        let result =
+            EngineSession::<P>::shutdown_process(self.process_mut()?, graceful, deadline).await;
+        if self.is_shutdown_complete() {
+            self.resources = None;
+            self.shutdown_failure = result.err().map(Arc::new);
+            EngineSessionError::shutdown_result(self.shutdown_failure.as_ref())
+        } else {
+            result
+        }
+    }
+
+    fn process_mut(&mut self) -> Result<&mut P, EngineSessionError> {
+        self.resources
+            .as_mut()
+            .map(|resources| &mut resources.process)
+            .ok_or(EngineSessionError::StartupUnavailable)
+    }
+}
+
 pub struct EngineSession<P: EngineProcess> {
     process: Option<P>,
     identity: EngineIdentity,
@@ -113,20 +212,10 @@ impl<P: EngineProcess> EngineSession<P> {
         provider: &impl EngineProcessProvider<Process = P>,
         package: EnginePackageSelected,
     ) -> Result<Self, EngineSessionError> {
-        let mut process = provider.spawn(&package)?;
-        let result = Self::handshake(&mut process).await;
-        match result {
-            Ok(identity) => Ok(Self {
-                process: Some(process),
-                identity,
-                package,
-                generation: EngineSearchGeneration::fresh(),
-                variant: BoardEnumVariant::Standard,
-                lifecycle: EngineSessionEnumLifecycle::Idle,
-                shutdown: EngineSessionEnumShutdown::Running,
-                shutdown_failure: None,
-            }),
-            Err(startup) => match process.shutdown().await {
+        let mut owner = EngineSessionStartup::new(provider, package)?;
+        match owner.initialize().await {
+            Ok(session) => Ok(session),
+            Err(startup) => match owner.process_mut()?.shutdown().await {
                 Ok(()) => Err(startup),
                 Err(cleanup) => Err(EngineSessionError::Cleanup {
                     startup: Box::new(startup),
@@ -315,7 +404,7 @@ impl<P: EngineProcess> EngineSession<P> {
 
     pub async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineSessionError> {
         if self.process.is_none() {
-            return self.shutdown_result();
+            return EngineSessionError::shutdown_result(self.shutdown_failure.as_ref());
         }
         let deadline = self.stop_request().map_or(deadline, |request| {
             deadline.min(request.termination_deadline())
@@ -352,17 +441,7 @@ impl<P: EngineProcess> EngineSession<P> {
                 self.shutdown = EngineSessionEnumShutdown::Graceful;
             }
             let graceful = matches!(self.shutdown, EngineSessionEnumShutdown::Graceful);
-            let process = self.process_mut()?;
-            let result = if graceful {
-                timeout_at(deadline, process.shutdown_retained(deadline)).await
-            } else {
-                timeout_at(deadline, process.terminate(deadline)).await
-            };
-            result.map_err(EngineProcessError::ShutdownDeadline)??;
-            if !process.is_shutdown_complete() {
-                return Err(EngineSessionError::ShutdownUnobserved);
-            }
-            Ok(())
+            Self::shutdown_process(self.process_mut()?, graceful, deadline).await
         }
         .await;
         if self.is_shutdown_complete() {
@@ -371,18 +450,28 @@ impl<P: EngineProcess> EngineSession<P> {
             if let Err(error) = result {
                 self.shutdown_failure = Some(Arc::new(error));
             }
-            self.shutdown_result()
+            EngineSessionError::shutdown_result(self.shutdown_failure.as_ref())
         } else {
             self.shutdown = EngineSessionEnumShutdown::Forced;
             result
         }
     }
 
-    fn shutdown_result(&self) -> Result<(), EngineSessionError> {
-        match &self.shutdown_failure {
-            Some(error) => Err(EngineSessionError::ShutdownFailed(Arc::clone(error))),
-            None => Ok(()),
+    async fn shutdown_process(
+        process: &mut P,
+        graceful: bool,
+        deadline: Instant,
+    ) -> Result<(), EngineSessionError> {
+        let result = if graceful {
+            timeout_at(deadline, process.shutdown_retained(deadline)).await
+        } else {
+            timeout_at(deadline, process.terminate(deadline)).await
+        };
+        result.map_err(EngineProcessError::ShutdownDeadline)??;
+        if !process.is_shutdown_complete() {
+            return Err(EngineSessionError::ShutdownUnobserved);
         }
+        Ok(())
     }
 
     fn require_idle(&self) -> Result<(), EngineSessionError> {
