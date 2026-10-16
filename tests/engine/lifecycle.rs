@@ -25,7 +25,7 @@ use chess::engine::search::limit::{EngineSearchClock, EngineSearchLimit};
 use chess::engine::search::position::EngineSearchPosition;
 use chess::engine::search::stop::EngineSearchStop;
 use chess::engine::session::{EngineSession, EngineSessionError};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 use uuid::Uuid;
 
@@ -39,6 +39,9 @@ pub(super) struct EngineLifecycleProvider {
     stall_stop_write: bool,
     threads_maximum: Option<u32>,
     acknowledge_ready: Arc<AtomicBool>,
+    position_blocked: Arc<AtomicBool>,
+    cleanup_allowed: Arc<AtomicBool>,
+    cleanup_ready: Arc<Notify>,
 }
 
 impl EngineLifecycleProvider {
@@ -53,11 +56,27 @@ impl EngineLifecycleProvider {
             stall_stop_write: false,
             threads_maximum: None,
             acknowledge_ready: Arc::new(AtomicBool::new(true)),
+            position_blocked: Arc::new(AtomicBool::new(false)),
+            cleanup_allowed: Arc::new(AtomicBool::new(true)),
+            cleanup_ready: Arc::new(Notify::new()),
         }
     }
 
     pub(super) fn advertise_threads_maximum(&mut self, maximum: u32) {
         self.threads_maximum = Some(maximum);
+    }
+
+    pub(super) fn block_stop_write(&mut self) {
+        self.stall_stop_write = true;
+    }
+
+    pub(super) fn set_position_blocked(&self, blocked: bool) {
+        self.position_blocked.store(blocked, Ordering::SeqCst);
+    }
+
+    pub(super) fn set_cleanup_allowed(&self, allowed: bool) {
+        self.cleanup_allowed.store(allowed, Ordering::SeqCst);
+        self.cleanup_ready.notify_waiters();
     }
 
     pub(super) fn set_readiness(&self, ready: bool) {
@@ -182,6 +201,9 @@ impl EngineProcessProvider for EngineLifecycleProvider {
             stall_stop_write: self.stall_stop_write,
             threads_maximum: self.threads_maximum,
             acknowledge_ready: Arc::clone(&self.acknowledge_ready),
+            position_blocked: Arc::clone(&self.position_blocked),
+            cleanup_allowed: Arc::clone(&self.cleanup_allowed),
+            cleanup_ready: Arc::clone(&self.cleanup_ready),
             shutdown_complete: false,
         })
     }
@@ -194,10 +216,28 @@ pub(super) struct EngineLifecycleProcess {
     stall_stop_write: bool,
     threads_maximum: Option<u32>,
     acknowledge_ready: Arc<AtomicBool>,
+    position_blocked: Arc<AtomicBool>,
+    cleanup_allowed: Arc<AtomicBool>,
+    cleanup_ready: Arc<Notify>,
     shutdown_complete: bool,
 }
 
 impl EngineLifecycleProcess {
+    async fn finish(&mut self, command: &str) -> Result<(), EngineProcessError> {
+        self.send(command).await?;
+        loop {
+            let ready = self.cleanup_ready.notified();
+            tokio::pin!(ready);
+            ready.as_mut().enable();
+            if self.cleanup_allowed.load(Ordering::SeqCst) {
+                break;
+            }
+            ready.await;
+        }
+        self.shutdown_complete = true;
+        Ok(())
+    }
+
     pub(super) async fn emit(&self, text: String) -> Result<(), EngineProcessError> {
         self.input
             .send(EngineProcessLine::new(EngineProcessEnumPipe::Stdout, text)?)
@@ -213,6 +253,9 @@ impl EngineProcess for EngineLifecycleProcess {
             .send(command.to_owned())
             .await
             .map_err(|_error| std::io::Error::other("fixture command receiver closed"))?;
+        if command.starts_with("position ") && self.position_blocked.load(Ordering::SeqCst) {
+            return std::future::pending().await;
+        }
         if command == "stop" && self.stall_stop_write {
             return std::future::pending().await;
         }
@@ -264,9 +307,7 @@ impl EngineProcess for EngineLifecycleProcess {
     }
 
     async fn shutdown(&mut self) -> Result<(), EngineProcessError> {
-        self.send("shutdown").await?;
-        self.shutdown_complete = true;
-        Ok(())
+        self.finish("shutdown").await
     }
 
     async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineProcessError> {
@@ -280,9 +321,7 @@ impl EngineProcess for EngineLifecycleProcess {
     }
 
     async fn terminate(&mut self, _deadline: Instant) -> Result<(), EngineProcessError> {
-        self.send("terminate").await?;
-        self.shutdown_complete = true;
-        Ok(())
+        self.finish("terminate").await
     }
 }
 

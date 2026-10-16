@@ -202,6 +202,7 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             shutdown: EngineSessionEnumShutdown::Running,
             shutdown_failure: None,
             diagnostics: std::mem::take(&mut self.diagnostics),
+            pending_failure: None,
         })
     }
 
@@ -260,6 +261,7 @@ pub struct EngineSession<P: EngineProcess> {
     shutdown: EngineSessionEnumShutdown,
     shutdown_failure: Option<Arc<EngineSessionError>>,
     diagnostics: EngineDiagnostics,
+    pending_failure: Option<EngineSessionError>,
 }
 
 impl<P: EngineProcess> EngineSession<P> {
@@ -419,6 +421,23 @@ impl<P: EngineProcess> EngineSession<P> {
         position: EngineSearchPosition,
         limit: EngineSearchLimit,
     ) -> Result<EngineSearchTag, EngineSessionError> {
+        self.start_search_tagged(
+            EngineSearchTag::fresh(self.generation, context),
+            position,
+            limit,
+        )
+        .await
+    }
+
+    pub(crate) async fn start_search_tagged(
+        &mut self,
+        tag: EngineSearchTag,
+        position: EngineSearchPosition,
+        limit: EngineSearchLimit,
+    ) -> Result<EngineSearchTag, EngineSessionError> {
+        if tag.generation() != self.generation {
+            return Err(EngineSessionError::StaleSearch);
+        }
         self.require_idle()?;
         if position.current().legal_moves().is_empty() {
             return Err(EngineSessionError::TerminalPosition);
@@ -448,7 +467,6 @@ impl<P: EngineProcess> EngineSession<P> {
                 .fail(error, Instant::now() + EngineProcessLimits::SHUTDOWN)
                 .await);
         }
-        let tag = EngineSearchTag::fresh(self.generation, context);
         self.lifecycle =
             EngineSessionEnumLifecycle::Searching(EngineSessionSearch { tag, position });
         Ok(tag)
@@ -473,6 +491,19 @@ impl<P: EngineProcess> EngineSession<P> {
         &mut self,
         request: EngineSearchStop,
     ) -> Result<EngineSearchTag, EngineSessionError> {
+        self.request_stop(request).await?;
+        loop {
+            let event = self.next_event().await?;
+            if matches!(event.output(), EngineSearchEnumOutput::Stopped) {
+                return Ok(event.tag());
+            }
+        }
+    }
+
+    pub(crate) async fn request_stop(
+        &mut self,
+        request: EngineSearchStop,
+    ) -> Result<(), EngineSessionError> {
         if self.active()?.tag != request.tag() {
             return Err(EngineSessionError::StaleSearch);
         }
@@ -534,12 +565,7 @@ impl<P: EngineProcess> EngineSession<P> {
             };
             *delivery = EngineSessionEnumStopDelivery::Complete;
         }
-        loop {
-            let event = self.next_event().await?;
-            if matches!(event.output(), EngineSearchEnumOutput::Stopped) {
-                return Ok(event.tag());
-            }
-        }
+        Ok(())
     }
 
     pub async fn shutdown(mut self) -> Result<(), EngineSessionError> {
@@ -771,13 +797,23 @@ impl<P: EngineProcess> EngineSession<P> {
         }
     }
 
+    pub(crate) fn take_pending_failure(&mut self) -> Option<EngineSessionError> {
+        self.pending_failure.take()
+    }
+
     async fn fail(
         &mut self,
         operation: EngineSessionError,
         deadline: Instant,
     ) -> EngineSessionError {
         self.lifecycle = EngineSessionEnumLifecycle::Failed;
-        match self.shutdown_retained(deadline).await {
+        self.pending_failure = Some(operation);
+        let cleanup = self.shutdown_retained(deadline).await;
+        let operation = match self.pending_failure.take() {
+            Some(operation) => operation,
+            None => return EngineSessionError::ShutdownUnobserved,
+        };
+        match cleanup {
             Ok(()) => operation,
             Err(cleanup) => EngineSessionError::OperationCleanup {
                 operation: Box::new(operation),

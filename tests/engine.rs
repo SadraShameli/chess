@@ -27,3 +27,6 @@ mod engine_startup;
 
 #[path = "desktop/game_supervisor_storage.rs"]
 mod desktop_game_supervisor_storage;
+
+#[path = "engine/search_session.rs"]
+mod engine_search_session;

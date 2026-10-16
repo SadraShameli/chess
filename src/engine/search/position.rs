@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use thiserror::Error;
+
+use crate::board::r#move::BoardMove;
 
 use crate::board::r#move::BoardMoveError;
 use crate::board::position::BoardPosition;
@@ -12,10 +16,15 @@ pub enum EngineSearchPositionError {
     OversizedHistory,
 }
 
+#[derive(Debug, Clone)]
+pub struct EngineSearchPosition(Arc<EngineSearchPositionState>);
+
 #[derive(Debug)]
-pub struct EngineSearchPosition {
+struct EngineSearchPositionState {
+    initial: BoardPosition,
     current: BoardPosition,
-    command: String,
+    history: Box<[BoardMove]>,
+    command: Box<str>,
 }
 
 impl EngineSearchPosition {
@@ -28,7 +37,8 @@ impl EngineSearchPosition {
         } else {
             format!("position fen {}", initial.fen())
         };
-        let mut current = initial;
+        let mut current = initial.clone();
+        let mut moves = Vec::new();
         let mut history = history.into_iter().peekable();
         if history.peek().is_some() {
             command.push_str(" moves");
@@ -43,18 +53,33 @@ impl EngineSearchPosition {
             if size > EngineProcessLimits::LINE_BYTES {
                 return Err(EngineSearchPositionError::OversizedHistory);
             }
-            current = current.play_uci(value)?;
+            let movement = current.parse_uci(value)?;
+            current = current.play(movement)?;
+            moves.push(movement);
             command.push(' ');
             command.push_str(value);
         }
-        Ok(Self { current, command })
+        Ok(Self(Arc::new(EngineSearchPositionState {
+            initial,
+            current,
+            history: moves.into_boxed_slice(),
+            command: command.into_boxed_str(),
+        })))
+    }
+
+    pub fn initial(&self) -> &BoardPosition {
+        &self.0.initial
+    }
+
+    pub fn history(&self) -> &[BoardMove] {
+        &self.0.history
     }
 
     pub fn current(&self) -> &BoardPosition {
-        &self.current
+        &self.0.current
     }
 
     pub fn command(&self) -> &str {
-        &self.command
+        &self.0.command
     }
 }

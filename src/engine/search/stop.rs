@@ -12,7 +12,7 @@ pub enum EngineSearchStopError {
     DeadlineOverflow,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineSearchStop {
     tag: EngineSearchTag,
     deadline: Instant,

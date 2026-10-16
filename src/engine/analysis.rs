@@ -345,6 +345,10 @@ impl EngineAnalysis {
         &self.text
     }
 
+    pub(crate) fn into_line(self) -> Option<EngineAnalysisLine> {
+        self.line
+    }
+
     pub fn into_text(self) -> String {
         self.text
     }
