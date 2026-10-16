@@ -105,6 +105,7 @@ pub struct PresentationApp {
     quit_confirmation: bool,
     quit_focus_pending: bool,
     quit_ready: bool,
+    quit_retry_frame: Option<u64>,
     theme_initialized: bool,
 }
 
@@ -128,6 +129,7 @@ impl PresentationApp {
             quit_confirmation: false,
             quit_focus_pending: false,
             quit_ready: false,
+            quit_retry_frame: None,
             theme_initialized: false,
         }
     }
@@ -206,6 +208,13 @@ impl PresentationApp {
     }
 
     pub fn poll(&mut self) {
+        for pending in &self.pending {
+            match pending.receipt.pending_notice() {
+                Ok(Some(notice)) => self.failure = Some(notice.message().to_owned()),
+                Ok(None) | Err(DesktopApplicationError::Busy) => {}
+                Err(error) => self.failure = Some(error.to_string()),
+            }
+        }
         let mut completed = Vec::new();
         self.pending.retain(|pending| {
             if let Some(response) = pending.receipt.response() {
@@ -370,14 +379,27 @@ impl PresentationApp {
                 ui.separator();
                 ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(PresentationThemeTokens::MUTED));
             });
+        let retry_quit = self.failure.is_some()
+            && self
+                .pending
+                .iter()
+                .any(|pending| pending.action == PresentationAppEnumAction::ConfirmQuit);
         let status = self.failure.as_deref().unwrap_or(&self.status);
+        let mut retry = false;
         egui::Panel::bottom("chess.status").show(ui, |ui| {
             let response = ui.label(status);
             ui.ctx().accesskit_node_builder(response.id, |node| {
                 node.set_role(egui::accesskit::Role::Status);
                 node.set_live(egui::accesskit::Live::Polite);
             });
+            if retry_quit {
+                retry = ui.button("Retry quit").clicked();
+            }
         });
+        if retry && self.quit_retry_frame != Some(frame) {
+            port.retry_quit()?;
+            self.quit_retry_frame = Some(frame);
+        }
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
                 ui.horizontal(|ui| {

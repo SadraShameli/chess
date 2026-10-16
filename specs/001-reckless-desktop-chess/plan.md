@@ -159,7 +159,7 @@ GPU startup/recovery behavior is a first migration acceptance gate.
    Replace the Bun-based GLB generator with a reproducible native tool while
    preserving asset identity or recording an explicitly verified replacement.
 6. Adapt Makefile verification/build/run/native-test commands, packaging and
-   update adapters. `make run` launches the optimized native application and
+   update adapters. `make run` launches a debug native application and
    appends an argument separator only when ARGS is nonempty.
 7. Resume the full remaining product implementation and platform acceptance.
    A native shell migration is an increment, not completion of the chess app.

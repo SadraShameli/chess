@@ -10,7 +10,6 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
 use thiserror::Error;
 use tokio::sync::oneshot;
-use uuid::Uuid;
 
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
@@ -29,6 +28,11 @@ pub enum DesktopFileHandleError {
     Saturated,
     #[error("The native file dialog closed unexpectedly: {0}")]
     DialogChannel(#[from] oneshot::error::RecvError),
+    #[error("The native file dialog failed: {source}")]
+    NativeDialog {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("The native selection is not a local filesystem location")]
     NonlocalSelection,
     #[error("The selected location has the wrong file type")]
@@ -51,16 +55,24 @@ pub enum DesktopFileEnumPurpose {
     Directory,
 }
 
+impl DesktopFileEnumPurpose {
+    pub const ALL: [Self; 3] = [Self::ReadFile, Self::WriteFile, Self::Directory];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct DesktopFileHandleId(DesktopRequestId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DesktopFileHandleOwner(Uuid);
+pub struct DesktopFileHandleOwner(DesktopRequestId);
 
 impl DesktopFileHandleOwner {
     pub fn new() -> Self {
-        Self(Uuid::new_v4())
+        Self(DesktopRequestId::new())
+    }
+
+    pub fn from_request_id(value: DesktopRequestId) -> Self {
+        Self(value)
     }
 }
 
@@ -231,19 +243,27 @@ impl DesktopFileHandleRegistry {
         request: DesktopFileHandleRequest,
         executor: &CapacityExecutor,
     ) -> Result<Option<DesktopFileHandleId>, DesktopFileHandleError> {
+        self.check_capacity(request.now)?;
+        let Some(path) = provider.select(request.purpose).await? else {
+            return Ok(None);
+        };
+        self.register_selection(path, request, executor)
+            .await
+            .map(Some)
+    }
+
+    pub async fn register_selection(
+        &mut self,
+        path: PathBuf,
+        request: DesktopFileHandleRequest,
+        executor: &CapacityExecutor,
+    ) -> Result<DesktopFileHandleId, DesktopFileHandleError> {
         let DesktopFileHandleRequest {
             owner,
             purpose,
             now,
         } = request;
-        self.entries
-            .retain(|_id, entry| !now.has_reached(entry.expires));
-        if self.entries.len() >= Self::CAPACITY {
-            return Err(DesktopFileHandleError::Saturated);
-        }
-        let Some(path) = provider.select(purpose).await? else {
-            return Ok(None);
-        };
+        self.check_capacity(now)?;
         let selection = executor
             .submit(move |_cancellation| DesktopFileEnumSelection::capture(path, purpose))?
             .join()
@@ -259,7 +279,20 @@ impl DesktopFileHandleRegistry {
                 selection,
             },
         );
-        Ok(Some(id))
+        Ok(id)
+    }
+
+    fn check_capacity(&mut self, now: ClockInstant) -> Result<(), DesktopFileHandleError> {
+        self.entries
+            .retain(|_id, entry| !now.has_reached(entry.expires));
+        if self.entries.len() >= Self::CAPACITY {
+            return Err(DesktopFileHandleError::Saturated);
+        }
+        Ok(())
+    }
+
+    pub fn revoke(&mut self, id: DesktopFileHandleId) -> bool {
+        self.entries.remove(&id).is_some()
     }
 
     pub fn consume(

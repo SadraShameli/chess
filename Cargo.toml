@@ -53,6 +53,7 @@ tokio = { version = "=1.53.3", features = ["fs", "io-util", "macros", "net", "pr
 uuid = { version = "=1.28.0", features = ["serde", "v4"] }
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 win-sd = { version = "=0.3.1", default-features = false }

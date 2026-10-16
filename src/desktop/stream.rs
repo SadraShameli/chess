@@ -17,7 +17,7 @@ pub enum DesktopEnumStreamClass {
     JobProgress,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DesktopStreamEvent<T> {
     protocol_version: DesktopProtocolVersion,
@@ -74,6 +74,17 @@ impl<T> DesktopStream<T> {
 
     pub fn is_resync_required(&self) -> bool {
         self.resync_required
+    }
+
+    pub fn acknowledgement_deadline(&self) -> Result<Option<ClockInstant>, DesktopError> {
+        if self.resync_required {
+            return Ok(None);
+        }
+        self.unacknowledged
+            .front()
+            .map(|(_sequence, sent)| sent.checked_add(Self::ACK_DEADLINE))
+            .transpose()
+            .map_err(|_error| DesktopError::TimeOrder)
     }
 
     pub fn require_resync(&mut self) {

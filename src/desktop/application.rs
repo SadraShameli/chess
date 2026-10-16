@@ -7,7 +7,7 @@ use tokio::sync::Notify;
 
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProvider;
-use crate::desktop::dto::DesktopEnumValue;
+use crate::desktop::dto::{DesktopEnumEvent, DesktopEnumValue};
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::{
@@ -15,6 +15,7 @@ use crate::desktop::messages::{
     DesktopMessagesEnumResult, DesktopRequest,
 };
 use crate::desktop::request_cache::DesktopRequestCache;
+use crate::desktop::stream::{DesktopStream, DesktopStreamEvent};
 
 #[derive(Debug, Error)]
 pub enum DesktopApplicationWakeError {
@@ -31,10 +32,18 @@ pub trait DesktopApplicationWakeProvider: Send + Sync {
     fn wake(&self) -> Result<(), DesktopApplicationWakeError>;
 }
 
+impl<W: DesktopApplicationWakeProvider> DesktopApplicationWakeProvider for Arc<W> {
+    fn wake(&self) -> Result<(), DesktopApplicationWakeError> {
+        self.as_ref().wake()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DesktopApplicationError {
     #[error("The application cannot admit another request right now")]
     Busy,
+    #[error("The native event queue is full and requires resynchronization")]
+    EventSaturated,
     #[error("An unapplied mutation or control already belongs to this entity")]
     EntityBusy,
     #[error("No admitted work belongs to this entity")]
@@ -79,6 +88,7 @@ struct DesktopApplicationReceiptState {
     deadline: Option<ClockInstant>,
     cancellation: AtomicBool,
     response: OnceLock<DesktopMessagesEnumResult>,
+    pending_notice: Mutex<Option<DesktopFailure>>,
 }
 
 #[derive(Clone)]
@@ -101,6 +111,7 @@ impl DesktopApplicationReceipt {
             deadline,
             cancellation: AtomicBool::new(false),
             response: OnceLock::new(),
+            pending_notice: Mutex::new(None),
         })))
     }
 
@@ -120,6 +131,22 @@ impl DesktopApplicationReceipt {
         self.0.response.get()
     }
 
+    pub fn pending_notice(&self) -> Result<Option<DesktopFailure>, DesktopApplicationError> {
+        Ok(self.lock_notice()?.clone())
+    }
+
+    fn lock_notice(
+        &self,
+    ) -> Result<MutexGuard<'_, Option<DesktopFailure>>, DesktopApplicationError> {
+        self.0
+            .pending_notice
+            .try_lock()
+            .map_err(|error| match error {
+                TryLockError::WouldBlock => DesktopApplicationError::Busy,
+                TryLockError::Poisoned(_error) => DesktopApplicationError::Poisoned,
+            })
+    }
+
     pub fn shares_outcome(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
@@ -131,7 +158,7 @@ impl DesktopApplicationReceipt {
         ) || self.response().is_none() && self.deadline().is_some_and(|deadline| now >= deadline)
     }
 
-    fn is_cancellation_requested(&self) -> bool {
+    pub fn is_cancellation_requested(&self) -> bool {
         self.0.cancellation.load(Ordering::Acquire)
     }
 
@@ -185,6 +212,7 @@ enum DesktopApplicationEnumLifecycle {
 }
 
 struct DesktopApplicationState {
+    events: VecDeque<DesktopStreamEvent<DesktopEnumEvent>>,
     entries: HashMap<u64, DesktopApplicationEntry>,
     ordinary: VecDeque<u64>,
     urgent: VecDeque<u64>,
@@ -205,6 +233,7 @@ impl DesktopApplicationState {
 
     fn new() -> Self {
         Self {
+            events: VecDeque::with_capacity(DesktopStream::<DesktopEnumEvent>::MAX_UNACKNOWLEDGED),
             entries: HashMap::new(),
             ordinary: VecDeque::with_capacity(Self::ORDINARY_CAPACITY),
             urgent: VecDeque::new(),
@@ -348,6 +377,14 @@ impl DesktopApplicationState {
             request.retain_admission(sequence);
             return Ok((receipt, false));
         }
+        if key != DesktopMessagesEnumControlKey::Quit
+            && matches!(
+                self.lifecycle,
+                DesktopApplicationEnumLifecycle::Closing { .. }
+            )
+        {
+            return Err(DesktopApplicationError::Closing);
+        }
         if key == DesktopMessagesEnumControlKey::Quit
             && let DesktopApplicationEnumLifecycle::Closing { quit_sequence } = self.lifecycle
         {
@@ -457,6 +494,7 @@ struct DesktopApplicationShared<C: ClockTimeProvider, W: DesktopApplicationWakeP
     clock: Arc<C>,
     wake: Arc<W>,
     wake_pending: AtomicBool,
+    quit_retry: AtomicBool,
     ready: Notify,
     state: Mutex<DesktopApplicationState>,
 }
@@ -554,8 +592,28 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         self.shared.wake_pending.store(false, Ordering::Release);
     }
 
+    pub fn try_event(
+        &self,
+    ) -> Result<Option<DesktopStreamEvent<DesktopEnumEvent>>, DesktopApplicationError> {
+        Ok(self.shared.lock()?.events.pop_front())
+    }
+
     pub fn rearm_wake(&self) -> Result<(), DesktopApplicationError> {
         self.shared.notify_presentation()
+    }
+
+    pub fn retry_quit(&self) -> Result<(), DesktopApplicationError> {
+        let state = self.shared.lock()?;
+        if !matches!(
+            state.lifecycle,
+            DesktopApplicationEnumLifecycle::Closing { .. }
+        ) {
+            return Err(DesktopApplicationError::InvalidTransition);
+        }
+        self.shared.quit_retry.store(true, Ordering::Release);
+        drop(state);
+        self.shared.ready.notify_one();
+        Ok(())
     }
 }
 
@@ -575,6 +633,7 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
                 clock,
                 wake,
                 wake_pending: AtomicBool::new(false),
+                quit_retry: AtomicBool::new(false),
                 ready: Notify::new(),
                 state: Mutex::new(DesktopApplicationState::new()),
             }),
@@ -587,8 +646,30 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         }
     }
 
+    pub fn publish_event(
+        &self,
+        event: DesktopStreamEvent<DesktopEnumEvent>,
+    ) -> Result<(), DesktopApplicationError> {
+        let mut state = self.shared.lock()?;
+        if state.events.len() == DesktopStream::<DesktopEnumEvent>::MAX_UNACKNOWLEDGED {
+            return Err(DesktopApplicationError::EventSaturated);
+        }
+        state.events.push_back(event);
+        drop(state);
+        self.shared.notify_presentation()
+    }
+
+    pub fn clear_events(&self) -> Result<(), DesktopApplicationError> {
+        self.shared.lock()?.events.clear();
+        Ok(())
+    }
+
     pub async fn ready(&self) {
         self.shared.ready.notified().await;
+    }
+
+    pub fn take_quit_retry(&self) -> bool {
+        self.shared.quit_retry.swap(false, Ordering::AcqRel)
     }
 
     pub fn try_next(&self) -> Result<Option<DesktopApplicationWork>, DesktopApplicationError> {
@@ -773,6 +854,23 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
             DesktopMessagesEnumResult::ReconciliationRequired
         };
         state.complete(work.request.sequence(), response, now)?;
+        drop(state);
+        self.shared.notify_presentation()
+    }
+
+    pub fn report_pending_control(
+        &self,
+        work: &DesktopApplicationWork,
+        notice: DesktopFailure,
+    ) -> Result<(), DesktopApplicationError> {
+        let mut state = self.shared.lock()?;
+        let entry = self.entry(&mut state, work)?;
+        if !entry.request.command().operation().is_control()
+            || !matches!(entry.phase, DesktopApplicationEnumWorkPhase::Running)
+        {
+            return Err(DesktopApplicationError::InvalidTransition);
+        }
+        *entry.receipt.lock_notice()? = Some(notice);
         drop(state);
         self.shared.notify_presentation()
     }

@@ -15,6 +15,7 @@ use crate::desktop::profile::security::DesktopProfileSecurity;
 
 #[derive(Clone, Copy)]
 pub(super) enum DesktopProfileControlRecordEnumKind {
+    Identity,
     Owner,
     Installation,
 }
@@ -22,6 +23,7 @@ pub(super) enum DesktopProfileControlRecordEnumKind {
 impl DesktopProfileControlRecordEnumKind {
     fn filename(self) -> &'static str {
         match self {
+            Self::Identity => DesktopProfilePaths::IDENTITY_NAME,
             Self::Owner => "owner.json",
             Self::Installation => "installation.json",
         }
@@ -29,6 +31,7 @@ impl DesktopProfileControlRecordEnumKind {
 
     fn maximum_bytes(self) -> u64 {
         match self {
+            Self::Identity => DesktopProfilePaths::IDENTITY_BYTES,
             Self::Owner => 4096,
             Self::Installation => 8192,
         }
@@ -73,6 +76,16 @@ impl DesktopProfileControlRecord {
         security: &DesktopProfileSecurity,
         kind: DesktopProfileControlRecordEnumKind,
     ) -> Result<Option<T>, DesktopProfileError> {
+        Self::read_bytes(data, security, kind)?
+            .map(|(path, bytes)| Self::decode(&path, &bytes))
+            .transpose()
+    }
+
+    pub(super) fn read_bytes(
+        data: &Path,
+        security: &DesktopProfileSecurity,
+        kind: DesktopProfileControlRecordEnumKind,
+    ) -> Result<Option<(PathBuf, Vec<u8>)>, DesktopProfileError> {
         let canonical = match data.canonicalize() {
             Ok(path) => path,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -115,7 +128,7 @@ impl DesktopProfileControlRecord {
         data.verify_identity(security)?;
         control.verify_identity(security)?;
         kind.check_bound(&path, &bytes)?;
-        Self::decode(&path, &bytes).map(Some)
+        Ok(Some((path, bytes)))
     }
 
     pub(super) fn replace<T: Serialize>(

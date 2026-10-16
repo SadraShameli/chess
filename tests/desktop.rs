@@ -6,6 +6,12 @@ mod desktop_activation_unix;
 #[cfg(windows)]
 #[path = "desktop/activation_windows.rs"]
 mod desktop_activation_windows;
+#[path = "desktop/coordinator.rs"]
+mod desktop_coordinator;
+#[path = "desktop/dialogs.rs"]
+mod desktop_dialogs;
+#[path = "desktop/dialogs_proxy.rs"]
+mod desktop_dialogs_proxy;
 #[path = "desktop/identity.rs"]
 mod desktop_identity;
 #[path = "desktop/installation.rs"]
@@ -14,6 +20,8 @@ mod desktop_installation;
 mod desktop_native_host;
 #[path = "desktop/resources.rs"]
 mod desktop_native_resources;
+#[path = "desktop/native_startup.rs"]
+mod desktop_native_startup;
 #[path = "desktop/owner_record.rs"]
 mod desktop_owner_record;
 #[path = "desktop/profile_lease.rs"]

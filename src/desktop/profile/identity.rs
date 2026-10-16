@@ -5,8 +5,12 @@ use std::str::FromStr;
 use directories::BaseDirs;
 use uuid::Uuid;
 
+use crate::desktop::profile::control_record::{
+    DesktopProfileControlRecord, DesktopProfileControlRecordEnumKind,
+};
 use crate::desktop::profile::error::DesktopProfileError;
 use crate::desktop::profile::paths::DesktopProfilePaths;
+use crate::desktop::profile::security::DesktopProfileSecurity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DesktopProfileId(Uuid);
@@ -17,6 +21,27 @@ impl DesktopProfileId {
             return Err(DesktopProfileError::NoncanonicalProfileId);
         }
         Ok(Self(value))
+    }
+
+    pub(super) fn from_control_record(
+        path: &Path,
+        bytes: &[u8],
+    ) -> Result<Self, DesktopProfileError> {
+        let value = std::str::from_utf8(bytes)
+            .map_err(|source| Self::invalid_control_record(path, source))?;
+        value
+            .parse()
+            .map_err(|source| Self::invalid_control_record(path, source))
+    }
+
+    fn invalid_control_record(
+        path: &Path,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> DesktopProfileError {
+        DesktopProfileError::InvalidIdentityRecord {
+            path: path.to_path_buf(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidData, source),
+        }
     }
 }
 
@@ -45,6 +70,19 @@ pub struct DesktopProfileIdentity {
 }
 
 impl DesktopProfileIdentity {
+    pub fn read_existing(
+        data_directory: &Path,
+        security: &DesktopProfileSecurity,
+    ) -> Result<Option<DesktopProfileId>, DesktopProfileError> {
+        DesktopProfileControlRecord::read_bytes(
+            data_directory,
+            security,
+            DesktopProfileControlRecordEnumKind::Identity,
+        )?
+        .map(|(path, bytes)| DesktopProfileId::from_control_record(&path, &bytes))
+        .transpose()
+    }
+
     pub fn discover_data_directory() -> Result<PathBuf, DesktopProfileError> {
         BaseDirs::new()
             .map(|base| Self::data_directory_in(base.data_dir()))

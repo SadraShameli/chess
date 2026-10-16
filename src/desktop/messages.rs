@@ -4,6 +4,7 @@ use crate::clock::duration::ClockInstant;
 use crate::desktop::dto::DesktopEnumValue;
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::file_handle::DesktopFileEnumPurpose;
+use crate::desktop::file_handle::DesktopFileHandleOwner;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -12,6 +13,10 @@ pub struct DesktopMessagesEntityId(DesktopRequestId);
 impl DesktopMessagesEntityId {
     pub fn new() -> Self {
         Self(DesktopRequestId::new())
+    }
+
+    pub fn file_handle_owner(self) -> DesktopFileHandleOwner {
+        DesktopFileHandleOwner::from_request_id(self.0)
     }
 }
 

@@ -177,3 +177,41 @@ The integrated debug run passed 12 library tests and 94 desktop tests in
 Five focused presentation application tests passed after the quit-readiness
 addition. Targeted strict library/desktop/presentation Clippy passed.
 These adapters do not yet replace the retained executable bootstrap.
+
+## Native orchestration and retained service shutdown
+
+The in-process coordinator services bootstrap requests while a native selection
+is pending, retains selection identity through cancellation and preserves
+revision validation. Its subscription/resynchronization events remain typed
+and bounded. Failed shutdown keeps the coordinator and the pending Quit receipt
+alive; an explicit Retry quit is required before another cleanup attempt.
+The regression first failed when the old coordinator returned its cleanup error
+and exited. The fixed coordinator passed all four focused cases.
+
+Native dialogs retain their real parent, future and shared-capacity reservation
+until actual completion. Cancellation before opening prevents creation; active
+rfd cancellation remains deferred until native close because the pinned library
+does not expose an active close operation. Fifteen adapter cases and two
+pre-window proxy cases passed. This limitation still leaves T038's bounded
+active-dialog cancellation acceptance unresolved.
+
+Fourteen synchronous startup cases passed, including one-owner first-launch
+races, aliases, stored-profile binding and installation barriers that release
+the lease before displaying blocked status. The resource/startup/native-wake
+selection passed 21 cases. These tests do not yet launch the complete executable
+or prove secondary-process service exclusion in production.
+
+Engine and database cleanup now borrows retained owners across an absolute
+deadline. Timeouts and canceled waits preserve child, pipe-reader and database
+worker handles for later observed cleanup. Completion failures retain their
+causes and completed handles are not polled twice. Targeted debug verification
+passed three process-reader tests, 30 engine cases and 14 storage cases. Strict
+library/engine/storage Clippy passed. A real Reckless child shutdown remains
+part of the native launch gate.
+
+Two native-host contention cases passed: transient capacity/mailbox contention
+rearms the reactive event loop, and nontransient failures remain visible.
+Six focused presentation cases passed, including the accessible explicit Retry
+quit action and replacement of a stale pending notice with a later cleanup
+failure. All development checks used incremental debug builds; native GPU,
+cross-platform, optimized performance and final whole-project gates remain open.

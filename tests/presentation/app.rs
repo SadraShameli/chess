@@ -101,6 +101,31 @@ impl PresentationAppFixture {
         let frame = result.ok_or("missing presentation frame")??;
         Ok((output, frame.viewport()))
     }
+
+    fn click(&mut self, output: &egui::FullOutput, label: &str) -> PresentationAppTestResult {
+        let nodes = &output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .ok_or("missing native action semantics")?
+            .nodes;
+        let (target, _) = nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some(label))
+            .ok_or("missing native action control")?;
+        self.frame(
+            None,
+            vec![egui::Event::AccessKitActionRequest(
+                accesskit::ActionRequest {
+                    action: accesskit::Action::Click,
+                    target_tree: accesskit::TreeId::ROOT,
+                    target_node: *target,
+                    data: None,
+                },
+            )],
+        )?;
+        Ok(())
+    }
 }
 
 #[test]
@@ -306,26 +331,7 @@ fn quit_waits_for_explicit_confirmation_and_submits_one_owned_control() -> Prese
     assert!(fixture.presentation.is_quit_confirmation_open());
     assert!(fixture.application.try_next()?.is_none());
     let (output, _) = fixture.frame(None, Vec::new())?;
-    let nodes = output
-        .platform_output
-        .accesskit_update
-        .ok_or("missing confirmation semantics")?
-        .nodes;
-    let (target, _) = nodes
-        .iter()
-        .find(|(_, node)| node.label() == Some("Confirm quit"))
-        .ok_or("missing confirm control")?;
-    fixture.frame(
-        None,
-        vec![egui::Event::AccessKitActionRequest(
-            accesskit::ActionRequest {
-                action: accesskit::Action::Click,
-                target_tree: accesskit::TreeId::ROOT,
-                target_node: *target,
-                data: None,
-            },
-        )],
-    )?;
+    fixture.click(&output, "Confirm quit")?;
     assert!(!fixture.presentation.is_quit_confirmation_open());
     let work = fixture
         .application
@@ -345,5 +351,51 @@ fn quit_waits_for_explicit_confirmation_and_submits_one_owned_control() -> Prese
         fixture.presentation.status(),
         "Application is ready to close"
     );
+    Ok(())
+}
+
+#[test]
+fn pending_quit_shows_updated_failures_and_an_accessible_explicit_retry()
+-> PresentationAppTestResult {
+    let mut fixture = PresentationAppFixture::new();
+    let port = fixture.application.port();
+    assert!(port.retry_quit().is_err());
+    fixture
+        .presentation
+        .activate(PresentationAppEnumAction::ConfirmQuit, 1, &port)?;
+    let work = fixture
+        .application
+        .try_next()?
+        .ok_or("missing pending quit")?;
+    fixture.application.report_pending_control(
+        &work,
+        DesktopFailure::new(
+            DesktopEnumFailureCode::ResourceRefusal,
+            "Close the file dialog".to_owned(),
+            true,
+        ),
+    )?;
+    fixture.application.report_pending_control(
+        &work,
+        DesktopFailure::new(
+            DesktopEnumFailureCode::ResourceRefusal,
+            "Cleanup needs an explicit retry".to_owned(),
+            true,
+        ),
+    )?;
+    let (output, _) = fixture.frame(None, Vec::new())?;
+    assert_eq!(
+        fixture.presentation.failure(),
+        Some("Cleanup needs an explicit retry")
+    );
+    assert!(!fixture.application.take_quit_retry());
+    fixture.click(&output, "Retry quit")?;
+    assert!(fixture.application.take_quit_retry());
+    assert!(!fixture.application.take_quit_retry());
+    assert!(!fixture.presentation.is_quit_ready());
+    assert!(fixture.application.try_next()?.is_none());
+    fixture.application.complete_control(&work)?;
+    fixture.presentation.poll();
+    assert!(fixture.presentation.is_quit_ready());
     Ok(())
 }

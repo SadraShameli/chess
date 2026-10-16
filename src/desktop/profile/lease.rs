@@ -126,17 +126,6 @@ impl DesktopProfileLease {
         file.take(DesktopProfilePaths::IDENTITY_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|error| DesktopProfileError::io(paths.identity(), error))?;
-        let value = std::str::from_utf8(&bytes).map_err(|error| {
-            DesktopProfileError::InvalidIdentityRecord {
-                path: paths.identity().to_path_buf(),
-                source: std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-            }
-        })?;
-        value.parse::<DesktopProfileId>().map_err(|error| {
-            DesktopProfileError::InvalidIdentityRecord {
-                path: paths.identity().to_path_buf(),
-                source: std::io::Error::new(std::io::ErrorKind::InvalidData, error),
-            }
-        })
+        DesktopProfileId::from_control_record(paths.identity(), &bytes)
     }
 }

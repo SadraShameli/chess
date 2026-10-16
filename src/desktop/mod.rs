@@ -1,5 +1,6 @@
 pub mod application;
 pub mod bootstrap;
+pub mod coordinator;
 pub mod dto;
 pub mod envelope;
 pub mod error;
