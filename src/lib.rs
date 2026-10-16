@@ -8,3 +8,4 @@ pub mod package;
 pub mod presentation;
 pub mod scene;
 pub mod storage;
+pub mod workbench;
