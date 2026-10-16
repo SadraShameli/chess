@@ -1,8 +1,8 @@
 use schemars::{JsonSchema, Schema, generate::SchemaSettings};
 
 use crate::desktop::dto::{
-    DesktopBootstrapSnapshot, DesktopEnumEvent, DesktopEnumRequest, DesktopEnumResponseResult,
-    DesktopEnumValue, DesktopResponse,
+    DesktopBootstrapSnapshot, DesktopEnumEngineSnapshot, DesktopEnumEvent, DesktopEnumRequest,
+    DesktopEnumResponseResult, DesktopEnumValue, DesktopResponse,
 };
 use crate::desktop::envelope::DesktopEnvelope;
 use crate::desktop::stream::DesktopStreamEvent;
@@ -29,7 +29,13 @@ impl DesktopSchema {
     pub fn fixture() -> Result<Self, crate::desktop::error::DesktopError> {
         let request_id = "123e4567-e89b-42d3-a456-426614174000".parse()?;
         let board = crate::board::position::BoardPosition::standard();
-        let snapshot = DesktopBootstrapSnapshot::new(&board, std::num::NonZeroU32::MIN);
+        let snapshot = DesktopBootstrapSnapshot::new(
+            &board,
+            std::num::NonZeroU32::MIN,
+            DesktopEnumEngineSnapshot::Unavailable {
+                message: "The schema fixture does not start an engine.".to_owned(),
+            },
+        );
         let now = crate::clock::duration::ClockInstant::from_nanos(0);
         let mut stream = crate::desktop::stream::DesktopStream::new(request_id, now);
         let event = stream

@@ -87,3 +87,13 @@ impl From<DesktopError> for DesktopFailure {
         Self::new(code, error.to_string(), retryable)
     }
 }
+
+impl From<crate::clock::duration::ClockDurationError> for DesktopFailure {
+    fn from(error: crate::clock::duration::ClockDurationError) -> Self {
+        Self::new(
+            DesktopEnumFailureCode::InternalFailure,
+            error.to_string(),
+            false,
+        )
+    }
+}

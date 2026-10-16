@@ -85,3 +85,36 @@ async fn admits_a_full_bounded_batch_at_detected_capacity() -> Result<(), Box<dy
     executor.shutdown().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn fair_capacity_waits_release_on_cancellation() -> Result<(), Box<dyn std::error::Error>> {
+    use std::future::{Future, poll_fn};
+    use std::task::Poll;
+
+    let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
+    let held = budget.try_lease(1)?;
+    let mut waiting = std::pin::pin!(budget.lease(1));
+    poll_fn(|context| {
+        assert!(waiting.as_mut().poll(context).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    drop(held);
+    let acquired = waiting.await?;
+    assert_eq!(budget.available(), 0);
+    drop(acquired);
+    assert_eq!(budget.available(), 1);
+    assert!(budget.lease(0).await.is_err());
+    let held = budget.try_lease(1)?;
+    {
+        let mut cancelled = Box::pin(budget.lease(1));
+        poll_fn(|context| {
+            assert!(cancelled.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+    }
+    drop(held);
+    assert_eq!(budget.available(), 1);
+    Ok(())
+}

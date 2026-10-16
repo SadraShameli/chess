@@ -36,6 +36,9 @@
     "longDescription": "Offline chess, analysis and study with a native Reckless engine and a real-time 3D board.",
     "macOS": {
       "minimumSystemVersion": "14.0"
+    },
+    "resources": {
+      "resources/engine/": "resources/engine/"
     }
   }
 }

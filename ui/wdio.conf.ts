@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 
 const application =
-  resolve(import.meta.dirname, "../target/debug/chess") +
+  resolve(import.meta.dirname, "../target/release/chess") +
   (process.platform === "win32" ? ".exe" : "");
 const service = {
   appBinaryPath: application,

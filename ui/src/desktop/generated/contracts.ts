@@ -112,6 +112,58 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                       maximum: 4294967295,
                       minimum: 1,
                     },
+                    engine: {
+                      oneOf: [
+                        {
+                          type: "object",
+                          properties: {
+                            identity: {
+                              type: "object",
+                              properties: {
+                                author: {
+                                  type: "string",
+                                  maxLength: 256,
+                                },
+                                name: {
+                                  type: "string",
+                                  maxLength: 256,
+                                },
+                                supported_options: {
+                                  type: "array",
+                                  items: {
+                                    type: "string",
+                                  },
+                                  maxItems: 128,
+                                },
+                              },
+                              additionalProperties: false,
+                              required: ["name", "author", "supported_options"],
+                            },
+                            state: {
+                              type: "string",
+                              const: "ready",
+                            },
+                          },
+                          additionalProperties: false,
+                          required: ["state", "identity"],
+                        },
+                        {
+                          type: "object",
+                          properties: {
+                            message: {
+                              type: "string",
+                              maxLength: 1024,
+                            },
+                            state: {
+                              type: "string",
+                              const: "unavailable",
+                            },
+                          },
+                          additionalProperties: false,
+                          required: ["state", "message"],
+                        },
+                      ],
+                    },
                     protocol_version: {
                       type: "integer",
                       const: 1,
@@ -123,7 +175,14 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                     },
                   },
                   additionalProperties: false,
-                  required: ["protocol_version", "app_version", "revision", "board", "cpu_threads"],
+                  required: [
+                    "protocol_version",
+                    "app_version",
+                    "revision",
+                    "board",
+                    "engine",
+                    "cpu_threads",
+                  ],
                 },
               },
               additionalProperties: false,
@@ -431,6 +490,58 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                               maximum: 4294967295,
                               minimum: 1,
                             },
+                            engine: {
+                              oneOf: [
+                                {
+                                  type: "object",
+                                  properties: {
+                                    identity: {
+                                      type: "object",
+                                      properties: {
+                                        author: {
+                                          type: "string",
+                                          maxLength: 256,
+                                        },
+                                        name: {
+                                          type: "string",
+                                          maxLength: 256,
+                                        },
+                                        supported_options: {
+                                          type: "array",
+                                          items: {
+                                            type: "string",
+                                          },
+                                          maxItems: 128,
+                                        },
+                                      },
+                                      additionalProperties: false,
+                                      required: ["name", "author", "supported_options"],
+                                    },
+                                    state: {
+                                      type: "string",
+                                      const: "ready",
+                                    },
+                                  },
+                                  additionalProperties: false,
+                                  required: ["state", "identity"],
+                                },
+                                {
+                                  type: "object",
+                                  properties: {
+                                    message: {
+                                      type: "string",
+                                      maxLength: 1024,
+                                    },
+                                    state: {
+                                      type: "string",
+                                      const: "unavailable",
+                                    },
+                                  },
+                                  additionalProperties: false,
+                                  required: ["state", "message"],
+                                },
+                              ],
+                            },
                             protocol_version: {
                               type: "integer",
                               const: 1,
@@ -447,6 +558,7 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                             "app_version",
                             "revision",
                             "board",
+                            "engine",
                             "cpu_threads",
                           ],
                         },
@@ -600,6 +712,58 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                                   maximum: 4294967295,
                                   minimum: 1,
                                 },
+                                engine: {
+                                  oneOf: [
+                                    {
+                                      type: "object",
+                                      properties: {
+                                        identity: {
+                                          type: "object",
+                                          properties: {
+                                            author: {
+                                              type: "string",
+                                              maxLength: 256,
+                                            },
+                                            name: {
+                                              type: "string",
+                                              maxLength: 256,
+                                            },
+                                            supported_options: {
+                                              type: "array",
+                                              items: {
+                                                type: "string",
+                                              },
+                                              maxItems: 128,
+                                            },
+                                          },
+                                          additionalProperties: false,
+                                          required: ["name", "author", "supported_options"],
+                                        },
+                                        state: {
+                                          type: "string",
+                                          const: "ready",
+                                        },
+                                      },
+                                      additionalProperties: false,
+                                      required: ["state", "identity"],
+                                    },
+                                    {
+                                      type: "object",
+                                      properties: {
+                                        message: {
+                                          type: "string",
+                                          maxLength: 1024,
+                                        },
+                                        state: {
+                                          type: "string",
+                                          const: "unavailable",
+                                        },
+                                      },
+                                      additionalProperties: false,
+                                      required: ["state", "message"],
+                                    },
+                                  ],
+                                },
                                 protocol_version: {
                                   type: "integer",
                                   const: 1,
@@ -616,6 +780,7 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                                 "app_version",
                                 "revision",
                                 "board",
+                                "engine",
                                 "cpu_threads",
                               ],
                             },
@@ -773,6 +938,58 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                                   maximum: 4294967295,
                                   minimum: 1,
                                 },
+                                engine: {
+                                  oneOf: [
+                                    {
+                                      type: "object",
+                                      properties: {
+                                        identity: {
+                                          type: "object",
+                                          properties: {
+                                            author: {
+                                              type: "string",
+                                              maxLength: 256,
+                                            },
+                                            name: {
+                                              type: "string",
+                                              maxLength: 256,
+                                            },
+                                            supported_options: {
+                                              type: "array",
+                                              items: {
+                                                type: "string",
+                                              },
+                                              maxItems: 128,
+                                            },
+                                          },
+                                          additionalProperties: false,
+                                          required: ["name", "author", "supported_options"],
+                                        },
+                                        state: {
+                                          type: "string",
+                                          const: "ready",
+                                        },
+                                      },
+                                      additionalProperties: false,
+                                      required: ["state", "identity"],
+                                    },
+                                    {
+                                      type: "object",
+                                      properties: {
+                                        message: {
+                                          type: "string",
+                                          maxLength: 1024,
+                                        },
+                                        state: {
+                                          type: "string",
+                                          const: "unavailable",
+                                        },
+                                      },
+                                      additionalProperties: false,
+                                      required: ["state", "message"],
+                                    },
+                                  ],
+                                },
                                 protocol_version: {
                                   type: "integer",
                                   const: 1,
@@ -789,6 +1006,7 @@ export const desktopWireSchema = new DesktopSchemaLiteral({
                                 "app_version",
                                 "revision",
                                 "board",
+                                "engine",
                                 "cpu_threads",
                               ],
                             },

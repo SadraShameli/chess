@@ -23,5 +23,26 @@ export default defineConfig({
   resolve: { tsconfigPaths: true },
   clearScreen: false,
   server: { host: "127.0.0.1", port: 1420, strictPort: true },
-  build: { target: "es2023", sourcemap: true },
+  build: {
+    target: "es2023",
+    sourcemap: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "three-core",
+              test: /[\\/]three[\\/]build[\\/]three\.core\.js$/,
+              priority: 2,
+            },
+            {
+              name: "three-webgl",
+              test: /[\\/]three[\\/]build[\\/]three\.module\.js$/,
+              priority: 1,
+            },
+          ],
+        },
+      },
+    },
+  },
 });

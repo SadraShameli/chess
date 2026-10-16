@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import type { ComponentPublicInstance, DeepReadonly } from "vue";
-import pieceAssetUrl from "@resources/pieces/chess.glb?url";
 import { BoardSceneFailure, BoardSceneFailureKind } from "@/board/failure";
-import { BoardScene } from "@/board/scene";
+import type { BoardScene } from "@/board/scene";
 import { BoardSemanticGrid } from "@/board/semantic_grid";
 import type { DesktopBootstrap } from "@/desktop/generated/contracts";
 import "@/board/board.css";
@@ -31,7 +30,7 @@ const grid = computed(() => new BoardSemanticGrid(props.snapshot));
 const buttons = new Map<number, HTMLButtonElement>();
 let scene: BoardScene | null = null;
 let resizeObserver: ResizeObserver | null = null;
-let disposed = false;
+const lifetime = new AbortController();
 
 function registerButton(square: number, element: Element | ComponentPublicInstance | null): void {
   if (element instanceof HTMLButtonElement) {
@@ -75,7 +74,7 @@ function pick(event: MouseEvent): void {
 }
 
 function fail(error: unknown): void {
-  if (disposed) {
+  if (lifetime.signal.aborted) {
     return;
   }
   const message =
@@ -104,6 +103,11 @@ onMounted(async () => {
   }
   const styles = globalThis.getComputedStyle(viewport.value);
   try {
+    const [{ BoardScene }, { default: pieceAssetUrl }] = await Promise.all([
+      import("@/board/scene"),
+      import("@resources/pieces/chess.glb?url"),
+    ]);
+    lifetime.signal.throwIfAborted();
     const initialized = await BoardScene.create({
       canvas: canvas.value,
       assetUrl: pieceAssetUrl,
@@ -115,7 +119,7 @@ onMounted(async () => {
       },
       failed: fail,
     });
-    if (disposed) {
+    if (lifetime.signal.aborted) {
       initialized.dispose();
       return;
     }
@@ -130,9 +134,7 @@ onMounted(async () => {
     resizeObserver.observe(viewport.value);
     emit("ready");
   } catch (error) {
-    if (!disposed) {
-      fail(error);
-    }
+    fail(error);
   }
 });
 
@@ -144,7 +146,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  disposed = true;
+  lifetime.abort();
   resizeObserver?.disconnect();
   scene?.dispose();
   buttons.clear();

@@ -10,10 +10,13 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::storage::migration::StorageMigration;
 
 #[derive(Debug, Error)]
 pub enum StorageDocumentError {
+    #[error(transparent)]
+    Capacity(#[from] CapacityBudgetError),
     #[error("Local database operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("Invalid JSON document: {0}")]
@@ -90,33 +93,38 @@ pub struct StorageDocumentStore {
     commands: mpsc::Sender<StorageDocumentEnumCommand>,
     worker: JoinHandle<Result<(), StorageDocumentError>>,
     memory: Arc<Semaphore>,
+    admission: Arc<Semaphore>,
 }
 
 impl StorageDocumentStore {
     pub const QUEUE_CAPACITY: usize = 256;
     pub const MEMORY_BUDGET: usize = 64 * 1024 * 1024;
 
-    pub async fn open(path: PathBuf) -> Result<Self, StorageDocumentError> {
-        Self::open_with_migrations(path, StorageMigration::core()).await
+    pub async fn open(path: PathBuf, budget: CapacityBudget) -> Result<Self, StorageDocumentError> {
+        Self::open_with_migrations(path, StorageMigration::core(), budget).await
     }
 
     pub async fn open_with_migrations(
         path: PathBuf,
         migrations: Vec<StorageMigration>,
+        budget: CapacityBudget,
     ) -> Result<Self, StorageDocumentError> {
+        let initialization_lease = budget.lease(1).await?;
         let (commands, receiver) = mpsc::channel(Self::QUEUE_CAPACITY);
         let (ready_sender, ready_receiver) = oneshot::channel();
         let memory = Arc::new(Semaphore::new(Self::MEMORY_BUDGET));
         let actor_memory = Arc::clone(&memory);
+        let runtime = tokio::runtime::Handle::current();
         let worker = tokio::task::spawn_blocking(move || {
-            let initialized = StorageDocumentActor::open(path, migrations, actor_memory);
+            let initialized =
+                StorageDocumentActor::open(path, migrations, actor_memory, budget, runtime);
+            drop(initialization_lease);
             match initialized {
                 Ok(actor) => {
                     if ready_sender.send(Ok(())).is_err() {
                         return Ok(());
                     }
-                    actor.run(receiver);
-                    Ok(())
+                    actor.run(receiver)
                 }
                 Err(error) => {
                     if let Err(abandoned_error) = ready_sender.send(Err(error)) {
@@ -131,6 +139,7 @@ impl StorageDocumentStore {
                 commands,
                 worker,
                 memory,
+                admission: Arc::new(Semaphore::new(Self::QUEUE_CAPACITY)),
             }),
             Ok(Err(error)) => {
                 worker.await??;
@@ -149,6 +158,7 @@ impl StorageDocumentStore {
         expected_revision: u64,
         body: String,
     ) -> Result<StorageDocumentReceipt, StorageDocumentError> {
+        let _admission = self.admit()?;
         let memory_reservation = Self::reserve_memory(&self.memory, body.len())?;
         let (result, receiver) = oneshot::channel();
         self.enqueue(StorageDocumentEnumCommand::Save {
@@ -162,6 +172,7 @@ impl StorageDocumentStore {
     }
 
     pub async fn read(&self, id: Uuid) -> Result<Option<StorageDocument>, StorageDocumentError> {
+        let _admission = self.admit()?;
         let (result, receiver) = oneshot::channel();
         self.enqueue(StorageDocumentEnumCommand::Read { id, result })?;
         receiver.await?
@@ -170,6 +181,12 @@ impl StorageDocumentStore {
     pub async fn close(self) -> Result<(), StorageDocumentError> {
         drop(self.commands);
         self.worker.await?
+    }
+
+    fn admit(&self) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
+        Arc::clone(&self.admission)
+            .try_acquire_owned()
+            .map_err(|_error| StorageDocumentError::Saturated)
     }
 
     fn reserve_memory(
@@ -197,6 +214,8 @@ impl StorageDocumentStore {
 struct StorageDocumentActor {
     connection: Connection,
     memory: Arc<Semaphore>,
+    budget: CapacityBudget,
+    runtime: tokio::runtime::Handle,
 }
 
 impl StorageDocumentActor {
@@ -206,6 +225,8 @@ impl StorageDocumentActor {
         path: PathBuf,
         migrations: Vec<StorageMigration>,
         memory: Arc<Semaphore>,
+        budget: CapacityBudget,
+        runtime: tokio::runtime::Handle,
     ) -> Result<Self, StorageDocumentError> {
         let mut connection = Connection::open(path)?;
         connection.busy_timeout(Self::BUSY_TIMEOUT)?;
@@ -213,11 +234,20 @@ impl StorageDocumentActor {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         StorageMigration::apply(&mut connection, &migrations)?;
-        Ok(Self { connection, memory })
+        Ok(Self {
+            connection,
+            memory,
+            budget,
+            runtime,
+        })
     }
 
-    fn run(mut self, mut receiver: mpsc::Receiver<StorageDocumentEnumCommand>) {
+    fn run(
+        mut self,
+        mut receiver: mpsc::Receiver<StorageDocumentEnumCommand>,
+    ) -> Result<(), StorageDocumentError> {
         while let Some(command) = receiver.blocking_recv() {
+            let lease = self.runtime.block_on(self.budget.lease(1))?;
             match command {
                 StorageDocumentEnumCommand::Save {
                     id,
@@ -227,18 +257,21 @@ impl StorageDocumentActor {
                     result,
                 } => {
                     let outcome = self.save(id, expected_revision, &body);
-                    drop((body, _memory_reservation));
+                    drop((body, _memory_reservation, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
                     }
                 }
                 StorageDocumentEnumCommand::Read { id, result } => {
-                    if let Err(abandoned_result) = result.send(self.read(id)) {
+                    let outcome = self.read(id);
+                    drop(lease);
+                    if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn save(

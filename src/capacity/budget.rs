@@ -56,4 +56,15 @@ impl CapacityBudget {
             .map_err(|_error| CapacityBudgetError::Unavailable)?;
         Ok(CapacityLease::new(permits))
     }
+
+    pub async fn lease(&self, workers: usize) -> Result<CapacityLease, CapacityBudgetError> {
+        if workers == 0 || workers > self.workers() {
+            return Err(CapacityBudgetError::InvalidAllocation);
+        }
+        let permits = Arc::clone(&self.permits)
+            .acquire_many_owned(u32::try_from(workers)?)
+            .await
+            .map_err(|_error| CapacityBudgetError::Unavailable)?;
+        Ok(CapacityLease::new(permits))
+    }
 }

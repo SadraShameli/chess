@@ -1,4 +1,5 @@
 {
+  "identifier": "nl.sadra.chess.native-test",
   "build": {
     "beforeBuildCommand": "bun run build:native",
     "frontendDist": "ui/dist-native"

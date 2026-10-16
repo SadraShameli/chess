@@ -87,12 +87,46 @@ impl DesktopBoardSnapshot {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct DesktopEngineIdentity {
+    #[schemars(length(max = 256))]
+    name: String,
+    #[schemars(length(max = 256))]
+    author: String,
+    #[schemars(length(max = 128))]
+    supported_options: Vec<String>,
+}
+
+impl DesktopEngineIdentity {
+    pub fn new(name: String, author: String, supported_options: Vec<String>) -> Self {
+        Self {
+            name,
+            author,
+            supported_options,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DesktopEnumEngineSnapshot {
+    Ready {
+        identity: Box<DesktopEngineIdentity>,
+    },
+    Unavailable {
+        #[schemars(length(max = 1024))]
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DesktopBootstrapSnapshot {
     protocol_version: DesktopProtocolVersion,
     #[schemars(length(max = 64))]
     app_version: String,
     revision: DesktopRevision,
     board: DesktopBoardSnapshot,
+    engine: DesktopEnumEngineSnapshot,
     #[schemars(schema_with = "DesktopBootstrapSnapshot::cpu_schema")]
     cpu_threads: u32,
 }
@@ -102,12 +136,17 @@ impl DesktopBootstrapSnapshot {
         schemars::json_schema!({"type": "integer", "minimum": 1, "maximum": u32::MAX})
     }
 
-    pub fn new(board: &BoardPosition, cpu_threads: std::num::NonZeroU32) -> Self {
+    pub fn new(
+        board: &BoardPosition,
+        cpu_threads: std::num::NonZeroU32,
+        engine: DesktopEnumEngineSnapshot,
+    ) -> Self {
         Self {
             protocol_version: DesktopProtocolVersion::CURRENT,
             app_version: env!("CARGO_PKG_VERSION").to_owned(),
             revision: DesktopRevision::ZERO,
             board: DesktopBoardSnapshot::from_position(board),
+            engine,
             cpu_threads: cpu_threads.get(),
         }
     }

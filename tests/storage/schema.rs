@@ -1,3 +1,4 @@
+use chess::capacity::budget::CapacityBudget;
 use chess::storage::document_store::StorageDocumentStore;
 use rusqlite::{Connection, params};
 
@@ -6,7 +7,7 @@ async fn position_lookup_never_merges_equal_hashes_with_different_full_identitie
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("library.sqlite3");
-    StorageDocumentStore::open(path.clone())
+    StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?)
         .await?
         .close()
         .await?;
@@ -39,7 +40,7 @@ async fn foreign_keys_refuse_cross_game_parents_and_orphan_clocks()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("library.sqlite3");
-    StorageDocumentStore::open(path.clone())
+    StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?)
         .await?
         .close()
         .await?;

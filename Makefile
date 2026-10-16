@@ -35,7 +35,7 @@ run:
 	bun run --cwd ui tauri dev --release$(if $(strip $(ARGS)), -- -- $(ARGS))
 
 native-test-build:
-	bun run --cwd ui tauri build --debug --no-bundle --features native-test --config tauri.test.conf.json
+	bun run --cwd ui tauri build --no-bundle --features native-test --config tauri.test.conf.json -- --locked
 
 native-tests: native-test-build
 	bun run --cwd ui test:native

@@ -17,7 +17,6 @@ import {
   WebGLRenderer,
 } from "three";
 import type { Object3D } from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { DeepReadonly } from "vue";
 import { BoardSceneFailure, BoardSceneFailureKind } from "@/board/failure";
 import { BoardFraming } from "@/board/framing";
@@ -229,6 +228,7 @@ export class BoardScene {
 
   async #loadAssets(): Promise<void> {
     try {
+      const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
       const gltf = await new GLTFLoader().loadAsync(this.options.assetUrl);
       this.#templates = gltf.scene;
       this.#trackResources(gltf.scene);

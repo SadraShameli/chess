@@ -308,6 +308,10 @@
               }
             ]
           },
+          "engine": {
+            "state": "unavailable",
+            "message": "The schema fixture does not start an engine."
+          },
           "cpu_threads": 1
         }
       },
@@ -614,6 +618,10 @@
               "castling_rook": null
             }
           ]
+        },
+        "engine": {
+          "state": "unavailable",
+          "message": "The schema fixture does not start an engine."
         },
         "cpu_threads": 1
       }
