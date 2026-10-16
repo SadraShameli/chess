@@ -8,3 +8,5 @@ mod clock_time;
 mod capacity_budget;
 #[path = "capacity/native_partition.rs"]
 mod capacity_native_partition;
+#[path = "capacity/retained_shutdown.rs"]
+mod capacity_retained_shutdown;

@@ -6,7 +6,7 @@ use std::sync::{
 
 use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 use thiserror::Error;
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::{Semaphore, oneshot, watch};
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 
@@ -22,6 +22,8 @@ pub enum CapacityExecutorError {
     WorkerPanicked,
     #[error("The CPU result channel closed: {0}")]
     ResultChannel(#[from] oneshot::error::RecvError),
+    #[error("The CPU completion channel closed before cleanup finished: {0}")]
+    CompletionChannel(#[from] watch::error::RecvError),
 }
 
 #[derive(Clone)]
@@ -41,6 +43,7 @@ impl CapacityExecutorCancellation {
 
 pub struct CapacityExecutorJob<R> {
     result: oneshot::Receiver<Result<R, CapacityExecutorError>>,
+    completion: watch::Receiver<bool>,
     cancellation: CapacityExecutorCancellation,
 }
 
@@ -49,7 +52,9 @@ impl<R> CapacityExecutorJob<R> {
         self.cancellation.cancel();
     }
     pub async fn join(mut self) -> Result<R, CapacityExecutorError> {
-        (&mut self.result).await?
+        let result = (&mut self.result).await?;
+        drop(self.completion.wait_for(|completed| *completed).await?);
+        result
     }
 }
 
@@ -105,16 +110,19 @@ impl CapacityExecutor {
         };
         let worker_cancellation = cancellation.clone();
         let (sender, result) = oneshot::channel();
+        let (completed, completion) = watch::channel(false);
         self.pool.spawn(move || {
             let outcome = catch_unwind(|| operation(&worker_cancellation))
                 .map_err(|_panic| CapacityExecutorError::WorkerPanicked);
-            drop((lease, slot));
             if let Err(abandoned_result) = sender.send(outcome) {
                 drop(abandoned_result);
             }
+            drop((lease, slot));
+            completed.send_replace(true);
         });
         Ok(CapacityExecutorJob {
             result,
+            completion,
             cancellation,
         })
     }
