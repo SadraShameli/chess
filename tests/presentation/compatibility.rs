@@ -2,7 +2,7 @@ use bevy_egui::egui;
 use chess::desktop::identity::DesktopRevision;
 use egui_kittest::{Harness, kittest::Queryable};
 
-use crate::presentation_font::PresentationFontFixture;
+use chess::presentation::theme::font::PresentationThemeFont;
 
 struct PresentationCompatibilityFixture {
     needs_fonts: bool,
@@ -28,7 +28,7 @@ impl PresentationCompatibilityFixture {
 
     fn show(ui: &mut egui::Ui, state: &mut Self) {
         if state.needs_fonts {
-            ui.ctx().set_fonts(PresentationFontFixture::definitions());
+            ui.ctx().set_fonts(PresentationThemeFont::definitions());
             ui.ctx().request_repaint();
             state.needs_fonts = false;
             return;

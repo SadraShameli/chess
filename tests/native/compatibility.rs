@@ -33,8 +33,8 @@ use thiserror::Error;
 
 use chess::package::digest::{PackageDigest, PackageDigestError};
 
-use crate::presentation_font::PresentationFontFixture;
 use crate::scene_task_pools::SceneTaskPoolFixture;
+use chess::presentation::theme::font::PresentationThemeFont;
 
 #[derive(Debug, Error)]
 pub(super) enum NativeCompatibilityError {
@@ -385,7 +385,7 @@ impl NativeCompatibilityHarness {
     ) -> bevy::prelude::Result {
         let context = contexts.ctx_mut()?;
         if state.needs_fonts {
-            context.set_fonts(PresentationFontFixture::definitions());
+            context.set_fonts(PresentationThemeFont::definitions());
             state.needs_fonts = false;
             return Ok(());
         }

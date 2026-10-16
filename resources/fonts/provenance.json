@@ -1,5 +1,5 @@
 {
-  "purpose": "Hermetic matching-egui and explicit native compatibility tests only",
+  "purpose": "Bundled offline native interface font, shared with compatibility tests",
   "family": "Inter",
   "version": "4.1",
   "license": "SIL Open Font License 1.1",

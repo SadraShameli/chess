@@ -101,3 +101,30 @@ existing domain and desktop cases. Targeted strict Clippy passed.
 These plain Rust owners expose actual typed ports for native presentation.
 Production actor effects, Bevy pool wiring and measured CPU chunk limits remain
 open under T038/T039; these tests do not establish those later integrations.
+
+## T041/T042: Native scene and semantic input adapters
+
+The adapter resolves the original twelve named GLB piece templates and their
+authored descendant transforms. It instances board pieces individually, renders
+to a reusable image, fits the approved camera, maps clipped logical coordinates
+to physical rays and invalidates pending picks after geometry/device generations
+change. A real headless MeshRayCast regression verifies that the nearest piece
+occludes the square beneath it. Cached frames stop that board camera until a
+change explicitly requests another frame.
+
+All eleven scene tests and thirteen presentation tests passed. The latter cover
+64 projected visible semantic squares, actual AccessKit click/focus ingress,
+keyboard orientation, bounded stale-generation input, repeated passes, retained
+application request identities and confirmed quit. Targeted strict Clippy passed.
+The UI reads real bootstrap DTOs and shows engine identity/failure state; square
+selection inspects authoritative legal destinations without inventing game play.
+
+Inter 4.1 and its OFL/provenance moved from test fixtures to resources/fonts.
+Production and compatibility code share one embedded font owner. The font SHA-256
+remains 4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf.
+The cold-layout test now waits for the pending font update before creating its
+matching offscreen viewport; production rejects input until both geometries match.
+
+The complete native host, graphics recovery, clock repaint/idle measurement and
+OS accessibility acceptance remain later gates. Headless tests do not establish
+native frame-time, complete-process idle CPU or real assistive-technology behavior.

@@ -4,4 +4,6 @@ pub mod clock;
 pub mod desktop;
 pub mod engine;
 pub mod package;
+pub mod presentation;
+pub mod scene;
 pub mod storage;
