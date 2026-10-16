@@ -4,6 +4,7 @@ use crate::board::enums::BoardEnumColor;
 use crate::clock::duration::ClockInstant;
 use crate::clock::state::{ClockState, ClockStateError};
 use crate::desktop::dto::DesktopBoardSnapshot;
+use crate::engine::search::position::{EngineSearchPosition, EngineSearchPositionError};
 use crate::game::draw_claim::GameDrawClaimEnumAvailability;
 use crate::game::enums::{GameEnumPhase, GameId, GameMoveId, GameRevision};
 use crate::game::outcome::GameOutcome;
@@ -20,12 +21,83 @@ use crate::game::tree::GameTreeError;
 pub enum DesktopGameSnapshotError {
     #[error("A non-root game node is missing its parent or SAN notation")]
     IncompleteMove,
+    #[error("The selected game history does not reproduce its authoritative position")]
+    InconsistentAnalysis,
+    #[error(transparent)]
+    Analysis(#[from] EngineSearchPositionError),
     #[error(transparent)]
     Tree(#[from] GameTreeError),
     #[error(transparent)]
     Clock(#[from] ClockStateError),
     #[error(transparent)]
     Session(#[from] GameSessionError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopGameSnapshotEnumAnalysisUnavailable {
+    LivePlay,
+    OversizedHistory,
+}
+
+#[derive(Debug, Clone)]
+pub struct DesktopGameSnapshotAnalysis {
+    node: GameMoveId,
+    position: EngineSearchPosition,
+}
+
+impl DesktopGameSnapshotAnalysis {
+    pub const fn node(&self) -> GameMoveId {
+        self.node
+    }
+
+    pub const fn position(&self) -> &EngineSearchPosition {
+        &self.position
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DesktopGameSnapshotEnumAnalysis {
+    Available(DesktopGameSnapshotAnalysis),
+    Unavailable(DesktopGameSnapshotEnumAnalysisUnavailable),
+}
+
+impl DesktopGameSnapshotEnumAnalysis {
+    fn capture(session: &GameSession) -> Result<Self, DesktopGameSnapshotError> {
+        match session.phase() {
+            GameEnumPhase::Completed | GameEnumPhase::Analysis => {}
+            GameEnumPhase::Setup | GameEnumPhase::Active | GameEnumPhase::Interrupted => {
+                return Ok(Self::Unavailable(
+                    DesktopGameSnapshotEnumAnalysisUnavailable::LivePlay,
+                ));
+            }
+        }
+        let tree = session.tree();
+        let initial = tree.node(tree.root())?.position();
+        let path = tree.path_to(session.view())?;
+        let mut history = Vec::with_capacity(path.len().saturating_sub(1));
+        for &id in path.iter().skip(1) {
+            let node = tree.node(id)?;
+            let movement = node
+                .movement()
+                .ok_or(DesktopGameSnapshotError::IncompleteMove)?;
+            history.push(movement.uci(initial.variant()));
+        }
+        match EngineSearchPosition::new(initial.clone(), history) {
+            Ok(position) => {
+                if position.current() != tree.node(session.view())?.position() {
+                    return Err(DesktopGameSnapshotError::InconsistentAnalysis);
+                }
+                Ok(Self::Available(DesktopGameSnapshotAnalysis {
+                    node: session.view(),
+                    position,
+                }))
+            }
+            Err(EngineSearchPositionError::OversizedHistory) => Ok(Self::Unavailable(
+                DesktopGameSnapshotEnumAnalysisUnavailable::OversizedHistory,
+            )),
+            Err(error @ EngineSearchPositionError::Move(_)) => Err(error.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +173,7 @@ pub struct DesktopGameSnapshot {
     takeback_target: Option<GameMoveId>,
     save_required: bool,
     notice: Option<DesktopGameSnapshotEnumNotice>,
+    analysis: DesktopGameSnapshotEnumAnalysis,
 }
 
 impl DesktopGameSnapshot {
@@ -173,11 +246,16 @@ impl DesktopGameSnapshot {
             takeback_target,
             save_required: session.save_status() == GameSaveEnumStatus::Required,
             notice: None,
+            analysis: DesktopGameSnapshotEnumAnalysis::capture(session)?,
         })
     }
 
     pub const fn id(&self) -> GameId {
         self.id
+    }
+
+    pub const fn analysis(&self) -> &DesktopGameSnapshotEnumAnalysis {
+        &self.analysis
     }
 
     pub const fn revision(&self) -> GameRevision {

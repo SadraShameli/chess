@@ -254,6 +254,15 @@ impl<P: EngineProcess> EngineSearchSession<P> {
     pub const fn engine(&self) -> &EngineSession<P> {
         &self.engine
     }
+    pub fn idle_engine(&mut self) -> Result<&mut EngineSession<P>, EngineSearchSessionError> {
+        if self.lease.is_some()
+            || self.engine.state() != EngineSearchEnumState::Idle
+            || self.terminal.is_some() && !self.terminal_delivered
+        {
+            return Err(EngineSearchSessionError::Busy);
+        }
+        Ok(&mut self.engine)
+    }
     pub const fn metadata(&self) -> Option<&EngineSearchSessionMetadata> {
         self.metadata.as_ref()
     }

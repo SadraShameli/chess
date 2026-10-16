@@ -71,6 +71,21 @@ impl EngineResourceConfig {
         self.move_overhead
     }
 
+    pub(crate) fn advertised_default(
+        capabilities: &EngineCapabilities,
+        option: EngineEnumOption,
+    ) -> Result<u32, EngineResourceConfigError> {
+        match capabilities.descriptor(option) {
+            Some(EngineOptionEnumDescriptor::Spin(range)) => Ok(range.default_value()),
+            Some(
+                EngineOptionEnumDescriptor::Check(_)
+                | EngineOptionEnumDescriptor::Button
+                | EngineOptionEnumDescriptor::String,
+            ) => Err(EngineResourceConfigError::NonNumericOption(option)),
+            None => Err(EngineResourceConfigError::MissingOption(option)),
+        }
+    }
+
     pub(crate) fn validate_move_overhead(
         move_overhead: ClockDuration,
     ) -> Result<(), EngineResourceConfigError> {

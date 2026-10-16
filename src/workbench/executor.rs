@@ -7,7 +7,7 @@ use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::engine::capabilities::EngineIdentity;
 use crate::engine::diagnostic::EngineDiagnosticEnumCommand;
 use crate::engine::diagnostics::EngineDiagnostics;
-use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
+use crate::engine::enums::EngineEnumOption;
 use crate::engine::options::EngineOptionsApplied;
 use crate::engine::package::selector::EnginePackageSelected;
 use crate::engine::process_provider::{
@@ -90,6 +90,7 @@ pub struct WorkbenchExecutor<P: EngineProcess> {
     output: WorkbenchOutput,
     completion: Option<WorkbenchEnumCompletion>,
     cleanup_failure: Option<Arc<EngineSessionError>>,
+    run_cleanup_deadline: Option<Instant>,
     observation: Option<WorkbenchExecutorObservation>,
 }
 
@@ -115,6 +116,7 @@ impl<P: EngineProcess> WorkbenchExecutor<P> {
             output: WorkbenchOutput::default(),
             completion: None,
             cleanup_failure: None,
+            run_cleanup_deadline: None,
             observation: None,
         })
     }
@@ -195,11 +197,11 @@ impl<P: EngineProcess> WorkbenchExecutor<P> {
             return Err(EngineSessionError::StartupUnavailable);
         };
         let capabilities = session.identity().capabilities();
-        let default_hash = Self::default_resource(capabilities, EngineEnumOption::Hash)?;
-        let overhead = ClockDuration::from_millis(u64::from(Self::default_resource(
-            capabilities,
-            EngineEnumOption::MoveOverhead,
-        )?))
+        let default_hash =
+            EngineResourceConfig::advertised_default(capabilities, EngineEnumOption::Hash)?;
+        let overhead = ClockDuration::from_millis(u64::from(
+            EngineResourceConfig::advertised_default(capabilities, EngineEnumOption::MoveOverhead)?,
+        ))
         .map_err(crate::engine::resource_config::EngineResourceConfigError::from)?;
         let (hash_mib, workers) = match self.job.parameters() {
             WorkbenchEnumParameters::Bench(parameters) => {
@@ -242,22 +244,13 @@ impl<P: EngineProcess> WorkbenchExecutor<P> {
         Ok(())
     }
 
-    fn default_resource(
-        capabilities: &crate::engine::capabilities::EngineCapabilities,
-        option: EngineEnumOption,
-    ) -> Result<u32, EngineSessionError> {
-        match capabilities.descriptor(option) {
-            Some(EngineOptionEnumDescriptor::Spin(range)) => Ok(range.default_value()),
-            Some(
-                EngineOptionEnumDescriptor::Check(_)
-                | EngineOptionEnumDescriptor::Button
-                | EngineOptionEnumDescriptor::String,
-            )
-            | None => Err(EngineSessionError::UnexpectedResponse),
-        }
-    }
-
     pub async fn run(&mut self) -> Result<(), WorkbenchExecutorError> {
+        if self.state == WorkbenchExecutorEnumState::Cleaning {
+            let deadline = self
+                .run_cleanup_deadline
+                .ok_or(WorkbenchExecutorError::State("resume result cleanup"))?;
+            return self.shutdown_retained(deadline).await;
+        }
         if self.state != WorkbenchExecutorEnumState::Running {
             return Err(WorkbenchExecutorError::State("run"));
         }
@@ -314,8 +307,10 @@ impl<P: EngineProcess> WorkbenchExecutor<P> {
                 }
             }
         }
-        self.shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
-            .await
+        let deadline = *self
+            .run_cleanup_deadline
+            .get_or_insert_with(|| Instant::now() + EngineProcessLimits::SHUTDOWN);
+        self.shutdown_retained(deadline).await
     }
 
     pub async fn cancel(&mut self, id: WorkbenchJobId) -> Result<(), WorkbenchExecutorError> {

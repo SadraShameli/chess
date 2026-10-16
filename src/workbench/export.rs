@@ -87,6 +87,18 @@ impl WorkbenchExportMetadata {
         created_unix_milliseconds: u64,
         application_version: String,
     ) -> Result<Self, WorkbenchExportError> {
+        Self::with_optional_timestamp(
+            export_id,
+            Some(created_unix_milliseconds),
+            application_version,
+        )
+    }
+
+    pub fn with_optional_timestamp(
+        export_id: Uuid,
+        created_unix_milliseconds: Option<u64>,
+        application_version: String,
+    ) -> Result<Self, WorkbenchExportError> {
         if export_id.is_nil()
             || application_version.trim().is_empty()
             || application_version.len() > 256
@@ -96,7 +108,7 @@ impl WorkbenchExportMetadata {
         }
         Ok(Self {
             export_id: Some(export_id),
-            created_unix_milliseconds: Some(WorkbenchExportDecimal(created_unix_milliseconds)),
+            created_unix_milliseconds: created_unix_milliseconds.map(WorkbenchExportDecimal),
             application_version: Some(application_version.into_boxed_str()),
         })
     }
@@ -717,6 +729,7 @@ impl<'a> WorkbenchExport<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct WorkbenchExportEncoded {
     bytes: Vec<u8>,
     receipt: WorkbenchExportReceipt,

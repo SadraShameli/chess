@@ -46,7 +46,7 @@ impl WorkbenchPerftDepth {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbenchPerftParameters {
     position: EngineSearchPosition,
     depth: WorkbenchPerftDepth,

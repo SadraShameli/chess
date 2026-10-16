@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use bevy_egui::egui::{self, Ui};
 
+use crate::desktop::error::DesktopFailure;
 use crate::desktop::identity::DesktopRequestId;
 use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use crate::engine::options::EngineOptionsEnumValue;
@@ -31,6 +32,7 @@ pub struct PresentationWorkbenchView {
     context: Option<PresentationWorkbenchControllerContext>,
     submitted_frame: Option<u64>,
     error: Option<PresentationWorkbenchControllerError>,
+    tablebase_selection_failure: Option<DesktopFailure>,
 }
 
 impl Default for PresentationWorkbenchView {
@@ -43,6 +45,7 @@ impl Default for PresentationWorkbenchView {
             context: None,
             submitted_frame: None,
             error: None,
+            tablebase_selection_failure: None,
         }
     }
 }
@@ -51,6 +54,10 @@ impl PresentationWorkbenchView {
     pub fn new() -> Self {
         Self::default()
     }
+    pub fn set_tablebase_selection_failure(&mut self, failure: Option<DesktopFailure>) {
+        self.tablebase_selection_failure = failure;
+    }
+
     pub const fn configuration(&self) -> &PresentationWorkbenchConfiguration {
         &self.configuration
     }
@@ -363,7 +370,14 @@ impl PresentationWorkbenchView {
             tablebases.state(),
             PresentationWorkbenchTablebaseEnumState::Unconfigured
         );
-        if Self::button(ui, enabled, "Select tablebase directories") {
+        if let Some(failure) = &self.tablebase_selection_failure {
+            ui.label(failure.message());
+        }
+        if Self::button(
+            ui,
+            enabled && self.tablebase_selection_failure.is_none(),
+            "Select tablebase directories",
+        ) {
             let result = controller.select_tablebases(DesktopRequestId::new());
             return self.accept(result);
         }

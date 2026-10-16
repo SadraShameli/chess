@@ -34,6 +34,7 @@ impl Default for DesktopMessagesEntityId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DesktopEnumCommand {
     Game(DesktopGameBridgeEnumOperation),
+    Engine(crate::desktop::engine_commands::DesktopEngineCommandsOperation),
     Bootstrap,
     FileSelect {
         owner: DesktopMessagesEntityId,
@@ -63,6 +64,17 @@ impl DesktopEnumCommand {
 
     pub(crate) fn control_key(&self) -> Option<DesktopMessagesEnumControlKey> {
         match self {
+            Self::Engine(operation) => match operation.action() {
+                crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Stop { .. } => Some(DesktopMessagesEnumControlKey::EngineStop(operation.context().owner())),
+                crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Workbench(crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation::Cancel { .. }) => Some(DesktopMessagesEnumControlKey::WorkbenchCancel(operation.context().owner())),
+                crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Snapshot
+                | crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Start { .. }
+                | crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Configure(_)
+                | crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Retry
+                | crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::PrepareTablebases { .. }
+                | crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::LoadTablebases
+                | crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Workbench(crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation::Start { .. } | crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation::Result { .. } | crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation::PreviewExport { .. } | crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation::ApplyExport { .. }) => None,
+            },
             Self::Game(DesktopGameBridgeEnumOperation::Session { game, action, .. }) => {
                 let owner = DesktopMessagesEntityId::for_game(*game);
                 if matches!(action, DesktopGameCommandsEnumAction::Pause { .. }) {
@@ -87,6 +99,10 @@ impl DesktopEnumCommand {
 
     pub fn mutation_entity(&self) -> Option<DesktopMessagesEntityId> {
         match self {
+            Self::Engine(operation) => operation
+                .action()
+                .is_mutation()
+                .then_some(operation.context().owner()),
             Self::Game(operation) => Some(operation.owner()),
             Self::FileSelect { owner, .. } => Some(*owner),
             Self::Bootstrap
@@ -102,6 +118,8 @@ impl DesktopEnumCommand {
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub(crate) enum DesktopMessagesEnumControlKey {
+    EngineStop(DesktopMessagesEntityId),
+    WorkbenchCancel(DesktopMessagesEntityId),
     GamePause(DesktopMessagesEntityId),
     GameStop(DesktopMessagesEntityId),
     Stop(DesktopMessagesEntityId),
@@ -112,7 +130,9 @@ pub(crate) enum DesktopMessagesEnumControlKey {
 impl DesktopMessagesEnumControlKey {
     pub(crate) fn belongs_to(self, owner: DesktopMessagesEntityId) -> bool {
         match self {
-            Self::Stop(target)
+            Self::EngineStop(target)
+            | Self::WorkbenchCancel(target)
+            | Self::Stop(target)
             | Self::Pause(target)
             | Self::GameStop(target)
             | Self::GamePause(target) => target == owner,
@@ -122,6 +142,8 @@ impl DesktopMessagesEnumControlKey {
 
     pub(crate) fn stopped_result(self) -> DesktopMessagesEnumResult {
         match self {
+            Self::EngineStop(_) => DesktopMessagesEnumResult::Stopped,
+            Self::WorkbenchCancel(_) => DesktopMessagesEnumResult::Stopped,
             Self::Stop(_) | Self::GameStop(_) => DesktopMessagesEnumResult::Stopped,
             Self::Pause(_) | Self::GamePause(_) => DesktopMessagesEnumResult::Paused,
             Self::Quit => DesktopMessagesEnumResult::QuitReady,
@@ -157,7 +179,7 @@ struct DesktopMessagesRequestIdentity {
     sequence: u64,
     request_id: DesktopRequestId,
     command: DesktopCommand,
-    received_at: OnceLock<ClockInstant>,
+    received_at: OnceLock<(ClockInstant, tokio::time::Instant)>,
     admitted_sequence: OnceLock<u64>,
 }
 
@@ -193,7 +215,14 @@ impl DesktopRequest {
     }
 
     pub(crate) fn first_receipt(&self, now: ClockInstant) -> ClockInstant {
-        *self.0.received_at.get_or_init(|| now)
+        self.0
+            .received_at
+            .get_or_init(|| (now, tokio::time::Instant::now()))
+            .0
+    }
+
+    pub(crate) fn runtime_receipt(&self) -> Option<tokio::time::Instant> {
+        self.0.received_at.get().map(|(_clock, runtime)| *runtime)
     }
 
     pub(crate) fn admitted_sequence(&self) -> Option<u64> {

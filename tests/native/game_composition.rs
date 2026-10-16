@@ -276,7 +276,11 @@ impl NativeGameCompositionStream {
         NativeGameCompositionHarness::bounded("waiting for a game event", async {
             loop {
                 NativeGameCompositionHarness::acknowledge_wake(services);
-                let Some(event) = services.port.try_event()? else {
+                let Some(event) = NativeGameCompositionHarness::application(|| {
+                    services.port.try_event()
+                })
+                .await?
+                else {
                     services.wake.notified().await;
                     continue;
                 };
@@ -387,12 +391,27 @@ impl NativeGameCompositionHarness {
         .await
     }
 
+    async fn application<T>(
+        mut operation: impl FnMut() -> Result<T, DesktopApplicationError>,
+    ) -> NativeGameCompositionResult<T> {
+        Self::bounded("waiting for native application access", async {
+            loop {
+                match operation() {
+                    Err(DesktopApplicationError::Busy) => tokio::task::yield_now().await,
+                    result => return Ok(result?),
+                }
+            }
+        })
+        .await
+    }
+
     async fn command(
         services: &DesktopNativeHostServices,
         command: DesktopEnumCommand,
     ) -> NativeGameCompositionResult<DesktopMessagesEnumResult> {
         let revision = match &command {
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
+            DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Bootstrap
             | DesktopEnumCommand::FileSelect { .. }
             | DesktopEnumCommand::StreamSubscribe
@@ -406,12 +425,7 @@ impl NativeGameCompositionHarness {
             .port
             .request(DesktopCommand::new(command, revision))?;
         Self::bounded("submitting and observing a native command", async {
-            let receipt = loop {
-                match services.port.try_submit(&request) {
-                    Err(DesktopApplicationError::Busy) => tokio::task::yield_now().await,
-                    result => break result?,
-                }
-            };
+            let receipt = Self::application(|| services.port.try_submit(&request)).await?;
             loop {
                 Self::acknowledge_wake(services);
                 if let Some(response) = receipt.response() {

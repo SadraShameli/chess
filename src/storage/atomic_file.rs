@@ -17,6 +17,10 @@ pub enum StorageAtomicFileError {
     InvalidLocation,
     #[error("The staged file length exceeds the native range")]
     LengthOverflow,
+    #[error("The staged file was cancelled before publication")]
+    Cancelled,
+    #[error("The file was published but its durable outcome is indeterminate: {0}")]
+    PublicationIndeterminate(#[source] std::io::Error),
 }
 
 pub struct StorageFileIdentity {
@@ -133,19 +137,32 @@ impl StorageAtomicFileStage {
         Ok(())
     }
 
-    pub fn commit(mut self) -> Result<u64, StorageAtomicFileError> {
+    pub fn commit(self) -> Result<u64, StorageAtomicFileError> {
+        self.commit_if(|| false)
+    }
+
+    pub fn commit_if(
+        mut self,
+        cancelled: impl FnOnce() -> bool,
+    ) -> Result<u64, StorageAtomicFileError> {
         self.temporary.flush()?;
         self.temporary.as_file().sync_all()?;
         self.target.validate()?;
+        if cancelled() {
+            return Err(StorageAtomicFileError::Cancelled);
+        }
         let result = if self.target.existing.is_some() {
             self.temporary.persist(&self.target.path)
         } else {
             self.temporary.persist_noclobber(&self.target.path)
         };
         let file: File = result.map_err(|error| StorageAtomicFileError::Io(error.error))?;
-        file.sync_all()?;
+        file.sync_all()
+            .map_err(StorageAtomicFileError::PublicationIndeterminate)?;
         #[cfg(unix)]
-        File::open(&self.target.parent)?.sync_all()?;
+        File::open(&self.target.parent)
+            .and_then(|parent| parent.sync_all())
+            .map_err(StorageAtomicFileError::PublicationIndeterminate)?;
         Ok(self.bytes)
     }
 }

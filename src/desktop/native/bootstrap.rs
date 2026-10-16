@@ -33,10 +33,14 @@ use crate::desktop::coordinator::{
 use crate::desktop::dto::{
     DesktopBootstrapSnapshot, DesktopEngineIdentity, DesktopEnumEngineSnapshot,
 };
+use crate::desktop::game_bridge::DesktopGameBridgeProvider;
 use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryReceipt};
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand};
 use crate::desktop::native::dialogs_proxy::DesktopNativeDialogsProxy;
+use crate::desktop::native::engine_runtime::{
+    DesktopNativeEngineRuntime, DesktopNativeEngineRuntimeOptions,
+};
 use crate::desktop::native::event_loop::DesktopNativeEventLoopWake;
 use crate::desktop::native::game_factories::DesktopNativeGameFactories;
 use crate::desktop::native::game_resources::{
@@ -122,6 +126,8 @@ pub enum DesktopNativeBootstrapError {
     CapacityPoisoned,
     #[error("Native initialization or cleanup exceeded its owned deadline")]
     CleanupDeadline,
+    #[error("Native engine quiescence exceeded its preparation deadline: {0}")]
+    EngineQuiescenceDeadline(#[source] tokio::time::error::Elapsed),
     #[error("Application operation failed ({operation}); cleanup also failed ({cleanup})")]
     Cleanup {
         operation: Box<Self>,
@@ -151,6 +157,8 @@ pub enum DesktopNativeBootstrapError {
     EnginePackage(#[from] EnginePackageSelectorError),
     #[error(transparent)]
     Engine(#[from] EngineSessionError),
+    #[error(transparent)]
+    Analysis(#[from] crate::desktop::error::DesktopFailure),
     #[error(transparent)]
     Storage(#[from] StorageDocumentError),
     #[error(transparent)]
@@ -238,14 +246,21 @@ struct DesktopNativeBootstrapServices {
     executor_startup: Option<CapacityExecutor>,
     executor: Option<Arc<CapacityExecutor>>,
     games: Option<DesktopNativeGameService>,
+    analysis: Option<
+        DesktopNativeEngineRuntime<EngineNativeProcessProvider, DesktopNativeGameResourcesMemory>,
+    >,
     terminal: Option<DesktopNativeBootstrapError>,
 }
 
 impl DesktopNativeBootstrapServices {
     fn is_shutdown_complete(&self) -> bool {
-        self.games
+        self.analysis
             .as_ref()
-            .is_none_or(DesktopNativeGameService::is_shutdown_complete)
+            .is_none_or(DesktopNativeEngineRuntime::is_shutdown_complete)
+            && self
+                .games
+                .as_ref()
+                .is_none_or(DesktopNativeGameService::is_shutdown_complete)
             && self
                 .startup
                 .as_ref()
@@ -291,6 +306,17 @@ impl DesktopNativeBootstrapLifecycle {
         let mut services = timeout_at(deadline, self.services.lock())
             .await
             .map_err(|_elapsed| DesktopNativeBootstrapError::CleanupDeadline)?;
+        if let Some(analysis) = &mut services.analysis {
+            let result = analysis.shutdown_retained(deadline).await;
+            let complete = analysis.is_shutdown_complete();
+            match result {
+                Ok(()) if complete => {}
+                Ok(()) => return Err(DesktopNativeBootstrapError::CleanupDeadline),
+                Err(error) if complete => services.retain_terminal(error.into()),
+                Err(error) => return Err(error.into()),
+            }
+            services.analysis = None;
+        }
         if let Some(games) = &mut services.games {
             let result = games.shutdown_retained(deadline).await;
             let complete = games.is_shutdown_complete();
@@ -449,6 +475,7 @@ struct DesktopNativeBootstrapHostObservation<'a, 'lease> {
     host_done: watch::Receiver<bool>,
     capacity: Arc<Mutex<CapacityPhase>>,
     games: DesktopNativeGameRuntimePort,
+    analysis: Option<crate::desktop::engine_bridge::DesktopEngineBridgePort>,
     publication: &'a mut DesktopProfileOwnerRecordPublisher<'lease>,
     wake: &'a DesktopNativeEventLoopWake,
 }
@@ -566,7 +593,7 @@ impl DesktopNativeBootstrapSupervisor {
         )
         .await?;
         self.lifecycle.services.lock().await.storage = Some(storage);
-        let (engine_snapshot, package) = Self::engine(
+        let (mut engine_snapshot, package) = Self::engine(
             resources.engine().to_path_buf(),
             &executor,
             &self.budget,
@@ -575,8 +602,6 @@ impl DesktopNativeBootstrapSupervisor {
         .await?;
         let cpu_threads = NonZeroU32::new(u32::try_from(self.budget.workers())?)
             .ok_or(CapacityBudgetError::InvalidAllocation)?;
-        let snapshot =
-            DesktopBootstrapSnapshot::new(&BoardPosition::standard(), cpu_threads, engine_snapshot);
         let clock = Arc::new(ClockTimeProviderMonotonic::new());
         let memory = Arc::new(DesktopNativeGameResourcesMemory::new(Arc::clone(&executor)));
         let available_memory = memory.available_bytes().await?;
@@ -609,9 +634,9 @@ impl DesktopNativeBootstrapSupervisor {
             .client();
         let games = DesktopNativeGameService::new(DesktopNativeGameServiceOptions {
             factory_provider: DesktopNativeGameFactories::new(
-                package,
+                package.clone(),
                 Arc::clone(&clock),
-                engine_resources,
+                Arc::clone(&engine_resources),
             ),
             storage: storage_client,
             executor: Arc::clone(&executor),
@@ -629,6 +654,52 @@ impl DesktopNativeBootstrapSupervisor {
             games.restore().await?;
             games.start()?
         };
+        let mut engine_port = None;
+        let mut engine_panels = None;
+        if let Some(package) = package {
+            let analysis = DesktopNativeEngineRuntime::new(DesktopNativeEngineRuntimeOptions {
+                provider: EngineNativeProcessProvider,
+                package,
+                resources: engine_resources,
+                executor: Arc::clone(&executor),
+                clock: Arc::clone(&clock),
+                wake: Arc::clone(&self.wake),
+                snapshots: game_port.snapshots(),
+                budget: self.budget.clone(),
+                tablebase_parent: std::env::temp_dir(),
+            });
+            let mut retained = self.lifecycle.services.lock().await;
+            retained.analysis = Some(analysis);
+            let analysis = retained
+                .analysis
+                .as_mut()
+                .ok_or(DesktopNativeBootstrapError::HostServices)?;
+            match analysis.initialize().await {
+                Ok((port, panels)) => {
+                    engine_port = Some(port);
+                    engine_panels = Some(panels);
+                }
+                Err(failure) => {
+                    engine_snapshot = DesktopEnumEngineSnapshot::Unavailable {
+                        message: failure.to_string(),
+                    };
+                    let cleanup = analysis.shutdown_retained(Self::control_deadline()).await;
+                    let complete = analysis.is_shutdown_complete();
+                    if !complete {
+                        return Err(cleanup.err().map_or(
+                            DesktopNativeBootstrapError::CleanupDeadline,
+                            DesktopNativeBootstrapError::Analysis,
+                        ));
+                    }
+                    if let Err(failure) = cleanup {
+                        retained.retain_terminal(failure.into());
+                    }
+                    retained.analysis = None;
+                }
+            }
+        }
+        let snapshot =
+            DesktopBootstrapSnapshot::new(&BoardPosition::standard(), cpu_threads, engine_snapshot);
         let application = DesktopApplication::new(Arc::clone(&clock), Arc::clone(&self.wake));
         let port = application.port();
         let (dialog_ready, dialogs) = watch::channel(None);
@@ -639,6 +710,9 @@ impl DesktopNativeBootstrapSupervisor {
         );
         let mut coordinator = DesktopCoordinator::new(application, clock, snapshot, services)
             .with_games(Arc::new(game_port.clone()));
+        if let Some(engine_port) = &engine_port {
+            coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
+        }
         let mut phase = CapacityPhase::new(self.budget.clone())?;
         let generation = phase.request_preparation()?;
         let capacity = Arc::new(Mutex::new(phase));
@@ -648,6 +722,7 @@ impl DesktopNativeBootstrapSupervisor {
         }
         let (events, receiver) = DesktopNativeHost::event_channel();
         let host = DesktopNativeHostServices {
+            engine_panels,
             port,
             wake: Arc::clone(&self.wake),
             resources,
@@ -666,6 +741,7 @@ impl DesktopNativeBootstrapSupervisor {
             host_done: self.host_done,
             capacity,
             games: game_port,
+            analysis: engine_port,
             publication,
             wake: &self.wake,
         });
@@ -828,6 +904,18 @@ impl DesktopNativeBootstrapSupervisor {
             .is_none()
         {
             return Ok(());
+        }
+        if matches!(
+            event,
+            DesktopNativeHostEvent::PreparationRequested { .. }
+                | DesktopNativeHostEvent::GraphicsPreparationStopped { .. }
+                | DesktopNativeHostEvent::Interrupted { .. }
+        ) && let Some(analysis) = &observation.analysis
+        {
+            let deadline = Self::control_deadline();
+            timeout_at(deadline, analysis.quiesce(deadline))
+                .await
+                .map_err(DesktopNativeBootstrapError::EngineQuiescenceDeadline)??;
         }
         match event {
             DesktopNativeHostEvent::Idle => {}

@@ -1,6 +1,11 @@
 pub mod application;
 pub mod coordinator;
 pub mod dto;
+pub mod engine_bridge;
+pub mod engine_commands;
+pub mod engine_selection;
+pub mod engine_service;
+pub mod engine_tablebases;
 pub mod error;
 pub mod file_handle;
 pub mod game_bridge;
@@ -16,3 +21,5 @@ pub mod preferences;
 pub mod profile;
 pub mod request_cache;
 pub mod stream;
+pub mod workbench_commands;
+pub mod workbench_export;

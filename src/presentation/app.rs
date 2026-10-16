@@ -37,6 +37,9 @@ use crate::presentation::board::view::{
     PresentationBoardAction, PresentationBoardPickingProvider, PresentationBoardView,
     PresentationBoardViewError, PresentationBoardViewInput,
 };
+use crate::presentation::engine_panels::{
+    PresentationEnginePanels, PresentationEnginePanelsConnection, PresentationEnginePanelsError,
+};
 use crate::presentation::game::controller::{
     PresentationGameController, PresentationGameControllerError, PresentationGameControllerIntent,
 };
@@ -69,6 +72,8 @@ pub enum PresentationAppError {
     GamePanel(#[from] PresentationGamePlayError),
     #[error(transparent)]
     Clock(#[from] ClockStateError),
+    #[error(transparent)]
+    EnginePanels(#[from] PresentationEnginePanelsError),
     #[error("This game input identity was already used for another command")]
     GameRequestConflict,
     #[error("Wait for pending game actions before starting another action")]
@@ -188,6 +193,7 @@ pub struct PresentationApp {
     board: PresentationBoardView,
     games: Vec<PresentationAppGame>,
     selected_game: Option<GameId>,
+    engine_panels: Option<PresentationEnginePanels>,
     new_game: Option<PresentationGameNewGame>,
     game_retained: HashMap<DesktopRequestId, PresentationAppGameRetained>,
     game_pending: Vec<PresentationAppGamePending>,
@@ -231,6 +237,7 @@ impl PresentationApp {
             board: PresentationBoardView::new(),
             games: Vec::new(),
             selected_game: None,
+            engine_panels: None,
             new_game: None,
             game_retained: HashMap::new(),
             game_pending: Vec::new(),
@@ -258,6 +265,14 @@ impl PresentationApp {
             settings_open: false,
             settings_toggle_frame: None,
         }
+    }
+
+    pub fn mount_engine(&mut self, connection: PresentationEnginePanelsConnection) {
+        self.engine_panels = Some(PresentationEnginePanels::new(connection));
+    }
+
+    pub fn engine_panels(&self) -> Option<&PresentationEnginePanels> {
+        self.engine_panels.as_ref()
     }
 
     pub fn accept_snapshot(&mut self, snapshot: DesktopBootstrapSnapshot) {
@@ -292,7 +307,10 @@ impl PresentationApp {
     }
 
     pub fn has_pending_work(&self) -> bool {
-        !self.pending.is_empty()
+        self.engine_panels
+            .as_ref()
+            .is_some_and(PresentationEnginePanels::has_pending_work)
+            || !self.pending.is_empty()
             || !self.game_pending.is_empty()
             || self.stream_pending.as_ref().is_some_and(|pending| {
                 pending.receipt.is_some()
@@ -577,7 +595,8 @@ impl PresentationApp {
                     current.snapshot.id() == *game && current.snapshot.revision() == *revision
                 }),
                 DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. }) => false,
-                DesktopEnumCommand::Bootstrap
+                DesktopEnumCommand::Engine(_)
+                | DesktopEnumCommand::Bootstrap
                 | DesktopEnumCommand::FileSelect { .. }
                 | DesktopEnumCommand::StreamSubscribe
                 | DesktopEnumCommand::StreamAcknowledge { .. }
@@ -618,6 +637,16 @@ impl PresentationApp {
 
     fn accept_value(&mut self, value: DesktopEnumValue) {
         match value {
+            DesktopEnumValue::Engine(result) => match self.engine_panels.as_mut() {
+                Some(panels) => {
+                    if let Err(error) = panels.observe_value(*result) {
+                        self.failure = Some(error.to_string());
+                    }
+                }
+                None => {
+                    self.failure = Some("The native engine panel owner is unavailable".to_owned())
+                }
+            },
             DesktopEnumValue::Game(snapshot) => {
                 self.accept_game_snapshot(*snapshot);
             }
@@ -1030,6 +1059,16 @@ impl PresentationApp {
                 }
             });
         });
+        if let Some(panels) = &mut self.engine_panels {
+            let selected = self
+                .games
+                .iter()
+                .find(|game| Some(game.snapshot.id()) == self.selected_game)
+                .map(|game| &game.snapshot);
+            if let Err(error) = panels.synchronize(selected, port) {
+                self.failure = Some(error.to_string());
+            }
+        }
         let is_busy = self
             .selected_game
             .is_some_and(|game| self.is_game_busy(game));
@@ -1105,6 +1144,10 @@ impl PresentationApp {
                     ui.label(format!("{} usable hardware threads", snapshot.cpu_threads()));
                 } else {
                     ui.label("Waiting for the local application");
+                }
+                if let Some(panels) = &mut self.engine_panels
+                    && let Err(error) = panels.show(ui, port) {
+                    self.failure = Some(error.to_string());
                 }
                 ui.separator();
                 ui.heading("Camera");

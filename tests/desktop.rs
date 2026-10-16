@@ -36,6 +36,8 @@ mod desktop_file_handle;
 
 #[path = "desktop/application.rs"]
 mod desktop_application;
+#[path = "desktop/engine_selection.rs"]
+mod desktop_engine_selection;
 #[path = "desktop/game_registry.rs"]
 mod desktop_game_registry;
 #[path = "desktop/game_registry_fixture.rs"]
@@ -48,6 +50,8 @@ mod desktop_game_supervisor;
 mod desktop_game_transition;
 #[path = "desktop/graphics_lifecycle.rs"]
 mod desktop_graphics_lifecycle;
+#[path = "desktop/native/analysis_resources.rs"]
+mod desktop_native_analysis_resources;
 #[path = "desktop/native/game_resources.rs"]
 mod desktop_native_game_resources;
 #[path = "desktop/native/game_runtime.rs"]

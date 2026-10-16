@@ -13,6 +13,8 @@ mod native_engine_analysis_session;
 #[path = "native/engine_options.rs"]
 mod native_engine_options;
 
+#[path = "native/engine_composition.rs"]
+mod native_engine_composition;
 #[path = "native/workbench.rs"]
 mod native_workbench;
 
@@ -31,6 +33,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         [operation] if operation == "--game-composition" => {
             native_game_composition::NativeGameCompositionHarness::run()?;
+        }
+        [operation] if operation == "--engine-composition" => {
+            native_engine_composition::NativeEngineCompositionHarness::run()?;
         }
         [operation, directory] if operation == "--engine-analysis-session" => {
             native_engine_analysis_session::NativeEngineAnalysisSessionHarness::run(
@@ -58,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "Usage: native [--host-lifecycle | --game-composition | --engine-live-game ENGINE_DIRECTORY | --engine-options ENGINE_DIRECTORY | --engine-analysis-session ENGINE_DIRECTORY | --workbench ENGINE_DIRECTORY | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
+                "Usage: native [--host-lifecycle | --game-composition | --engine-composition | --engine-live-game ENGINE_DIRECTORY | --engine-options ENGINE_DIRECTORY | --engine-analysis-session ENGINE_DIRECTORY | --workbench ENGINE_DIRECTORY | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
                     .into(),
             );
         }

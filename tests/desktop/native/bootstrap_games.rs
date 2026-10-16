@@ -140,11 +140,26 @@ impl DesktopNativeBootstrapGameFixture {
         }
     }
 
+    async fn application<T>(
+        mut operation: impl FnMut() -> Result<T, DesktopApplicationError>,
+    ) -> DesktopNativeBootstrapGameTestResult<T> {
+        Ok(tokio::time::timeout(Self::DEADLINE, async {
+            loop {
+                match operation() {
+                    Err(DesktopApplicationError::Busy) => tokio::task::yield_now().await,
+                    result => return result,
+                }
+            }
+        })
+        .await??)
+    }
+
     async fn command(
         services: &DesktopNativeHostServices,
         command: DesktopEnumCommand,
     ) -> DesktopNativeBootstrapGameTestResult<DesktopMessagesEnumResult> {
         let revision = match &command {
+            DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
             DesktopEnumCommand::Bootstrap
             | DesktopEnumCommand::FileSelect { .. }
@@ -158,12 +173,7 @@ impl DesktopNativeBootstrapGameFixture {
         let request = services
             .port
             .request(DesktopCommand::new(command, revision))?;
-        let receipt = loop {
-            match services.port.try_submit(&request) {
-                Err(DesktopApplicationError::Busy) => tokio::task::yield_now().await,
-                result => break result?,
-            }
-        };
+        let receipt = Self::application(|| services.port.try_submit(&request)).await?;
         loop {
             services.wake.acknowledge();
             services.port.acknowledge_wake();
@@ -362,7 +372,9 @@ fn native_composition_creates_plays_saves_and_restores_a_local_game_paused()
         loop {
             services.wake.acknowledge();
             services.port.acknowledge_wake();
-            while let Some(event) = services.port.try_event()? {
+            while let Some(event) =
+                DesktopNativeBootstrapGameFixture::application(|| services.port.try_event()).await?
+            {
                 if let DesktopEnumEvent::Games(games) = event.payload() {
                     assert_eq!(games.len(), 1);
                     let restored = &games[0];

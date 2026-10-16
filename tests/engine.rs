@@ -37,5 +37,10 @@ mod workbench_executor;
 #[path = "workbench/job.rs"]
 mod workbench_job;
 
+#[path = "desktop/engine_commands.rs"]
+mod desktop_engine_commands;
 #[path = "workbench/export.rs"]
 mod workbench_export;
+
+#[path = "desktop/workbench_commands.rs"]
+mod desktop_workbench_commands;

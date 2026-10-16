@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::future::Future;
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -17,9 +17,16 @@ use crate::desktop::application::{
     DesktopApplicationWork,
 };
 use crate::desktop::dto::{DesktopBootstrapSnapshot, DesktopEnumEvent, DesktopEnumValue};
+use crate::desktop::engine_bridge::{
+    DesktopEngineBridgeEnumResult, DesktopEngineBridgeFuture, DesktopEngineBridgeProvider,
+    DesktopEngineBridgeRequest,
+};
+use crate::desktop::engine_commands::{
+    DesktopEngineCommandsEnumOperation, DesktopEngineCommandsOperation,
+};
 use crate::desktop::error::{DesktopEnumFailureCode, DesktopError, DesktopFailure};
 use crate::desktop::file_handle::{
-    DesktopFileDialogProvider, DesktopFileHandleError, DesktopFileHandleId,
+    DesktopFileDialogProvider, DesktopFileEnumPurpose, DesktopFileHandleError, DesktopFileHandleId,
     DesktopFileHandleRegistry, DesktopFileHandleRequest,
 };
 use crate::desktop::game_bridge::{
@@ -29,11 +36,26 @@ use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::DesktopEnumCommand;
 use crate::desktop::stream::{DesktopEnumStreamClass, DesktopStream};
+use crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation;
+
+#[cfg(test)]
+#[path = "../../tests/desktop/coordinator_engine_quit.rs"]
+mod engine_quit_tests;
 
 #[derive(Debug, Error)]
 pub enum DesktopCoordinatorError {
     #[error("The live-game snapshot service closed before application shutdown")]
     GamesClosed,
+    #[error("The Quit deadline exceeds the native runtime range")]
+    QuitDeadlineRange,
+    #[error("The Quit cleanup window expired; unfinished operations remain owned until completion")]
+    QuitDeadline,
+    #[error(
+        "Previous engine quiescence responses remain unresolved; wait for observation before another Retry quit"
+    )]
+    EngineQuiescenceCapacity,
+    #[error("Engine quiescence failed: {0}")]
+    EngineQuiescence(#[source] DesktopFailure),
     #[error(transparent)]
     Application(#[from] DesktopApplicationError),
     #[error(transparent)]
@@ -104,6 +126,93 @@ struct DesktopCoordinatorGamePending {
     response: Option<Result<DesktopGameSnapshot, DesktopFailure>>,
 }
 
+struct DesktopCoordinatorEnginePending {
+    work: DesktopApplicationWork,
+    future: Option<DesktopEngineBridgeFuture>,
+    response: Option<Result<DesktopEngineBridgeEnumResult, DesktopFailure>>,
+}
+
+type DesktopCoordinatorEngineQuiescenceFuture =
+    Pin<Box<dyn Future<Output = Result<(), DesktopFailure>> + Send>>;
+
+struct DesktopCoordinatorEngineQuiescence {
+    future: DesktopCoordinatorEngineQuiescenceFuture,
+    outcome: Option<Result<(), DesktopFailure>>,
+}
+
+impl DesktopCoordinatorEngineQuiescence {
+    fn new(engine: &dyn DesktopEngineBridgeProvider, deadline: Instant) -> Self {
+        Self {
+            future: engine.quiesce(deadline),
+            outcome: None,
+        }
+    }
+}
+
+enum DesktopCoordinatorEngineQuitEnumPhase {
+    Quiescing(Vec<DesktopCoordinatorEngineQuiescence>),
+    Cleanup,
+}
+
+impl DesktopCoordinatorEngineQuitEnumPhase {
+    const MAX_RETAINED: usize = 2;
+
+    fn new(engine: &dyn DesktopEngineBridgeProvider, deadline: Instant) -> Self {
+        Self::Quiescing(vec![DesktopCoordinatorEngineQuiescence::new(
+            engine, deadline,
+        )])
+    }
+
+    fn retry(
+        &mut self,
+        engine: &dyn DesktopEngineBridgeProvider,
+        deadline: Instant,
+    ) -> Result<(), DesktopCoordinatorError> {
+        match self {
+            Self::Quiescing(attempts) => {
+                attempts.retain(|attempt| attempt.outcome.is_none());
+                if attempts.len() == Self::MAX_RETAINED {
+                    return Err(DesktopCoordinatorError::EngineQuiescenceCapacity);
+                }
+                attempts.push(DesktopCoordinatorEngineQuiescence::new(engine, deadline));
+            }
+            Self::Cleanup => {}
+        }
+        Ok(())
+    }
+
+    fn failure(&self) -> Option<DesktopCoordinatorError> {
+        match self {
+            Self::Quiescing(attempts) => {
+                attempts.last().and_then(|attempt| match &attempt.outcome {
+                    Some(Err(failure)) => {
+                        Some(DesktopCoordinatorError::EngineQuiescence(failure.clone()))
+                    }
+                    Some(Ok(())) | None => None,
+                })
+            }
+            Self::Cleanup => None,
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        match self {
+            Self::Quiescing(attempts) => {
+                !attempts.is_empty()
+                    && attempts.iter().all(|attempt| attempt.outcome.is_some())
+                    && attempts
+                        .last()
+                        .is_some_and(|attempt| matches!(attempt.outcome.as_ref(), Some(Ok(()))))
+            }
+            Self::Cleanup => true,
+        }
+    }
+
+    fn begin_cleanup(&mut self) {
+        *self = Self::Cleanup;
+    }
+}
+
 pub struct DesktopCoordinator<C, W, P, L>
 where
     C: ClockTimeProvider,
@@ -126,6 +235,12 @@ where
     game_snapshots: Option<watch::Receiver<Vec<DesktopGameSnapshot>>>,
     latest_games: Vec<DesktopGameSnapshot>,
     pending_games: Vec<DesktopCoordinatorGamePending>,
+    engine: Option<Arc<dyn DesktopEngineBridgeProvider>>,
+    pending_engine: Vec<DesktopCoordinatorEnginePending>,
+    engine_quit: Option<DesktopCoordinatorEngineQuitEnumPhase>,
+    shutdown_notice: Option<(DesktopRequestId, DesktopFailure)>,
+    quit_retry_deadline: Option<Instant>,
+    quit_deadline: Option<Instant>,
 }
 
 impl<C, W, P, L> DesktopCoordinator<C, W, P, L>
@@ -170,6 +285,12 @@ where
             game_snapshots: None,
             latest_games: Vec::new(),
             pending_games: Vec::new(),
+            engine: None,
+            pending_engine: Vec::new(),
+            engine_quit: None,
+            shutdown_notice: None,
+            quit_retry_deadline: None,
+            quit_deadline: None,
         }
     }
 
@@ -185,9 +306,15 @@ where
         self
     }
 
+    pub fn with_engine(mut self, engine: Arc<dyn DesktopEngineBridgeProvider>) -> Self {
+        self.engine = Some(engine);
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), DesktopCoordinatorError> {
         loop {
             self.complete_games().await?;
+            self.complete_engine().await?;
             if self.complete_controls().await? {
                 return Ok(());
             }
@@ -206,6 +333,14 @@ where
             let deadline = self.next_deadline()?;
             tokio::select! {
                 biased;
+                (index, outcome) = Self::engine_quiescence_ready(&mut self.engine_quit) => {
+                    if let Some(DesktopCoordinatorEngineQuitEnumPhase::Quiescing(attempts)) = &mut self.engine_quit {
+                        attempts[index].outcome = Some(outcome);
+                    }
+                }
+                (index, response) = Self::engine_ready(&mut self.pending_engine) => {
+                    self.pending_engine[index].response = Some(response);
+                }
                 (index, response) = Self::game_ready(&mut self.pending_games) => {
                     self.pending_games[index].response = Some(response);
                 }
@@ -232,9 +367,21 @@ where
         self.shutdown_failure.as_ref()
     }
 
+    fn uses_quit_deadline(&self, control: &DesktopApplicationWork) -> bool {
+        self.quit_deadline.is_some()
+            && self.pending_selection.is_none()
+            && matches!(
+                control.request().command().operation(),
+                DesktopEnumCommand::Quit
+            )
+    }
+
     async fn report_pending_controls(&mut self) -> Result<(), DesktopCoordinatorError> {
         let now = self.clock.now()?;
         for control in &self.controls {
+            if self.uses_quit_deadline(control) {
+                continue;
+            }
             if !self
                 .reported_deadlines
                 .contains(&control.receipt().request_id())
@@ -271,6 +418,7 @@ where
         work: DesktopApplicationWork,
     ) -> Result<(), DesktopCoordinatorError> {
         match work.request().command().operation().clone() {
+            DesktopEnumCommand::Engine(operation) => self.dispatch_engine(work, operation).await?,
             DesktopEnumCommand::Game(operation) => {
                 let response =
                     if work.request().command().expected_revision() != Some(operation.revision()) {
@@ -416,9 +564,43 @@ where
         Ok(())
     }
 
+    fn record_shutdown_failure(&mut self, control: usize, error: DesktopCoordinatorError) {
+        let notice = DesktopFailure::new(
+            DesktopEnumFailureCode::ResourceRefusal,
+            format!("{error}. Services remain owned. Choose Retry quit to try cleanup again."),
+            true,
+        );
+        self.shutdown_failure = Some(error);
+        self.shutdown_notice = Some((self.controls[control].receipt().request_id(), notice));
+    }
+
+    async fn publish_shutdown_notice(&mut self) -> Result<(), DesktopCoordinatorError> {
+        if let Some((request, notice)) = &self.shutdown_notice
+            && let Some(control) = self
+                .controls
+                .iter()
+                .find(|control| control.receipt().request_id() == *request)
+        {
+            Self::retry(|| {
+                self.application
+                    .report_pending_control(control, notice.clone())
+            })
+            .await?;
+            self.reported_deadlines.insert(*request);
+            self.shutdown_notice = None;
+        }
+        Ok(())
+    }
+
     async fn complete_controls(&mut self) -> Result<bool, DesktopCoordinatorError> {
         if self.application.take_quit_retry() {
             self.shutdown_failure = None;
+            self.shutdown_notice = None;
+            self.quit_retry_deadline = Some(
+                Instant::now()
+                    .checked_add(Self::SHUTDOWN)
+                    .ok_or(DesktopCoordinatorError::QuitDeadlineRange)?,
+            );
         }
         self.controls.sort_by_key(|work| {
             matches!(
@@ -433,33 +615,62 @@ where
                 DesktopEnumCommand::Quit
             );
             if is_quit {
+                let retry = self.quit_retry_deadline.take();
+                let deadline = match retry.or(self.quit_deadline) {
+                    Some(deadline) => deadline,
+                    None => self.controls[index]
+                        .receipt()
+                        .runtime_received_at()
+                        .checked_add(Self::SHUTDOWN)
+                        .ok_or(DesktopCoordinatorError::QuitDeadlineRange)?,
+                };
+                self.quit_deadline = Some(deadline);
+                if let Some(deadline) = retry
+                    && let (Some(quit), Some(engine)) = (&mut self.engine_quit, &self.engine)
+                    && let Err(error) = quit.retry(engine.as_ref(), deadline)
+                {
+                    self.record_shutdown_failure(index, error);
+                }
+                if self.engine_quit.is_none()
+                    && !self.pending_engine.is_empty()
+                    && let Some(engine) = &self.engine
+                {
+                    self.engine_quit = Some(DesktopCoordinatorEngineQuitEnumPhase::new(
+                        engine.as_ref(),
+                        deadline,
+                    ));
+                }
+                if self.shutdown_failure.is_none() {
+                    let failure = if Instant::now() >= deadline {
+                        Some(DesktopCoordinatorError::QuitDeadline)
+                    } else {
+                        self.engine_quit
+                            .as_ref()
+                            .and_then(DesktopCoordinatorEngineQuitEnumPhase::failure)
+                    };
+                    if let Some(error) = failure {
+                        self.record_shutdown_failure(index, error);
+                    }
+                }
+                self.publish_shutdown_notice().await?;
                 if self.pending_selection.is_some()
                     || !self.pending_games.is_empty()
+                    || !self.pending_engine.is_empty()
                     || self.shutdown_failure.is_some()
+                    || self
+                        .engine_quit
+                        .as_ref()
+                        .is_some_and(|quit| !quit.is_ready())
                 {
                     index += 1;
                     continue;
                 }
-                if let Err(error) = self
-                    .lifecycle
-                    .shutdown(Instant::now() + Self::SHUTDOWN)
-                    .await
-                {
-                    let notice = DesktopFailure::new(
-                        DesktopEnumFailureCode::ResourceRefusal,
-                        format!(
-                            "{error}. Services remain owned. Choose Retry quit to try cleanup again."
-                        ),
-                        true,
-                    );
-                    self.shutdown_failure = Some(error);
-                    Self::retry(|| {
-                        self.application
-                            .report_pending_control(&self.controls[index], notice.clone())
-                    })
-                    .await?;
-                    self.reported_deadlines
-                        .insert(self.controls[index].receipt().request_id());
+                if let Some(quit) = &mut self.engine_quit {
+                    quit.begin_cleanup();
+                }
+                if let Err(error) = self.lifecycle.shutdown(deadline).await {
+                    self.record_shutdown_failure(index, error);
+                    self.publish_shutdown_notice().await?;
                     index += 1;
                     continue;
                 }
@@ -470,6 +681,8 @@ where
                         .remove(&self.controls[index].receipt().request_id());
                     self.controls.remove(index);
                     if is_quit {
+                        self.engine_quit = None;
+                        self.quit_deadline = None;
                         return Ok(true);
                     }
                 }
@@ -478,6 +691,24 @@ where
             }
         }
         Ok(false)
+    }
+
+    async fn engine_quiescence_ready(
+        quit: &mut Option<DesktopCoordinatorEngineQuitEnumPhase>,
+    ) -> (usize, Result<(), DesktopFailure>) {
+        poll_fn(|context| {
+            if let Some(DesktopCoordinatorEngineQuitEnumPhase::Quiescing(attempts)) = quit {
+                for (index, attempt) in attempts.iter_mut().enumerate() {
+                    if attempt.outcome.is_none()
+                        && let Poll::Ready(outcome) = attempt.future.as_mut().poll(context)
+                    {
+                        return Poll::Ready((index, outcome));
+                    }
+                }
+            }
+            Poll::Pending
+        })
+        .await
     }
 
     async fn complete_games(&mut self) -> Result<(), DesktopCoordinatorError> {
@@ -515,6 +746,170 @@ where
             match result {
                 Ok(()) => {
                     self.pending_games.swap_remove(index);
+                }
+                Err(DesktopApplicationError::CancellationUnacknowledged) => index += 1,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
+    async fn dispatch_engine(
+        &mut self,
+        work: DesktopApplicationWork,
+        operation: crate::desktop::engine_commands::DesktopEngineCommandsOperation,
+    ) -> Result<(), DesktopCoordinatorError> {
+        let failure = if work.request().command().expected_revision()
+            != Some(operation.context().configuration())
+        {
+            Some(DesktopFailure::new(
+                DesktopEnumFailureCode::StaleRevision,
+                "The engine command has a mismatched configuration revision".to_owned(),
+                true,
+            ))
+        } else if self.engine.is_none() {
+            Some(DesktopFailure::new(
+                DesktopEnumFailureCode::ResourceRefusal,
+                "The native analysis and workbench service is unavailable".to_owned(),
+                true,
+            ))
+        } else {
+            None
+        };
+        let mut selection = None;
+        let failure = if let Some(failure) = failure {
+            Some(failure)
+        } else if let Some((handle, purpose)) = Self::engine_file_selection(&operation) {
+            let now = self.clock.now()?;
+            let selected = self
+                .files
+                .as_mut()
+                .ok_or(DesktopFileHandleError::Saturated)
+                .and_then(|files| {
+                    files.registry.consume(
+                        handle,
+                        operation.context().owner().file_handle_owner(),
+                        purpose,
+                        now,
+                    )
+                });
+            match selected {
+                Ok(selected) => {
+                    selection = Some(selected);
+                    None
+                }
+                Err(error) => Some(DesktopFailure::new(
+                    DesktopEnumFailureCode::FileUnavailable,
+                    error.to_string(),
+                    true,
+                )),
+            }
+        } else {
+            None
+        };
+        if !work.request().command().operation().is_control() {
+            match Self::retry(|| self.application.begin_commit(&work)).await {
+                Ok(()) => {}
+                Err(DesktopApplicationError::CancellationRequested) => {
+                    Self::retry(|| self.application.acknowledge_stopped(&work)).await?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let future = match (&self.engine, &failure) {
+            (Some(engine), None) => Some(engine.execute(DesktopEngineBridgeRequest {
+                operation,
+                receipt: work.receipt().clone(),
+                selection,
+            })),
+            (Some(_), Some(_)) | (None, _) => None,
+        };
+        self.pending_engine.push(DesktopCoordinatorEnginePending {
+            work,
+            future,
+            response: failure.map(Err),
+        });
+        Ok(())
+    }
+
+    fn engine_file_selection(
+        operation: &DesktopEngineCommandsOperation,
+    ) -> Option<(DesktopFileHandleId, DesktopFileEnumPurpose)> {
+        match operation.action() {
+            DesktopEngineCommandsEnumOperation::PrepareTablebases { directory } => {
+                Some((*directory, DesktopFileEnumPurpose::Directory))
+            }
+            DesktopEngineCommandsEnumOperation::Workbench(
+                DesktopWorkbenchCommandsEnumOperation::ApplyExport { destination, .. },
+            ) => Some((*destination, DesktopFileEnumPurpose::WriteFile)),
+            DesktopEngineCommandsEnumOperation::Snapshot
+            | DesktopEngineCommandsEnumOperation::Start { .. }
+            | DesktopEngineCommandsEnumOperation::Stop { .. }
+            | DesktopEngineCommandsEnumOperation::Configure(_)
+            | DesktopEngineCommandsEnumOperation::Retry
+            | DesktopEngineCommandsEnumOperation::LoadTablebases
+            | DesktopEngineCommandsEnumOperation::Workbench(
+                DesktopWorkbenchCommandsEnumOperation::Start { .. }
+                | DesktopWorkbenchCommandsEnumOperation::Cancel { .. }
+                | DesktopWorkbenchCommandsEnumOperation::Result { .. }
+                | DesktopWorkbenchCommandsEnumOperation::PreviewExport { .. },
+            ) => None,
+        }
+    }
+
+    async fn engine_ready(
+        pending: &mut [DesktopCoordinatorEnginePending],
+    ) -> (usize, Result<DesktopEngineBridgeEnumResult, DesktopFailure>) {
+        std::future::poll_fn(|context| {
+            for (index, pending) in pending.iter_mut().enumerate() {
+                if let Some(future) = &mut pending.future
+                    && let Poll::Ready(response) = future.as_mut().poll(context)
+                {
+                    pending.future = None;
+                    return Poll::Ready((index, response));
+                }
+            }
+            Poll::Pending
+        })
+        .await
+    }
+
+    async fn complete_engine(&mut self) -> Result<(), DesktopCoordinatorError> {
+        let mut index = 0;
+        while index < self.pending_engine.len() {
+            let Some(response) = self.pending_engine[index].response.clone() else {
+                index += 1;
+                continue;
+            };
+            let work = &self.pending_engine[index].work;
+            let result = if work.request().command().operation().is_control() {
+                Self::retry(|| {
+                    self.application
+                        .complete_engine_control(work, response.clone())
+                })
+                .await
+            } else {
+                match response {
+                    Ok(value) => {
+                        Self::retry(|| {
+                            self.application.complete_value(
+                                work,
+                                DesktopEnumValue::Engine(Box::new(value.clone())),
+                                None,
+                            )
+                        })
+                        .await
+                    }
+                    Err(failure) => {
+                        Self::retry(|| self.application.complete_failure(work, failure.clone()))
+                            .await
+                    }
+                }
+            };
+            match result {
+                Ok(()) => {
+                    self.pending_engine.swap_remove(index);
                 }
                 Err(DesktopApplicationError::CancellationUnacknowledged) => index += 1,
                 Err(error) => return Err(error.into()),
@@ -736,24 +1131,33 @@ where
             .controls
             .iter()
             .filter(|control| {
-                !self
-                    .reported_deadlines
-                    .contains(&control.receipt().request_id())
+                !self.uses_quit_deadline(control)
+                    && !self
+                        .reported_deadlines
+                        .contains(&control.receipt().request_id())
             })
             .filter_map(|control| control.receipt().deadline())
             .min();
-        let Some(deadline) = stream_deadline.into_iter().chain(control_deadline).min() else {
-            return Ok(None);
+        let application_deadline = match stream_deadline.into_iter().chain(control_deadline).min() {
+            Some(deadline) => {
+                let now = self.clock.now()?;
+                Some(
+                    Instant::now()
+                        + if now >= deadline {
+                            Duration::ZERO
+                        } else {
+                            Duration::from_nanos(deadline.elapsed_since(now)?.as_nanos())
+                        },
+                )
+            }
+            None => None,
         };
-        let now = self.clock.now()?;
-        Ok(Some(
-            Instant::now()
-                + if now >= deadline {
-                    Duration::ZERO
-                } else {
-                    Duration::from_nanos(deadline.elapsed_since(now)?.as_nanos())
-                },
-        ))
+        let quit_deadline = if self.shutdown_failure.is_none() {
+            self.quit_deadline
+        } else {
+            None
+        };
+        Ok(application_deadline.into_iter().chain(quit_deadline).min())
     }
 
     async fn wait_deadline(deadline: Option<Instant>) {

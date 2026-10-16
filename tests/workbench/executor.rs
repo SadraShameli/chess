@@ -714,6 +714,67 @@ async fn dropped_run_cancel_and_failed_cleanup_keep_the_owner_and_lease()
 }
 
 #[tokio::test(start_paused = true)]
+async fn result_cleanup_resumes_after_repeated_dropped_run_waits() -> Result<(), Box<dyn Error>> {
+    let fixture = WorkbenchExecutorFixture::new()?;
+    let provider = WorkbenchExecutorProvider::new(WorkbenchExecutorFixture::transcript(
+        WorkbenchEnumOperation::Compiler,
+    )?);
+    let mut executor = fixture.executor(WorkbenchEnumOperation::Compiler)?;
+    executor.start(&provider).await?;
+    provider.blocked_cleanup.store(true, Ordering::SeqCst);
+    for _publication in 0..2 {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), executor.run())
+                .await
+                .is_err(),
+            "a pending result cleanup could not resume"
+        );
+        assert!(!executor.is_shutdown_complete());
+        assert_eq!(fixture.budget.available(), 1);
+    }
+    provider.blocked_cleanup.store(false, Ordering::SeqCst);
+    executor.run().await?;
+    assert!(executor.is_shutdown_complete());
+    assert_eq!(executor.job().state(), WorkbenchEnumJobState::Succeeded);
+    assert_eq!(fixture.budget.available(), 2);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn resumed_result_cleanup_keeps_its_original_absolute_deadline() -> Result<(), Box<dyn Error>>
+{
+    let fixture = WorkbenchExecutorFixture::new()?;
+    let provider = WorkbenchExecutorProvider::new(WorkbenchExecutorFixture::transcript(
+        WorkbenchEnumOperation::Compiler,
+    )?);
+    let mut executor = fixture.executor(WorkbenchEnumOperation::Compiler)?;
+    executor.start(&provider).await?;
+    provider.blocked_cleanup.store(true, Ordering::SeqCst);
+    let original = Instant::now();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1), executor.run())
+            .await
+            .is_err()
+    );
+    let result = executor.run().await;
+    assert!(matches!(
+        result,
+        Err(chess::workbench::executor::WorkbenchExecutorError::Cleanup(
+            _
+        ))
+    ));
+    assert_eq!(Instant::now(), original + EngineProcessLimits::SHUTDOWN);
+    assert_eq!(fixture.budget.available(), 1);
+    provider.blocked_cleanup.store(false, Ordering::SeqCst);
+    executor
+        .shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
+        .await?;
+    assert!(executor.is_shutdown_complete());
+    assert_eq!(fixture.budget.available(), 2);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn an_isolated_job_never_commands_the_live_session() -> Result<(), Box<dyn Error>> {
     let fixture = WorkbenchExecutorFixture::new()?;
     let live_provider = WorkbenchExecutorProvider::new(Vec::new());

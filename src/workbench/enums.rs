@@ -33,7 +33,7 @@ impl WorkbenchEnumOperation {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkbenchEnumParameters {
     Inspector(EngineSearchPosition),
     RawEvaluation(EngineSearchPosition),

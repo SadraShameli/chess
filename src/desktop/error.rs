@@ -50,6 +50,14 @@ pub struct DesktopFailure {
     retryable: bool,
 }
 
+impl std::fmt::Display for DesktopFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for DesktopFailure {}
+
 impl DesktopFailure {
     pub fn code(&self) -> DesktopEnumFailureCode {
         self.code

@@ -1,13 +1,19 @@
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::num::TryFromIntError;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use thiserror::Error;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, watch};
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
+use crate::capacity::lease::CapacityLease;
+use crate::desktop::engine_commands::{
+    DesktopEngineCommandsEnumWorkload, DesktopEngineCommandsResourceRequest,
+};
+use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::desktop::native::game_engine::{
     DesktopNativeGameEngineAllocation, DesktopNativeGameEngineAllocationActivity,
     DesktopNativeGameEngineAllocationError, DesktopNativeGameEngineResources,
@@ -24,6 +30,8 @@ pub enum DesktopNativeGameResourcesPolicyError {
     Empty,
     #[error("The configured workload of {requested} exceeds the shared CPU budget of {available}")]
     ThreadBudget { requested: usize, available: usize },
+    #[error("Configured analysis hash exceeds the shared hash budget")]
+    HashBudget,
     #[error("The pinned engine does not advertise a numeric option for {0:?}")]
     OptionDescriptor(EngineEnumOption),
     #[error("The resource accounting value exceeds its supported range: {0}")]
@@ -93,10 +101,17 @@ impl DesktopNativeGameResourcesPolicy {
         self.hash_mib
     }
 
-    fn required_memory(self, games: usize) -> Result<u64, DesktopNativeGameResourcesPolicyError> {
+    pub const fn startup_hash_mib(self) -> u32 {
+        self.startup_hash_mib
+    }
+
+    fn required_memory(
+        self,
+        processes: usize,
+    ) -> Result<u64, DesktopNativeGameResourcesPolicyError> {
         let per_process = EnginePackageManifest::NETWORK_BYTES + Self::PROCESS_ALLOWANCE_BYTES;
-        let games = u64::try_from(games)?;
-        Ok(u64::from(self.hash_mib) * Self::MIB + per_process * games + Self::HEADROOM_BYTES)
+        let processes = u64::try_from(processes)?;
+        Ok(u64::from(self.hash_mib) * Self::MIB + per_process * processes + Self::HEADROOM_BYTES)
     }
 
     fn config(
@@ -146,6 +161,34 @@ impl DesktopNativeGameResourcesMemoryProvider for DesktopNativeGameResourcesMemo
 
 #[derive(Debug, Error)]
 pub enum DesktopNativeGameResourcesError<E: std::error::Error + Send + Sync + 'static> {
+    #[error(
+        "The {workload:?} startup hash hint {supplied:?} does not match the actual process requirement {required:?}"
+    )]
+    StartupHint {
+        workload: DesktopEngineCommandsEnumWorkload,
+        supplied: Option<u32>,
+        required: Option<u32>,
+    },
+    #[error("A configured, acknowledged analysis-engine reservation is required")]
+    AnalysisMissing,
+    #[error(
+        "This analysis engine already owns an unfinished allocation for the requested operation"
+    )]
+    AnalysisBusy,
+    #[error("Analysis must use its acknowledged configured resources")]
+    AnalysisResources,
+    #[error("Live-game search demand has priority over analysis and diagnostics")]
+    LivePriority,
+    #[error(
+        "The requested {requested} workers exceed the shared engine budget of {available} workers"
+    )]
+    AnalysisThreads { requested: usize, available: usize },
+    #[error(
+        "Analysis admission requires {required_mib} MiB of configured and startup hash, exceeding the shared {budget_mib} MiB budget"
+    )]
+    AnalysisHash { required_mib: u64, budget_mib: u32 },
+    #[error("The analysis reservation is absent, unadmitted or belongs to another owner")]
+    UnknownAnalysisReservation,
     #[error("Game {0:?} already owns a running-engine resource registration")]
     DuplicateGame(GameId),
     #[error("Game {0:?} has no admitted running-engine resource registration")]
@@ -194,6 +237,43 @@ pub struct DesktopNativeGameResources<M> {
     memory: Arc<M>,
     state: Mutex<DesktopNativeGameResourcesState>,
     changed: Arc<Notify>,
+    live_demand: watch::Sender<Option<GameEngineContext>>,
+}
+
+pub struct DesktopNativeGameResourcesAnalysisReservation {
+    claim: Arc<DesktopNativeGameResourcesAnalysisClaim>,
+    changed: Arc<Notify>,
+}
+
+impl Drop for DesktopNativeGameResourcesAnalysisReservation {
+    fn drop(&mut self) {
+        self.claim.registered.store(false, Ordering::SeqCst);
+        self.changed.notify_waiters();
+    }
+}
+
+struct DesktopNativeGameResourcesAnalysisClaim {
+    owner: DesktopMessagesEntityId,
+    workload: DesktopEngineCommandsEnumWorkload,
+    resources: EngineResourceConfig,
+    registered: AtomicBool,
+    admitted: AtomicBool,
+    acknowledged: AtomicBool,
+    reserved_hash_mib: AtomicU32,
+}
+
+impl DesktopNativeGameResourcesAnalysisClaim {
+    fn is_active(&self) -> bool {
+        !self.is_persistent() || !self.acknowledged.load(Ordering::SeqCst)
+    }
+
+    fn is_persistent(&self) -> bool {
+        matches!(
+            self.workload,
+            DesktopEngineCommandsEnumWorkload::Configuration
+                | DesktopEngineCommandsEnumWorkload::Retry
+        )
+    }
 }
 
 pub struct DesktopNativeGameResourcesRegistration {
@@ -228,13 +308,76 @@ impl DesktopNativeGameResourcesEntry {
 #[derive(Default)]
 struct DesktopNativeGameResourcesState {
     entries: Vec<DesktopNativeGameResourcesEntry>,
+    analysis: Vec<Arc<DesktopNativeGameResourcesAnalysisClaim>>,
     rotation: usize,
 }
 
 impl DesktopNativeGameResourcesState {
+    fn has_active_analysis(&self) -> bool {
+        self.analysis.iter().any(|claim| claim.is_active())
+    }
+
     fn retain_registered(&mut self) {
         self.entries
             .retain(|entry| entry.registered.load(Ordering::SeqCst));
+        self.analysis
+            .retain(|claim| claim.registered.load(Ordering::SeqCst));
+    }
+
+    fn analysis_hash(
+        &self,
+        pending: bool,
+        candidate: Option<&Arc<DesktopNativeGameResourcesAnalysisClaim>>,
+    ) -> u64 {
+        let mut owners = HashMap::<DesktopMessagesEntityId, u32>::new();
+        let mut diagnostics = 0_u64;
+        for claim in self.analysis.iter().filter(|claim| {
+            claim.registered.load(Ordering::SeqCst)
+                && (pending
+                    || claim.admitted.load(Ordering::SeqCst)
+                    || candidate.is_some_and(|candidate| Arc::ptr_eq(candidate, claim)))
+        }) {
+            let hash = claim.reserved_hash_mib.load(Ordering::SeqCst);
+            if claim.workload == DesktopEngineCommandsEnumWorkload::Diagnostic {
+                diagnostics += u64::from(hash);
+            } else {
+                let reserved = owners.entry(claim.owner).or_default();
+                *reserved = (*reserved).max(hash);
+            }
+        }
+        diagnostics + owners.values().map(|hash| u64::from(*hash)).sum::<u64>()
+    }
+
+    fn process_count(&self) -> usize {
+        let owners: HashSet<_> = self
+            .analysis
+            .iter()
+            .filter(|claim| claim.workload != DesktopEngineCommandsEnumWorkload::Diagnostic)
+            .map(|claim| claim.owner)
+            .collect();
+        self.entries.len()
+            + owners.len()
+            + self
+                .analysis
+                .iter()
+                .filter(|claim| claim.workload == DesktopEngineCommandsEnumWorkload::Diagnostic)
+                .count()
+    }
+
+    fn hash_for_games(
+        &self,
+        policy: DesktopNativeGameResourcesPolicy,
+    ) -> Result<u32, DesktopNativeGameResourcesPolicyError> {
+        policy
+            .hash_mib
+            .checked_sub(u32::try_from(self.analysis_hash(true, None))?)
+            .ok_or(DesktopNativeGameResourcesPolicyError::HashBudget)
+    }
+
+    fn has_live_demand(&self) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.searching.load(Ordering::SeqCst))
     }
 
     fn index(&self, game: GameId) -> Option<usize> {
@@ -250,6 +393,7 @@ impl DesktopNativeGameResourcesState {
         policy: DesktopNativeGameResourcesPolicy,
     ) -> Result<(), DesktopNativeGameResourcesPolicyError> {
         self.retain_registered();
+        let hash_mib = self.hash_for_games(policy)?;
         if self.entries.is_empty() {
             return Ok(());
         }
@@ -258,14 +402,13 @@ impl DesktopNativeGameResourcesState {
         let mut existing = 0_u32;
         for (index, entry) in self.entries.iter_mut().enumerate() {
             if entry.applied_hash_mib.is_none() {
-                entry.desired_hash_mib =
-                    Self::assigned(policy.hash_mib, count, u32::try_from(index)?);
+                entry.desired_hash_mib = Self::assigned(hash_mib, count, u32::try_from(index)?);
                 startup_reserved += u64::from(entry.desired_hash_mib.max(policy.startup_hash_mib));
             } else {
                 existing += 1;
             }
         }
-        let total = u64::from(policy.hash_mib);
+        let total = u64::from(hash_mib);
         if startup_reserved + u64::from(existing) > total {
             return Ok(());
         }
@@ -290,14 +433,16 @@ impl DesktopNativeGameResourcesState {
                     1
                 }
             })
-            .sum()
+            .sum::<u64>()
+            + self.analysis_hash(true, None)
     }
 
     fn reserved_hash(&self) -> u64 {
         self.entries
             .iter()
             .map(|entry| u64::from(entry.reserved_hash_mib))
-            .sum()
+            .sum::<u64>()
+            + self.analysis_hash(false, None)
     }
 
     fn can_reserve_hash(&self, index: usize, policy: DesktopNativeGameResourcesPolicy) -> bool {
@@ -367,11 +512,222 @@ impl<M: DesktopNativeGameResourcesMemoryProvider> DesktopNativeGameResources<M> 
             memory: options.memory,
             state: Mutex::new(DesktopNativeGameResourcesState::default()),
             changed: Arc::new(Notify::new()),
+            live_demand: watch::channel(None).0,
         })
     }
 
     pub const fn policy(&self) -> DesktopNativeGameResourcesPolicy {
         self.policy
+    }
+
+    pub fn live_demand(&self) -> watch::Receiver<Option<GameEngineContext>> {
+        self.live_demand.subscribe()
+    }
+
+    fn analysis_priority(
+        &self,
+        state: &DesktopNativeGameResourcesState,
+        resources: EngineResourceConfig,
+    ) -> Result<usize, DesktopNativeGameResourcesError<M::Error>> {
+        if state.has_live_demand() {
+            return Err(DesktopNativeGameResourcesError::LivePriority);
+        }
+        let workers =
+            usize::try_from(resources.threads()).map_err(EngineResourceConfigError::from)?;
+        let available = self.policy.workers;
+        if workers > available {
+            return Err(DesktopNativeGameResourcesError::AnalysisThreads {
+                requested: workers,
+                available,
+            });
+        }
+        Ok(workers)
+    }
+
+    fn validate_analysis(
+        &self,
+        state: &DesktopNativeGameResourcesState,
+        owner: DesktopMessagesEntityId,
+        request: DesktopEngineCommandsResourceRequest,
+    ) -> Result<(), DesktopNativeGameResourcesError<M::Error>> {
+        self.analysis_priority(state, request.resources())?;
+        let claims: Vec<_> = state
+            .analysis
+            .iter()
+            .filter(|claim| claim.owner == owner)
+            .collect();
+        let configured = claims
+            .iter()
+            .rev()
+            .find(|claim| claim.is_persistent() && claim.acknowledged.load(Ordering::SeqCst));
+        if claims.iter().any(|claim| claim.is_active()) {
+            return Err(DesktopNativeGameResourcesError::AnalysisBusy);
+        }
+        match request.workload() {
+            DesktopEngineCommandsEnumWorkload::Analysis => {
+                let configured =
+                    configured.ok_or(DesktopNativeGameResourcesError::AnalysisMissing)?;
+                if configured.resources != request.resources() {
+                    return Err(DesktopNativeGameResourcesError::AnalysisResources);
+                }
+            }
+            DesktopEngineCommandsEnumWorkload::Configuration
+            | DesktopEngineCommandsEnumWorkload::Retry => {
+                if request.workload() == DesktopEngineCommandsEnumWorkload::Configuration
+                    && configured.is_none()
+                {
+                    return Err(DesktopNativeGameResourcesError::AnalysisMissing);
+                }
+            }
+            DesktopEngineCommandsEnumWorkload::Diagnostic => {}
+        }
+        Ok(())
+    }
+
+    fn memory_admission(
+        &self,
+        processes: usize,
+        available: u64,
+    ) -> Result<(), DesktopNativeGameResourcesError<M::Error>> {
+        let required = self.policy.required_memory(processes)?;
+        if required > available {
+            return Err(DesktopNativeGameResourcesError::MemoryAdmission {
+                required,
+                available,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn reserve_analysis(
+        &self,
+        owner: DesktopMessagesEntityId,
+        request: DesktopEngineCommandsResourceRequest,
+    ) -> Result<
+        (CapacityLease, DesktopNativeGameResourcesAnalysisReservation),
+        DesktopNativeGameResourcesError<M::Error>,
+    > {
+        let startup_hash_mib = match request.workload() {
+            DesktopEngineCommandsEnumWorkload::Retry
+            | DesktopEngineCommandsEnumWorkload::Diagnostic => Some(self.policy.startup_hash_mib),
+            DesktopEngineCommandsEnumWorkload::Analysis
+            | DesktopEngineCommandsEnumWorkload::Configuration => None,
+        };
+        if request.startup_hash_mib() != startup_hash_mib {
+            return Err(DesktopNativeGameResourcesError::StartupHint {
+                workload: request.workload(),
+                supplied: request.startup_hash_mib(),
+                required: startup_hash_mib,
+            });
+        }
+        let available = self
+            .memory
+            .available_bytes()
+            .await
+            .map_err(DesktopNativeGameResourcesError::Memory)?;
+        let reservation = {
+            let mut state = self.state.lock().await;
+            state.rebalance(self.policy)?;
+            self.validate_analysis(&state, owner, request)?;
+            let claim = Arc::new(DesktopNativeGameResourcesAnalysisClaim {
+                owner,
+                workload: request.workload(),
+                resources: request.resources(),
+                registered: AtomicBool::new(true),
+                admitted: AtomicBool::new(false),
+                acknowledged: AtomicBool::new(false),
+                reserved_hash_mib: AtomicU32::new(
+                    request
+                        .resources()
+                        .hash_mib()
+                        .max(startup_hash_mib.unwrap_or(0)),
+                ),
+            });
+            let reservation = DesktopNativeGameResourcesAnalysisReservation {
+                claim: Arc::clone(&claim),
+                changed: Arc::clone(&self.changed),
+            };
+            state.analysis.push(claim);
+            let required_mib = state.analysis_hash(true, None)
+                + u64::try_from(state.entries.len())
+                    .map_err(DesktopNativeGameResourcesPolicyError::from)?;
+            if required_mib > u64::from(self.policy.hash_mib) {
+                return Err(DesktopNativeGameResourcesError::AnalysisHash {
+                    required_mib,
+                    budget_mib: self.policy.hash_mib,
+                });
+            }
+            state.rebalance(self.policy)?;
+            let required_mib = state.startup_required(self.policy);
+            if required_mib > u64::from(self.policy.hash_mib) {
+                return Err(DesktopNativeGameResourcesError::AnalysisHash {
+                    required_mib,
+                    budget_mib: self.policy.hash_mib,
+                });
+            }
+            self.memory_admission(state.process_count(), available)?;
+            reservation
+        };
+        self.changed.notify_waiters();
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let available = self
+                .memory
+                .available_bytes()
+                .await
+                .map_err(DesktopNativeGameResourcesError::Memory)?;
+            {
+                let mut state = self.state.lock().await;
+                state.rebalance(self.policy)?;
+                let workers = self.analysis_priority(&state, request.resources())?;
+                self.memory_admission(state.process_count(), available)?;
+                let game_hash: u64 = state
+                    .entries
+                    .iter()
+                    .map(|entry| u64::from(entry.reserved_hash_mib))
+                    .sum();
+                if game_hash + state.analysis_hash(false, Some(&reservation.claim))
+                    <= u64::from(self.policy.hash_mib)
+                {
+                    let lease = self.budget.try_lease(workers)?;
+                    reservation.claim.admitted.store(true, Ordering::SeqCst);
+                    drop(state);
+                    self.changed.notify_waiters();
+                    return Ok((lease, reservation));
+                }
+            }
+            changed.await;
+        }
+    }
+
+    pub(crate) async fn acknowledge_analysis(
+        &self,
+        owner: DesktopMessagesEntityId,
+        reservation: &DesktopNativeGameResourcesAnalysisReservation,
+    ) -> Result<(), DesktopNativeGameResourcesError<M::Error>> {
+        let mut state = self.state.lock().await;
+        state.rebalance(self.policy)?;
+        let claim = &reservation.claim;
+        if claim.owner != owner
+            || !claim.admitted.load(Ordering::SeqCst)
+            || !state
+                .analysis
+                .iter()
+                .any(|current| Arc::ptr_eq(current, claim))
+            || !claim.is_persistent()
+        {
+            return Err(DesktopNativeGameResourcesError::UnknownAnalysisReservation);
+        }
+        claim
+            .reserved_hash_mib
+            .store(claim.resources.hash_mib(), Ordering::SeqCst);
+        claim.acknowledged.store(true, Ordering::SeqCst);
+        state.rebalance(self.policy)?;
+        drop(state);
+        self.changed.notify_waiters();
+        Ok(())
     }
 
     async fn allocation(
@@ -391,6 +747,7 @@ impl<M: DesktopNativeGameResourcesMemoryProvider> DesktopNativeGameResources<M> 
             searching
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .map_err(|_value| DesktopNativeGameResourcesError::SearchPending(game))?;
+            let _previous = self.live_demand.send_replace(Some(context));
             Some(DesktopNativeGameEngineAllocationActivity::new(
                 searching,
                 Arc::clone(&self.changed),
@@ -416,7 +773,10 @@ impl<M: DesktopNativeGameResourcesMemoryProvider> DesktopNativeGameResources<M> 
                 }
                 let needs_update = state.entries[index].applied_hash_mib
                     != Some(state.entries[index].desired_hash_mib);
-                if (is_search || needs_update) && state.can_reserve_hash(index, self.policy) {
+                if (is_search || needs_update)
+                    && (!is_search || !state.has_active_analysis())
+                    && state.can_reserve_hash(index, self.policy)
+                {
                     let workers = if is_search {
                         state.search_workers(index, self.policy)
                     } else {
@@ -449,6 +809,7 @@ impl<M: DesktopNativeGameResourcesMemoryProvider> DesktopNativeGameResources<M> 
             };
             if current_workers != workers
                 || state.entries[index].desired_hash_mib != hash_mib
+                || (is_search && state.has_active_analysis())
                 || !state.can_reserve_hash(index, self.policy)
             {
                 continue;
@@ -506,13 +867,7 @@ impl<M: DesktopNativeGameResourcesMemoryProvider> DesktopNativeGameEngineResourc
                     workers: self.policy.workers(),
                 });
             }
-            let required = self.policy.required_memory(count)?;
-            if required > available {
-                return Err(Self::Error::MemoryAdmission {
-                    required,
-                    available,
-                });
-            }
+            self.memory_admission(state.process_count() + 1, available)?;
             let registered = Arc::new(AtomicBool::new(true));
             let registration = DesktopNativeGameResourcesRegistration {
                 registered: Arc::clone(&registered),
@@ -561,13 +916,7 @@ impl<M: DesktopNativeGameResourcesMemoryProvider> DesktopNativeGameEngineResourc
                 let mut state = self.state.lock().await;
                 state.rebalance(self.policy)?;
                 let index = state.index(game).ok_or(Self::Error::UnknownGame(game))?;
-                let required = self.policy.required_memory(state.entries.len())?;
-                if required > available {
-                    return Err(Self::Error::MemoryAdmission {
-                        required,
-                        available,
-                    });
-                }
+                self.memory_admission(state.process_count(), available)?;
                 let startup = state.entries[index]
                     .desired_hash_mib
                     .max(self.policy.startup_hash_mib);

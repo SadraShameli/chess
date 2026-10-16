@@ -16,10 +16,10 @@ pub enum EngineSearchPositionError {
     OversizedHistory,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineSearchPosition(Arc<EngineSearchPositionState>);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct EngineSearchPositionState {
     initial: BoardPosition,
     current: BoardPosition,

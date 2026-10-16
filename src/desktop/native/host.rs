@@ -81,6 +81,7 @@ use crate::presentation::action::registry::PresentationActionEnumId;
 use crate::presentation::app::{PresentationApp, PresentationAppError};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
+use crate::presentation::engine_panels::PresentationEnginePanelsConnection;
 use crate::presentation::theme::font::PresentationThemeFont;
 use crate::scene::assets::{SceneAssets, SceneAssetsError};
 use crate::scene::camera::{SceneCamera, SceneCameraError};
@@ -106,6 +107,7 @@ pub enum DesktopNativeHostEvent {
 }
 
 pub struct DesktopNativeHostServices {
+    pub engine_panels: Option<PresentationEnginePanelsConnection>,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
     pub resources: DesktopNativeResources,
@@ -515,7 +517,7 @@ impl DesktopNativeHost {
     }
 
     pub fn run_with_plugin(
-        services: DesktopNativeHostServices,
+        mut services: DesktopNativeHostServices,
         plugin: impl Plugin,
     ) -> Result<(), DesktopNativeHostError> {
         let generation = Self::preparing_generation(&services)?;
@@ -586,9 +588,13 @@ impl DesktopNativeHost {
             .world()
             .resource::<AssetServer>()
             .load(DesktopNativeResources::PIECES_ASSET);
+        let mut presentation = PresentationApp::new();
+        if let Some(connection) = services.engine_panels.take() {
+            presentation.mount_engine(connection);
+        }
         app.insert_resource(DesktopNativeHostState {
             services,
-            presentation: PresentationApp::new(),
+            presentation,
             asset,
             asset_reload: None,
             camera: SceneCamera::initial(BoardEnumColor::White),

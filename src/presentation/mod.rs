@@ -3,6 +3,7 @@ pub mod action;
 pub mod analysis;
 pub mod app;
 pub mod board;
+pub mod engine_panels;
 pub mod game;
 pub mod theme;
 pub mod workbench;

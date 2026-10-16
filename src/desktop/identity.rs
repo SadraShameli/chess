@@ -11,6 +11,10 @@ use crate::desktop::error::DesktopError;
 pub struct DesktopRequestId(Uuid);
 
 impl DesktopRequestId {
+    pub const fn as_uuid(self) -> Uuid {
+        self.0
+    }
+
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
