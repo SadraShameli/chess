@@ -1,5 +1,0 @@
-{
-  "identifier": "test",
-  "windows": ["main"],
-  "permissions": ["wdio:default", "wdio-webdriver:default"]
-}

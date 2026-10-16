@@ -1,12 +1,4 @@
 /target
-node_modules/
-/ui/dist/
-/ui/dist-native/
-/gen/
-/ui/coverage/
-/ui/test-results/
-/ui/playwright-report/
-/ui/.vitest/
 *.rs.bk
 *.rlib
 *.profraw

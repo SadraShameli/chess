@@ -1,8 +1,6 @@
-use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -49,16 +47,6 @@ impl From<DesktopRequestId> for String {
     }
 }
 
-impl JsonSchema for DesktopRequestId {
-    fn schema_name() -> Cow<'static, str> {
-        "DesktopRequestId".into()
-    }
-
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"})
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct DesktopRevision(u64);
@@ -86,29 +74,6 @@ impl DesktopRevision {
                 actual: self,
             })
         }
-    }
-
-    fn schema_pattern() -> String {
-        let maximum = u64::MAX.to_string();
-        let mut alternatives = vec![
-            "0".to_owned(),
-            format!("[1-9][0-9]{{0,{}}}", maximum.len() - 2),
-        ];
-        let mut prefix = String::new();
-        for (index, byte) in maximum.bytes().enumerate() {
-            let minimum = if index == 0 { b'1' } else { b'0' };
-            if byte > minimum {
-                alternatives.push(format!(
-                    "{prefix}[{}-{}][0-9]{{{}}}",
-                    char::from(minimum),
-                    char::from(byte - 1),
-                    maximum.len() - index - 1
-                ));
-            }
-            prefix.push(char::from(byte));
-        }
-        alternatives.push(maximum);
-        format!("^(?:{})$", alternatives.join("|"))
     }
 }
 
@@ -141,14 +106,5 @@ impl From<DesktopRevision> for String {
 impl Display for DesktopRevision {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.0, formatter)
-    }
-}
-
-impl JsonSchema for DesktopRevision {
-    fn schema_name() -> Cow<'static, str> {
-        "DesktopRevision".into()
-    }
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({"type": "string", "pattern": Self::schema_pattern()})
     }
 }

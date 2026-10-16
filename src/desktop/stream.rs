@@ -1,15 +1,12 @@
 use std::collections::VecDeque;
 
-use schemars::JsonSchema;
 use serde::Serialize;
-use tauri::ipc::Channel;
 
 use crate::clock::duration::{ClockDuration, ClockInstant};
-use crate::desktop::envelope::DesktopProtocolVersion;
 use crate::desktop::error::DesktopError;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopEnumStreamClass {
     Control,
@@ -17,10 +14,9 @@ pub enum DesktopEnumStreamClass {
     JobProgress,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesktopStreamEvent<T> {
-    protocol_version: DesktopProtocolVersion,
     subscription_id: DesktopRequestId,
     sequence: DesktopRevision,
     class: DesktopEnumStreamClass,
@@ -150,7 +146,6 @@ impl<T> DesktopStream<T> {
             .inspect_err(|_error| self.require_resync())?;
         self.unacknowledged.push_back((self.sequence, now));
         Ok(Some(DesktopStreamEvent {
-            protocol_version: DesktopProtocolVersion::CURRENT,
             subscription_id: self.subscription_id,
             sequence: self.sequence,
             class,
@@ -222,63 +217,5 @@ impl<T> DesktopStream<T> {
             })
             .transpose()
             .map(|due| due.unwrap_or(true))
-    }
-}
-
-pub struct DesktopSubscription<T> {
-    stream: DesktopStream<T>,
-    channel: Channel<DesktopStreamEvent<T>>,
-}
-
-impl<T: Serialize> DesktopSubscription<T> {
-    pub fn new(
-        subscription_id: DesktopRequestId,
-        channel: Channel<DesktopStreamEvent<T>>,
-        now: ClockInstant,
-    ) -> Self {
-        Self {
-            stream: DesktopStream::new(subscription_id, now),
-            channel,
-        }
-    }
-
-    pub fn publish(
-        &mut self,
-        payload: T,
-        class: DesktopEnumStreamClass,
-        now: ClockInstant,
-    ) -> Result<(), DesktopError> {
-        if let Some(event) = self.stream.publish(payload, class, now)? {
-            self.send(event)?;
-        }
-        Ok(())
-    }
-
-    pub fn acknowledge(
-        &mut self,
-        sequence: DesktopRevision,
-        now: ClockInstant,
-    ) -> Result<(), DesktopError> {
-        self.stream.acknowledge(sequence, now)?;
-        self.tick(now)
-    }
-
-    pub fn tick(&mut self, now: ClockInstant) -> Result<(), DesktopError> {
-        for event in self.stream.flush_pending(now)? {
-            self.send(event)?;
-        }
-        Ok(())
-    }
-
-    pub fn resynchronize(&mut self, snapshot: T, now: ClockInstant) -> Result<(), DesktopError> {
-        let event = self.stream.resynchronize(snapshot, now)?;
-        self.send(event)
-    }
-
-    fn send(&mut self, event: DesktopStreamEvent<T>) -> Result<(), DesktopError> {
-        self.channel.send(event).map_err(|_error| {
-            self.stream.require_resync();
-            DesktopError::ResyncRequired
-        })
     }
 }

@@ -8,11 +8,12 @@ existing implementation from future native acceptance.
 ## Current checkout
 
 The repository has partial native Rust/Bevy/egui implementation, including
-verified engine packaging/startup and original 3D assets. Legacy Tauri/Vue files
-remain until the native replacement passes its migration gates.
-Tasks T001 through T028 retain their recorded completion. Former T029 staged
-changes and former T030 unstaged preparation remain preserved and unaccepted;
-[the reconciliation table](tasks.md#pending-task-reconciliation) maps their new owners. Existing
+verified engine packaging/startup and original 3D assets. The obsolete Tauri/Vue
+shell, browser schemas and frontend toolchain have been removed following the
+current-host debug native lifecycle checks. Optimized performance and remaining
+platform gates are still open. Tasks T001 through T028 retain their recorded
+completion; [the reconciliation table](tasks.md#pending-task-reconciliation)
+maps their native replacement owners. Existing
 [evidence](evidence/) describes its specific previous-stack checks; it does not
 prove native-egui operation or the full product.
 

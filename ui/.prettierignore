@@ -1,8 +1,0 @@
-node_modules/
-dist/
-dist-native/
-coverage/
-test-results/
-playwright-report/
-bun.lock
-src/desktop/generated/

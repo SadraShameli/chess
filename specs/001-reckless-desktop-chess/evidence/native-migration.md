@@ -1,224 +1,43 @@
-# Native migration evidence
+# Native migration execution
 
-Recorded 2026-10-16 on the current macOS ARM64 development host. This register
-separates the migration inventory from subsequent executed compatibility checks.
-The implementation sequence is owned by [the plan](../plan.md) and
-[tasks](../tasks.md).
+## Obsolete shell removal
 
-## T029: Preserved migration baseline
+T050 removes `ui/`, Tauri build scripts/configuration/capabilities, browser
+validators, the browser envelope/schema and concrete Tauri adapters. Native
+commands, bounded streams, request deduplication and canonical identifier
+serialization remain in their Rust owners. The Rust asset generator and the
+reviewed assets are retained under [their acceptance evidence](native-assets.md).
 
-The starting branch is `001-reckless-desktop-chess`, at commit
-`1f243d139844a72f4d9b8b0d404c365456fcc516`.
+All application and authoring commands now use Cargo. `make run` is an incremental
+debug launch. Dry runs produced `cargo run --locked` without arguments and
+`cargo run --locked -- --help` with explicit arguments. The lockfile lost 270
+packages and added no package versions. No Tauri, Wry or Schemars package remains.
 
-Git reported 43 changed or untracked paths: 26 staged paths, 17 tracked paths
-with unstaged changes and two untracked paths. Two paths have both staged and
-unstaged changes, so these category counts overlap.
+Following the owner's instruction to use debug iteration, post-removal validation
+used targeted debug commands:
 
-| Baseline snapshot | SHA-256 |
-| --- | --- |
-| Staged binary diff | `960811aea845934742ecd8c5d13e8880700471e1de84221a68132fa17515fd55` |
-| Unstaged binary diff | `0fd635b0eac2e3d99251d2f79103e4f16cfeb3eb10c9cee9331b0851b0205688` |
+- Clippy for the library, binaries, desktop tests and native harness with the
+  asset-tools feature passed.
+- The desktop suite passed all 132 tests, including the preserved bounded stream,
+  canonical serialization and deduplication cases.
+- The production native lifecycle harness passed startup, actual Reckless
+  identity, graphics readiness, canceled quit, confirmed quit, observed cleanup,
+  exclusive profile reacquisition and durable SQLite reopen on Apple Silicon.
+- `cargo fmt --all` and `git diff --check` passed.
 
-Separate staged, unstaged and combined binary patches were saved outside the
-repository before implementation. No stash, reset or owner-profile access was
-used to create the baseline.
+The debug linker still reports a compact-unwind section size warning. Bevy still
+logs a skipped Destroyed event during window teardown; production cleanup returns
+success. Neither warning is suppressed or represented as resolved.
 
-The staged paths are `resources/desktop/validators.mjs`,
-`src/capacity/budget.rs`, `src/desktop/{bootstrap,dto,error,mod,schema}.rs`,
-`src/main.rs`, `src/storage/document_store.rs`, `tauri.conf.json`,
-`tauri.test.conf.json`, `tests/capacity/budget.rs`,
-`tests/storage/{document_store,schema}.rs`, `ui/src/{App.vue,main.ts}`,
-`ui/src/desktop/application.ts`,
-`ui/src/desktop/generated/{contracts.ts,fixture.json,schema.json}`,
-`ui/src/shell/PlayerBar.vue`, `ui/tests/app.test.ts`,
-`ui/tests/desktop/{application.test.ts,application_fixture.ts}`,
-`ui/tests/native/bootstrap.e2e.ts` and `ui/types/wdio-globals.d.ts`.
+T049 and T051 remain open: no optimized performance acceptance, complete-process
+idle measurements or Windows/Linux native execution is claimed by this cleanup.
+Actual graphics-failure recovery, native power events and active native-dialog
+cancellation also retain the limits in [foundation evidence](native-foundation.md).
 
-Unstaged tooling changes select an optimized, locked former native-test build
-in `Makefile` and `ui/wdio.conf.ts`. Additional unstaged screenshot support in
-`ui/tests/native/bootstrap.e2e.ts` and `ui/types/wdio-globals.d.ts` must be retained
-alongside those files' staged bootstrap assertions/declarations. The other 13
-unstaged tracked paths are feature planning artifacts. The untracked paths are
-`checklists/native-desktop.md` and `checklists/native-desktop-review.md`.
+## Development scope
 
-### Former T029/T030 reuse boundaries
-
-| Existing owner | Reusable behavior | Remaining migration |
-| --- | --- | --- |
-| `src/desktop/bootstrap.rs` | Capacity/executor construction, SQLite actor ownership, verified engine readiness, bounded queues, snapshots/streams and observed shutdown results | Embedded Tauri handles/runtime/window ownership; no profile lease, activation or Bevy host |
-| Desktop DTOs, schemas and generated fixtures | Validated payload semantics and existing external encodings | Replace browser transport with typed in-process messages while retaining persisted compatibility |
-| `src/capacity/budget.rs` | Shared async leases and cancellation behavior | Native preparation/steady/recovery admission |
-| `src/storage/document_store.rs` | Serialized SQLite actor, bounded admission, transactional receipts and execution-scoped capacity lease | Complete game schemas and native lifecycle ownership |
-| `src/main.rs` | Historical composition entry point | Replace setup/exit `block_on` with asynchronous native pause/save/reap orchestration |
-| Vue shell and PlayerBar | Board snapshot, engine identity/unavailable/error and stream presentation contracts | Preserve until native parity, then remove with final callers |
-| WDIO preparation | Ready-engine, 64-square and visible-canvas assertions, temporary test profile and screenshot preparation | These establish no Bevy renderer or native accessibility acceptance |
-
-The staged bootstrap is 892 lines and 33,519 bytes, SHA-256
-`d3857979376d0ac7fba4043bab901fde7c0004e7de4ce145c9357c6efec45d1f`.
-Its operations are bootstrap, stream subscribe/acknowledge/resynchronize and file
-selection. It does not implement a live chess game.
-
-### Retained assets and fixtures
-
-| Path | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `resources/pieces/chess.glb` | 1,376,224 | `ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e` |
-| `resources/pieces/provenance.json` | 5,046 | `7ece728b19dd2717020cdfe90119354cacd1663d4aad18ec7ada49c6312852f2` |
-| `ui/tools/generate-pieces.ts` | 17,746 | `78910901be4d567f0dbd891a7188ddb112ccb4b59634d570d9170113ed4e5f81` |
-| `resources/engine/manifest.json` | 624 | `1ba2ee79a3020c26b25d1d495ca4891f9aed0936600606217f68f78c526db1f9` |
-| `resources/engine/bin/reckless-aarch64-apple-darwin` | 65,383,664 | `ab4128cd33149b14713475e049db8ddaff702ee79bfb412ecfbde91655273689` |
-| `src/storage/migrations/0001_core.sql` | 2,727 | `f17119fc8c888c166e988c1bdb0e127f7e116d7fbff1c559d892d144e68b1e61` |
-| `tests/fixtures/positions.json` | 1,579 | `0b7ebf1545acadb7741b00ded7b3eb8ca58dc59c0f5994a48ebc3190505e64e6` |
-| `ui/src/desktop/generated/fixture.json` | 16,242 | `67d64ab10faf543efdf826ebc9f624459f6b7004f2480dcb1d88e5e8d39d5d48` |
-| `ui/src/desktop/generated/schema.json` | 59,018 | `584eb03069c6e8587898de7754bba9a7b7e9e9f3608fb660da5ebe23e65641ff` |
-
-The GLB header declares glTF binary version 2 and its actual byte length. Its
-JSON contains twelve named color/kind parents with twelve sculpture descendants,
-twelve meshes and `IvorySatin`/`EbonySatin` materials. There are no external buffer
-or image URIs. Library nodes intentionally overlap and require named-parent
-instantiation with authored transforms.
-
-The ignored local engine exists and matches its manifest hash. This inventory
-did not execute it. The production application identity is `nl.sadra.chess`;
-the former instrumented configuration uses `nl.sadra.chess.native-test` and a
-temporary bootstrap data directory. Existing owner data was not opened.
-
-### External-format continuity
-
-The existing desktop protocol is version 1. Identifiers use non-nil canonical
-lowercase UUID strings; checked u64 revisions use canonical unsigned decimal
-strings. The retained fixture includes `18446744073709551615`.
-
-SQLite migration version 1 is applied transactionally through `PRAGMA
-user_version`, with future schema versions rejected before migration. It owns
-`documents`, `games`, `move_nodes`, `clock_snapshots` and `preferences`. Preserve
-UUID/revision text and JSON bodies, full position identities beside eight-byte
-hashes, immutable-parent behavior and composite game-ownership foreign keys.
-Seventeen FEN boundary fixtures and existing rollback/future-schema/revision/
-collision/cross-game tests were inspected, not rerun for this inventory.
-
-### Evidence boundary
-
-The prior toolchain, contracts, engine build and startup reports remain historical
-evidence. Their test counts and target results were not refreshed by T029.
-`toolchain.md` records 477 packages; the starting lockfile contains 481.
-
-At this baseline, Cargo still describes the former Tauri graph. There are no
-direct Bevy, bevy_egui, egui, rfd, directories, interprocess, winsafe or widestring
-dependencies. Transitive rfd presence proves no native integration. The planned
-`src/{presentation,scene}`, `src/desktop/{native,profile}`,
-`tests/{native,presentation,scene}.rs` and `packager.toml` are absent.
-
-T029 records preservation and reuse boundaries only. Native compatibility,
-production-host integration, data migration execution, frame/CPU measurements
-and Windows/macOS/X11/Wayland acceptance remain subsequent work.
-
-## T030: Native dependency compatibility
-
-The installed standalone compiler is Rust 1.99.0 and Cargo 1.99.0, matching the
-repository pin. Rustup is unavailable; no compiler was installed or replaced.
-The resolved lockfile has 848 packages including this application, comprising
-847 external packages. Registry checksums remain pinned in `Cargo.lock`.
-
-| Selected family | Resolved version | Declared license |
-| --- | --- | --- |
-| Bevy | 0.20.0 | MIT OR Apache-2.0 |
-| bevy_egui | 0.43.1 | MIT |
-| egui | 0.36.2 | MIT OR Apache-2.0 |
-| wgpu | 30.0.1 | MIT OR Apache-2.0 |
-| AccessKit | 0.24.1 | MIT OR Apache-2.0 |
-| winit | 0.30.13 | Apache-2.0 |
-| directories | 6.0.0 | MIT OR Apache-2.0 |
-| interprocess | 2.4.5 | 0BSD OR Apache-2.0 |
-| rfd | 0.17.2 | MIT |
-| winsafe, Windows target only | 0.0.29 | MIT |
-| widestring, Windows target only | 1.0.2 | MIT OR Apache-2.0 |
-
-Bevy 0.20.0 requires Rust 1.97.1 and bevy_egui 0.43.1 requires Rust 1.95.0.
-The plugin requires Bevy 0.20 and egui 0.36. The resolved Bevy/plugin graph has
-one matching egui, wgpu, AccessKit and winit family. Existing Tauri dependencies
-remain during migration, including their separate older rfd 0.16.0.
-
-Bevy defaults are disabled. The explicit feature selection includes native
-windows/input, scene/PBR/glTF, mesh picking, native accessibility, X11/Wayland,
-async execution and multithreading. The egui adapter enables rendering,
-AccessKit and clipboard support without browser URL handling, a second host,
-or forced graphics backends. Tokio explicitly enables its owned multithreaded
-runtime and networking for application actors and local activation.
-
-Tagged source inspection verified offscreen image textures, named glTF nodes,
-`EguiContexts::ctx_mut`, `EguiPrimaryContextPass`, native reactive scheduling,
-task-pool options, `RenderErrorHandler`, `RenderErrorPolicy` and manual
-`RenderCreation`. The latter APIs still require implementation and exercised
-failure handling; their existence is not renderer-recovery evidence.
-
-The selected rfd release has no Tokio/async-std feature. Its Linux portal backend
-uses blocking native work and an internal thread for the async API. Awaiting that
-API requires no additional Tokio runtime. Dropping its future does not prove
-dialog cancellation or worker completion. T038 must establish bounded admission,
-observed completion and the actual cancellation policy at the adapter boundary.
-
-Executed on the current macOS ARM64 host:
-
-- `cargo generate-lockfile` resolved the selected stable graph.
-- `cargo check --locked --all-targets --all-features` passed in 30.65 seconds
-  with no compiler warnings. This compiles the retained shell and selected
-  native dependencies; it does not run a native egui application.
-- `make verify` passed with the selected graph: formatting, strict frontend
-  checks, all-target/all-feature Clippy, 53 Rust tests, 40 Chromium tests and
-  optimized frontend/all-target Rust builds. The Rust release build completed
-  in 1 minute 23 seconds. No warnings, failed tests or ignored tests occurred.
-
-Windows-only adapters, Linux native dependencies, OS accessibility, actual GPU
-initialization, installer behavior and production runtime integration remain
-unverified. Native harness compilation/execution is tracked separately by T031
-and the foundation gates.
-
-## T031: Executable compatibility harnesses
-
-The hermetic test roots now exercise the matching egui family, bundled Inter
-font and explicitly configured headless Bevy task pools. The separate native
-target uses `harness = false` and `test = false`, retaining ordinary Cargo test
-and library-doctest discovery. Named native lint/build commands select that
-target separately because Cargo's all-target selection omits it.
-
-The main-thread native smoke checks the original GLB checksum, all twelve
-declared piece nodes and their fully loaded dependencies. It renders a GPU
-geometry fixture plus bundled-font egui text and verifies actual screenshot
-pixels and physical window dimensions. Its asset copy lives in a temporary
-directory; the original GLB and provenance remain unchanged. Inter 4.1 comes
-from its official tagged source with its SIL Open Font License and checksum
-beside the fixture.
-
-Two final optimized smoke executions passed on Apple M4 Pro through Metal.
-Each reported twelve declared GLB pieces, 184,900 geometry pixels, 12,649 text
-pixels and a 2560 by 1600 physical image. No warnings were emitted. Pixel
-classification also checks supported RGBA/BGRA formats, thresholds, saturation,
-truncated buffers, missing buffers and unsupported formats before native startup.
-
-Earlier readback failures prompted bounded first/latest pixel and window-state
-diagnostics. Inspection exposed default dark-theme text at intensity 140 below
-the fixture's threshold of 180; explicit white fixture text corrected that
-failure without lowering the threshold. Earlier zero-geometry readbacks were
-not fully explained, so the retained diagnostics report that condition rather
-than treating asset loading as rendering success. The final two runs used no
-screenshot file output. Supported plugin options avoid unsupported macOS
-bindless mode. A final schedule after Bevy's Last schedule allows normal cleanup
-before AppExit, eliminating the teardown warning without suppressions.
-
-The final `make verify` passed formatting, strict frontend checks, all-target
-and separately named native Clippy, 56 Rust tests, 40 Chromium tests, and
-optimized frontend/all-target/separately named native builds. No tests failed
-or were ignored. A separately named profiling native build also passed before
-the final readback diagnostics/text refinements; that final source has not been
-rebuilt under the profiling profile.
-
-Following the owner's development-workflow correction, subsequent implementation
-uses targeted debug checks. Native test commands default to the dev profile;
-their profile override retains explicit optimized acceptance runs. Full release
-and profiling revalidation is deferred to final acceptance rather than repeated
-for each task.
-
-This harness proves current-host dependency/render compatibility. It does not
-establish the production native application host, live games, native accessibility,
-graphics recovery, platform packaging or Windows/Linux acceptance.
+The native shell is a working migration checkpoint. Full playable games and the
+remaining product stories are tracked in [tasks](../tasks.md); removing the old
+frontend does not complete those requirements. During implementation, subsequent
+checks select changed components and reuse the debug dependency cache. Final
+optimized verification remains a separate acceptance gate.

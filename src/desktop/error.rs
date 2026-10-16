@@ -17,8 +17,6 @@ pub enum DesktopError {
         expected: DesktopRevision,
         actual: DesktopRevision,
     },
-    #[error("Unsupported protocol version {received}; update the application")]
-    UnsupportedProtocol { received: u32 },
     #[error("A request identifier cannot be reused with a different payload")]
     RequestConflict,
     #[error("The subscription must resynchronize before accepting more events")]
@@ -28,14 +26,12 @@ pub enum DesktopError {
     #[error("Monotonic time moved backwards")]
     TimeOrder,
 }
-use schemars::JsonSchema;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopEnumFailureCode {
     InvalidInput,
-    UnsupportedProtocol,
     StaleRevision,
     RequestConflict,
     ResyncRequired,
@@ -46,11 +42,10 @@ pub enum DesktopEnumFailureCode {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesktopFailure {
     code: DesktopEnumFailureCode,
-    #[schemars(length(max = 1024))]
     message: String,
     retryable: bool,
 }
@@ -87,7 +82,6 @@ impl From<DesktopError> for DesktopFailure {
                 DesktopEnumFailureCode::InternalFailure
             }
             DesktopError::StaleRevision { .. } => DesktopEnumFailureCode::StaleRevision,
-            DesktopError::UnsupportedProtocol { .. } => DesktopEnumFailureCode::UnsupportedProtocol,
             DesktopError::RequestConflict => DesktopEnumFailureCode::RequestConflict,
             DesktopError::ResyncRequired => DesktopEnumFailureCode::ResyncRequired,
             DesktopError::InvalidAcknowledgement => DesktopEnumFailureCode::InvalidAcknowledgement,

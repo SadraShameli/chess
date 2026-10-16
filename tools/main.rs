@@ -1,7 +1,4 @@
 use std::ffi::OsStr;
-use std::io::Write;
-
-use chess::desktop::schema::DesktopSchema;
 use thiserror::Error;
 
 #[cfg(feature = "asset-tools")]
@@ -11,14 +8,12 @@ mod engine;
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools schema | schema-fixture | engine-build | engine-check | assets-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools engine-build | engine-check | assets-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
 }
 
 enum ToolsEnumCommand {
-    Schema,
-    SchemaFixture,
     EngineBuild,
     EngineCheck,
     #[cfg(feature = "asset-tools")]
@@ -52,10 +47,6 @@ impl ToolsEnumCommand {
             }
         }
         match (args.next().as_deref(), args.next()) {
-            (Some(command), None) if command == OsStr::new("schema") => Ok(Self::Schema),
-            (Some(command), None) if command == OsStr::new("schema-fixture") => {
-                Ok(Self::SchemaFixture)
-            }
             (Some(command), None) if command == OsStr::new("engine-build") => Ok(Self::EngineBuild),
             (Some(command), None) if command == OsStr::new("engine-check") => Ok(Self::EngineCheck),
             _ => Err(ToolsCommandError::Usage),
@@ -64,16 +55,6 @@ impl ToolsEnumCommand {
 
     fn execute(self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::Schema => {
-                let mut output = std::io::stdout().lock();
-                serde_json::to_writer_pretty(&mut output, &DesktopSchema::generate())?;
-                writeln!(output)?;
-            }
-            Self::SchemaFixture => {
-                let mut output = std::io::stdout().lock();
-                serde_json::to_writer_pretty(&mut output, &DesktopSchema::fixture()?)?;
-                writeln!(output)?;
-            }
             Self::EngineBuild => {
                 let temporary = tempfile::tempdir()?;
                 let budget = chess::capacity::budget::CapacityBudget::discover()?;

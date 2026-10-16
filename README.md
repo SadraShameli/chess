@@ -19,6 +19,10 @@ Run an incremental debug build with `make run`. Use `make run ARGS="--help"`
 for supported arguments. For isolated development data, use
 `make run ARGS="--profile-directory /tmp/chess-development"`.
 
+The application and its asset tools use Cargo only. Development checks use the
+debug profile and select the affected Cargo target. The full optimized build
+belongs to the final verification command.
+
 ## Spec Kit
 
 [GitHub Spec Kit](https://github.com/github/spec-kit) v1.2.0 is initialized here

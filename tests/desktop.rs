@@ -36,5 +36,7 @@ mod desktop_file_handle;
 
 #[path = "desktop/application.rs"]
 mod desktop_application;
-#[path = "desktop/envelope.rs"]
-mod desktop_envelope;
+#[path = "desktop/request_cache.rs"]
+mod desktop_request_cache;
+#[path = "desktop/stream.rs"]
+mod desktop_stream;

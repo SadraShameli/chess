@@ -4,12 +4,8 @@ use std::future::Future;
 use std::path::PathBuf;
 
 use same_file::Handle;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
-use tauri_plugin_dialog::DialogExt;
 use thiserror::Error;
-use tokio::sync::oneshot;
 
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
@@ -26,15 +22,11 @@ pub enum DesktopFileHandleError {
     WrongScope,
     #[error("Too many pending file selections")]
     Saturated,
-    #[error("The native file dialog closed unexpectedly: {0}")]
-    DialogChannel(#[from] oneshot::error::RecvError),
     #[error("The native file dialog failed: {source}")]
     NativeDialog {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-    #[error("The native selection is not a local filesystem location")]
-    NonlocalSelection,
     #[error("The selected location has the wrong file type")]
     WrongType,
     #[error(transparent)]
@@ -47,7 +39,7 @@ pub enum DesktopFileHandleError {
     Capacity(#[from] CapacityExecutorError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopFileEnumPurpose {
     ReadFile,
@@ -59,7 +51,7 @@ impl DesktopFileEnumPurpose {
     pub const ALL: [Self; 3] = [Self::ReadFile, Self::WriteFile, Self::Directory];
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DesktopFileHandleId(DesktopRequestId);
 
@@ -87,43 +79,6 @@ pub trait DesktopFileDialogProvider: Send + Sync {
         &self,
         purpose: DesktopFileEnumPurpose,
     ) -> impl Future<Output = Result<Option<PathBuf>, DesktopFileHandleError>> + Send;
-}
-
-pub struct DesktopFileDialogNative<R: Runtime> {
-    app: AppHandle<R>,
-}
-
-impl<R: Runtime> DesktopFileDialogNative<R> {
-    pub fn new(app: AppHandle<R>) -> Self {
-        Self { app }
-    }
-}
-
-impl<R: Runtime> DesktopFileDialogProvider for DesktopFileDialogNative<R> {
-    async fn select(
-        &self,
-        purpose: DesktopFileEnumPurpose,
-    ) -> Result<Option<PathBuf>, DesktopFileHandleError> {
-        let (sender, receiver) = oneshot::channel();
-        let callback = move |selection: Option<tauri_plugin_dialog::FilePath>| {
-            let result = selection
-                .map(|path| {
-                    path.into_path()
-                        .map_err(|_error| DesktopFileHandleError::NonlocalSelection)
-                })
-                .transpose();
-            if let Err(abandoned) = sender.send(result) {
-                drop(abandoned);
-            }
-        };
-        let dialog = self.app.dialog().file();
-        match purpose {
-            DesktopFileEnumPurpose::ReadFile => dialog.pick_file(callback),
-            DesktopFileEnumPurpose::WriteFile => dialog.save_file(callback),
-            DesktopFileEnumPurpose::Directory => dialog.pick_folder(callback),
-        }
-        receiver.await?
-    }
 }
 
 pub enum DesktopFileEnumSelection {

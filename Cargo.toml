@@ -22,7 +22,6 @@ required-features = ["asset-tools"]
 
 [features]
 asset-tools = ["dep:boolmesh", "dep:earcutr", "dep:gltf-json"]
-native-test = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
 [dependencies]
 bevy = { version = "=0.20.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_gltf", "bevy_pbr", "bevy_winit", "png", "scene", "mesh_picking", "mouse", "keyboard", "reflect_auto_register", "tonemapping_luts", "zstd_rust", "x11", "wayland", "accesskit_unix"] }
@@ -37,16 +36,11 @@ rayon = "=1.12.0"
 rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
 same-file = "=1.0.6"
 rusqlite = { version = "=0.40.2", features = ["backup", "bundled"] }
-schemars = { version = "=1.2.3", features = ["uuid1"] }
 semver = "=1.0.28"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"
 shakmaty = "=0.30.2"
-tauri = { version = "=2.12.4", features = [] }
-tauri-plugin-dialog = "=2.8.3"
-tauri-plugin-wdio = { version = "=1.5.0", optional = true }
-tauri-plugin-wdio-webdriver = { version = "=1.5.0", optional = true }
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tokio = { version = "=1.53.3", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
@@ -72,9 +66,6 @@ muda = { version = "=0.20.0", default-features = false }
 [dev-dependencies]
 egui_kittest = { version = "=0.36.0", default-features = false }
 tokio = { version = "=1.53.3", features = ["test-util"] }
-
-[build-dependencies]
-tauri-build = { version = "=2.7.3", features = [] }
 
 [lints.rust]
 unsafe_code = "forbid"

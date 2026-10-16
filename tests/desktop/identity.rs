@@ -1,16 +1,9 @@
 use std::str::FromStr;
 
-use chess::desktop::envelope::DesktopEnvelope;
 use chess::desktop::identity::{DesktopRequestId, DesktopRevision};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
-struct DesktopEnvelopeFixturePayload {
-    label: String,
-}
 
 #[test]
-fn round_trips_maximum_unsigned_counter_without_javascript_precision_loss()
+fn round_trips_canonical_unsigned_counter_across_the_full_native_range()
 -> Result<(), Box<dyn std::error::Error>> {
     let revision = DesktopRevision::from_str("18446744073709551615")?;
     assert_eq!(
@@ -38,19 +31,24 @@ fn round_trips_maximum_unsigned_counter_without_javascript_precision_loss()
 }
 
 #[test]
-fn rejects_future_protocols_and_noncanonical_request_ids() -> Result<(), Box<dyn std::error::Error>>
-{
-    let valid = r#"{"protocol_version":1,"request_id":"123e4567-e89b-42d3-a456-426614174000","expected_revision":"0","payload":{"label":"bootstrap"}}"#;
-    let request: DesktopEnvelope<DesktopEnvelopeFixturePayload> = serde_json::from_str(valid)?;
-    assert_eq!(request.expected_revision(), Some(DesktopRevision::ZERO));
-    assert!(
-        serde_json::from_str::<DesktopEnvelope<DesktopEnvelopeFixturePayload>>(
-            &valid.replace("\"protocol_version\":1", "\"protocol_version\":2")
-        )
-        .is_err()
-    );
-    assert!(DesktopRequestId::from_str("123E4567-E89B-42D3-A456-426614174000").is_err());
-    assert!(DesktopRequestId::from_str("not-an-id").is_err());
+fn identifiers_keep_canonical_external_encodings() -> Result<(), Box<dyn std::error::Error>> {
+    let canonical = "123e4567-e89b-42d3-a456-426614174000";
+    let id = DesktopRequestId::from_str(canonical)?;
+    let encoded = serde_json::to_string(&id)?;
+    assert_eq!(encoded, format!("\"{canonical}\""));
+    assert_eq!(serde_json::from_str::<DesktopRequestId>(&encoded)?, id);
+    for invalid in [
+        "123E4567-E89B-42D3-A456-426614174000",
+        "123e4567e89b42d3a456426614174000",
+        "00000000-0000-0000-0000-000000000000",
+        "not-an-id",
+    ] {
+        assert!(DesktopRequestId::from_str(invalid).is_err(), "{invalid}");
+        assert!(
+            serde_json::from_str::<DesktopRequestId>(&serde_json::to_string(invalid)?).is_err(),
+            "{invalid}"
+        );
+    }
     Ok(())
 }
 
