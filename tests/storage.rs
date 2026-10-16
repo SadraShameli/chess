@@ -16,3 +16,5 @@ mod storage_retained_shutdown;
 mod storage_dataset_package;
 #[path = "storage/game_document.rs"]
 mod storage_game_document;
+#[path = "storage/puzzle_repository.rs"]
+mod storage_puzzle_repository;

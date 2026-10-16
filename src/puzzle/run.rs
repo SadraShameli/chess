@@ -239,6 +239,18 @@ impl<R: PuzzleRandomProvider> PuzzleRun<R> {
         self.session.context()
     }
 
+    pub(super) fn persistence_session(&self) -> &PuzzleSession {
+        &self.session
+    }
+
+    pub(super) fn persistence_selection(&self) -> Result<PuzzleSelectionSnapshot, PuzzleRunError> {
+        Ok(self.selection.snapshot()?)
+    }
+
+    pub(super) fn persistence_attempt_elapsed(&self, timer: PuzzleTimerView) -> ClockDuration {
+        self.attempt_elapsed(timer)
+    }
+
     pub fn previous_attempts(&self) -> &[PuzzleRunAttempt] {
         &self.previous_attempts
     }

@@ -13,10 +13,10 @@ impl StorageMigration {
     }
 
     pub fn core() -> Vec<Self> {
-        vec![Self::new(
-            1,
-            include_str!("migrations/0001_core.sql").into(),
-        )]
+        vec![
+            Self::new(1, include_str!("migrations/0001_core.sql").into()),
+            Self::new(2, include_str!("migrations/0002_puzzles.sql").into()),
+        ]
     }
 
     pub(super) fn apply(

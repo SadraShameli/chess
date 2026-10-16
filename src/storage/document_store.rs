@@ -12,7 +12,12 @@ use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
+use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
+use crate::puzzle::session::PuzzleSessionId;
 use crate::storage::migration::StorageMigration;
+use crate::storage::puzzle_repository::{
+    StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleTransaction, StoragePuzzleWrite,
+};
 
 #[derive(Debug, Error)]
 pub enum StorageDocumentError {
@@ -83,6 +88,17 @@ impl StorageDocumentReceipt {
 }
 
 enum StorageDocumentEnumCommand {
+    PuzzleSave {
+        request: Box<PuzzlePersistenceSaveRequest>,
+        _memory_reservation: OwnedSemaphorePermit,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<PuzzlePersistenceReceipt, StoragePuzzleError>>,
+    },
+    PuzzleRead {
+        id: PuzzleSessionId,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<Option<StoragePuzzleRecovered>, StoragePuzzleError>>,
+    },
     Save {
         id: Uuid,
         expected_revision: u64,
@@ -228,6 +244,37 @@ impl StorageDocumentStore {
 }
 
 impl StorageDocumentClient {
+    pub(crate) fn begin_puzzle_save(
+        &self,
+        request: PuzzlePersistenceSaveRequest,
+    ) -> Result<StoragePuzzleWrite, StoragePuzzleError> {
+        let admission = self.admit()?;
+        let memory_reservation =
+            Self::reserve_memory(&self.memory, request.snapshot().transport_bytes()?)?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::PuzzleSave {
+            request: Box::new(request),
+            _memory_reservation: memory_reservation,
+            _admission: admission,
+            result,
+        })?;
+        Ok(StoragePuzzleWrite::new(receiver))
+    }
+
+    pub(crate) async fn read_puzzle(
+        &self,
+        id: PuzzleSessionId,
+    ) -> Result<Option<StoragePuzzleRecovered>, StoragePuzzleError> {
+        let admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::PuzzleRead {
+            id,
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub async fn save(
         &self,
         id: Uuid,
@@ -273,7 +320,7 @@ impl StorageDocumentClient {
             })
     }
 
-    fn reserve_memory(
+    pub(super) fn reserve_memory(
         memory: &Arc<Semaphore>,
         bytes: usize,
     ) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
@@ -338,6 +385,30 @@ impl StorageDocumentActor {
         while let Some(command) = receiver.blocking_recv() {
             let lease = self.runtime.block_on(self.budget.lease(1))?;
             match command {
+                StorageDocumentEnumCommand::PuzzleSave {
+                    request,
+                    _memory_reservation,
+                    _admission,
+                    result,
+                } => {
+                    let outcome = StoragePuzzleTransaction::save(&mut self.connection, *request);
+                    drop((_memory_reservation, _admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
+                StorageDocumentEnumCommand::PuzzleRead {
+                    id,
+                    _admission,
+                    result,
+                } => {
+                    let outcome =
+                        StoragePuzzleTransaction::load(&mut self.connection, id, &self.memory);
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
                 StorageDocumentEnumCommand::Save {
                     id,
                     expected_revision,

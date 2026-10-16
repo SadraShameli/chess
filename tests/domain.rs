@@ -41,6 +41,8 @@ mod puzzle_checkpoint;
 mod puzzle_definition;
 #[path = "puzzle/fixture.rs"]
 mod puzzle_fixture;
+#[path = "puzzle/persistence.rs"]
+mod puzzle_persistence;
 #[path = "puzzle/run.rs"]
 mod puzzle_run;
 #[path = "puzzle/selection.rs"]

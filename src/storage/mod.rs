@@ -3,3 +3,4 @@ pub mod dataset_package;
 pub mod document_store;
 pub mod game_document;
 pub mod migration;
+pub mod puzzle_repository;
