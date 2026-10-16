@@ -40,7 +40,7 @@ same-file = "=1.0.6"
 rusqlite = { version = "=0.40.2", features = ["backup", "bundled"] }
 semver = "=1.0.28"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.154"
+serde_json = { version = "=1.0.154", features = ["raw_value"] }
 sha2 = "=0.11.1"
 shakmaty = "=0.30.2"
 tempfile = "=3.27.0"

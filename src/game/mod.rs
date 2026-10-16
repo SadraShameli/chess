@@ -8,6 +8,8 @@ pub mod move_node;
 pub mod outcome;
 pub mod pause;
 pub mod premove;
+pub mod result;
 pub mod session;
+pub mod storage_repository;
 pub mod takeback;
 pub mod tree;

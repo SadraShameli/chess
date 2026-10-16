@@ -15,6 +15,8 @@ pub enum GameTreeError {
     UnknownNode,
     #[error("The supplied move identity already identifies a different node")]
     DuplicateIdentity,
+    #[error("A restored continuation must use its existing stable move identity")]
+    DuplicateContinuation,
     #[error("The immutable root cannot be removed or replaced as a move")]
     ImmutableRoot,
     #[error("The resolved move belongs to a different immutable parent position")]
@@ -107,6 +109,36 @@ impl GameTree {
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    pub fn nodes(&self) -> impl ExactSizeIterator<Item = &GameMoveNode> {
+        self.nodes.iter()
+    }
+
+    pub(super) fn restore_move(
+        &mut self,
+        parent: GameMoveId,
+        id: GameMoveId,
+        movement: BoardMove,
+        clock: Option<GameTreeCandidateClock>,
+    ) -> Result<GameMoveId, GameTreeError> {
+        let position = self.node(parent)?.position().play(movement)?;
+        let (before_clock, clock) = match clock {
+            Some(clock) => (Some(clock.before), Some(clock.after)),
+            None => (None, None),
+        };
+        let prepared = self.prepare_resolved(GameTreeResolvedMove {
+            parent,
+            id,
+            movement,
+            position,
+            clock,
+            before_clock,
+        })?;
+        if prepared.id() != id {
+            return Err(GameTreeError::DuplicateContinuation);
+        }
+        Ok(prepared.commit().id())
     }
 
     pub fn node(&self, id: GameMoveId) -> Result<&GameMoveNode, GameTreeError> {

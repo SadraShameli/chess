@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
@@ -23,10 +23,10 @@ use crate::game::engine_provider::{
     GameEngineContext, GameEngineRequest, GameEngineRequestError, GameEngineSearchConfig,
 };
 use crate::game::enums::{
-    GameEnumEngineReadiness, GameEnumMode, GameEnumPhase, GameEnumResult, GameEnumSeat,
-    GameEnumTransitionKind, GameId, GameMoveId, GameRevision, GameRevisionError,
+    GameEnumEngineReadiness, GameEnumMode, GameEnumOutcomeReason, GameEnumPhase, GameEnumResult,
+    GameEnumSeat, GameEnumTransitionKind, GameId, GameMoveId, GameRevision, GameRevisionError,
 };
-use crate::game::move_node::GameMoveNode;
+use crate::game::move_node::{GameMoveNode, GameMoveNodeAnnotations};
 use crate::game::outcome::{GameOutcome, GameOutcomeError};
 use crate::game::pause::{
     GamePauseEnumCause, GamePauseEnumFault, GamePauseError, GamePauseRequest, GameResumeRequest,
@@ -34,6 +34,9 @@ use crate::game::pause::{
 use crate::game::premove::{
     GamePremove, GamePremoveEnumClearReason, GamePremoveEnumResolution, GamePremoveError,
     GamePremoveIntent,
+};
+use crate::game::result::{
+    GameResultEnumLocalKind, GameResultError, GameResultLocalRequest, GameResultResignRequest,
 };
 use crate::game::takeback::{
     GameTakeback, GameTakebackEnumConsent, GameTakebackEnumResponse, GameTakebackError,
@@ -297,8 +300,8 @@ pub enum GameSessionEnumInterruption {
     Recovered(GamePauseEnumFault),
 }
 
-#[derive(Debug, Clone, Copy)]
-enum GameSessionEnumState {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameSessionEnumState {
     Setup,
     Active,
     Interrupted(GameSessionEnumInterruption),
@@ -347,6 +350,7 @@ impl GameSessionEnumState {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct GameSessionOptions {
     pub id: GameId,
     pub root: GameMoveId,
@@ -354,6 +358,125 @@ pub struct GameSessionOptions {
     pub seats: GameSeats,
     pub clock: ClockState,
     pub metadata: GameMetadata,
+}
+
+#[derive(Debug, Clone)]
+pub struct GameSessionRestoredMove {
+    pub id: GameMoveId,
+    pub parent: GameMoveId,
+    pub movement: BoardMove,
+    pub annotations: GameMoveNodeAnnotations,
+    pub before_clock: Option<ClockStateSnapshot>,
+    pub clock: Option<ClockStateSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GameSessionRestoreOptions {
+    pub session: GameSessionOptions,
+    pub root_annotations: GameMoveNodeAnnotations,
+    pub root_clock: Option<ClockStateSnapshot>,
+    pub revision: GameRevision,
+    pub live: GameMoveId,
+    pub view: GameMoveId,
+    pub moves: Vec<GameSessionRestoredMove>,
+    pub clock: ClockStateSnapshot,
+    pub warnings_used: [bool; 2],
+    pub state: GameSessionEnumState,
+    pub takeback_consent: GameTakebackEnumConsent,
+    pub premoves_enabled: bool,
+}
+
+#[derive(Debug, Error)]
+pub enum GameSessionRestoreError {
+    #[error("Stored clock snapshots must match the game control, position and move counters")]
+    ClockMismatch,
+    #[error("An accepted move needs both before and after snapshots or neither")]
+    UnpairedClocks,
+    #[error("A restored move's after snapshot does not follow from its before snapshot")]
+    RewrittenMoveClock,
+    #[error("The stored game phase, result or clock status is inconsistent")]
+    StateMismatch,
+    #[error("The authoritative deadline must be adjudicated before capturing this game")]
+    UnacceptedDeadline,
+    #[error("Stored move counters exceed their representable capacity")]
+    MoveOverflow,
+    #[error("The recorded live line continues after an established terminal result")]
+    MovesAfterResult,
+}
+
+#[derive(Clone, Copy)]
+struct GameSessionMoveCounts([u64; 2]);
+
+impl GameSessionMoveCounts {
+    const ZERO: Self = Self([0; 2]);
+
+    fn after(self, side: BoardEnumColor) -> Result<Self, GameSessionRestoreError> {
+        let mut counts = self.0;
+        let index = match side {
+            BoardEnumColor::White => 0,
+            BoardEnumColor::Black => 1,
+        };
+        counts[index] = counts[index]
+            .checked_add(1)
+            .ok_or(GameSessionRestoreError::MoveOverflow)?;
+        Ok(Self(counts))
+    }
+
+    fn matches(self, clock: &ClockStateSnapshot) -> bool {
+        self.0
+            == [
+                clock.completed_moves(BoardEnumColor::White),
+                clock.completed_moves(BoardEnumColor::Black),
+            ]
+    }
+}
+
+impl GameSessionRestoredMove {
+    fn validate_clocks(
+        &self,
+        initial: &ClockState,
+        before_counts: GameSessionMoveCounts,
+        after_counts: GameSessionMoveCounts,
+    ) -> Result<(), GameSessionError> {
+        let (before, after) = match (&self.before_clock, &self.clock) {
+            (None, None) => return Ok(()),
+            (Some(before), Some(after)) => (before, after),
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(GameSessionRestoreError::UnpairedClocks.into());
+            }
+        };
+        if before.control() != initial.control()
+            || after.control() != initial.control()
+            || !before_counts.matches(before)
+            || !after_counts.matches(after)
+            || before.status() != ClockStateEnumStatus::Running
+            || before.active() == after.active()
+        {
+            return Err(GameSessionRestoreError::ClockMismatch.into());
+        }
+        let now = ClockInstant::from_nanos(0);
+        let mut replayed = ClockState::recover(before, [false; 2])?;
+        replayed.resume(now)?;
+        if !matches!(
+            replayed.complete_move(now)?,
+            ClockStateEnumMoveOutcome::Accepted(_)
+        ) {
+            return Err(GameSessionRestoreError::RewrittenMoveClock.into());
+        }
+        match after.status() {
+            ClockStateEnumStatus::Running => {}
+            ClockStateEnumStatus::Paused => {
+                replayed.pause(now)?;
+            }
+            ClockStateEnumStatus::Flagged(_) => {
+                return Err(GameSessionRestoreError::RewrittenMoveClock.into());
+            }
+        }
+        if replayed.snapshot(now)? != *after {
+            return Err(GameSessionRestoreError::RewrittenMoveClock.into());
+        }
+        Ok(())
+    }
 }
 
 pub struct GameSessionMoveRequest {
@@ -452,6 +575,10 @@ pub enum GameSessionError {
     Premove(#[from] GamePremoveError),
     #[error(transparent)]
     EngineRequest(#[from] GameEngineRequestError),
+    #[error(transparent)]
+    Restore(#[from] GameSessionRestoreError),
+    #[error(transparent)]
+    Result(#[from] GameResultError),
 }
 
 struct GameSessionDecisionTransition {
@@ -520,6 +647,301 @@ impl GameSession {
 
     pub fn id(&self) -> GameId {
         self.id
+    }
+
+    pub fn state(&self) -> GameSessionEnumState {
+        self.state
+    }
+
+    pub fn restoration(
+        &self,
+        now: ClockInstant,
+    ) -> Result<GameSessionRestoreOptions, GameSessionError> {
+        let clock = self.clock.snapshot(now)?;
+        if self.phase() == GameEnumPhase::Active && clock.status() != ClockStateEnumStatus::Running
+        {
+            return Err(GameSessionRestoreError::UnacceptedDeadline.into());
+        }
+        let root = self.tree.node(self.tree.root())?;
+        let mut pending = vec![root.id()];
+        let mut moves = Vec::with_capacity(self.tree.len().saturating_sub(1));
+        while let Some(id) = pending.pop() {
+            let node = self.tree.node(id)?;
+            if let (Some(parent), Some(movement)) = (node.parent(), node.movement()) {
+                moves.push(GameSessionRestoredMove {
+                    id,
+                    parent,
+                    movement,
+                    annotations: node.annotations().clone(),
+                    before_clock: node.before_clock().cloned(),
+                    clock: node.clock().cloned(),
+                });
+            }
+            pending.extend(node.children().iter().rev().copied());
+        }
+        Ok(GameSessionRestoreOptions {
+            session: GameSessionOptions {
+                id: self.id,
+                root: root.id(),
+                start: self.start.clone(),
+                seats: self.seats,
+                clock: ClockState::new(self.clock.control().clone(), self.start.position().turn()),
+                metadata: self.metadata.clone(),
+            },
+            root_annotations: root.annotations().clone(),
+            root_clock: root.clock().cloned(),
+            revision: self.revision,
+            live: self.live,
+            view: self.view,
+            moves,
+            clock,
+            warnings_used: [
+                self.clock.warning_used(BoardEnumColor::White),
+                self.clock.warning_used(BoardEnumColor::Black),
+            ],
+            state: self.state,
+            takeback_consent: self.takeback.consent(),
+            premoves_enabled: self.premove.is_enabled(),
+        })
+    }
+
+    pub fn restore(options: GameSessionRestoreOptions) -> Result<Self, GameSessionError> {
+        let mut session = Self::new(options.session)?;
+        if options.clock.control() != session.clock.control() {
+            return Err(GameSessionRestoreError::ClockMismatch.into());
+        }
+        if let Some(root_clock) = &options.root_clock
+            && (root_clock.control() != session.clock.control()
+                || root_clock.active() != session.start.position().turn()
+                || root_clock.status() != ClockStateEnumStatus::Paused
+                || root_clock.elapsed() != ClockDuration::ZERO
+                || !GameSessionMoveCounts::ZERO.matches(root_clock))
+        {
+            return Err(GameSessionRestoreError::ClockMismatch.into());
+        }
+        session.tree = GameTree::new(
+            session.tree.root(),
+            session.start.position().clone(),
+            options.root_clock,
+        );
+        session
+            .tree
+            .set_annotations(session.tree.root(), options.root_annotations)?;
+        let mut counts = HashMap::with_capacity(options.moves.len().saturating_add(1));
+        counts.insert(session.tree.root(), GameSessionMoveCounts::ZERO);
+        for movement in options.moves {
+            if counts.contains_key(&movement.id) {
+                return Err(GameTreeError::DuplicateIdentity.into());
+            }
+            let before_counts = *counts
+                .get(&movement.parent)
+                .ok_or(GameTreeError::UnknownNode)?;
+            let mover = session.tree.node(movement.parent)?.position().turn();
+            let after_counts = before_counts.after(mover)?;
+            movement.validate_clocks(&session.clock, before_counts, after_counts)?;
+            if movement
+                .before_clock
+                .as_ref()
+                .is_some_and(|clock| clock.active() != mover)
+            {
+                return Err(GameSessionRestoreError::ClockMismatch.into());
+            }
+            let clock = movement
+                .before_clock
+                .zip(movement.clock)
+                .map(|(before, after)| GameTreeCandidateClock { before, after });
+            session
+                .tree
+                .restore_move(movement.parent, movement.id, movement.movement, clock)?;
+            session
+                .tree
+                .set_annotations(movement.id, movement.annotations)?;
+            counts.insert(movement.id, after_counts);
+        }
+        let live_counts = *counts
+            .get(&options.live)
+            .ok_or(GameTreeError::UnknownNode)?;
+        session.tree.node(options.view)?;
+        session.live = options.live;
+        session.view = options.view;
+        session.history = session.restored_live_history()?;
+        if options.clock.active() != session.history.position().turn()
+            || !live_counts.matches(&options.clock)
+        {
+            return Err(GameSessionRestoreError::ClockMismatch.into());
+        }
+        if let Some(live_clock) = session.tree.node(session.live)?.clock()
+            && live_clock.persisted().sides != options.clock.persisted().sides
+        {
+            return Err(GameSessionRestoreError::ClockMismatch.into());
+        }
+        session.validate_restored_state(options.state, &options.clock)?;
+        if matches!(
+            options.state,
+            GameSessionEnumState::Active | GameSessionEnumState::Interrupted(_)
+        ) {
+            options.revision.next()?;
+            for id in session.tree.path_to(session.live)? {
+                let node = session.tree.node(id)?;
+                if node.parent().is_some() && node.before_clock().is_none() {
+                    return Err(GameSessionRestoreError::ClockMismatch.into());
+                }
+            }
+        }
+        session.state = match options.state {
+            GameSessionEnumState::Active => GameSessionEnumState::Interrupted(
+                GameSessionEnumInterruption::Paused(GamePauseEnumCause::Relaunch),
+            ),
+            state @ (GameSessionEnumState::Setup
+            | GameSessionEnumState::Interrupted(_)
+            | GameSessionEnumState::Completed(_)
+            | GameSessionEnumState::Analysis(_)) => state,
+        };
+        session.clock = ClockState::recover(&options.clock, options.warnings_used)?;
+        session.revision = options.revision;
+        session.takeback.configure(options.takeback_consent);
+        session.premove.set_enabled(options.premoves_enabled);
+        session.premove.clear(GamePremoveEnumClearReason::Relaunch);
+        Ok(session)
+    }
+
+    fn restored_live_history(&self) -> Result<GameAdjudicationHistory, GameSessionError> {
+        let mut history = GameAdjudicationHistory::new(self.start.position().clone());
+        for movement in self.live_moves()? {
+            if history.direct_terminal().is_some() {
+                return Err(GameSessionRestoreError::MovesAfterResult.into());
+            }
+            let candidate = history.prepare(movement)?;
+            history.commit(candidate)?;
+        }
+        Ok(history)
+    }
+
+    fn validate_restored_state(
+        &self,
+        state: GameSessionEnumState,
+        clock: &ClockStateSnapshot,
+    ) -> Result<(), GameSessionError> {
+        let valid = match state {
+            GameSessionEnumState::Setup => {
+                self.tree.len() == 1
+                    && clock.status() == ClockStateEnumStatus::Paused
+                    && clock.elapsed() == ClockDuration::ZERO
+            }
+            GameSessionEnumState::Active => {
+                clock.status() == ClockStateEnumStatus::Running
+                    && self.history.direct_terminal().is_none()
+            }
+            GameSessionEnumState::Interrupted(GameSessionEnumInterruption::Adjudication {
+                question,
+                ..
+            }) => match (question, clock.status()) {
+                (GameAdjudicationEnumMateQuestion::AnySide, ClockStateEnumStatus::Paused) => {
+                    self.history.direct_terminal().is_none()
+                }
+                (
+                    GameAdjudicationEnumMateQuestion::Side(side),
+                    ClockStateEnumStatus::Flagged(flagged),
+                ) => side == flagged.opposite() && self.history.direct_terminal().is_none(),
+                (
+                    GameAdjudicationEnumMateQuestion::AnySide,
+                    ClockStateEnumStatus::Running | ClockStateEnumStatus::Flagged(_),
+                )
+                | (
+                    GameAdjudicationEnumMateQuestion::Side(_),
+                    ClockStateEnumStatus::Paused | ClockStateEnumStatus::Running,
+                ) => false,
+            },
+            GameSessionEnumState::Interrupted(GameSessionEnumInterruption::Paused(
+                GamePauseEnumCause::Fault(_),
+            )) => false,
+            GameSessionEnumState::Interrupted(
+                GameSessionEnumInterruption::Paused(_)
+                | GameSessionEnumInterruption::RecoveryRequired(_)
+                | GameSessionEnumInterruption::Recovered(_),
+            ) => {
+                clock.status() == ClockStateEnumStatus::Paused
+                    && self.history.direct_terminal().is_none()
+            }
+            GameSessionEnumState::Completed(outcome)
+            | GameSessionEnumState::Analysis(Some(outcome)) => {
+                return self.validate_restored_outcome(outcome, clock);
+            }
+            GameSessionEnumState::Analysis(None) => clock.status() == ClockStateEnumStatus::Paused,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(GameSessionRestoreError::StateMismatch.into())
+        }
+    }
+
+    fn validate_restored_outcome(
+        &self,
+        outcome: GameOutcome,
+        clock: &ClockStateSnapshot,
+    ) -> Result<(), GameSessionError> {
+        if outcome.origin() != self.live || clock.status() == ClockStateEnumStatus::Running {
+            return Err(GameSessionRestoreError::StateMismatch.into());
+        }
+        if let Some(GameAdjudicationEnumDecision::Complete { result, reason }) =
+            self.history.direct_terminal()
+        {
+            if result == outcome.result()
+                && reason == outcome.reason()
+                && clock.status() == ClockStateEnumStatus::Paused
+            {
+                return Ok(());
+            }
+            return Err(GameSessionRestoreError::StateMismatch.into());
+        }
+        let valid = match outcome.reason() {
+            GameEnumOutcomeReason::Checkmate
+            | GameEnumOutcomeReason::Stalemate
+            | GameEnumOutcomeReason::FivefoldRepetition
+            | GameEnumOutcomeReason::SeventyFiveMove => false,
+            GameEnumOutcomeReason::DeadPosition => clock.status() == ClockStateEnumStatus::Paused,
+            GameEnumOutcomeReason::Resignation => clock.status() != ClockStateEnumStatus::Running,
+            GameEnumOutcomeReason::ConsensualAdjudication => {
+                self.seats.mode() == GameEnumMode::LocalTwoPlayer
+            }
+            GameEnumOutcomeReason::Agreement => {
+                self.seats.mode() == GameEnumMode::LocalTwoPlayer
+                    && clock.status() == ClockStateEnumStatus::Paused
+            }
+            GameEnumOutcomeReason::ThreefoldRepetition => {
+                clock.status() == ClockStateEnumStatus::Paused
+                    && self.has_restored_claim(GameDrawClaimEnumKind::ThreefoldRepetition)?
+            }
+            GameEnumOutcomeReason::FiftyMove => {
+                clock.status() == ClockStateEnumStatus::Paused
+                    && self.has_restored_claim(GameDrawClaimEnumKind::FiftyMove)?
+            }
+            GameEnumOutcomeReason::Flagfall => match clock.status() {
+                ClockStateEnumStatus::Flagged(flagged) => {
+                    outcome.result() == GameEnumResult::Draw
+                        || outcome.result() == GameEnumResult::Victory(flagged.opposite())
+                }
+                ClockStateEnumStatus::Paused | ClockStateEnumStatus::Running => false,
+            },
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(GameSessionRestoreError::StateMismatch.into())
+        }
+    }
+
+    fn has_restored_claim(&self, kind: GameDrawClaimEnumKind) -> Result<bool, GameSessionError> {
+        if self.history.claimable().contains(kind) {
+            return Ok(true);
+        }
+        for movement in self.history.position().legal_moves() {
+            if self.history.prepare(movement)?.claimable().contains(kind) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     pub fn revision(&self) -> GameRevision {
         self.revision
@@ -633,6 +1055,118 @@ impl GameSession {
 
     pub fn takeback(&self) -> &GameTakeback {
         &self.takeback
+    }
+
+    fn validate_result_phase(&self) -> Result<(), GameSessionError> {
+        match self.phase() {
+            GameEnumPhase::Active | GameEnumPhase::Interrupted => Ok(()),
+            GameEnumPhase::Setup | GameEnumPhase::Completed | GameEnumPhase::Analysis => {
+                Err(GameSessionError::WrongPhase(self.phase()))
+            }
+        }
+    }
+
+    fn finish_result<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        requested: GameAdjudicationEnumDecision,
+        now: ClockInstant,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        let revision = self.revision.next()?;
+        let mut clock = self.clock.clone();
+        let update = if clock.is_running() {
+            clock.pause(now)?
+        } else {
+            clock.poll(now)?
+        };
+        let (kind, decision) = match (self.phase(), update.view().status()) {
+            (GameEnumPhase::Active, ClockStateEnumStatus::Flagged(flagged)) => (
+                GameEnumTransitionKind::FlagFall,
+                self.history.flag_fall(flagged, proof),
+            ),
+            (
+                GameEnumPhase::Active,
+                ClockStateEnumStatus::Paused | ClockStateEnumStatus::Running,
+            )
+            | (
+                GameEnumPhase::Interrupted,
+                ClockStateEnumStatus::Paused
+                | ClockStateEnumStatus::Running
+                | ClockStateEnumStatus::Flagged(_),
+            ) => (GameEnumTransitionKind::ResultAccepted, requested),
+            (
+                GameEnumPhase::Setup | GameEnumPhase::Completed | GameEnumPhase::Analysis,
+                ClockStateEnumStatus::Paused
+                | ClockStateEnumStatus::Running
+                | ClockStateEnumStatus::Flagged(_),
+            ) => return Err(GameSessionError::WrongPhase(self.phase())),
+        };
+        self.finish_decision(GameSessionDecisionTransition {
+            revision,
+            kind,
+            clock,
+            decision,
+            now,
+        })
+    }
+
+    pub fn resign<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameResultResignRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        self.validate_result_phase()?;
+        if self.seats.seat(request.resigning) != GameEnumSeat::Human {
+            return Err(GameSessionError::WrongSeat);
+        }
+        request
+            .engine
+            .validate(self.id, self.revision, self.seats.mode(), None)?;
+        self.finish_result(
+            self.history.resign(request.resigning),
+            request.received_at,
+            proof,
+        )
+    }
+
+    pub fn finish_local<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameResultLocalRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        self.validate_result_phase()?;
+        if self.seats.mode() != GameEnumMode::LocalTwoPlayer {
+            return Err(GameResultError::LocalPlayersRequired.into());
+        }
+        request
+            .consent
+            .validate(self.id, self.revision, self.live)?;
+        let decision = match request.consent.kind() {
+            GameResultEnumLocalKind::DrawAgreement => {
+                if matches!(self.clock.status(), ClockStateEnumStatus::Flagged(_)) {
+                    return Err(GameResultError::ConsensualResultRequired.into());
+                }
+                GameAdjudicationEnumDecision::Complete {
+                    result: GameEnumResult::Draw,
+                    reason: GameEnumOutcomeReason::Agreement,
+                }
+            }
+            GameResultEnumLocalKind::ConsensualAdjudication(result) => {
+                if !matches!(
+                    self.interruption(),
+                    Some(GameSessionEnumInterruption::Adjudication { .. })
+                ) {
+                    return Err(GameResultError::AdjudicationInterruptionRequired.into());
+                }
+                GameAdjudicationEnumDecision::Complete {
+                    result,
+                    reason: GameEnumOutcomeReason::ConsensualAdjudication,
+                }
+            }
+        };
+        self.finish_result(decision, request.received_at, proof)
     }
 
     pub fn configure_takeback_consent(
@@ -1085,6 +1619,8 @@ impl GameSession {
         self.takeback.clear();
         if self.phase() != GameEnumPhase::Active {
             self.premove.clear(GamePremoveEnumClearReason::Fault);
+        } else if request.seat == GameEnumSeat::Human {
+            self.premove.clear(GamePremoveEnumClearReason::Explicit);
         }
         Ok(GameSessionTransition {
             game: self.id,

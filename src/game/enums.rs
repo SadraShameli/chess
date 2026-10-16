@@ -219,13 +219,14 @@ pub enum GameEnumOutcomeReason {
     Resignation,
     Flagfall,
     Agreement,
+    ConsensualAdjudication,
 }
 
 impl GameEnumOutcomeReason {
     pub(crate) fn permits(self, result: GameEnumResult) -> bool {
         match self {
             Self::Checkmate | Self::Resignation => matches!(result, GameEnumResult::Victory(_)),
-            Self::Flagfall => true,
+            Self::Flagfall | Self::ConsensualAdjudication => true,
             Self::Stalemate
             | Self::DeadPosition
             | Self::FivefoldRepetition

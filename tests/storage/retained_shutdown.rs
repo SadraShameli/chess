@@ -16,10 +16,11 @@ async fn timed_out_close_keeps_the_real_database_worker_owned_until_retry()
     let path = directory.path().join("library.sqlite3");
     let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
     let mut store = StorageDocumentStore::open(path.clone(), budget.clone()).await?;
+    let client = store.client();
     let held = budget.try_lease(1)?;
     let id = Uuid::new_v4();
     {
-        let saving = store.save(id, 0, "{\"saved\":true}".to_owned());
+        let saving = client.save(id, 0, "{\"saved\":true}".to_owned());
         let mut saving = std::pin::pin!(saving);
         assert!(
             saving
@@ -37,11 +38,11 @@ async fn timed_out_close_keeps_the_real_database_worker_owned_until_retry()
     assert!(error.source().is_some());
     assert!(!store.is_closed());
     assert!(matches!(
-        store.read(id).await,
+        client.read(id).await,
         Err(StorageDocumentError::Closed)
     ));
     assert!(matches!(
-        store.save(id, 1, "{}".to_owned()).await,
+        client.save(id, 1, "{}".to_owned()).await,
         Err(StorageDocumentError::Closed)
     ));
     drop(held);
@@ -53,6 +54,7 @@ async fn timed_out_close_keeps_the_real_database_worker_owned_until_retry()
     let reopened = StorageDocumentStore::open(path, budget).await?;
     assert_eq!(
         reopened
+            .client()
             .read(id)
             .await?
             .ok_or("Queued commit was lost")?
@@ -70,10 +72,11 @@ async fn cancelling_a_close_wait_preserves_worker_ownership_and_closed_admission
     let path = directory.path().join("library.sqlite3");
     let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
     let mut store = StorageDocumentStore::open(path.clone(), budget.clone()).await?;
+    let client = store.client();
     let held = budget.try_lease(1)?;
     let id = Uuid::new_v4();
     {
-        let saving = store.save(id, 0, "{}".to_owned());
+        let saving = client.save(id, 0, "{}".to_owned());
         let mut saving = std::pin::pin!(saving);
         assert!(
             saving
@@ -94,7 +97,7 @@ async fn cancelling_a_close_wait_preserves_worker_ownership_and_closed_admission
     }
     assert!(!store.is_closed());
     assert!(matches!(
-        store.read(id).await,
+        client.read(id).await,
         Err(StorageDocumentError::Closed)
     ));
     drop(held);
@@ -105,6 +108,7 @@ async fn cancelling_a_close_wait_preserves_worker_ownership_and_closed_admission
     let reopened = StorageDocumentStore::open(path, budget).await?;
     assert_eq!(
         reopened
+            .client()
             .read(id)
             .await?
             .ok_or("Cancelled caller lost its accepted commit")?
@@ -129,5 +133,41 @@ async fn observed_database_close_is_idempotent_even_with_an_expired_deadline()
     assert!(store.is_closed());
     store.close_retained(Instant::now()).await?;
     store.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_live_client_response_wait_does_not_own_the_worker_shutdown_sender()
+-> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
+    let mut store =
+        StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget.clone())
+            .await?;
+    let client = store.client();
+    let held = budget.try_lease(1)?;
+    let id = Uuid::new_v4();
+    let saving = client.save(id, 0, "{}".to_owned());
+    let mut saving = std::pin::pin!(saving);
+    assert!(
+        saving
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+    );
+    assert!(matches!(
+        store.close_retained(Instant::now()).await,
+        Err(StorageDocumentError::CloseDeadline(_))
+    ));
+    assert!(matches!(
+        client.read(id).await,
+        Err(StorageDocumentError::Closed)
+    ));
+    drop(held);
+    assert_eq!(saving.await?.revision(), 1);
+    store
+        .close_retained(Instant::now() + Duration::from_secs(3))
+        .await?;
+    assert!(store.is_closed());
     Ok(())
 }

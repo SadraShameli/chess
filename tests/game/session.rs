@@ -12,6 +12,7 @@ use chess::game::enums::{
     GameEnumEngineReadiness, GameEnumMode, GameEnumOutcomeReason, GameEnumPhase, GameEnumResult,
     GameEnumSeat, GameEnumTransitionKind, GameId, GameMoveId, GameRevision,
 };
+use chess::game::premove::GamePremoveIntent;
 use chess::game::session::{
     GameMetadata, GameMetadataExtension, GameMetadataKnownTags, GameMetadataText, GameSeats,
     GameSession, GameSessionMoveRequest, GameSessionOptions,
@@ -521,5 +522,32 @@ fn human_claims_stay_explicit_and_the_next_reckless_turn_claims_automatically()
         GameEnumOutcomeReason::FiftyMove
     );
     assert_eq!(session.live(), GameSessionFixture::id(2)?);
+    Ok(())
+}
+
+#[test]
+fn accepted_manual_move_clears_a_queue_that_has_not_executed_after_engine_reply()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = GameSessionFixture::session(ClockTimeControl::untimed())?;
+    GameSessionFixture::start(&mut session)?;
+    session.accept_move(
+        GameSessionFixture::request(&session, 2, "e2e4", 1_000)?,
+        &GameSessionFixtureProof,
+    )?;
+    session.set_premoves_enabled(true);
+    session.queue_premove(
+        session.revision(),
+        GamePremoveIntent::new("g1".parse()?, "f3".parse()?, None)?,
+    )?;
+    session.accept_move(
+        GameSessionFixture::request(&session, 3, "e7e5", 2_000)?,
+        &GameSessionFixtureProof,
+    )?;
+    assert!(session.premove().pending().is_some());
+    session.accept_move(
+        GameSessionFixture::request(&session, 4, "d2d4", 3_000)?,
+        &GameSessionFixtureProof,
+    )?;
+    assert!(session.premove().pending().is_none());
     Ok(())
 }

@@ -444,6 +444,7 @@ impl NativeHostLifecycleHarness {
                     StorageDocumentStore::open(profile.join("library.sqlite3"), budget.clone())
                         .await?;
                 let receipt = storage
+                    .client()
                     .save(Self::DOCUMENT_ID, 0, Self::DOCUMENT.to_owned())
                     .await?;
                 if receipt.revision() != 1 {
@@ -511,7 +512,7 @@ impl NativeHostLifecycleHarness {
         runtime.block_on(async {
             let storage =
                 StorageDocumentStore::open(profile.join("library.sqlite3"), budget).await?;
-            let document = storage.read(Self::DOCUMENT_ID).await?.ok_or(
+            let document = storage.client().read(Self::DOCUMENT_ID).await?.ok_or(
                 NativeHostLifecycleError::Invariant(
                     "the durable seed document survived native startup and shutdown",
                 ),

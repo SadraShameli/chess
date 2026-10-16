@@ -6,7 +6,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::de::IgnoredAny;
 use thiserror::Error;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
@@ -97,9 +97,15 @@ enum StorageDocumentEnumCommand {
 pub struct StorageDocumentStore {
     commands: Option<mpsc::Sender<StorageDocumentEnumCommand>>,
     worker: Option<JoinHandle<Result<(), StorageDocumentError>>>,
+    client: StorageDocumentClient,
+    close_failure: Option<Arc<StorageDocumentError>>,
+}
+
+#[derive(Clone)]
+pub struct StorageDocumentClient {
+    commands: mpsc::WeakSender<StorageDocumentEnumCommand>,
     memory: Arc<Semaphore>,
     admission: Arc<Semaphore>,
-    close_failure: Option<Arc<StorageDocumentError>>,
 }
 
 impl StorageDocumentStore {
@@ -141,13 +147,19 @@ impl StorageDocumentStore {
             }
         });
         match ready_receiver.await {
-            Ok(Ok(())) => Ok(Self {
-                commands: Some(commands),
-                worker: Some(worker),
-                memory,
-                admission: Arc::new(Semaphore::new(Self::QUEUE_CAPACITY)),
-                close_failure: None,
-            }),
+            Ok(Ok(())) => {
+                let client = StorageDocumentClient {
+                    commands: commands.downgrade(),
+                    memory,
+                    admission: Arc::new(Semaphore::new(Self::QUEUE_CAPACITY)),
+                };
+                Ok(Self {
+                    commands: Some(commands),
+                    worker: Some(worker),
+                    client,
+                    close_failure: None,
+                })
+            }
             Ok(Err(error)) => {
                 worker.await??;
                 Err(error)
@@ -159,30 +171,8 @@ impl StorageDocumentStore {
         }
     }
 
-    pub async fn save(
-        &self,
-        id: Uuid,
-        expected_revision: u64,
-        body: String,
-    ) -> Result<StorageDocumentReceipt, StorageDocumentError> {
-        let _admission = self.admit()?;
-        let memory_reservation = Self::reserve_memory(&self.memory, body.len())?;
-        let (result, receiver) = oneshot::channel();
-        self.enqueue(StorageDocumentEnumCommand::Save {
-            id,
-            expected_revision,
-            body,
-            _memory_reservation: memory_reservation,
-            result,
-        })?;
-        receiver.await?
-    }
-
-    pub async fn read(&self, id: Uuid) -> Result<Option<StorageDocument>, StorageDocumentError> {
-        let _admission = self.admit()?;
-        let (result, receiver) = oneshot::channel();
-        self.enqueue(StorageDocumentEnumCommand::Read { id, result })?;
-        receiver.await?
+    pub fn client(&self) -> StorageDocumentClient {
+        self.client.clone()
     }
 
     pub async fn close(mut self) -> Result<(), StorageDocumentError> {
@@ -200,7 +190,7 @@ impl StorageDocumentStore {
     }
 
     fn close_admission(&mut self) {
-        self.admission.close();
+        self.client.admission.close();
         drop(self.commands.take());
     }
 
@@ -228,21 +218,49 @@ impl StorageDocumentStore {
             None => Ok(()),
         }
     }
+}
+
+impl StorageDocumentClient {
+    pub async fn save(
+        &self,
+        id: Uuid,
+        expected_revision: u64,
+        body: String,
+    ) -> Result<StorageDocumentReceipt, StorageDocumentError> {
+        let _admission = self.admit()?;
+        let memory_reservation = Self::reserve_memory(&self.memory, body.len())?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Save {
+            id,
+            expected_revision,
+            body,
+            _memory_reservation: memory_reservation,
+            result,
+        })?;
+        receiver.await?
+    }
+
+    pub async fn read(&self, id: Uuid) -> Result<Option<StorageDocument>, StorageDocumentError> {
+        let _admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Read { id, result })?;
+        receiver.await?
+    }
 
     fn admit(&self) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
-        if self.commands.is_none() {
-            return Err(StorageDocumentError::Closed);
-        }
         Arc::clone(&self.admission)
             .try_acquire_owned()
-            .map_err(|_error| StorageDocumentError::Saturated)
+            .map_err(|error| match error {
+                TryAcquireError::Closed => StorageDocumentError::Closed,
+                TryAcquireError::NoPermits => StorageDocumentError::Saturated,
+            })
     }
 
     fn reserve_memory(
         memory: &Arc<Semaphore>,
         bytes: usize,
     ) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
-        if bytes > Self::MEMORY_BUDGET {
+        if bytes > StorageDocumentStore::MEMORY_BUDGET {
             return Err(StorageDocumentError::DocumentTooLarge);
         }
         Arc::clone(memory)
@@ -251,8 +269,11 @@ impl StorageDocumentStore {
     }
 
     fn enqueue(&self, command: StorageDocumentEnumCommand) -> Result<(), StorageDocumentError> {
+        if self.admission.is_closed() {
+            return Err(StorageDocumentError::Closed);
+        }
         self.commands
-            .as_ref()
+            .upgrade()
             .ok_or(StorageDocumentError::Closed)?
             .try_send(command)
             .map_err(|error| match error {
@@ -373,7 +394,7 @@ impl StorageDocumentActor {
         stored
             .map(|(revision, body)| {
                 let memory_reservation =
-                    StorageDocumentStore::reserve_memory(&self.memory, body.len())?;
+                    StorageDocumentClient::reserve_memory(&self.memory, body.len())?;
                 Ok(StorageDocument {
                     revision: revision.parse()?,
                     body,

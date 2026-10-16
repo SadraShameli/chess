@@ -16,6 +16,10 @@ mod game_mate_proof;
 mod game_pause;
 #[path = "game/premove.rs"]
 mod game_premove;
+#[path = "game/restoration.rs"]
+mod game_restoration;
+#[path = "game/result.rs"]
+mod game_result;
 #[path = "game/rules.rs"]
 mod game_rules;
 #[path = "game/session.rs"]

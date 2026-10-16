@@ -16,6 +16,8 @@ use crate::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumPhase, G
 use crate::game::pause::{
     GamePauseEnumCause, GamePauseEnumEngineBarrier, GamePauseRequest, GameResumeRequest,
 };
+use crate::game::premove::GamePremoveIntent;
+use crate::game::result::GameResultResignRequest;
 use crate::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionMoveRequest, GameSessionOptions,
 };
@@ -191,5 +193,48 @@ fn healthy_idle_receipt_pauses_human_turn_and_resume_builds_a_fresh_full_search(
     assert_eq!(resumed.history(), first.history());
     assert_ne!(resumed.context(), first.context());
     assert_eq!(resumed.context().revision(), session.revision());
+    Ok(())
+}
+
+#[test]
+fn engine_resignation_consumes_current_quiescence_and_clears_queued_premove()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = GameEngineBarrierFixture::session()?;
+    let stale = GameEngineBarrierFixture::barrier(&session, false);
+    GameEngineBarrierFixture::play(&mut session, 2, "e2e4", 1_000)?;
+    session.set_premoves_enabled(true);
+    session.queue_premove(
+        session.revision(),
+        GamePremoveIntent::new("g1".parse()?, "f3".parse()?, None)?,
+    )?;
+    let revision = session.revision();
+    assert!(
+        session
+            .resign(
+                GameResultResignRequest {
+                    expected_revision: revision,
+                    resigning: BoardEnumColor::White,
+                    received_at: ClockInstant::from_millis(2_000)?,
+                    engine: stale,
+                },
+                &GameEngineBarrierFixture
+            )
+            .is_err()
+    );
+    assert_eq!(session.revision(), revision);
+    assert!(session.premove().pending().is_some());
+    let engine = GameEngineBarrierFixture::barrier(&session, true);
+    session.resign(
+        GameResultResignRequest {
+            expected_revision: revision,
+            resigning: BoardEnumColor::White,
+            received_at: ClockInstant::from_millis(2_000)?,
+            engine,
+        },
+        &GameEngineBarrierFixture,
+    )?;
+    assert_eq!(session.phase(), GameEnumPhase::Completed);
+    assert!(session.premove().pending().is_none());
+    assert!(!session.clock().is_running());
     Ok(())
 }

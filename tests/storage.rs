@@ -11,3 +11,5 @@ mod storage_retained_shutdown;
 
 #[path = "storage/dataset_package.rs"]
 mod storage_dataset_package;
+#[path = "storage/game_document.rs"]
+mod storage_game_document;
