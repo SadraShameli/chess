@@ -73,17 +73,25 @@ impl GamePremoveIntent {
             .find_map(|(square, piece)| (square == self.origin).then_some(piece))
             .filter(|piece| piece.color() == human)
             .ok_or(GamePremoveError::Origin)?;
-        let promotion_rank = match human {
-            BoardEnumColor::White => Self::WHITE_PROMOTION_RANK,
-            BoardEnumColor::Black => Self::BLACK_PROMOTION_RANK,
-        };
-        let requires_promotion = piece.kind() == BoardEnumPieceKind::Pawn
-            && u8::from(self.destination) / Self::SQUARES_PER_RANK == promotion_rank;
+        let requires_promotion = Self::requires_promotion(piece.kind(), human, self.destination);
         match (requires_promotion, self.promotion) {
             (true, None) => Err(GamePremoveError::PromotionRequired),
             (false, Some(_)) => Err(GamePremoveError::UnexpectedPromotion),
             (true, Some(_)) | (false, None) => Ok(()),
         }
+    }
+
+    pub fn requires_promotion(
+        kind: BoardEnumPieceKind,
+        color: BoardEnumColor,
+        destination: BoardSquare,
+    ) -> bool {
+        let promotion_rank = match color {
+            BoardEnumColor::White => Self::WHITE_PROMOTION_RANK,
+            BoardEnumColor::Black => Self::BLACK_PROMOTION_RANK,
+        };
+        kind == BoardEnumPieceKind::Pawn
+            && u8::from(destination) / Self::SQUARES_PER_RANK == promotion_rank
     }
 }
 

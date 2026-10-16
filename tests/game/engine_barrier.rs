@@ -202,7 +202,7 @@ fn engine_resignation_consumes_current_quiescence_and_clears_queued_premove()
     let mut session = GameEngineBarrierFixture::session()?;
     let stale = GameEngineBarrierFixture::barrier(&session, false);
     GameEngineBarrierFixture::play(&mut session, 2, "e2e4", 1_000)?;
-    session.set_premoves_enabled(true);
+    session.set_premoves_enabled(session.revision(), true)?;
     session.queue_premove(
         session.revision(),
         GamePremoveIntent::new("g1".parse()?, "f3".parse()?, None)?,

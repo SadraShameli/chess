@@ -48,6 +48,11 @@ impl GameStorageSaveRequest {
         self.expected_storage_revision
     }
 
+    pub(crate) fn expect_storage_revision(mut self, revision: GameStorageRevision) -> Self {
+        self.expected_storage_revision = revision;
+        self
+    }
+
     pub(crate) fn into_snapshot(self) -> GameSessionRestoreOptions {
         self.snapshot
     }

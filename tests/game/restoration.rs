@@ -382,7 +382,7 @@ fn restored_engine_fault_retains_retry_gate_and_enabled_premoves_without_replayi
     let mut session =
         GameTransitionFixture::session(ClockTimeControl::untimed(), Some(BoardEnumColor::Black))?;
     GameTransitionFixture::play(&mut session, 2, "e2e4", 1_000)?;
-    session.set_premoves_enabled(true);
+    session.set_premoves_enabled(session.revision(), true)?;
     session.queue_premove(
         session.revision(),
         GamePremoveIntent::new("g1".parse()?, "f3".parse()?, None)?,

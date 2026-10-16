@@ -26,6 +26,7 @@ pub enum CapacityPhaseEnumState {
     Draining,
     Interrupted,
     Steady,
+    Teardown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,6 +66,11 @@ enum CapacityPhaseEnumSearchStop {
     Acknowledged,
 }
 
+enum CapacityPhaseEnumLifecycle {
+    Active,
+    Terminating,
+}
+
 enum CapacityPhaseEnumRuntimeState {
     Quiescing {
         generation: CapacityPhaseGeneration,
@@ -83,6 +89,7 @@ enum CapacityPhaseEnumRuntimeState {
         reason: CapacityPhaseEnumInterruption,
     },
     Steady,
+    Teardown,
 }
 
 impl CapacityPhaseEnumRuntimeState {
@@ -93,6 +100,7 @@ impl CapacityPhaseEnumRuntimeState {
             Self::Draining { .. } => CapacityPhaseEnumState::Draining,
             Self::Interrupted { .. } => CapacityPhaseEnumState::Interrupted,
             Self::Steady => CapacityPhaseEnumState::Steady,
+            Self::Teardown => CapacityPhaseEnumState::Teardown,
         }
     }
 
@@ -101,14 +109,14 @@ impl CapacityPhaseEnumRuntimeState {
             Self::Quiescing { generation, .. }
             | Self::Preparing { generation, .. }
             | Self::Draining { generation, .. } => Some(*generation),
-            Self::Interrupted { .. } | Self::Steady => None,
+            Self::Interrupted { .. } | Self::Steady | Self::Teardown => None,
         }
     }
 
     fn interruption(&self) -> Option<CapacityPhaseEnumInterruption> {
         match self {
             Self::Draining { reason, .. } | Self::Interrupted { reason } => Some(*reason),
-            Self::Quiescing { .. } | Self::Preparing { .. } | Self::Steady => None,
+            Self::Quiescing { .. } | Self::Preparing { .. } | Self::Steady | Self::Teardown => None,
         }
     }
 }
@@ -119,6 +127,7 @@ pub struct CapacityPhase {
     last_generation: CapacityPhaseGeneration,
     state: CapacityPhaseEnumRuntimeState,
     admission: CapacityBudgetPhaseAdmission,
+    lifecycle: CapacityPhaseEnumLifecycle,
 }
 
 impl CapacityPhase {
@@ -144,6 +153,7 @@ impl CapacityPhase {
                 searches: CapacityPhaseEnumSearchStop::Pending,
             },
             admission,
+            lifecycle: CapacityPhaseEnumLifecycle::Active,
         })
     }
 
@@ -177,15 +187,20 @@ impl CapacityPhase {
             | CapacityPhaseEnumRuntimeState::Draining { guard, .. } => guard.workers(),
             CapacityPhaseEnumRuntimeState::Quiescing { .. }
             | CapacityPhaseEnumRuntimeState::Interrupted { .. }
-            | CapacityPhaseEnumRuntimeState::Steady => 0,
+            | CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Teardown => 0,
         }
     }
 
     pub fn request_preparation(&mut self) -> Result<CapacityPhaseGeneration, CapacityPhaseError> {
+        if matches!(self.lifecycle, CapacityPhaseEnumLifecycle::Terminating) {
+            return Err(CapacityPhaseError::InvalidPhase(self.state()));
+        }
         match &self.state {
             CapacityPhaseEnumRuntimeState::Quiescing { generation, .. }
             | CapacityPhaseEnumRuntimeState::Preparing { generation, .. } => Ok(*generation),
-            CapacityPhaseEnumRuntimeState::Draining { .. } => {
+            CapacityPhaseEnumRuntimeState::Draining { .. }
+            | CapacityPhaseEnumRuntimeState::Teardown => {
                 Err(CapacityPhaseError::InvalidPhase(self.state()))
             }
             CapacityPhaseEnumRuntimeState::Interrupted { .. }
@@ -215,7 +230,8 @@ impl CapacityPhase {
             CapacityPhaseEnumRuntimeState::Preparing { .. }
             | CapacityPhaseEnumRuntimeState::Draining { .. }
             | CapacityPhaseEnumRuntimeState::Interrupted { .. }
-            | CapacityPhaseEnumRuntimeState::Steady => {
+            | CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Teardown => {
                 Err(CapacityPhaseError::InvalidPhase(self.state()))
             }
         }
@@ -252,7 +268,8 @@ impl CapacityPhase {
             CapacityPhaseEnumRuntimeState::Preparing { .. }
             | CapacityPhaseEnumRuntimeState::Draining { .. }
             | CapacityPhaseEnumRuntimeState::Interrupted { .. }
-            | CapacityPhaseEnumRuntimeState::Steady => {
+            | CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Teardown => {
                 Err(CapacityPhaseError::InvalidPhase(self.state()))
             }
         }
@@ -272,7 +289,8 @@ impl CapacityPhase {
             CapacityPhaseEnumRuntimeState::Quiescing { .. }
             | CapacityPhaseEnumRuntimeState::Draining { .. }
             | CapacityPhaseEnumRuntimeState::Interrupted { .. }
-            | CapacityPhaseEnumRuntimeState::Steady => {
+            | CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Teardown => {
                 Err(CapacityPhaseError::InvalidPhase(self.state()))
             }
         }
@@ -313,7 +331,8 @@ impl CapacityPhase {
             }
             CapacityPhaseEnumRuntimeState::Draining { .. }
             | CapacityPhaseEnumRuntimeState::Interrupted { .. }
-            | CapacityPhaseEnumRuntimeState::Steady => {
+            | CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Teardown => {
                 self.state = previous;
                 Err(CapacityPhaseError::InvalidPhase(self.state()))
             }
@@ -333,10 +352,34 @@ impl CapacityPhase {
             CapacityPhaseEnumRuntimeState::Quiescing { .. }
             | CapacityPhaseEnumRuntimeState::Preparing { .. }
             | CapacityPhaseEnumRuntimeState::Interrupted { .. }
-            | CapacityPhaseEnumRuntimeState::Steady => {
+            | CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Teardown => {
                 Err(CapacityPhaseError::InvalidPhase(self.state()))
             }
         }
+    }
+
+    pub fn complete_interruption(
+        &mut self,
+        generation: CapacityPhaseGeneration,
+        reason: CapacityPhaseEnumInterruption,
+    ) -> Result<(), CapacityPhaseError> {
+        if self.state() != CapacityPhaseEnumState::Draining {
+            self.interrupt_preparation(generation, reason)?;
+        }
+        if self.state() == CapacityPhaseEnumState::Draining {
+            self.acknowledge_preparation_stopped(generation)?;
+        }
+        Ok(())
+    }
+
+    pub fn open_interrupted_admission(&mut self) -> Result<(), CapacityPhaseError> {
+        if self.state() != CapacityPhaseEnumState::Interrupted {
+            return Err(CapacityPhaseError::InvalidPhase(self.state()));
+        }
+        self.state = CapacityPhaseEnumRuntimeState::Steady;
+        self.admission.open();
+        Ok(())
     }
 
     fn validate_generation(
@@ -348,5 +391,48 @@ impl CapacityPhase {
             return Err(CapacityPhaseError::StaleGeneration { expected, actual });
         }
         Ok(())
+    }
+
+    pub fn accepts_preparation_event(
+        &self,
+        actual: CapacityPhaseGeneration,
+    ) -> Result<bool, CapacityPhaseError> {
+        let expected = self.last_generation;
+        if expected != actual {
+            return Err(CapacityPhaseError::StaleGeneration {
+                expected: Some(expected),
+                actual,
+            });
+        }
+        Ok(matches!(self.lifecycle, CapacityPhaseEnumLifecycle::Active))
+    }
+
+    pub fn request_teardown(&mut self) -> Result<(), CapacityPhaseError> {
+        if let Some(generation) = self.generation()
+            && self.state() != CapacityPhaseEnumState::Draining
+        {
+            self.interrupt_preparation(generation, CapacityPhaseEnumInterruption::Cancelled)?;
+        }
+        self.lifecycle = CapacityPhaseEnumLifecycle::Terminating;
+        self.admission.close();
+        Ok(())
+    }
+
+    pub fn begin_teardown(&mut self) -> Result<(), CapacityPhaseError> {
+        match &self.state {
+            CapacityPhaseEnumRuntimeState::Steady
+            | CapacityPhaseEnumRuntimeState::Interrupted { .. }
+            | CapacityPhaseEnumRuntimeState::Teardown => {
+                self.lifecycle = CapacityPhaseEnumLifecycle::Terminating;
+                self.state = CapacityPhaseEnumRuntimeState::Teardown;
+                self.admission.open();
+                Ok(())
+            }
+            CapacityPhaseEnumRuntimeState::Quiescing { .. }
+            | CapacityPhaseEnumRuntimeState::Preparing { .. }
+            | CapacityPhaseEnumRuntimeState::Draining { .. } => {
+                Err(CapacityPhaseError::InvalidPhase(self.state()))
+            }
+        }
     }
 }

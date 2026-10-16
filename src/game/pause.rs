@@ -19,6 +19,7 @@ pub enum GamePauseEnumCause {
     TabClosed,
     ApplicationQuit,
     UpdateInstall,
+    AutosaveFailure,
     Fault(GamePauseEnumFault),
 }
 

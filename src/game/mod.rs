@@ -9,6 +9,7 @@ pub mod outcome;
 pub mod pause;
 pub mod premove;
 pub mod result;
+pub mod save;
 pub mod session;
 pub mod storage_repository;
 pub mod takeback;

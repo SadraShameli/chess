@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind, BoardEnumVariant};
+use crate::board::r#move::BoardMove;
 use crate::board::position::BoardPosition;
 use crate::board::square::BoardSquare;
 use crate::desktop::file_handle::DesktopFileHandleId;
@@ -31,6 +32,8 @@ impl DesktopBoardPiece {
 #[derive(Debug, Clone, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesktopBoardMove {
+    #[serde(skip)]
+    movement: BoardMove,
     origin: Option<BoardSquare>,
     destination: BoardSquare,
     promotion: Option<BoardEnumPieceKind>,
@@ -38,6 +41,10 @@ pub struct DesktopBoardMove {
 }
 
 impl DesktopBoardMove {
+    pub const fn movement(&self) -> BoardMove {
+        self.movement
+    }
+
     pub fn origin(&self) -> Option<BoardSquare> {
         self.origin
     }
@@ -109,6 +116,7 @@ impl DesktopBoardSnapshot {
                 .legal_moves()
                 .into_iter()
                 .map(|movement| DesktopBoardMove {
+                    movement,
                     origin: movement.origin(),
                     destination: movement.destination(),
                     promotion: movement.promotion(),
@@ -206,14 +214,9 @@ impl DesktopBootstrapSnapshot {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(
-    tag = "operation",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
+#[derive(Debug, Clone)]
 pub enum DesktopEnumValue {
+    Game(Box<crate::desktop::game_snapshot::DesktopGameSnapshot>),
     Bootstrap(DesktopBootstrapSnapshot),
     FileSelect(Option<DesktopFileHandleId>),
     StreamSubscribe {
@@ -229,14 +232,9 @@ pub enum DesktopEnumValue {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(
-    tag = "kind",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
+#[derive(Debug, Clone)]
 pub enum DesktopEnumEvent {
+    Games(Vec<crate::desktop::game_snapshot::DesktopGameSnapshot>),
     Snapshot(DesktopBootstrapSnapshot),
     Failure(crate::desktop::error::DesktopFailure),
 }

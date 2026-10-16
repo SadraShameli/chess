@@ -1,6 +1,9 @@
 #[path = "storage/document_store.rs"]
 mod storage_document_store;
 
+#[path = "storage/document_inventory.rs"]
+mod storage_document_inventory;
+
 #[path = "storage/schema.rs"]
 mod storage_schema;
 

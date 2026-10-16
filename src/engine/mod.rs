@@ -3,5 +3,6 @@ pub mod enums;
 pub mod live_game;
 pub mod package;
 pub mod process_provider;
+pub mod resource_config;
 pub mod search;
 pub mod session;

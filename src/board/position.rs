@@ -86,6 +86,10 @@ impl BoardPosition {
         self.chess.turn().into()
     }
 
+    pub fn fullmoves(&self) -> u32 {
+        self.chess.fullmoves().get()
+    }
+
     pub fn fen(&self) -> String {
         match self.variant {
             BoardEnumVariant::Standard => {

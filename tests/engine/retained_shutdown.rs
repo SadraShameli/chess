@@ -7,6 +7,7 @@ use std::task::{Context, Waker};
 use std::time::Duration;
 
 use chess::board::position::BoardPosition;
+use chess::clock::duration::ClockDuration;
 use chess::engine::capabilities::EngineIdentity;
 use chess::engine::enums::EngineEnumOption;
 use chess::engine::package::selector::EnginePackageSelected;
@@ -14,6 +15,7 @@ use chess::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLine,
     EngineProcessProvider,
 };
+use chess::engine::resource_config::EngineResourceConfig;
 use chess::engine::search::identity::{
     EngineSearchContext, EngineSearchGameId, EngineSearchRevision,
 };
@@ -31,6 +33,7 @@ enum EngineRetainedShutdownEnumCompletion {
     Success,
     Failure,
     Unobserved,
+    UnobservedForced,
 }
 
 #[derive(Default)]
@@ -124,13 +127,18 @@ impl EngineRetainedShutdownProcess {
             }
             notified.await;
         }
-        self.complete = !matches!(
-            self.completion,
-            EngineRetainedShutdownEnumCompletion::Unobserved
-        ) || forced;
+        self.complete = match self.completion {
+            EngineRetainedShutdownEnumCompletion::UnobservedForced => {
+                self.observations.terminate.load(Ordering::SeqCst) > 1
+            }
+            EngineRetainedShutdownEnumCompletion::Unobserved => forced,
+            EngineRetainedShutdownEnumCompletion::Success
+            | EngineRetainedShutdownEnumCompletion::Failure => true,
+        };
         match self.completion {
             EngineRetainedShutdownEnumCompletion::Success
-            | EngineRetainedShutdownEnumCompletion::Unobserved => Ok(()),
+            | EngineRetainedShutdownEnumCompletion::Unobserved
+            | EngineRetainedShutdownEnumCompletion::UnobservedForced => Ok(()),
             EngineRetainedShutdownEnumCompletion::Failure => {
                 Err(std::io::Error::other("Controlled engine cleanup failure").into())
             }
@@ -366,5 +374,68 @@ async fn cancelled_stop_delivery_forces_cleanup_without_repeating_the_write()
     assert_eq!(provider.observations.shutdown.load(Ordering::SeqCst), 0);
     assert_eq!(provider.observations.terminate.load(Ordering::SeqCst), 1);
     assert!(session.is_shutdown_complete());
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_preparation_retains_successfully_requested_but_unobserved_forced_cleanup()
+-> Result<(), Box<dyn Error>> {
+    let fixture = EnginePackageFixture::new()?;
+    let provider =
+        EngineRetainedShutdownProvider::new(EngineRetainedShutdownEnumCompletion::UnobservedForced);
+    provider.observations.release();
+    let mut session = EngineSession::start(&provider, fixture.select()?).await?;
+    let error = session
+        .configure_resources(EngineResourceConfig::new(1, 64, ClockDuration::ZERO)?)
+        .await
+        .err()
+        .ok_or("missing preparation failure")?;
+    assert!(!session.is_shutdown_complete());
+    assert_eq!(provider.observations.live.load(Ordering::SeqCst), 1);
+    assert!(error.source().is_some());
+    session
+        .shutdown_retained(Instant::now() + Duration::from_secs(3))
+        .await?;
+    assert!(session.is_shutdown_complete());
+    assert_eq!(provider.observations.live.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.observations.terminate.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_preparation_bounds_forced_cleanup_and_keeps_its_process_for_retry()
+-> Result<(), Box<dyn Error>> {
+    let fixture = EnginePackageFixture::new()?;
+    let provider =
+        EngineRetainedShutdownProvider::new(EngineRetainedShutdownEnumCompletion::Success);
+    let mut session = EngineSession::start(&provider, fixture.select()?).await?;
+    let started = Instant::now();
+    {
+        let preparation =
+            session.configure_resources(EngineResourceConfig::new(1, 64, ClockDuration::ZERO)?);
+        tokio::pin!(preparation);
+        assert!(
+            preparation
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+                .is_pending()
+        );
+        tokio::time::advance(Duration::from_secs(3)).await;
+        assert!(matches!(
+            preparation
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            std::task::Poll::Ready(Err(_))
+        ));
+    }
+    assert_eq!(Instant::now() - started, Duration::from_secs(3));
+    assert!(!session.is_shutdown_complete());
+    assert_eq!(provider.observations.live.load(Ordering::SeqCst), 1);
+    provider.observations.release();
+    session
+        .shutdown_retained(Instant::now() + Duration::from_secs(3))
+        .await?;
+    assert!(session.is_shutdown_complete());
+    assert_eq!(provider.observations.live.load(Ordering::SeqCst), 0);
     Ok(())
 }

@@ -8,6 +8,7 @@ use chess::game::adjudication::{
     GameAdjudicationEnumInterruption, GameAdjudicationEnumMateProof,
     GameAdjudicationEnumMateQuestion, GameAdjudicationMateProofProvider,
 };
+use chess::game::draw_claim::GameDrawClaimEnumAvailability;
 use chess::game::enums::{
     GameEnumEngineReadiness, GameEnumMode, GameEnumOutcomeReason, GameEnumPhase, GameEnumResult,
     GameEnumSeat, GameEnumTransitionKind, GameId, GameMoveId, GameRevision,
@@ -512,6 +513,10 @@ fn human_claims_stay_explicit_and_the_next_reckless_turn_claims_automatically()
     })?;
     GameSessionFixture::start(&mut session)?;
     assert_eq!(session.phase(), GameEnumPhase::Active);
+    assert_eq!(
+        session.claimable(),
+        GameDrawClaimEnumAvailability::FiftyMove
+    );
     session.accept_move(
         GameSessionFixture::request(&session, 2, "g1f3", 1_000)?,
         &GameSessionFixtureProof,
@@ -534,7 +539,7 @@ fn accepted_manual_move_clears_a_queue_that_has_not_executed_after_engine_reply(
         GameSessionFixture::request(&session, 2, "e2e4", 1_000)?,
         &GameSessionFixtureProof,
     )?;
-    session.set_premoves_enabled(true);
+    session.set_premoves_enabled(session.revision(), true)?;
     session.queue_premove(
         session.revision(),
         GamePremoveIntent::new("g1".parse()?, "f3".parse()?, None)?,

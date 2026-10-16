@@ -22,8 +22,12 @@ mod game_restoration;
 mod game_result;
 #[path = "game/rules.rs"]
 mod game_rules;
+#[path = "game/save.rs"]
+mod game_save;
 #[path = "game/session.rs"]
 mod game_session;
+#[path = "game/study.rs"]
+mod game_study;
 #[path = "game/takeback.rs"]
 mod game_takeback;
 #[path = "game/transition_fixture.rs"]
@@ -37,3 +41,5 @@ mod capacity_budget;
 mod capacity_native_partition;
 #[path = "capacity/retained_shutdown.rs"]
 mod capacity_retained_shutdown;
+#[path = "capacity/waiting.rs"]
+mod capacity_waiting;

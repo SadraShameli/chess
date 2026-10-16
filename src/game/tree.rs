@@ -167,6 +167,50 @@ impl GameTree {
         .map(|prepared| prepared.commit().id())
     }
 
+    pub(super) fn append_study(
+        &mut self,
+        parent: GameMoveId,
+        id: GameMoveId,
+        movement: BoardMove,
+    ) -> Result<GameMoveId, GameTreeError> {
+        let matching = self.continuation_index(parent, movement)?;
+        let (before_clock, clock) = match matching {
+            Some(index) => (
+                self.nodes[index].before_clock().cloned(),
+                self.nodes[index].clock().cloned(),
+            ),
+            None => (None, None),
+        };
+        let position = self.node(parent)?.position().play(movement)?;
+        self.prepare_resolved(GameTreeResolvedMove {
+            parent,
+            id,
+            movement,
+            position,
+            clock,
+            before_clock,
+        })
+        .map(|prepared| prepared.commit().id())
+    }
+
+    fn continuation_index(
+        &self,
+        parent: GameMoveId,
+        movement: BoardMove,
+    ) -> Result<Option<usize>, GameTreeError> {
+        for child in self.node(parent)?.children() {
+            if self.node(*child)?.movement() == Some(movement) {
+                return self
+                    .indices
+                    .get(child)
+                    .copied()
+                    .map(Some)
+                    .ok_or(GameTreeError::BrokenRelationship);
+            }
+        }
+        Ok(None)
+    }
+
     pub(super) fn prepare_candidate(
         &mut self,
         parent: GameMoveId,
@@ -199,19 +243,7 @@ impl GameTree {
             .nodes
             .get(parent_index)
             .ok_or(GameTreeError::BrokenRelationship)?;
-        let mut matching = None;
-        for child in parent.children() {
-            let node = self.node(*child)?;
-            if node.movement() == Some(resolved.movement) {
-                matching = Some(
-                    *self
-                        .indices
-                        .get(child)
-                        .ok_or(GameTreeError::BrokenRelationship)?,
-                );
-                break;
-            }
-        }
+        let matching = self.continuation_index(resolved.parent, resolved.movement)?;
         if let Some(existing) = self.indices.get(&resolved.id)
             && Some(*existing) != matching
         {
@@ -321,8 +353,23 @@ impl GameTree {
             .position(|child| *child == id)
             .ok_or(GameTreeError::BrokenRelationship)?;
         let removed = self.subtree(id)?;
-        if self.indices.contains_key(&replacement) && !removed.contains(&replacement) {
+        let matching = self
+            .continuation_index(parent, movement)?
+            .map(|index| self.nodes[index].id());
+        if self.indices.contains_key(&replacement)
+            && Some(replacement) != matching
+            && !removed.contains(&replacement)
+        {
             return Err(GameTreeError::DuplicateIdentity);
+        }
+        if let Some(existing) = matching {
+            if existing != id {
+                self.nodes[parent_index]
+                    .children_mut()
+                    .retain(|child| *child != id);
+                self.remove_nodes(&removed);
+            }
+            return Ok(existing);
         }
         let node = GameMoveNode::child(replacement, parent, movement, san, position);
         self.nodes[parent_index].children_mut()[child_index] = replacement;

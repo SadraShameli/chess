@@ -3,6 +3,11 @@ pub mod bootstrap;
 pub mod dialogs;
 pub mod dialogs_proxy;
 pub mod event_loop;
+pub mod game_engine;
+pub mod game_factories;
+pub mod game_resources;
+pub mod game_runtime;
+pub mod game_service;
 pub mod host;
 #[cfg(target_os = "macos")]
 pub mod menu;

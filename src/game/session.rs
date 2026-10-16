@@ -38,6 +38,10 @@ use crate::game::premove::{
 use crate::game::result::{
     GameResultEnumLocalKind, GameResultError, GameResultLocalRequest, GameResultResignRequest,
 };
+use crate::game::save::{
+    GameSaveEnumAcknowledgment, GameSaveEnumStatus, GameSaveError, GameSaveFailureRequest,
+};
+use crate::game::storage_repository::GameStorageReceipt;
 use crate::game::takeback::{
     GameTakeback, GameTakebackEnumConsent, GameTakebackEnumResponse, GameTakebackError,
     GameTakebackPending, GameTakebackRequest, GameTakebackResponseRequest,
@@ -384,6 +388,8 @@ pub struct GameSessionRestoreOptions {
     pub state: GameSessionEnumState,
     pub takeback_consent: GameTakebackEnumConsent,
     pub premoves_enabled: bool,
+    pub engine_search_config: GameEngineSearchConfig,
+    pub is_auto_flip_enabled: bool,
 }
 
 #[derive(Debug, Error)]
@@ -579,6 +585,8 @@ pub enum GameSessionError {
     Restore(#[from] GameSessionRestoreError),
     #[error(transparent)]
     Result(#[from] GameResultError),
+    #[error(transparent)]
+    Save(#[from] GameSaveError),
 }
 
 struct GameSessionDecisionTransition {
@@ -611,6 +619,9 @@ pub struct GameSession {
     history: GameAdjudicationHistory,
     premove: GamePremove,
     takeback: GameTakeback,
+    save_status: GameSaveEnumStatus,
+    engine_search_config: GameEngineSearchConfig,
+    is_auto_flip_enabled: bool,
 }
 
 impl GameSession {
@@ -640,8 +651,11 @@ impl GameSession {
             clock: options.clock,
             metadata: options.metadata,
             state: GameSessionEnumState::Setup,
+            save_status: GameSaveEnumStatus::Current,
             premove: GamePremove::default(),
             takeback: GameTakeback::default(),
+            engine_search_config: GameEngineSearchConfig::initial_default(),
+            is_auto_flip_enabled: false,
         })
     }
 
@@ -651,6 +665,94 @@ impl GameSession {
 
     pub fn state(&self) -> GameSessionEnumState {
         self.state
+    }
+
+    pub const fn engine_search_config(&self) -> GameEngineSearchConfig {
+        self.engine_search_config
+    }
+
+    pub const fn is_auto_flip_enabled(&self) -> bool {
+        self.is_auto_flip_enabled
+    }
+
+    pub fn configure_play_options(
+        &mut self,
+        expected: GameRevision,
+        engine_search_config: GameEngineSearchConfig,
+        is_auto_flip_enabled: bool,
+    ) -> Result<GameRevision, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
+        if self.phase() != GameEnumPhase::Setup {
+            return Err(GameSessionError::WrongPhase(self.phase()));
+        }
+        let revision = self.revision.next()?;
+        self.engine_search_config = engine_search_config;
+        self.is_auto_flip_enabled = is_auto_flip_enabled;
+        self.revision = revision;
+        Ok(revision)
+    }
+
+    pub fn save_status(&self) -> GameSaveEnumStatus {
+        self.save_status
+    }
+
+    pub fn acknowledge_save(
+        &mut self,
+        receipt: GameStorageReceipt,
+    ) -> Result<GameSaveEnumAcknowledgment, GameSessionError> {
+        if receipt.game() != self.id {
+            return Err(GameSaveError::ForeignGame {
+                expected: self.id,
+                received: receipt.game(),
+            }
+            .into());
+        }
+        if receipt.game_revision() > self.revision {
+            return Err(GameSaveError::FutureRevision {
+                current: self.revision,
+                received: receipt.game_revision(),
+            }
+            .into());
+        }
+        if receipt.game_revision() < self.revision {
+            return Ok(GameSaveEnumAcknowledgment::Older);
+        }
+        self.save_status = GameSaveEnumStatus::Current;
+        Ok(GameSaveEnumAcknowledgment::Current)
+    }
+
+    pub fn interrupt_for_save_failure<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameSaveFailureRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.revision.check_expected(request.expected_revision)?;
+        let transition = match self.state {
+            GameSessionEnumState::Active => self.pause(
+                GamePauseRequest {
+                    expected_revision: request.expected_revision,
+                    cause: GamePauseEnumCause::AutosaveFailure,
+                    received_at: request.received_at,
+                    engine: request.engine,
+                },
+                proof,
+            )?,
+            GameSessionEnumState::Setup
+            | GameSessionEnumState::Interrupted(_)
+            | GameSessionEnumState::Completed(_)
+            | GameSessionEnumState::Analysis(_) => {
+                self.finish_state(GameSessionStateTransition {
+                    revision: self.revision.next()?,
+                    kind: GameEnumTransitionKind::Interrupted,
+                    clock: self.clock.clone(),
+                    state: self.state,
+                    now: request.received_at,
+                })?
+            }
+        };
+        self.save_status = GameSaveEnumStatus::Required;
+        Ok(transition)
     }
 
     pub fn restoration(
@@ -702,6 +804,8 @@ impl GameSession {
             state: self.state,
             takeback_consent: self.takeback.consent(),
             premoves_enabled: self.premove.is_enabled(),
+            engine_search_config: self.engine_search_config,
+            is_auto_flip_enabled: self.is_auto_flip_enabled,
         })
     }
 
@@ -802,6 +906,8 @@ impl GameSession {
         session.takeback.configure(options.takeback_consent);
         session.premove.set_enabled(options.premoves_enabled);
         session.premove.clear(GamePremoveEnumClearReason::Relaunch);
+        session.engine_search_config = options.engine_search_config;
+        session.is_auto_flip_enabled = options.is_auto_flip_enabled;
         Ok(session)
     }
 
@@ -981,8 +1087,17 @@ impl GameSession {
         &self.premove
     }
 
-    pub fn set_premoves_enabled(&mut self, enabled: bool) {
+    pub fn set_premoves_enabled(
+        &mut self,
+        expected: GameRevision,
+        enabled: bool,
+    ) -> Result<GameRevision, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
+        let revision = self.revision.next()?;
         self.premove.set_enabled(enabled);
+        self.revision = revision;
+        Ok(revision)
     }
 
     fn human_color(&self) -> Result<BoardEnumColor, GameTakebackError> {
@@ -1004,6 +1119,7 @@ impl GameSession {
         intent: GamePremoveIntent,
     ) -> Result<Option<GamePremoveIntent>, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
         }
@@ -1027,6 +1143,7 @@ impl GameSession {
         expected: GameRevision,
     ) -> Result<GamePremoveEnumResolution, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
         }
@@ -1038,6 +1155,7 @@ impl GameSession {
         &self,
         config: GameEngineSearchConfig,
     ) -> Result<GameEngineRequest, GameSessionError> {
+        self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
         }
@@ -1057,7 +1175,12 @@ impl GameSession {
         &self.takeback
     }
 
+    pub fn claimable(&self) -> GameDrawClaimEnumAvailability {
+        self.history.claimable()
+    }
+
     fn validate_result_phase(&self) -> Result<(), GameSessionError> {
+        self.save_status.validate()?;
         match self.phase() {
             GameEnumPhase::Active | GameEnumPhase::Interrupted => Ok(()),
             GameEnumPhase::Setup | GameEnumPhase::Completed | GameEnumPhase::Analysis => {
@@ -1175,6 +1298,7 @@ impl GameSession {
         consent: GameTakebackEnumConsent,
     ) -> Result<GameRevision, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
         match self.phase() {
             GameEnumPhase::Setup | GameEnumPhase::Active | GameEnumPhase::Interrupted => {}
             GameEnumPhase::Completed | GameEnumPhase::Analysis => {
@@ -1223,7 +1347,8 @@ impl GameSession {
             | GamePauseEnumCause::Relaunch
             | GamePauseEnumCause::TabClosed
             | GamePauseEnumCause::ApplicationQuit
-            | GamePauseEnumCause::UpdateInstall) => GameSessionEnumInterruption::Paused(cause),
+            | GamePauseEnumCause::UpdateInstall
+            | GamePauseEnumCause::AutosaveFailure) => GameSessionEnumInterruption::Paused(cause),
         };
         self.finish_state(GameSessionStateTransition {
             revision,
@@ -1241,6 +1366,7 @@ impl GameSession {
         now: ClockInstant,
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
         if self.interruption() != Some(GameSessionEnumInterruption::RecoveryRequired(fault)) {
             return Err(GamePauseError::WrongRecovery.into());
         }
@@ -1260,6 +1386,7 @@ impl GameSession {
         proof: &P,
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(request.expected_revision)?;
+        self.save_status.validate()?;
         let Some(interruption) = self.interruption() else {
             return Err(GameSessionError::WrongPhase(self.phase()));
         };
@@ -1294,6 +1421,7 @@ impl GameSession {
     }
 
     fn validate_takeback_phase(&self) -> Result<(), GameSessionError> {
+        self.save_status.validate()?;
         match self.state {
             GameSessionEnumState::Active => Ok(()),
             GameSessionEnumState::Interrupted(
@@ -1506,6 +1634,29 @@ impl GameSession {
         self.view = self.live;
     }
 
+    pub fn append_study_variation(
+        &mut self,
+        expected: GameRevision,
+        node: GameMoveId,
+        movement: BoardMove,
+    ) -> Result<GameMoveId, GameSessionError> {
+        self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
+        match self.state {
+            GameSessionEnumState::Completed(_) | GameSessionEnumState::Analysis(_) => {}
+            GameSessionEnumState::Setup
+            | GameSessionEnumState::Active
+            | GameSessionEnumState::Interrupted(_) => {
+                return Err(GameSessionError::WrongPhase(self.phase()));
+            }
+        }
+        let revision = self.revision.next()?;
+        let inserted = self.tree.append_study(self.view, node, movement)?;
+        self.view = inserted;
+        self.revision = revision;
+        Ok(inserted)
+    }
+
     pub fn start<P: GameAdjudicationMateProofProvider + ?Sized>(
         &mut self,
         expected_revision: GameRevision,
@@ -1514,6 +1665,7 @@ impl GameSession {
         proof: &P,
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(expected_revision)?;
+        self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Setup {
             return Err(GameSessionError::WrongPhase(self.phase()));
         }
@@ -1644,6 +1796,7 @@ impl GameSession {
         color: BoardEnumColor,
     ) -> Result<(), GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
         }
@@ -1774,6 +1927,7 @@ impl GameSession {
         now: ClockInstant,
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(expected_revision)?;
+        self.save_status.validate()?;
         match self.phase() {
             GameEnumPhase::Setup | GameEnumPhase::Completed | GameEnumPhase::Analysis => {}
             GameEnumPhase::Active | GameEnumPhase::Interrupted => {

@@ -2,9 +2,11 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 
 use thiserror::Error;
+use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::capacity::executor::CapacityExecutor;
@@ -20,12 +22,18 @@ use crate::desktop::file_handle::{
     DesktopFileDialogProvider, DesktopFileHandleError, DesktopFileHandleId,
     DesktopFileHandleRegistry, DesktopFileHandleRequest,
 };
+use crate::desktop::game_bridge::{
+    DesktopGameBridgeFuture, DesktopGameBridgeProvider, DesktopGameBridgeRequest,
+};
+use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::DesktopEnumCommand;
 use crate::desktop::stream::{DesktopEnumStreamClass, DesktopStream};
 
 #[derive(Debug, Error)]
 pub enum DesktopCoordinatorError {
+    #[error("The live-game snapshot service closed before application shutdown")]
+    GamesClosed,
     #[error(transparent)]
     Application(#[from] DesktopApplicationError),
     #[error(transparent)]
@@ -90,6 +98,12 @@ struct DesktopCoordinatorSelection<P> {
     selection: DesktopCoordinatorSelectionFuture<P>,
 }
 
+struct DesktopCoordinatorGamePending {
+    work: DesktopApplicationWork,
+    future: Option<DesktopGameBridgeFuture>,
+    response: Option<Result<DesktopGameSnapshot, DesktopFailure>>,
+}
+
 pub struct DesktopCoordinator<C, W, P, L>
 where
     C: ClockTimeProvider,
@@ -108,6 +122,10 @@ where
     cancellation_failure: Option<DesktopFileHandleError>,
     shutdown_failure: Option<DesktopCoordinatorError>,
     reported_deadlines: HashSet<DesktopRequestId>,
+    games: Option<Arc<dyn DesktopGameBridgeProvider>>,
+    game_snapshots: Option<watch::Receiver<Vec<DesktopGameSnapshot>>>,
+    latest_games: Vec<DesktopGameSnapshot>,
+    pending_games: Vec<DesktopCoordinatorGamePending>,
 }
 
 impl<C, W, P, L> DesktopCoordinator<C, W, P, L>
@@ -148,6 +166,10 @@ where
             cancellation_failure: None,
             shutdown_failure: None,
             reported_deadlines: HashSet::new(),
+            games: None,
+            game_snapshots: None,
+            latest_games: Vec::new(),
+            pending_games: Vec::new(),
         }
     }
 
@@ -155,8 +177,17 @@ where
         &self.snapshot
     }
 
+    pub fn with_games(mut self, games: Arc<dyn DesktopGameBridgeProvider>) -> Self {
+        let receiver = games.snapshots();
+        self.latest_games = receiver.borrow().clone();
+        self.game_snapshots = Some(receiver);
+        self.games = Some(games);
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), DesktopCoordinatorError> {
         loop {
+            self.complete_games().await?;
             if self.complete_controls().await? {
                 return Ok(());
             }
@@ -175,6 +206,12 @@ where
             let deadline = self.next_deadline()?;
             tokio::select! {
                 biased;
+                (index, response) = Self::game_ready(&mut self.pending_games) => {
+                    self.pending_games[index].response = Some(response);
+                }
+                snapshots = Self::game_snapshots_ready(&mut self.game_snapshots) => {
+                    self.publish_games(snapshots?).await?;
+                }
                 selected = Self::selection_ready(&mut self.pending_selection), if self.pending_selection.is_some() => {
                     self.finish_selection(selected).await?;
                 }
@@ -234,6 +271,48 @@ where
         work: DesktopApplicationWork,
     ) -> Result<(), DesktopCoordinatorError> {
         match work.request().command().operation().clone() {
+            DesktopEnumCommand::Game(operation) => {
+                let response =
+                    if work.request().command().expected_revision() != Some(operation.revision()) {
+                        Some(Err(DesktopFailure::new(
+                            DesktopEnumFailureCode::StaleRevision,
+                            "The game command has a mismatched native revision".to_owned(),
+                            true,
+                        )))
+                    } else if self.games.is_none() {
+                        Some(Err(DesktopFailure::new(
+                            DesktopEnumFailureCode::ResourceRefusal,
+                            "The live-game service is unavailable".to_owned(),
+                            true,
+                        )))
+                    } else {
+                        None
+                    };
+                let is_control = work.request().command().operation().is_control();
+                if !is_control {
+                    match Self::retry(|| self.application.begin_commit(&work)).await {
+                        Ok(()) => {}
+                        Err(DesktopApplicationError::CancellationRequested) => {
+                            Self::retry(|| self.application.acknowledge_stopped(&work)).await?;
+                            return Ok(());
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                let future = match (&self.games, &response) {
+                    (Some(games), None) => Some(games.execute(DesktopGameBridgeRequest {
+                        request_id: work.receipt().request_id(),
+                        received_at: work.receipt().received_at(),
+                        operation,
+                    })),
+                    (Some(_), Some(_)) | (None, _) => None,
+                };
+                self.pending_games.push(DesktopCoordinatorGamePending {
+                    work,
+                    future,
+                    response,
+                });
+            }
             DesktopEnumCommand::Bootstrap => {
                 self.complete(&work, DesktopEnumValue::Bootstrap(self.snapshot.clone()))
                     .await?;
@@ -305,6 +384,9 @@ where
                     },
                 )
                 .await?;
+                if self.games.is_some() {
+                    self.publish_games(self.latest_games.clone()).await?;
+                }
             }
             DesktopEnumCommand::StreamAcknowledge {
                 subscription_id,
@@ -351,7 +433,10 @@ where
                 DesktopEnumCommand::Quit
             );
             if is_quit {
-                if self.pending_selection.is_some() || self.shutdown_failure.is_some() {
+                if self.pending_selection.is_some()
+                    || !self.pending_games.is_empty()
+                    || self.shutdown_failure.is_some()
+                {
                     index += 1;
                     continue;
                 }
@@ -393,6 +478,98 @@ where
             }
         }
         Ok(false)
+    }
+
+    async fn complete_games(&mut self) -> Result<(), DesktopCoordinatorError> {
+        let mut index = 0;
+        while index < self.pending_games.len() {
+            let Some(response) = self.pending_games[index].response.clone() else {
+                index += 1;
+                continue;
+            };
+            let work = &self.pending_games[index].work;
+            let result = if work.request().command().operation().is_control() {
+                Self::retry(|| {
+                    self.application
+                        .complete_game_control(work, response.clone())
+                })
+                .await
+            } else {
+                match response {
+                    Ok(snapshot) => {
+                        Self::retry(|| {
+                            self.application.complete_value(
+                                work,
+                                DesktopEnumValue::Game(Box::new(snapshot.clone())),
+                                Some(DesktopRevision::for_game(snapshot.revision())),
+                            )
+                        })
+                        .await
+                    }
+                    Err(failure) => {
+                        Self::retry(|| self.application.complete_failure(work, failure.clone()))
+                            .await
+                    }
+                }
+            };
+            match result {
+                Ok(()) => {
+                    self.pending_games.swap_remove(index);
+                }
+                Err(DesktopApplicationError::CancellationUnacknowledged) => index += 1,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
+    async fn game_ready(
+        pending: &mut [DesktopCoordinatorGamePending],
+    ) -> (usize, Result<DesktopGameSnapshot, DesktopFailure>) {
+        std::future::poll_fn(|context| {
+            for (index, pending) in pending.iter_mut().enumerate() {
+                if let Some(future) = &mut pending.future
+                    && let Poll::Ready(response) = future.as_mut().poll(context)
+                {
+                    pending.future = None;
+                    return Poll::Ready((index, response));
+                }
+            }
+            Poll::Pending
+        })
+        .await
+    }
+
+    async fn game_snapshots_ready(
+        receiver: &mut Option<watch::Receiver<Vec<DesktopGameSnapshot>>>,
+    ) -> Result<Vec<DesktopGameSnapshot>, DesktopCoordinatorError> {
+        match receiver {
+            Some(receiver) => {
+                receiver
+                    .changed()
+                    .await
+                    .map_err(|_closed| DesktopCoordinatorError::GamesClosed)?;
+                Ok(receiver.borrow_and_update().clone())
+            }
+            None => std::future::pending().await,
+        }
+    }
+
+    async fn publish_games(
+        &mut self,
+        snapshots: Vec<DesktopGameSnapshot>,
+    ) -> Result<(), DesktopCoordinatorError> {
+        self.latest_games = snapshots;
+        if let Some(stream) = &mut self.stream
+            && let Some(event) = stream.publish(
+                DesktopEnumEvent::Games(self.latest_games.clone()),
+                DesktopEnumStreamClass::Snapshot,
+                self.clock.now()?,
+            )?
+        {
+            Self::retry(|| self.application.publish_event(event.clone())).await?;
+        }
+        Ok(())
     }
 
     async fn selection_ready(
@@ -514,6 +691,9 @@ where
         let sequence = event.sequence();
         Self::retry(|| self.application.clear_events()).await?;
         Self::retry(|| self.application.publish_event(event.clone())).await?;
+        if self.games.is_some() {
+            self.publish_games(self.latest_games.clone()).await?;
+        }
         Ok(DesktopEnumValue::StreamResync {
             subscription_id: subscription,
             sequence,

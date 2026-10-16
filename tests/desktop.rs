@@ -36,7 +36,29 @@ mod desktop_file_handle;
 
 #[path = "desktop/application.rs"]
 mod desktop_application;
+#[path = "desktop/game_registry.rs"]
+mod desktop_game_registry;
+#[path = "desktop/game_registry_fixture.rs"]
+mod desktop_game_registry_fixture;
+#[path = "desktop/game_snapshot.rs"]
+mod desktop_game_snapshot;
+#[path = "desktop/game_supervisor.rs"]
+mod desktop_game_supervisor;
+#[path = "desktop/game_transition.rs"]
+mod desktop_game_transition;
+#[path = "desktop/graphics_lifecycle.rs"]
+mod desktop_graphics_lifecycle;
+#[path = "desktop/native/game_resources.rs"]
+mod desktop_native_game_resources;
+#[path = "desktop/native/game_runtime.rs"]
+mod desktop_native_game_runtime;
+#[path = "desktop/native/game_service.rs"]
+mod desktop_native_game_service;
 #[path = "desktop/request_cache.rs"]
 mod desktop_request_cache;
 #[path = "desktop/stream.rs"]
 mod desktop_stream;
+#[path = "game/config_persistence.rs"]
+mod game_config_persistence;
+#[path = "game/transition_fixture.rs"]
+mod game_transition_fixture;

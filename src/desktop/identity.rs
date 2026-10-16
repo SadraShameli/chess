@@ -14,6 +14,10 @@ impl DesktopRequestId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
+    pub(crate) const fn for_game(game: crate::game::enums::GameId) -> Self {
+        Self(game.as_uuid())
+    }
 }
 
 impl Default for DesktopRequestId {
@@ -53,6 +57,10 @@ pub struct DesktopRevision(u64);
 
 impl DesktopRevision {
     pub const ZERO: Self = Self(0);
+
+    pub const fn for_game(revision: crate::game::enums::GameRevision) -> Self {
+        Self(revision.value())
+    }
 
     pub const fn value(self) -> u64 {
         self.0

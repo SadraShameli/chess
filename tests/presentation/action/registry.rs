@@ -16,6 +16,13 @@ fn every_registered_action_builds_its_real_native_intent_without_duplicate_ident
         assert!(!action.label().is_empty());
         let command = action.command(owner);
         match action {
+            PresentationActionEnumId::Subscribe => {
+                assert!(matches!(
+                    command.operation(),
+                    DesktopEnumCommand::StreamSubscribe
+                ));
+                assert_eq!(command.expected_revision(), None);
+            }
             PresentationActionEnumId::Refresh => {
                 assert!(matches!(command.operation(), DesktopEnumCommand::Bootstrap));
                 assert_eq!(command.expected_revision(), None);

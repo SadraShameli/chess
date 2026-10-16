@@ -9,11 +9,12 @@ use std::thread::{Builder, JoinHandle as NativeJoinHandle};
 
 use rayon::{ThreadBuilder, ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 use thiserror::Error;
-use tokio::sync::{Semaphore, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{Instant, timeout_at};
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
+use crate::capacity::lease::CapacityLease;
 
 #[derive(Debug, Error)]
 pub enum CapacityExecutorError {
@@ -220,14 +221,46 @@ impl CapacityExecutor {
         if !self.accepting.load(Ordering::SeqCst) {
             return Err(CapacityExecutorError::Closed);
         }
-        let pool = self.pool.as_ref().ok_or(CapacityExecutorError::Closed)?;
         let lease = self.budget.try_lease(1)?;
         let slot = Arc::clone(&self.slots)
             .try_acquire_owned()
             .map_err(|_error| CapacityExecutorError::Closed)?;
+        self.spawn_job(operation, lease, slot)
+    }
+
+    pub async fn submit_waiting<F, R>(
+        &self,
+        operation: F,
+    ) -> Result<CapacityExecutorJob<R>, CapacityExecutorError>
+    where
+        F: FnOnce(&CapacityExecutorCancellation) -> R + Send + UnwindSafe + 'static,
+        R: Send + 'static,
+    {
         if !self.accepting.load(Ordering::SeqCst) {
             return Err(CapacityExecutorError::Closed);
         }
+        let slot = Arc::clone(&self.slots)
+            .acquire_owned()
+            .await
+            .map_err(|_error| CapacityExecutorError::Closed)?;
+        let lease = self.budget.lease(1).await?;
+        self.spawn_job(operation, lease, slot)
+    }
+
+    fn spawn_job<F, R>(
+        &self,
+        operation: F,
+        lease: CapacityLease,
+        slot: OwnedSemaphorePermit,
+    ) -> Result<CapacityExecutorJob<R>, CapacityExecutorError>
+    where
+        F: FnOnce(&CapacityExecutorCancellation) -> R + Send + UnwindSafe + 'static,
+        R: Send + 'static,
+    {
+        if !self.accepting.load(Ordering::SeqCst) {
+            return Err(CapacityExecutorError::Closed);
+        }
+        let pool = self.pool.as_ref().ok_or(CapacityExecutorError::Closed)?;
         let cancellation = CapacityExecutorCancellation {
             cancelled: Arc::new(AtomicBool::new(false)),
             accepting: Arc::clone(&self.accepting),

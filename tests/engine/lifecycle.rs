@@ -208,7 +208,19 @@ impl EngineProcess for EngineLifecycleProcess {
                 self.emit("uciok".to_owned()).await?;
             }
             "isready" => self.emit("readyok".to_owned()).await?,
-            _ => {}
+            command => {
+                let prefix = format!(
+                    "setoption name {} value ",
+                    EngineEnumOption::Chess960.name()
+                );
+                if let Some(value) = command.strip_prefix(&prefix) {
+                    self.emit(format!(
+                        "info string set {} to {value}",
+                        EngineEnumOption::Chess960.name()
+                    ))
+                    .await?;
+                }
+            }
         }
         Ok(())
     }

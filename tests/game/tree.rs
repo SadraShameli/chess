@@ -172,3 +172,74 @@ fn move_identifiers_reject_nil_and_noncanonical_external_strings()
     }
     Ok(())
 }
+
+#[test]
+fn replacing_with_an_existing_sibling_reuses_its_subtree_annotations_and_order()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut tree = GameTreeFixture::tree()?;
+    let root = tree.root();
+    let e4 = GameTreeFixture::append(&mut tree, root, 2, "e2e4")?;
+    let e5 = GameTreeFixture::append(&mut tree, e4, 3, "e7e5")?;
+    let d4 = GameTreeFixture::append(&mut tree, root, 4, "d2d4")?;
+    let d5 = GameTreeFixture::append(&mut tree, d4, 5, "d7d5")?;
+    let c4 = GameTreeFixture::append(&mut tree, root, 6, "c2c4")?;
+    let notes =
+        GameMoveNodeAnnotations::new("Keep the existing study".to_owned(), Vec::new(), Vec::new())?;
+    tree.set_annotations(d4, notes.clone())?;
+    let movement = tree.node(root)?.position().parse_uci("d2d4")?;
+    assert_eq!(
+        tree.replace_branch(e4, GameTreeFixture::id(7)?, movement)?,
+        d4
+    );
+    assert_eq!(tree.node(root)?.children(), &[d4, c4]);
+    assert_eq!(tree.node(d4)?.annotations(), &notes);
+    assert_eq!(tree.path_to(d5)?, vec![root, d4, d5]);
+    assert_eq!(tree.len(), 4);
+    for deleted in [e4, e5, GameTreeFixture::id(7)?] {
+        assert!(tree.node(deleted).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn replacing_a_branch_with_its_own_move_preserves_all_descendants()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut tree = GameTreeFixture::tree()?;
+    let root = tree.root();
+    let e4 = GameTreeFixture::append(&mut tree, root, 2, "e2e4")?;
+    let e5 = GameTreeFixture::append(&mut tree, e4, 3, "e7e5")?;
+    let notes = GameMoveNodeAnnotations::new(
+        "Keep the original branch".to_owned(),
+        Vec::new(),
+        Vec::new(),
+    )?;
+    tree.set_annotations(e4, notes.clone())?;
+    let movement = tree.node(root)?.position().parse_uci("e2e4")?;
+    assert_eq!(
+        tree.replace_branch(e4, GameTreeFixture::id(4)?, movement)?,
+        e4
+    );
+    assert_eq!(tree.len(), 3);
+    assert_eq!(tree.path_to(e5)?, vec![root, e4, e5]);
+    assert_eq!(tree.node(e4)?.annotations(), &notes);
+    assert!(tree.node(GameTreeFixture::id(4)?).is_err());
+    Ok(())
+}
+
+#[test]
+fn matching_sibling_does_not_allow_an_unrelated_replacement_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut tree = GameTreeFixture::tree()?;
+    let root = tree.root();
+    let e4 = GameTreeFixture::append(&mut tree, root, 2, "e2e4")?;
+    let e5 = GameTreeFixture::append(&mut tree, e4, 3, "e7e5")?;
+    let d4 = GameTreeFixture::append(&mut tree, root, 4, "d2d4")?;
+    let d5 = GameTreeFixture::append(&mut tree, d4, 5, "d7d5")?;
+    let movement = tree.node(root)?.position().parse_uci("d2d4")?;
+    assert!(tree.replace_branch(e4, d5, movement).is_err());
+    assert_eq!(tree.node(root)?.children(), &[e4, d4]);
+    assert_eq!(tree.path_to(e5)?, vec![root, e4, e5]);
+    assert_eq!(tree.path_to(d5)?, vec![root, d4, d5]);
+    assert_eq!(tree.len(), 5);
+    Ok(())
+}

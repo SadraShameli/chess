@@ -25,6 +25,8 @@ use crate::clock::time_control::{ClockTimeControl, ClockTimeControlError};
 use crate::game::adjudication::{
     GameAdjudicationEnumInterruption, GameAdjudicationEnumMateQuestion,
 };
+use crate::game::configuration::GameConfigurationOptions;
+use crate::game::engine_provider::{GameEngineRequestError, GameEngineSearchConfig};
 use crate::game::enums::{
     GameEnumMode, GameEnumOutcomeReason, GameEnumResult, GameEnumSeat, GameId, GameMoveId,
     GameRevision,
@@ -64,6 +66,8 @@ pub enum StorageGameDocumentError {
     TextTooLarge,
     #[error("The saved game identity does not match its database key")]
     Identity,
+    #[error("The saved game has no required per-game play options")]
+    MissingPlayOptions,
     #[error("Game serialization or recovery was cancelled")]
     Cancelled,
     #[error(transparent)]
@@ -76,6 +80,8 @@ pub enum StorageGameDocumentError {
     Executor(#[from] CapacityExecutorError),
     #[error(transparent)]
     Session(#[from] GameSessionError),
+    #[error(transparent)]
+    EngineRequest(#[from] GameEngineRequestError),
     #[error(transparent)]
     Clock(#[from] ClockStateError),
     #[error(transparent)]
@@ -123,7 +129,8 @@ pub struct StorageGameDocument {
 }
 
 impl StorageGameDocument {
-    pub const SCHEMA_VERSION: u32 = 1;
+    pub const SCHEMA_VERSION: u32 = 2;
+    const LEGACY_SCHEMA_VERSION: u32 = 1;
     pub const MAX_MOVES: usize = 100_000;
     const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -190,13 +197,15 @@ impl StorageGameDocument {
                 supported: Self::SCHEMA_VERSION,
             });
         }
-        if envelope.schema_version != Self::SCHEMA_VERSION {
+        if envelope.schema_version != Self::SCHEMA_VERSION
+            && envelope.schema_version != Self::LEGACY_SCHEMA_VERSION
+        {
             return Err(StorageGameDocumentError::UnsupportedSchema(
                 envelope.schema_version,
             ));
         }
         let record: StorageGameDocumentRecord = serde_json::from_str(envelope.game.get())?;
-        record.restore(cancellation)
+        record.restore(envelope.schema_version, cancellation)
     }
 }
 
@@ -279,6 +288,7 @@ enum StorageGameDocumentEnumPauseCause {
     TabClosed,
     ApplicationQuit,
     UpdateInstall,
+    AutosaveFailure,
     Fault(#[serde(with = "StorageGameDocumentEnumFault")] GamePauseEnumFault),
 }
 
@@ -798,6 +808,36 @@ impl StorageGameDocumentEnumState {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct StorageGameDocumentPlayOptions {
+    untimed_move_time_nanos: u64,
+    move_overhead_nanos: u64,
+    is_auto_flip_enabled: bool,
+}
+
+impl StorageGameDocumentPlayOptions {
+    fn capture(engine_search: GameEngineSearchConfig, is_auto_flip_enabled: bool) -> Self {
+        Self {
+            untimed_move_time_nanos: engine_search.untimed_move_time().as_nanos(),
+            move_overhead_nanos: engine_search.move_overhead().as_nanos(),
+            is_auto_flip_enabled,
+        }
+    }
+
+    fn initial_default() -> Self {
+        let options = GameConfigurationOptions::initial_default();
+        Self::capture(options.engine_search(), options.is_auto_flip_enabled())
+    }
+
+    fn engine_search_config(&self) -> Result<GameEngineSearchConfig, GameEngineRequestError> {
+        GameEngineSearchConfig::new(
+            ClockDuration::from_nanos(self.untimed_move_time_nanos),
+            ClockDuration::from_nanos(self.move_overhead_nanos),
+        )
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StorageGameDocumentRecord {
     id: GameId,
     revision: GameRevision,
@@ -819,6 +859,8 @@ struct StorageGameDocumentRecord {
     #[serde(with = "StorageGameDocumentEnumConsent")]
     takeback_consent: GameTakebackEnumConsent,
     premoves_enabled: bool,
+    #[serde(default)]
+    play_options: Option<StorageGameDocumentPlayOptions>,
 }
 
 impl StorageGameDocumentRecord {
@@ -881,13 +923,26 @@ impl StorageGameDocumentRecord {
             metadata: StorageGameDocumentMetadata::capture(&snapshot.session.metadata)?,
             takeback_consent: snapshot.takeback_consent,
             premoves_enabled: snapshot.premoves_enabled,
+            play_options: Some(StorageGameDocumentPlayOptions::capture(
+                snapshot.engine_search_config,
+                snapshot.is_auto_flip_enabled,
+            )),
         })
     }
 
     fn restore(
         self,
+        schema_version: u32,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<GameSession, StorageGameDocumentError> {
+        let play_options = match self.play_options {
+            Some(options) => options,
+            None if schema_version == StorageGameDocument::LEGACY_SCHEMA_VERSION => {
+                StorageGameDocumentPlayOptions::initial_default()
+            }
+            None => return Err(StorageGameDocumentError::MissingPlayOptions),
+        };
+        let engine_search_config = play_options.engine_search_config()?;
         let control = if self.time_control.is_empty() {
             ClockTimeControl::untimed()
         } else {
@@ -950,6 +1005,8 @@ impl StorageGameDocumentRecord {
             state: self.state.restore()?,
             takeback_consent: self.takeback_consent,
             premoves_enabled: self.premoves_enabled,
+            engine_search_config,
+            is_auto_flip_enabled: play_options.is_auto_flip_enabled,
         };
         StorageGameDocumentError::check_cancellation(cancellation)?;
         Ok(GameSession::restore(snapshot)?)
@@ -979,10 +1036,11 @@ impl GameStorageRepository for StorageGameDocumentRepository<'_> {
         let expected_storage_revision = request.expected_storage_revision();
         let json = self
             .executor
-            .submit(move |cancellation| {
+            .submit_waiting(move |cancellation| {
                 StorageGameDocument::from_snapshot(request.into_snapshot(), Some(cancellation))?
                     .encode(Some(cancellation))
-            })?
+            })
+            .await?
             .join()
             .await??;
         let saved = self
@@ -1003,9 +1061,10 @@ impl GameStorageRepository for StorageGameDocumentRepository<'_> {
         let storage_revision = GameStorageRevision::new(document.revision());
         let session = self
             .executor
-            .submit(move |cancellation| {
+            .submit_waiting(move |cancellation| {
                 StorageGameDocument::recover(document.body(), Some(cancellation))
-            })?
+            })
+            .await?
             .join()
             .await??;
         if session.id() != game {
