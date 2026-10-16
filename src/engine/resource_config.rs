@@ -17,7 +17,7 @@ pub enum EngineResourceConfigError {
         minimum: u32,
         maximum: u32,
     },
-    #[error("Engine option {0:?} is not a numeric resource option")]
+    #[error("Engine option {0:?} is not a numeric option")]
     NonNumericOption(EngineEnumOption),
     #[error("The engine did not advertise resource option {0:?}")]
     MissingOption(EngineEnumOption),
@@ -51,15 +51,7 @@ impl EngineResourceConfig {
             u64::from(hash_mib),
             EngineEnumOption::Hash.typed_descriptor(),
         )?;
-        let millis = move_overhead.as_millis();
-        Self::number(
-            EngineEnumOption::MoveOverhead,
-            millis,
-            EngineEnumOption::MoveOverhead.typed_descriptor(),
-        )?;
-        if ClockDuration::from_millis(millis)? != move_overhead {
-            return Err(EngineResourceConfigError::FractionalMoveOverhead);
-        }
+        Self::validate_move_overhead(move_overhead)?;
         Ok(Self {
             threads,
             hash_mib,
@@ -77,6 +69,21 @@ impl EngineResourceConfig {
 
     pub const fn move_overhead(self) -> ClockDuration {
         self.move_overhead
+    }
+
+    pub(crate) fn validate_move_overhead(
+        move_overhead: ClockDuration,
+    ) -> Result<(), EngineResourceConfigError> {
+        let millis = move_overhead.as_millis();
+        Self::number(
+            EngineEnumOption::MoveOverhead,
+            millis,
+            EngineEnumOption::MoveOverhead.typed_descriptor(),
+        )?;
+        if ClockDuration::from_millis(millis)? != move_overhead {
+            return Err(EngineResourceConfigError::FractionalMoveOverhead);
+        }
+        Ok(())
     }
 
     pub(crate) fn validate(
@@ -103,7 +110,7 @@ impl EngineResourceConfig {
         ]
     }
 
-    fn number(
+    pub(crate) fn number(
         option: EngineEnumOption,
         value: u64,
         descriptor: EngineOptionEnumDescriptor,

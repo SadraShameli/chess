@@ -7,6 +7,8 @@ use crate::engine::package::manifest::EnginePackageManifest;
 
 #[derive(Debug, Error)]
 pub enum EngineCapabilitiesError {
+    #[error("Engine option registry version {0} is unsupported")]
+    UnsupportedVersion(u32),
     #[error("The engine identity does not match the packaged Reckless version")]
     IdentityMismatch,
     #[error("The engine advertised a malformed, duplicate, or incompatible option")]
@@ -17,12 +19,37 @@ pub enum EngineCapabilitiesError {
     MissingOptions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineCapabilitiesVersion(u32);
+
+impl EngineCapabilitiesVersion {
+    pub const CURRENT: Self = Self(1);
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for EngineCapabilitiesVersion {
+    type Error = EngineCapabilitiesError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value != Self::CURRENT.get() {
+            return Err(EngineCapabilitiesError::UnsupportedVersion(value));
+        }
+        Ok(Self(value))
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct EngineCapabilities {
     options: BTreeMap<EngineEnumOption, EngineOptionEnumDescriptor>,
 }
 
 impl EngineCapabilities {
+    pub const fn version(&self) -> EngineCapabilitiesVersion {
+        EngineCapabilitiesVersion::CURRENT
+    }
     pub fn discover(&mut self, line: &str) -> Result<(), EngineCapabilitiesError> {
         let (name, descriptor) = line
             .strip_prefix("option name ")

@@ -1,3 +1,4 @@
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,7 +11,10 @@ use crate::board::r#move::BoardMoveError;
 use crate::engine::analysis::{EngineAnalysis, EngineAnalysisError};
 use crate::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError, EngineIdentity};
 use crate::engine::diagnostics::EngineDiagnostics;
-use crate::engine::enums::EngineEnumOption;
+use crate::engine::options::{
+    EngineOptionsApplied, EngineOptionsEnumAcknowledgment, EngineOptionsEnumOutcome,
+    EngineOptionsEnumTablebases, EngineOptionsEnumValue, EngineOptionsError, EngineOptionsSetting,
+};
 use crate::engine::package::selector::EnginePackageSelected;
 use crate::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
@@ -28,6 +32,8 @@ use crate::engine::search::stop::EngineSearchStop;
 
 #[derive(Debug, Error)]
 pub enum EngineSessionError {
+    #[error(transparent)]
+    Options(#[from] EngineOptionsError),
     #[error(transparent)]
     Analysis(#[from] EngineAnalysisError),
     #[error(transparent)]
@@ -180,6 +186,7 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             .ok_or(EngineSessionError::StartupUnavailable)?
             .process;
         let identity = EngineSession::<P>::handshake(process, &mut self.diagnostics).await?;
+        let applied = EngineOptionsApplied::new(identity.capabilities())?;
         let resources = self
             .resources
             .take()
@@ -190,8 +197,7 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             identity,
             package: resources.package,
             generation: EngineSearchGeneration::fresh(),
-            variant: BoardEnumVariant::Standard,
-            resources: None,
+            applied,
             lifecycle: EngineSessionEnumLifecycle::Idle,
             shutdown: EngineSessionEnumShutdown::Running,
             shutdown_failure: None,
@@ -249,8 +255,7 @@ pub struct EngineSession<P: EngineProcess> {
     identity: EngineIdentity,
     package: EnginePackageSelected,
     generation: EngineSearchGeneration,
-    variant: BoardEnumVariant,
-    resources: Option<EngineResourceConfig>,
+    applied: EngineOptionsApplied,
     lifecycle: EngineSessionEnumLifecycle,
     shutdown: EngineSessionEnumShutdown,
     shutdown_failure: Option<Arc<EngineSessionError>>,
@@ -308,7 +313,41 @@ impl<P: EngineProcess> EngineSession<P> {
     }
 
     pub fn resources(&self) -> Option<EngineResourceConfig> {
-        self.resources
+        self.applied.resources()
+    }
+
+    pub fn applied_options(&self) -> Option<&EngineOptionsApplied> {
+        matches!(
+            self.state(),
+            EngineSearchEnumState::Idle
+                | EngineSearchEnumState::Searching
+                | EngineSearchEnumState::Stopping
+        )
+        .then_some(&self.applied)
+    }
+
+    pub async fn configure_option(
+        &mut self,
+        setting: EngineOptionsSetting,
+    ) -> Result<EngineOptionsEnumOutcome, EngineSessionError> {
+        self.require_idle()?;
+        setting.validate(self.identity.capabilities())?;
+        let resources = setting.updated_resources(self.applied.resources())?;
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        if setting.value().is_resource() {
+            self.applied.set_resources(None);
+        }
+        let result = timeout(Self::HANDSHAKE, async {
+            let outcome = self.send_option(&setting).await?;
+            self.ready_session().await?;
+            Ok(outcome)
+        })
+        .await
+        .map_err(|_elapsed| EngineSessionError::Timeout("option configuration"))
+        .and_then(|result| result);
+        let outcome = self.finish_preparation(result).await?;
+        self.applied.apply(&setting, &outcome, resources)?;
+        Ok(outcome)
     }
 
     pub fn state(&self) -> EngineSearchEnumState {
@@ -333,10 +372,14 @@ impl<P: EngineProcess> EngineSession<P> {
 
     pub async fn new_game(&mut self, variant: BoardEnumVariant) -> Result<(), EngineSessionError> {
         self.require_idle()?;
+        let setting = EngineOptionsSetting::new(
+            EngineOptionsEnumValue::Chess960(variant),
+            self.identity.capabilities(),
+        )?;
         self.lifecycle = EngineSessionEnumLifecycle::Preparing;
         let result = timeout(Self::HANDSHAKE, async {
             self.process_mut()?.send("ucinewgame").await?;
-            self.configure_variant(variant).await
+            self.configure_variant(&setting).await
         })
         .await
         .map_err(|_elapsed| EngineSessionError::Timeout("new game"))
@@ -350,15 +393,15 @@ impl<P: EngineProcess> EngineSession<P> {
     ) -> Result<(), EngineSessionError> {
         self.require_idle()?;
         config.validate(self.identity.capabilities())?;
+        let [threads, hash, overhead] = config.settings().map(|(option, value)| {
+            EngineOptionsSetting::resource(option, value, self.identity.capabilities())
+        });
+        let settings = [threads?, hash?, overhead?];
         self.lifecycle = EngineSessionEnumLifecycle::Preparing;
-        self.resources = None;
+        self.applied.set_resources(None);
         let result = timeout(Self::HANDSHAKE, async {
-            for (option, value) in config.settings() {
-                self.set_acknowledged_option(
-                    &option.set_value_command(value),
-                    &option.acknowledgment(value),
-                )
-                .await?;
+            for setting in &settings {
+                self.send_option(setting).await?;
             }
             self.ready_session().await
         })
@@ -366,7 +409,7 @@ impl<P: EngineProcess> EngineSession<P> {
         .map_err(|_elapsed| EngineSessionError::Timeout("resource configuration"))
         .and_then(|result| result);
         self.finish_preparation(result).await?;
-        self.resources = Some(config);
+        self.applied.set_resources(Some(config));
         Ok(())
     }
 
@@ -380,10 +423,18 @@ impl<P: EngineProcess> EngineSession<P> {
         if position.current().legal_moves().is_empty() {
             return Err(EngineSessionError::TerminalPosition);
         }
+        let variant = if self.applied.variant() != position.current().variant() {
+            Some(EngineOptionsSetting::new(
+                EngineOptionsEnumValue::Chess960(position.current().variant()),
+                self.identity.capabilities(),
+            )?)
+        } else {
+            None
+        };
         self.lifecycle = EngineSessionEnumLifecycle::Preparing;
         let result = timeout(Self::HANDSHAKE, async {
-            if self.variant != position.current().variant() {
-                self.configure_variant(position.current().variant()).await?;
+            if let Some(setting) = &variant {
+                self.configure_variant(setting).await?;
             }
             self.process_mut()?.send(position.command()).await?;
             self.process_mut()?.send(&limit.command()).await?;
@@ -641,49 +692,78 @@ impl<P: EngineProcess> EngineSession<P> {
 
     async fn configure_variant(
         &mut self,
-        variant: BoardEnumVariant,
+        setting: &EngineOptionsSetting,
     ) -> Result<(), EngineSessionError> {
-        let value = match variant {
-            BoardEnumVariant::Standard => "false",
-            BoardEnumVariant::Chess960 => "true",
-        };
-        let option = EngineEnumOption::Chess960;
-        self.set_acknowledged_option(
-            &option.set_value_command(value),
-            &option.acknowledgment(value),
-        )
-        .await?;
+        let outcome = self.send_option(setting).await?;
         self.ready_session().await?;
-        self.variant = variant;
+        self.applied
+            .apply(setting, &outcome, self.applied.resources())?;
         Ok(())
     }
 
-    async fn set_acknowledged_option(
+    async fn send_option(
         &mut self,
-        command: &str,
-        acknowledgment: &str,
-    ) -> Result<(), EngineSessionError> {
-        self.process_mut()?.send(command).await?;
-        loop {
-            let line = self.receive_line().await?;
-            if line.pipe() == EngineProcessEnumPipe::Stderr {
-                continue;
+        setting: &EngineOptionsSetting,
+    ) -> Result<EngineOptionsEnumOutcome, EngineSessionError> {
+        let acknowledgment = setting.acknowledgment()?;
+        self.process_mut()?.send(&setting.command()).await?;
+        match acknowledgment {
+            EngineOptionsEnumAcknowledgment::Readiness => {
+                Ok(EngineOptionsEnumOutcome::Applied(setting.option()))
             }
-            if line.text() != acknowledgment {
-                return Err(EngineSessionError::UnexpectedResponse);
+            EngineOptionsEnumAcknowledgment::Exact(expected) => loop {
+                let line = self.receive_line().await?;
+                if line.pipe() == EngineProcessEnumPipe::Stderr {
+                    continue;
+                }
+                if line.text() != expected {
+                    return Err(EngineSessionError::UnexpectedResponse);
+                }
+                return Ok(EngineOptionsEnumOutcome::Applied(setting.option()));
+            },
+            EngineOptionsEnumAcknowledgment::Tablebases => {
+                let EngineOptionsEnumValue::SyzygyPath(path) = setting.value() else {
+                    return Err(EngineSessionError::UnexpectedResponse);
+                };
+                loop {
+                    let line = self.receive_line().await?;
+                    match line.pipe() {
+                        EngineProcessEnumPipe::Stderr => {
+                            if line.text() == "Failed to load Syzygy tablebases" {
+                                return Ok(EngineOptionsEnumOutcome::Tablebases(
+                                    EngineOptionsEnumTablebases::Unavailable { path: path.clone() },
+                                ));
+                            }
+                        }
+                        EngineProcessEnumPipe::Stdout => {
+                            let pieces = line
+                                .text()
+                                .strip_prefix("info string Loaded Syzygy tablebases with ")
+                                .and_then(|value| value.strip_suffix(" pieces"))
+                                .and_then(|value| value.parse::<u32>().ok())
+                                .and_then(NonZeroU32::new)
+                                .ok_or(EngineSessionError::UnexpectedResponse)?;
+                            return Ok(EngineOptionsEnumOutcome::Tablebases(
+                                EngineOptionsEnumTablebases::Loaded {
+                                    path: path.clone(),
+                                    pieces,
+                                },
+                            ));
+                        }
+                    }
+                }
             }
-            return Ok(());
         }
     }
 
-    async fn finish_preparation(
+    async fn finish_preparation<T>(
         &mut self,
-        result: Result<(), EngineSessionError>,
-    ) -> Result<(), EngineSessionError> {
+        result: Result<T, EngineSessionError>,
+    ) -> Result<T, EngineSessionError> {
         match result {
-            Ok(()) => {
+            Ok(value) => {
                 self.lifecycle = EngineSessionEnumLifecycle::Idle;
-                Ok(())
+                Ok(value)
             }
             Err(error) => Err(self
                 .fail(error, Instant::now() + EngineProcessLimits::SHUTDOWN)

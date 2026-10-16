@@ -1,6 +1,9 @@
 use std::future::Future;
 use std::num::NonZeroU32;
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -35,6 +38,7 @@ pub(super) struct EngineLifecycleProvider {
     sent: mpsc::Sender<String>,
     stall_stop_write: bool,
     threads_maximum: Option<u32>,
+    acknowledge_ready: Arc<AtomicBool>,
 }
 
 impl EngineLifecycleProvider {
@@ -48,6 +52,7 @@ impl EngineLifecycleProvider {
             sent,
             stall_stop_write: false,
             threads_maximum: None,
+            acknowledge_ready: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -55,12 +60,21 @@ impl EngineLifecycleProvider {
         self.threads_maximum = Some(maximum);
     }
 
+    pub(super) fn set_readiness(&self, ready: bool) {
+        self.acknowledge_ready.store(ready, Ordering::SeqCst);
+    }
+
     pub(super) async fn emit(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.emit_pipe(EngineProcessEnumPipe::Stdout, text).await
+    }
+
+    pub(super) async fn emit_pipe(
+        &self,
+        pipe: EngineProcessEnumPipe,
+        text: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.input
-            .send(EngineProcessLine::new(
-                EngineProcessEnumPipe::Stdout,
-                text.to_owned(),
-            )?)
+            .send(EngineProcessLine::new(pipe, text.to_owned())?)
             .await?;
         Ok(())
     }
@@ -167,6 +181,7 @@ impl EngineProcessProvider for EngineLifecycleProvider {
             sent: self.sent.clone(),
             stall_stop_write: self.stall_stop_write,
             threads_maximum: self.threads_maximum,
+            acknowledge_ready: Arc::clone(&self.acknowledge_ready),
             shutdown_complete: false,
         })
     }
@@ -178,6 +193,7 @@ pub(super) struct EngineLifecycleProcess {
     sent: mpsc::Sender<String>,
     stall_stop_write: bool,
     threads_maximum: Option<u32>,
+    acknowledge_ready: Arc<AtomicBool>,
     shutdown_complete: bool,
 }
 
@@ -218,7 +234,11 @@ impl EngineProcess for EngineLifecycleProcess {
                 }
                 self.emit("uciok".to_owned()).await?;
             }
-            "isready" => self.emit("readyok".to_owned()).await?,
+            "isready" => {
+                if self.acknowledge_ready.load(Ordering::SeqCst) {
+                    self.emit("readyok".to_owned()).await?;
+                }
+            }
             command => {
                 let prefix = format!(
                     "setoption name {} value ",

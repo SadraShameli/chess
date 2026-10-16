@@ -3,6 +3,7 @@ pub mod capabilities;
 pub mod diagnostics;
 pub mod enums;
 pub mod live_game;
+pub mod options;
 pub mod package;
 pub mod process_provider;
 pub mod resource_config;

@@ -89,20 +89,6 @@ impl EngineEnumOption {
     pub(crate) fn set_value_command(self, value: impl Display) -> String {
         format!("setoption name {} value {value}", self.name())
     }
-
-    pub(crate) fn acknowledgment(self, value: impl Display) -> String {
-        let suffix = match self {
-            Self::Hash => " MB",
-            Self::MoveOverhead => " ms",
-            Self::Threads
-            | Self::Minimal
-            | Self::ClearHash
-            | Self::Chess960
-            | Self::MultiPv
-            | Self::SyzygyPath => "",
-        };
-        format!("info string set {} to {value}{suffix}", self.name())
-    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EngineOptionSpinDescriptor {

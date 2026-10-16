@@ -7,6 +7,9 @@ mod native_host_lifecycle;
 #[path = "native/engine_live_game.rs"]
 mod native_engine_live_game;
 
+#[path = "native/engine_options.rs"]
+mod native_engine_options;
+
 #[path = "native/game_composition.rs"]
 mod native_game_composition;
 
@@ -23,6 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         [operation] if operation == "--game-composition" => {
             native_game_composition::NativeGameCompositionHarness::run()?;
         }
+        [operation, directory] if operation == "--engine-options" => {
+            native_engine_options::NativeEngineOptionsHarness::run(std::path::Path::new(
+                directory,
+            ))?;
+        }
         [operation, directory] if operation == "--engine-live-game" => {
             native_engine_live_game::NativeEngineLiveGameHarness::run(std::path::Path::new(
                 directory,
@@ -36,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "Usage: native [--host-lifecycle | --game-composition | --engine-live-game ENGINE_DIRECTORY | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
+                "Usage: native [--host-lifecycle | --game-composition | --engine-live-game ENGINE_DIRECTORY | --engine-options ENGINE_DIRECTORY | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
                     .into(),
             );
         }
