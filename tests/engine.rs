@@ -1,5 +1,7 @@
 #[path = "engine/lifecycle.rs"]
 mod engine_lifecycle;
+#[path = "engine/live_game.rs"]
+mod engine_live_game;
 #[path = "engine/package_manifest.rs"]
 mod engine_package_manifest;
 #[path = "engine/package_selection.rs"]

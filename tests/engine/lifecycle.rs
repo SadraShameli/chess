@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::engine_package_selection::EnginePackageFixture;
 
-struct EngineLifecycleProvider {
+pub(super) struct EngineLifecycleProvider {
     input: mpsc::Sender<EngineProcessLine>,
     output: Mutex<Option<mpsc::Receiver<EngineProcessLine>>>,
     commands: mpsc::Receiver<String>,
@@ -37,7 +37,7 @@ struct EngineLifecycleProvider {
 }
 
 impl EngineLifecycleProvider {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let (input, output) = mpsc::channel(64);
         let (sent, commands) = mpsc::channel(64);
         Self {
@@ -49,7 +49,7 @@ impl EngineLifecycleProvider {
         }
     }
 
-    async fn emit(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(super) async fn emit(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         self.input
             .send(EngineProcessLine::new(
                 EngineProcessEnumPipe::Stdout,
@@ -59,7 +59,7 @@ impl EngineLifecycleProvider {
         Ok(())
     }
 
-    async fn expect(&mut self, command: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(super) async fn expect(&mut self, command: &str) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             self.commands.recv().await.ok_or("missing command")?,
             command
@@ -67,14 +67,14 @@ impl EngineLifecycleProvider {
         Ok(())
     }
 
-    fn assert_no_command(&mut self) {
+    pub(super) fn assert_no_command(&mut self) {
         assert!(matches!(
             self.commands.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
         ));
     }
 
-    async fn start(
+    pub(super) async fn start(
         &mut self,
         fixture: &EnginePackageFixture,
     ) -> Result<EngineSession<EngineLifecycleProcess>, Box<dyn std::error::Error>> {
@@ -165,7 +165,7 @@ impl EngineProcessProvider for EngineLifecycleProvider {
     }
 }
 
-struct EngineLifecycleProcess {
+pub(super) struct EngineLifecycleProcess {
     input: mpsc::Sender<EngineProcessLine>,
     output: mpsc::Receiver<EngineProcessLine>,
     sent: mpsc::Sender<String>,
@@ -174,7 +174,7 @@ struct EngineLifecycleProcess {
 }
 
 impl EngineLifecycleProcess {
-    async fn emit(&self, text: String) -> Result<(), EngineProcessError> {
+    pub(super) async fn emit(&self, text: String) -> Result<(), EngineProcessError> {
         self.input
             .send(EngineProcessLine::new(EngineProcessEnumPipe::Stdout, text)?)
             .await

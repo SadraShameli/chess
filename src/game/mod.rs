@@ -1,5 +1,6 @@
 pub mod adjudication;
 pub mod draw_claim;
+pub mod engine_provider;
 pub mod enums;
 pub mod move_node;
 pub mod outcome;

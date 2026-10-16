@@ -4,6 +4,9 @@ mod native_compatibility;
 #[path = "native/host_lifecycle.rs"]
 mod native_host_lifecycle;
 
+#[path = "native/engine_live_game.rs"]
+mod native_engine_live_game;
+
 #[path = "scene/task_pools.rs"]
 mod scene_task_pools;
 
@@ -14,6 +17,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         [operation] if operation == "--host-lifecycle" => {
             native_host_lifecycle::NativeHostLifecycleHarness::run()?;
         }
+        [operation, directory] if operation == "--engine-live-game" => {
+            native_engine_live_game::NativeEngineLiveGameHarness::run(std::path::Path::new(
+                directory,
+            ))?;
+        }
         [operation, candidate, output] if operation == "--compare-assets" => {
             native_compatibility::NativeCompatibilityHarness::compare_assets(
                 std::path::Path::new(candidate),
@@ -22,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "Usage: native [--host-lifecycle | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
+                "Usage: native [--host-lifecycle | --engine-live-game ENGINE_DIRECTORY | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
                     .into(),
             );
         }
