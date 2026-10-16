@@ -177,12 +177,14 @@ impl DesktopNativeBootstrapGameFixture {
     fn game(
         response: DesktopMessagesEnumResult,
     ) -> DesktopNativeBootstrapGameTestResult<DesktopGameSnapshot> {
-        match response {
-            DesktopMessagesEnumResult::Value {
-                value: DesktopEnumValue::Game(snapshot),
-                ..
-            } => Ok(*snapshot),
-            response => Err(format!("unexpected native game response: {response:?}").into()),
+        if let DesktopMessagesEnumResult::Value {
+            value: DesktopEnumValue::Game(snapshot),
+            ..
+        } = response
+        {
+            Ok(*snapshot)
+        } else {
+            Err(format!("unexpected native game response: {response:?}").into())
         }
     }
 }

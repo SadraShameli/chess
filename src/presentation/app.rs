@@ -4,6 +4,7 @@ use bevy_egui::egui::{self, Id, Ui};
 use thiserror::Error;
 
 use crate::board::enums::BoardEnumColor;
+use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::state::ClockStateError;
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::application::{
@@ -17,7 +18,7 @@ use crate::desktop::dto::{
 use crate::desktop::error::{DesktopEnumFailureCode, DesktopError, DesktopFailure};
 use crate::desktop::game_bridge::DesktopGameBridgeEnumOperation;
 use crate::desktop::game_commands::DesktopGameCommandsEnumAction;
-use crate::desktop::game_snapshot::DesktopGameSnapshot;
+use crate::desktop::game_snapshot::{DesktopGameSnapshot, DesktopGameSnapshotEnumNotice};
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::{
     DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
@@ -49,6 +50,8 @@ use crate::scene::picking::ScenePickingViewport;
 
 #[derive(Debug, Error)]
 pub enum PresentationAppError {
+    #[error(transparent)]
+    Time(#[from] ClockDurationError),
     #[error(transparent)]
     Application(#[from] DesktopApplicationError),
     #[error("Action {identity:?} was not admitted: {source}")]
@@ -87,6 +90,32 @@ struct PresentationAppGame {
     snapshot: DesktopGameSnapshot,
     controller: PresentationGameController,
     play: PresentationGamePlay,
+    last_notice: Option<DesktopGameSnapshotEnumNotice>,
+}
+
+struct PresentationAppGameNotice {
+    notice: DesktopGameSnapshotEnumNotice,
+    visible_since: Option<ClockInstant>,
+}
+
+impl PresentationAppGameNotice {
+    const DURATION: ClockDuration = ClockDuration::from_nanos(3_000_000_000);
+
+    fn new(notice: DesktopGameSnapshotEnumNotice) -> Self {
+        Self {
+            notice,
+            visible_since: None,
+        }
+    }
+
+    fn remaining(&mut self, now: ClockInstant) -> Result<ClockDuration, ClockDurationError> {
+        let elapsed = now.elapsed_since(*self.visible_since.get_or_insert(now))?;
+        if elapsed >= Self::DURATION {
+            Ok(ClockDuration::ZERO)
+        } else {
+            Self::DURATION.checked_sub(elapsed)
+        }
+    }
 }
 
 struct PresentationAppGameRetained {
@@ -174,6 +203,7 @@ pub struct PresentationApp {
     pending: Vec<PresentationAppPending>,
     status: String,
     failure: Option<String>,
+    game_notice: Option<PresentationAppGameNotice>,
     quit_confirmation: bool,
     quit_focus_pending: bool,
     confirmed_quit_pending: bool,
@@ -215,6 +245,7 @@ impl PresentationApp {
             pending: Vec::new(),
             status: "Loading local application state".to_owned(),
             failure: None,
+            game_notice: None,
             quit_confirmation: false,
             quit_focus_pending: false,
             confirmed_quit_pending: false,
@@ -237,7 +268,9 @@ impl PresentationApp {
     }
 
     pub fn status(&self) -> &str {
-        &self.status
+        self.game_notice
+            .as_ref()
+            .map_or(&self.status, |notice| notice.notice.message())
     }
 
     pub fn failure(&self) -> Option<&str> {
@@ -282,22 +315,37 @@ impl PresentationApp {
 
     pub fn accept_game_snapshot(&mut self, snapshot: DesktopGameSnapshot) -> bool {
         let id = snapshot.id();
+        let notice = snapshot.notice();
         if let Some(game) = self.games.iter_mut().find(|game| game.snapshot.id() == id) {
+            let has_new_notice = notice.is_some_and(|notice| {
+                game.last_notice
+                    .is_none_or(|last| notice.revision() > last.revision())
+            });
             if snapshot.revision() < game.snapshot.revision()
                 || (snapshot.revision() == game.snapshot.revision()
-                    && snapshot.captured_at() <= game.snapshot.captured_at())
+                    && (snapshot.captured_at() < game.snapshot.captured_at()
+                        || snapshot.captured_at() == game.snapshot.captured_at()
+                            && !has_new_notice))
             {
                 return false;
             }
             if game.controller.synchronize(&snapshot) && self.selected_game == Some(id) {
                 self.board.cancel_gesture();
             }
+            if let Some(notice) = notice.filter(|_| has_new_notice) {
+                self.game_notice = Some(PresentationAppGameNotice::new(notice));
+                game.last_notice = Some(notice);
+            }
             game.snapshot = snapshot;
         } else {
+            if let Some(notice) = notice {
+                self.game_notice = Some(PresentationAppGameNotice::new(notice));
+            }
             self.games.push(PresentationAppGame {
                 snapshot,
                 controller: PresentationGameController::new(),
                 play: PresentationGamePlay::new(),
+                last_notice: notice,
             });
             if self.selected_game.is_none() {
                 self.selected_game = Some(id);
@@ -895,6 +943,16 @@ impl PresentationApp {
             self.failure = Some(error.to_string());
         }
         let now = port.now()?;
+        if self.failure.is_none()
+            && let Some(notice) = &mut self.game_notice
+        {
+            let remaining = notice.remaining(now)?;
+            if remaining == ClockDuration::ZERO {
+                self.game_notice = None;
+            } else {
+                ui.ctx().request_repaint_after(remaining.as_duration());
+            }
+        }
         let frame = ui.ctx().cumulative_frame_nr();
         let mut configuration = None;
         let mut game_intent = None;
@@ -1064,7 +1122,7 @@ impl PresentationApp {
                 .pending
                 .iter()
                 .any(|pending| pending.action == PresentationActionEnumId::ConfirmQuit);
-        let status = self.failure.as_deref().unwrap_or(&self.status);
+        let status = self.failure.as_deref().unwrap_or_else(|| self.status());
         let has_refused_game = self
             .game_retained
             .values()

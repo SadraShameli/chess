@@ -12,13 +12,18 @@ use thiserror::Error;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::{Instant, timeout_at};
 
-use crate::board::r#move::BoardMoveError;
+#[cfg(test)]
+#[path = "../../tests/desktop/game_save_cancellation.rs"]
+mod cancellation_tests;
+
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use crate::capacity::phase::CapacityPhaseGeneration;
 use crate::clock::duration::{ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::game_commands::{DesktopGameCommandsEnumAction, DesktopGameCommandsRequest};
-use crate::desktop::game_snapshot::{DesktopGameSnapshot, DesktopGameSnapshotError};
+use crate::desktop::game_snapshot::{
+    DesktopGameSnapshot, DesktopGameSnapshotEnumNotice, DesktopGameSnapshotError,
+};
 use crate::desktop::game_transition::{
     DesktopGameTransition, DesktopGameTransitionEnumEffect, DesktopGameTransitionError,
     DesktopGameTransitionOptions,
@@ -65,8 +70,6 @@ pub enum DesktopGameSupervisorError {
     SaveRequired,
     #[error("The game engine is unavailable until explicit Retry")]
     EngineUnavailable,
-    #[error("The queued premove is no longer legal: {0}")]
-    Premove(#[source] BoardMoveError),
     #[error("The game engine operation failed: {source}")]
     Engine {
         #[source]
@@ -412,10 +415,10 @@ struct DesktopGameSupervisorComputeContext<'a, C, P> {
 
 struct DesktopGameSupervisorComputed {
     snapshot: DesktopGameSnapshot,
+    checkpoint: Option<GameStorageSaveRequest>,
     save: Option<GameStorageSaveRequest>,
     search: Option<GameEngineRequest>,
     quit: bool,
-    notice: Option<DesktopGameSupervisorError>,
 }
 
 type DesktopGameSupervisorComputeFuture = Pin<
@@ -429,14 +432,13 @@ type DesktopGameSupervisorSaveFuture =
 
 struct DesktopGameSupervisorWrite {
     request: GameStorageSaveRequest,
-    snapshot: DesktopGameSnapshot,
-    response: Option<DesktopGameSupervisorEnvelope>,
+    response: Option<(DesktopGameSnapshot, DesktopGameSupervisorEnvelope)>,
     quit: bool,
 }
 
 struct DesktopGameSupervisorWriteContext {
-    snapshot: DesktopGameSnapshot,
-    response: Option<DesktopGameSupervisorEnvelope>,
+    request: GameStorageSaveRequest,
+    response: Option<(DesktopGameSnapshot, DesktopGameSupervisorEnvelope)>,
     quit: bool,
 }
 
@@ -471,7 +473,6 @@ pub struct DesktopGameSupervisor<F: DesktopGameSupervisorEngineFactory, C, P> {
     saving_context: Option<DesktopGameSupervisorWriteContext>,
     save_failure: Option<Arc<DesktopGameSupervisorError>>,
     save_failure_at: Option<ClockInstant>,
-    retry_save: Option<DesktopGameSupervisorWriteContext>,
     quit_ready: bool,
 }
 
@@ -506,7 +507,7 @@ where
             DesktopGameSupervisorEnumPersistence::Current
         };
         let (events, receiver) = watch::channel(DesktopGameSupervisorEvent {
-            snapshot: computed.snapshot.clone(),
+            snapshot: computed.snapshot,
             storage_revision: options.storage_revision,
             persistence,
             notice: None,
@@ -528,7 +529,6 @@ where
         if let Some(request) = computed.save {
             writes.push_back(DesktopGameSupervisorWrite {
                 request,
-                snapshot: computed.snapshot,
                 response: None,
                 quit: false,
             });
@@ -567,7 +567,6 @@ where
                 saving_context: None,
                 save_failure: None,
                 save_failure_at: None,
-                retry_save: None,
                 quit_ready: false,
             },
             port,
@@ -615,6 +614,7 @@ where
         } = context;
         let mut now = clock.now()?;
         let mut notice = None;
+        let mut checkpoint = None;
         let effect = match operation {
             DesktopGameSupervisorEnumComputation::Resave { quit } => {
                 if quit {
@@ -661,6 +661,11 @@ where
                 if state.phase() == GameEnumPhase::Active {
                     match state.resolve_premove(state.revision()) {
                         Ok(GamePremoveEnumResolution::Execute(movement)) => {
+                            checkpoint = Some(GameStorageSaveRequest::capture(
+                                state,
+                                now,
+                                storage_revision,
+                            )?);
                             now = clock.now()?;
                             let color = state
                                 .tree()
@@ -681,8 +686,11 @@ where
                             )?;
                         }
                         Ok(GamePremoveEnumResolution::Empty) => {}
-                        Ok(GamePremoveEnumResolution::ClearedIllegal { source, .. }) => {
-                            notice = Some(DesktopGameSupervisorError::Premove(source))
+                        Ok(GamePremoveEnumResolution::ClearedIllegal { intent, .. }) => {
+                            notice = Some(DesktopGameSnapshotEnumNotice::IllegalPremove {
+                                revision: state.revision(),
+                                intent,
+                            });
                         }
                         Err(error) => return Err(error.into()),
                     }
@@ -745,7 +753,8 @@ where
                 DesktopGameTransitionEnumEffect::SnapshotOnly
             }
         };
-        let snapshot = DesktopGameSnapshot::capture(state, now)?;
+        let mut snapshot = DesktopGameSnapshot::capture(state, now)?;
+        snapshot.retain_notice(notice);
         let save = match effect {
             DesktopGameTransitionEnumEffect::Autosave | DesktopGameTransitionEnumEffect::Quit => {
                 Some(GameStorageSaveRequest::capture(
@@ -765,10 +774,10 @@ where
         };
         Ok(DesktopGameSupervisorComputed {
             snapshot,
+            checkpoint,
             save,
             search,
             quit: matches!(effect, DesktopGameTransitionEnumEffect::Quit),
-            notice,
         })
     }
 
@@ -835,11 +844,6 @@ where
                                 .ok_or(DesktopGameSupervisorError::StateUnavailable)?,
                         },
                         None,
-                    );
-                } else if let Some(retry) = self.retry_save.take() {
-                    self.schedule(
-                        DesktopGameSupervisorEnumComputation::Resave { quit: retry.quit },
-                        retry.response,
                     );
                 } else if self.pending_engine_failure {
                     self.retire_engine().await?;
@@ -1127,15 +1131,20 @@ where
             Ok(computed) => {
                 self.search_request = computed.search;
                 let mut event = self.events.borrow().clone();
+                let notice = event.snapshot.notice();
                 event.snapshot = computed.snapshot;
-                if let Some(notice) = computed.notice {
-                    event.notice = Some(Arc::new(notice));
+                event.snapshot.retain_notice(notice);
+                if let Some(request) = computed.checkpoint {
+                    self.writes.push_back(DesktopGameSupervisorWrite {
+                        request,
+                        response: None,
+                        quit: false,
+                    });
                 }
                 if let Some(request) = computed.save {
                     self.writes.push_back(DesktopGameSupervisorWrite {
                         request,
-                        snapshot: event.snapshot.clone(),
-                        response,
+                        response: response.map(|response| (event.snapshot.clone(), response)),
                         quit: computed.quit,
                     });
                 } else if let Some(response) = response {
@@ -1153,7 +1162,7 @@ where
             || !retry_failure
                 && self.save_failure.is_some()
                 && !self.writes.iter().any(|write| {
-                    write.response.as_ref().is_some_and(|response| {
+                    write.response.as_ref().is_some_and(|(_, response)| {
                         matches!(
                             response.request.action,
                             DesktopGameCommandsEnumAction::RetrySave
@@ -1171,7 +1180,7 @@ where
         let client = self.storage.clone();
         let executor = Arc::clone(&self.executor);
         self.saving_context = Some(DesktopGameSupervisorWriteContext {
-            snapshot: write.snapshot,
+            request: request.clone(),
             response: write.response,
             quit: write.quit,
         });
@@ -1186,7 +1195,7 @@ where
         &mut self,
         result: Result<GameStorageReceipt, StorageGameDocumentError>,
     ) -> Result<(), DesktopGameSupervisorError> {
-        let mut context = self
+        let context = self
             .saving_context
             .take()
             .ok_or(DesktopGameSupervisorError::StateUnavailable)?;
@@ -1201,31 +1210,33 @@ where
                 let mut event = self.events.borrow().clone();
                 event.storage_revision = self.storage_revision;
                 event.snapshot.refresh_save_status(status);
-                if receipt.game_revision() == context.snapshot.revision() {
-                    context
-                        .snapshot
-                        .refresh_save_status(GameSaveEnumStatus::Current);
-                }
                 if self.save_failure.is_none() {
                     event.notice = None;
                 }
                 event.persistence = self.persistence();
                 self.quit_ready |= context.quit;
                 self.events.send_replace(event);
-                if let Some(response) = context.response {
-                    response.complete(Ok(context.snapshot));
+                if let Some((mut snapshot, response)) = context.response {
+                    if receipt.game_revision() == snapshot.revision() {
+                        snapshot.refresh_save_status(GameSaveEnumStatus::Current);
+                    }
+                    response.complete(Ok(snapshot));
                 }
             }
             Err(StorageGameDocumentError::Cancelled) => {
-                self.retry_save = Some(context);
+                self.writes.push_front(DesktopGameSupervisorWrite {
+                    request: context.request,
+                    response: context.response,
+                    quit: context.quit,
+                });
             }
             Err(error) => {
                 let failure = Arc::new(DesktopGameSupervisorError::Storage(error));
-                if let Some(response) = context.response {
+                if let Some((_, response)) = context.response {
                     response.complete(Err(Arc::clone(&failure)));
                 }
                 for write in self.writes.drain(..) {
-                    if let Some(response) = write.response {
+                    if let Some((_, response)) = write.response {
                         response.complete(Err(Arc::clone(&failure)));
                     }
                 }
@@ -1281,10 +1292,7 @@ where
     fn persistence(&self) -> DesktopGameSupervisorEnumPersistence {
         match &self.save_failure {
             Some(failure) => DesktopGameSupervisorEnumPersistence::Failed(Arc::clone(failure)),
-            None if self.saving.is_some()
-                || !self.writes.is_empty()
-                || self.retry_save.is_some() =>
-            {
+            None if self.saving.is_some() || !self.writes.is_empty() => {
                 DesktopGameSupervisorEnumPersistence::Pending
             }
             None => DesktopGameSupervisorEnumPersistence::Current,
@@ -1352,7 +1360,6 @@ where
             && self.computing.is_none()
             && self.saving.is_none()
             && self.writes.is_empty()
-            && self.retry_save.is_none()
             && self.factory_request.is_none()
             && self.factory_shutdown_complete
             && self.save_failure.is_none()
@@ -1453,13 +1460,7 @@ where
                 );
                 self.observe_computation(deadline).await?;
             }
-            if let Some(retry) = self.retry_save.take() {
-                self.schedule(
-                    DesktopGameSupervisorEnumComputation::Resave { quit: retry.quit },
-                    retry.response,
-                );
-                self.observe_computation(deadline).await?;
-            } else if resave_required {
+            if resave_required {
                 resave_required = false;
                 self.schedule(
                     DesktopGameSupervisorEnumComputation::Resave { quit: false },

@@ -138,11 +138,11 @@ impl StorageGameDocument {
         session: &GameSession,
         now: ClockInstant,
     ) -> Result<Self, StorageGameDocumentError> {
-        Self::from_snapshot(session.restoration(now)?, None)
+        Self::from_snapshot(&session.restoration(now)?, None)
     }
 
     fn from_snapshot(
-        snapshot: GameSessionRestoreOptions,
+        snapshot: &GameSessionRestoreOptions,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<Self, StorageGameDocumentError> {
         StorageGameDocumentError::check_cancellation(cancellation)?;
@@ -865,7 +865,7 @@ struct StorageGameDocumentRecord {
 
 impl StorageGameDocumentRecord {
     fn from_snapshot(
-        snapshot: GameSessionRestoreOptions,
+        snapshot: &GameSessionRestoreOptions,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<Self, StorageGameDocumentError> {
         if snapshot.moves.len() > StorageGameDocument::MAX_MOVES {
@@ -873,7 +873,7 @@ impl StorageGameDocumentRecord {
         }
         let control = snapshot.clock.control();
         let mut moves = Vec::with_capacity(snapshot.moves.len());
-        for movement in snapshot.moves {
+        for movement in &snapshot.moves {
             StorageGameDocumentError::check_cancellation(cancellation)?;
             moves.push(StorageGameDocumentMove {
                 id: movement.id,
@@ -898,7 +898,7 @@ impl StorageGameDocumentRecord {
             id: snapshot.session.id,
             revision: snapshot.revision,
             root: snapshot.session.root,
-            start: snapshot.session.start,
+            start: snapshot.session.start.clone(),
             mode: snapshot.session.seats.mode(),
             white: snapshot.session.seats.seat(BoardEnumColor::White),
             black: snapshot.session.seats.seat(BoardEnumColor::Black),
@@ -1037,7 +1037,7 @@ impl GameStorageRepository for StorageGameDocumentRepository<'_> {
         let json = self
             .executor
             .submit_waiting(move |cancellation| {
-                StorageGameDocument::from_snapshot(request.into_snapshot(), Some(cancellation))?
+                StorageGameDocument::from_snapshot(request.snapshot(), Some(cancellation))?
                     .encode(Some(cancellation))
             })
             .await?

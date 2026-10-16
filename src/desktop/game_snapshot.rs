@@ -36,6 +36,28 @@ pub struct DesktopGameSnapshotMove {
     san: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopGameSnapshotEnumNotice {
+    IllegalPremove {
+        revision: GameRevision,
+        intent: GamePremoveIntent,
+    },
+}
+
+impl DesktopGameSnapshotEnumNotice {
+    pub const fn revision(self) -> GameRevision {
+        match self {
+            Self::IllegalPremove { revision, .. } => revision,
+        }
+    }
+
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::IllegalPremove { .. } => "The queued premove is no longer legal and was cleared",
+        }
+    }
+}
+
 impl DesktopGameSnapshotMove {
     pub const fn id(&self) -> GameMoveId {
         self.id
@@ -78,9 +100,18 @@ pub struct DesktopGameSnapshot {
     claimable: GameDrawClaimEnumAvailability,
     takeback_target: Option<GameMoveId>,
     save_required: bool,
+    notice: Option<DesktopGameSnapshotEnumNotice>,
 }
 
 impl DesktopGameSnapshot {
+    pub(crate) fn retain_notice(&mut self, notice: Option<DesktopGameSnapshotEnumNotice>) {
+        self.notice = self.notice.or(notice);
+    }
+
+    pub const fn notice(&self) -> Option<DesktopGameSnapshotEnumNotice> {
+        self.notice
+    }
+
     pub(crate) fn refresh_save_status(&mut self, status: GameSaveEnumStatus) {
         self.save_required = status == GameSaveEnumStatus::Required;
     }
@@ -141,6 +172,7 @@ impl DesktopGameSnapshot {
             claimable: session.claimable(),
             takeback_target,
             save_required: session.save_status() == GameSaveEnumStatus::Required,
+            notice: None,
         })
     }
 

@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 
 use crate::clock::duration::ClockInstant;
 use crate::game::enums::{GameId, GameRevision};
@@ -19,8 +20,9 @@ impl GameStorageRevision {
     }
 }
 
+#[derive(Clone)]
 pub struct GameStorageSaveRequest {
-    snapshot: GameSessionRestoreOptions,
+    snapshot: Arc<GameSessionRestoreOptions>,
     expected_storage_revision: GameStorageRevision,
 }
 
@@ -31,16 +33,16 @@ impl GameStorageSaveRequest {
         expected_storage_revision: GameStorageRevision,
     ) -> Result<Self, GameSessionError> {
         Ok(Self {
-            snapshot: session.restoration(now)?,
+            snapshot: Arc::new(session.restoration(now)?),
             expected_storage_revision,
         })
     }
 
-    pub const fn game(&self) -> GameId {
+    pub fn game(&self) -> GameId {
         self.snapshot.session.id
     }
 
-    pub const fn game_revision(&self) -> GameRevision {
+    pub fn game_revision(&self) -> GameRevision {
         self.snapshot.revision
     }
 
@@ -53,8 +55,8 @@ impl GameStorageSaveRequest {
         self
     }
 
-    pub(crate) fn into_snapshot(self) -> GameSessionRestoreOptions {
-        self.snapshot
+    pub(crate) fn snapshot(&self) -> &GameSessionRestoreOptions {
+        &self.snapshot
     }
 }
 

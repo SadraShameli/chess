@@ -44,6 +44,10 @@ use crate::game::storage_repository::GameStorageRevision;
 use crate::game::takeback::GameTakebackEnumConsent;
 use crate::storage::document_store::StorageDocumentClient;
 
+#[cfg(test)]
+#[path = "../../tests/desktop/game_premove.rs"]
+mod tests;
+
 #[derive(Debug, Error)]
 pub enum DesktopGameRegistryError {
     #[error("The game registry cannot admit another request")]
