@@ -96,7 +96,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 
 - [X] T029 Record staged versus unstaged migration inventory, existing profile/schema fixtures and asset identity in `specs/001-reckless-desktop-chess/evidence/native-migration.md`; inventory former T029/T030 reuse, original GLB SHA-256 ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e and 1,376,224 bytes, existing external encodings and current baseline evidence without rewriting owner data.
 - [X] T030 Resolve the selected native compatibility slice in `Cargo.toml` and `Cargo.lock`: Bevy 0.20.0, bevy_egui 0.43.1 and matching egui 0.36/wgpu/AccessKit APIs, preserving Rust 1.99.0/edition 2024 and one package; verify actual stable APIs/licenses and record the locked graph in `specs/001-reckless-desktop-chess/evidence/native-migration.md` before relying on it. Include concrete features for one owned Tokio runtime, interprocess Tokio, rfd/directories and target-specific safe winsafe/widestring activation/identity adapters; unify the resolved winit family with Bevy.
-- [ ] T031 Establish matching-egui/headless-Bevy and production-main-thread harness entry points in `tests/presentation.rs`, `tests/scene.rs`, `tests/native.rs`, `Cargo.toml` and `Makefile`; register the native target with harness=false/test=false, preserve default hermetic tests/doctests, add separate named native lint and nonexecuting release/profiling build checks without combining --all-targets, and make native-test-build/native-tests explicitly compile/run it under `research.md#native-test-target-selection`. Keep orchestration adapters in the harness, fail missing required native prerequisites, preserve former T030 staged/unstaged smoke preparation and zero-warning final gate ordering.
+- [X] T031 Establish matching-egui/headless-Bevy and production-main-thread harness entry points in `tests/presentation.rs`, `tests/scene.rs`, `tests/native.rs`, `Cargo.toml` and `Makefile`; register the native target with harness=false/test=false, preserve default hermetic tests/doctests, add separate named native lint and nonexecuting release/profiling build checks without combining --all-targets, and make native-test-build/native-tests explicitly compile/run it under `research.md#native-test-target-selection`. Keep orchestration adapters in the harness, fail missing required native prerequisites, preserve former T030 staged/unstaged smoke preparation and zero-warning final gate ordering.
 
 **Checkpoint**: Record actual passing evidence for this increment; unavailable platform evidence and unresolved release gates remain outstanding.
 
@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 2 native tasks completed and 265 pending.
+**Total**: 295 tasks: 28 historical completed, 3 native tasks completed and 264 pending.
 **Active parallel tasks**: 43 across disjoint contract-test files; three additional
 `[P]` markers belong to historical completed rows. No native task is accepted
 merely by this generation.

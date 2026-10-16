@@ -9,6 +9,12 @@ default-run = "chess"
 name = "chess-tools"
 path = "tools/main.rs"
 
+[[test]]
+name = "native"
+path = "tests/native.rs"
+harness = false
+test = false
+
 [features]
 native-test = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
@@ -43,6 +49,7 @@ widestring = "=1.0.2"
 winsafe = { version = "=0.0.29", default-features = false, features = ["advapi"] }
 
 [dev-dependencies]
+egui_kittest = { version = "=0.36.0", default-features = false }
 tokio = { version = "=1.53.3", features = ["test-util"] }
 
 [build-dependencies]

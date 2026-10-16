@@ -1,0 +1,17 @@
+{
+  "purpose": "Hermetic matching-egui and explicit native compatibility tests only",
+  "family": "Inter",
+  "version": "4.1",
+  "license": "SIL Open Font License 1.1",
+  "font": {
+    "path": "InterVariable.ttf",
+    "source": "https://raw.githubusercontent.com/rsms/inter/v4.1/docs/font-files/InterVariable.ttf",
+    "bytes": 879708,
+    "sha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf"
+  },
+  "notice": {
+    "path": "OFL.txt",
+    "source": "https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt",
+    "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+  }
+}

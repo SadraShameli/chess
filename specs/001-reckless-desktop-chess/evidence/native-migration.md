@@ -173,3 +173,52 @@ Windows-only adapters, Linux native dependencies, OS accessibility, actual GPU
 initialization, installer behavior and production runtime integration remain
 unverified. Native harness compilation/execution is tracked separately by T031
 and the foundation gates.
+
+## T031: Executable compatibility harnesses
+
+The hermetic test roots now exercise the matching egui family, bundled Inter
+font and explicitly configured headless Bevy task pools. The separate native
+target uses `harness = false` and `test = false`, retaining ordinary Cargo test
+and library-doctest discovery. Named native lint/build commands select that
+target separately because Cargo's all-target selection omits it.
+
+The main-thread native smoke checks the original GLB checksum, all twelve
+declared piece nodes and their fully loaded dependencies. It renders a GPU
+geometry fixture plus bundled-font egui text and verifies actual screenshot
+pixels and physical window dimensions. Its asset copy lives in a temporary
+directory; the original GLB and provenance remain unchanged. Inter 4.1 comes
+from its official tagged source with its SIL Open Font License and checksum
+beside the fixture.
+
+Two final optimized smoke executions passed on Apple M4 Pro through Metal.
+Each reported twelve declared GLB pieces, 184,900 geometry pixels, 12,649 text
+pixels and a 2560 by 1600 physical image. No warnings were emitted. Pixel
+classification also checks supported RGBA/BGRA formats, thresholds, saturation,
+truncated buffers, missing buffers and unsupported formats before native startup.
+
+Earlier readback failures prompted bounded first/latest pixel and window-state
+diagnostics. Inspection exposed default dark-theme text at intensity 140 below
+the fixture's threshold of 180; explicit white fixture text corrected that
+failure without lowering the threshold. Earlier zero-geometry readbacks were
+not fully explained, so the retained diagnostics report that condition rather
+than treating asset loading as rendering success. The final two runs used no
+screenshot file output. Supported plugin options avoid unsupported macOS
+bindless mode. A final schedule after Bevy's Last schedule allows normal cleanup
+before AppExit, eliminating the teardown warning without suppressions.
+
+The final `make verify` passed formatting, strict frontend checks, all-target
+and separately named native Clippy, 56 Rust tests, 40 Chromium tests, and
+optimized frontend/all-target/separately named native builds. No tests failed
+or were ignored. A separately named profiling native build also passed before
+the final readback diagnostics/text refinements; that final source has not been
+rebuilt under the profiling profile.
+
+Following the owner's development-workflow correction, subsequent implementation
+uses targeted debug checks. Native test commands default to the dev profile;
+their profile override retains explicit optimized acceptance runs. Full release
+and profiling revalidation is deferred to final acceptance rather than repeated
+for each task.
+
+This harness proves current-host dependency/render compatibility. It does not
+establish the production native application host, live games, native accessibility,
+graphics recovery, platform packaging or Windows/Linux acceptance.
