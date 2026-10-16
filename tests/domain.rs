@@ -1,6 +1,8 @@
 #[path = "board/position.rs"]
 mod board_position;
 
+#[path = "clock/persistence.rs"]
+mod clock_persistence;
 #[path = "clock/state.rs"]
 mod clock_state;
 #[path = "clock/time.rs"]

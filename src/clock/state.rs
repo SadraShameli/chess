@@ -20,6 +20,12 @@ pub enum ClockStateError {
     Stage,
     #[error("The clock move counter exhausted its integer range")]
     MoveOverflow,
+    #[error("The saved clock stage counters do not match its completed moves")]
+    SnapshotCounters,
+    #[error("The saved clock balance exceeds the time earned by its completed stages and moves")]
+    SnapshotBalance,
+    #[error("The saved clock status does not match its active side and elapsed time")]
+    SnapshotStatus,
     #[error(transparent)]
     Duration(#[from] ClockDurationError),
 }
@@ -178,7 +184,146 @@ pub struct ClockStateSnapshot {
     status: ClockStateEnumStatus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClockStateSideOptions {
+    pub remaining: ClockDuration,
+    pub completed_moves: u64,
+    pub stage_index: usize,
+    pub stage_moves: u64,
+}
+
+impl ClockStateSideOptions {
+    fn validate(self, control: &ClockTimeControl) -> Result<ClockStateSide, ClockStateError> {
+        if control.is_timed() {
+            self.validate_timed(control)?;
+        } else if self.remaining != ClockDuration::ZERO
+            || self.stage_index != 0
+            || self.stage_moves != 0
+        {
+            return Err(ClockStateError::SnapshotCounters);
+        }
+        Ok(ClockStateSide {
+            remaining: self.remaining,
+            completed_moves: self.completed_moves,
+            stage_index: self.stage_index,
+            stage_moves: self.stage_moves,
+        })
+    }
+
+    fn validate_timed(self, control: &ClockTimeControl) -> Result<(), ClockStateError> {
+        let current = control
+            .stages()
+            .get(self.stage_index)
+            .ok_or(ClockStateError::Stage)?;
+        self.remaining.checked_add(current.bonus().delay())?;
+        let mut preceding_moves = 0_u64;
+        let mut awarded = 0_u128;
+        for stage in &control.stages()[..self.stage_index] {
+            let ClockStageEnumQuota::Moves(quota) = stage.quota() else {
+                return Err(ClockStateError::SnapshotCounters);
+            };
+            let moves = u64::from(quota.get());
+            preceding_moves = preceding_moves
+                .checked_add(moves)
+                .ok_or(ClockStateError::MoveOverflow)?;
+            awarded += u128::from(stage.base_time().as_nanos())
+                + u128::from(stage.bonus().increment().as_nanos()) * u128::from(moves);
+        }
+        let current_moves = self
+            .completed_moves
+            .checked_sub(preceding_moves)
+            .ok_or(ClockStateError::SnapshotCounters)?;
+        let cycles = match current.quota() {
+            ClockStageEnumQuota::Moves(quota) => {
+                if self.stage_moves != current_moves || current_moves >= u64::from(quota.get()) {
+                    return Err(ClockStateError::SnapshotCounters);
+                }
+                0
+            }
+            ClockStageEnumQuota::Unlimited => {
+                if self.stage_moves != current_moves {
+                    return Err(ClockStateError::SnapshotCounters);
+                }
+                0
+            }
+            ClockStageEnumQuota::Cyclic(quota) => {
+                let quota = u64::from(quota.get());
+                if self.stage_moves != current_moves % quota {
+                    return Err(ClockStateError::SnapshotCounters);
+                }
+                current_moves / quota
+            }
+        };
+        awarded += u128::from(current.base_time().as_nanos()) * (u128::from(cycles) + 1)
+            + u128::from(current.bonus().increment().as_nanos()) * u128::from(current_moves);
+        if u128::from(self.remaining.as_nanos()) > awarded {
+            return Err(ClockStateError::SnapshotBalance);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClockStateSnapshotOptions {
+    pub control: ClockTimeControl,
+    pub sides: [ClockStateSideOptions; 2],
+    pub active: BoardEnumColor,
+    pub elapsed: ClockDuration,
+    pub status: ClockStateEnumStatus,
+}
+
 impl ClockStateSnapshot {
+    pub fn from_persisted(options: ClockStateSnapshotOptions) -> Result<Self, ClockStateError> {
+        let sides = [
+            options.sides[0].validate(&options.control)?,
+            options.sides[1].validate(&options.control)?,
+        ];
+        let active = sides[ClockStateSide::index(options.active)];
+        if let Some(stage) = options.control.stages().get(active.stage_index) {
+            let allowance = active.remaining.checked_add(stage.bonus().delay())?;
+            let expired = options.elapsed >= allowance;
+            match options.status {
+                ClockStateEnumStatus::Paused | ClockStateEnumStatus::Running if expired => {
+                    return Err(ClockStateError::SnapshotStatus);
+                }
+                ClockStateEnumStatus::Flagged(side) if side != options.active || !expired => {
+                    return Err(ClockStateError::SnapshotStatus);
+                }
+                ClockStateEnumStatus::Paused
+                | ClockStateEnumStatus::Running
+                | ClockStateEnumStatus::Flagged(_) => {}
+            }
+        } else if matches!(options.status, ClockStateEnumStatus::Flagged(_)) {
+            return Err(ClockStateError::SnapshotStatus);
+        }
+        Ok(Self {
+            control: Arc::new(options.control),
+            sides,
+            active: options.active,
+            elapsed: options.elapsed,
+            status: options.status,
+        })
+    }
+
+    pub fn persisted(&self) -> ClockStateSnapshotOptions {
+        ClockStateSnapshotOptions {
+            control: self.control.as_ref().clone(),
+            sides: self.sides.map(|side| ClockStateSideOptions {
+                remaining: side.remaining,
+                completed_moves: side.completed_moves,
+                stage_index: side.stage_index,
+                stage_moves: side.stage_moves,
+            }),
+            active: self.active,
+            elapsed: self.elapsed,
+            status: self.status,
+        }
+    }
+
+    pub fn control(&self) -> &ClockTimeControl {
+        &self.control
+    }
+
     pub const fn active(&self) -> BoardEnumColor {
         self.active
     }
@@ -262,6 +407,16 @@ impl ClockState {
             last_observed: None,
             warnings_used: [false; 2],
         }
+    }
+
+    pub fn recover(
+        snapshot: &ClockStateSnapshot,
+        warnings_used: [bool; 2],
+    ) -> Result<Self, ClockStateError> {
+        let mut clock = Self::new(snapshot.control.as_ref().clone(), snapshot.active);
+        clock.restore(snapshot)?;
+        clock.warnings_used = warnings_used;
+        Ok(clock)
     }
 
     pub fn control(&self) -> &ClockTimeControl {
