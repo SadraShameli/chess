@@ -1,5 +1,4 @@
 use chess::board::enums::{BoardEnumColor, BoardEnumPieceKind, BoardEnumVariant};
-use chess::board::r#move::BoardMove;
 use chess::board::position::BoardPosition;
 use chess::puzzle::definition::PuzzleDefinition;
 use chess::puzzle::identity::{PuzzleDefinitionIdentity, PuzzleDefinitionIdentityError};
@@ -9,43 +8,11 @@ use chess::puzzle::metadata::{
 };
 use chess::puzzle::tree::{PuzzleDefinitionTree, PuzzleDefinitionTreeError};
 
+use crate::puzzle_fixture::PuzzleFixture;
+
 struct PuzzleDefinitionFixture;
 
 impl PuzzleDefinitionFixture {
-    fn identity() -> Result<PuzzleDefinitionIdentity, PuzzleDefinitionIdentityError> {
-        PuzzleDefinitionIdentity::new("fixture".into(), "v1".into(), "tactic-1".into())
-    }
-
-    fn line(
-        initial: &BoardPosition,
-        values: &[&str],
-    ) -> Result<Vec<BoardMove>, Box<dyn std::error::Error>> {
-        let mut position = initial.clone();
-        let mut line = Vec::new();
-        for value in values {
-            let movement = position.parse_uci(value)?;
-            position = position.play(movement)?;
-            line.push(movement);
-        }
-        Ok(line)
-    }
-
-    fn definition(
-        initial: BoardPosition,
-        lines: &[&[&str]],
-    ) -> Result<PuzzleDefinition, Box<dyn std::error::Error>> {
-        let solutions = lines
-            .iter()
-            .map(|line| Self::line(&initial, line))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(PuzzleDefinition::new(
-            Self::identity()?,
-            initial,
-            solutions,
-            PuzzleDefinitionMetadata::default(),
-        )?)
-    }
-
     fn assert_paths(tree: &PuzzleDefinitionTree) -> Result<(), Box<dyn std::error::Error>> {
         for line in tree.lines() {
             let mut parent = tree.root();
@@ -75,9 +42,8 @@ impl PuzzleDefinitionFixture {
 fn retains_single_line_identity_start_and_unavailable_metadata()
 -> Result<(), Box<dyn std::error::Error>> {
     let initial = BoardPosition::standard();
-    let definition =
-        PuzzleDefinitionFixture::definition(initial.clone(), &[&["e2e4", "e7e5", "g1f3"]])?;
-    assert_eq!(definition.identity(), &PuzzleDefinitionFixture::identity()?);
+    let definition = PuzzleFixture::definition(initial.clone(), &[&["e2e4", "e7e5", "g1f3"]])?;
+    assert_eq!(definition.identity(), &PuzzleFixture::identity()?);
     assert_eq!(definition.starting_position(), &initial);
     assert_eq!(definition.solver(), BoardEnumColor::White);
     assert_eq!(definition.metadata().difficulty(), None);
@@ -102,7 +68,7 @@ fn preserves_source_line_and_branch_order_with_shared_prefixes()
         &["e2e4", "e7e5", "f1c4"],
         &["d2d4", "d7d5", "c2c4"],
     ];
-    let definition = PuzzleDefinitionFixture::definition(BoardPosition::standard(), lines)?;
+    let definition = PuzzleFixture::definition(BoardPosition::standard(), lines)?;
     let tree = definition.solution();
     let listed = tree.lines();
     assert_eq!(listed.len(), lines.len());
@@ -132,7 +98,7 @@ fn preserves_source_line_and_branch_order_with_shared_prefixes()
             .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(actual, *expected);
     }
-    let rebuilt = PuzzleDefinitionFixture::definition(BoardPosition::standard(), lines)?;
+    let rebuilt = PuzzleFixture::definition(BoardPosition::standard(), lines)?;
     assert_eq!(tree, rebuilt.solution());
     PuzzleDefinitionFixture::assert_paths(tree)
 }
@@ -142,7 +108,7 @@ fn refuses_empty_solutions_and_empty_listed_branches() -> Result<(), Box<dyn std
     let initial = BoardPosition::standard();
     assert!(matches!(
         PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             initial.clone(),
             Vec::new(),
             PuzzleDefinitionMetadata::default()
@@ -151,7 +117,7 @@ fn refuses_empty_solutions_and_empty_listed_branches() -> Result<(), Box<dyn std
     ));
     assert!(matches!(
         PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             initial,
             vec![Vec::new()],
             PuzzleDefinitionMetadata::default()
@@ -165,9 +131,9 @@ fn refuses_empty_solutions_and_empty_listed_branches() -> Result<(), Box<dyn std
 fn rejects_duplicate_complete_lines_without_silent_deduplication()
 -> Result<(), Box<dyn std::error::Error>> {
     let initial = BoardPosition::standard();
-    let line = PuzzleDefinitionFixture::line(&initial, &["e2e4", "e7e5", "g1f3"])?;
+    let line = PuzzleFixture::line(&initial, &["e2e4", "e7e5", "g1f3"])?;
     let result = PuzzleDefinition::new(
-        PuzzleDefinitionFixture::identity()?,
+        PuzzleFixture::identity()?,
         initial,
         vec![line.clone(), line],
         PuzzleDefinitionMetadata::default(),
@@ -184,14 +150,14 @@ fn rejects_a_terminal_prefix_in_either_source_order() -> Result<(), Box<dyn std:
     for reverse in [false, true] {
         let initial = BoardPosition::standard();
         let mut lines = vec![
-            PuzzleDefinitionFixture::line(&initial, &["e2e4"])?,
-            PuzzleDefinitionFixture::line(&initial, &["e2e4", "e7e5", "g1f3"])?,
+            PuzzleFixture::line(&initial, &["e2e4"])?,
+            PuzzleFixture::line(&initial, &["e2e4", "e7e5", "g1f3"])?,
         ];
         if reverse {
             lines.reverse();
         }
         let result = PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             initial,
             lines,
             PuzzleDefinitionMetadata::default(),
@@ -208,7 +174,7 @@ fn rejects_a_terminal_prefix_in_either_source_order() -> Result<(), Box<dyn std:
 fn validates_each_ply_against_its_actual_preceding_board() -> Result<(), Box<dyn std::error::Error>>
 {
     let initial = BoardPosition::standard();
-    let valid = PuzzleDefinitionFixture::line(&initial, &["e2e4", "e7e5", "g1f3"])?;
+    let valid = PuzzleFixture::line(&initial, &["e2e4", "e7e5", "g1f3"])?;
     let developed = initial.play_uci("e2e4")?.play_uci("e7e5")?;
     let illegal = [
         developed.parse_uci("f1b5")?,
@@ -219,7 +185,7 @@ fn validates_each_ply_against_its_actual_preceding_board() -> Result<(), Box<dyn
         let mut line = valid.clone();
         line[ply] = movement;
         let result = PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             initial.clone(),
             vec![line],
             PuzzleDefinitionMetadata::default(),
@@ -235,11 +201,11 @@ fn validates_each_ply_against_its_actual_preceding_board() -> Result<(), Box<dyn
 fn rejects_illegal_later_branch_without_borrowing_another_branch_history()
 -> Result<(), Box<dyn std::error::Error>> {
     let initial = BoardPosition::standard();
-    let capture = PuzzleDefinitionFixture::line(&initial, &["e2e4", "d7d5", "e4d5"])?;
+    let capture = PuzzleFixture::line(&initial, &["e2e4", "d7d5", "e4d5"])?;
     let mut inconsistent = capture.clone();
     inconsistent[1] = initial.play_uci("e2e4")?.parse_uci("e7e5")?;
     let result = PuzzleDefinition::new(
-        PuzzleDefinitionFixture::identity()?,
+        PuzzleFixture::identity()?,
         initial,
         vec![capture, inconsistent],
         PuzzleDefinitionMetadata::default(),
@@ -269,7 +235,7 @@ fn rejects_a_move_that_exposes_its_king_even_when_valid_in_another_position()
     let movement = unpinned.parse_uci("e5d6")?;
     assert!(matches!(
         PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             pinned,
             vec![vec![movement]],
             PuzzleDefinitionMetadata::default()
@@ -286,7 +252,7 @@ fn rejects_a_move_that_exposes_its_king_even_when_valid_in_another_position()
 #[test]
 fn keeps_transposed_positions_on_their_distinct_listed_paths()
 -> Result<(), Box<dyn std::error::Error>> {
-    let definition = PuzzleDefinitionFixture::definition(
+    let definition = PuzzleFixture::definition(
         BoardPosition::standard(),
         &[
             &["g1f3", "g8f6", "b1c3", "b8c6"],
@@ -309,10 +275,8 @@ fn keeps_transposed_positions_on_their_distinct_listed_paths()
 #[test]
 fn keeps_legal_unlisted_moves_outside_the_accepted_tree() -> Result<(), Box<dyn std::error::Error>>
 {
-    let definition = PuzzleDefinitionFixture::definition(
-        BoardPosition::standard(),
-        &[&["e2e4", "e7e5", "g1f3"]],
-    )?;
+    let definition =
+        PuzzleFixture::definition(BoardPosition::standard(), &[&["e2e4", "e7e5", "g1f3"]])?;
     let initial = definition.starting_position();
     let tree = definition.solution();
     assert!(
@@ -330,7 +294,7 @@ fn keeps_legal_unlisted_moves_outside_the_accepted_tree() -> Result<(), Box<dyn 
 fn uses_the_supplied_solver_position_without_applying_an_extra_setup_move()
 -> Result<(), Box<dyn std::error::Error>> {
     let initial = BoardPosition::standard().play_uci("e2e4")?;
-    let definition = PuzzleDefinitionFixture::definition(initial.clone(), &[&["c7c5", "g1f3"]])?;
+    let definition = PuzzleFixture::definition(initial.clone(), &[&["c7c5", "g1f3"]])?;
     assert_eq!(definition.solver(), BoardEnumColor::Black);
     assert_eq!(definition.starting_position(), &initial);
     let first = definition.solution().lines()[0].nodes()[0];
@@ -352,8 +316,7 @@ fn preserves_en_passant_and_counters_in_validated_positions()
         "4k3/8/8/3pP3/8/8/8/4K3 w - d6 19 42",
         BoardEnumVariant::Standard,
     )?;
-    let definition =
-        PuzzleDefinitionFixture::definition(initial.clone(), &[&["e5d6", "e8d7", "e1d2"]])?;
+    let definition = PuzzleFixture::definition(initial.clone(), &[&["e5d6", "e8d7", "e1d2"]])?;
     assert_eq!(definition.starting_position(), &initial);
     let first = definition.solution().lines()[0].nodes()[0];
     let position = definition
@@ -372,7 +335,7 @@ fn preserves_each_listed_promotion_without_adding_a_queen_default()
 -> Result<(), Box<dyn std::error::Error>> {
     let initial =
         BoardPosition::from_fen("7k/P7/8/8/8/8/8/7K w - - 0 1", BoardEnumVariant::Standard)?;
-    let definition = PuzzleDefinitionFixture::definition(
+    let definition = PuzzleFixture::definition(
         initial.clone(),
         &[&["a7a8n"], &["a7a8b"], &["a7a8r"], &["a7a8q"]],
     )?;
@@ -418,7 +381,7 @@ fn retains_chess960_castling_variant_rook_identity_and_stationary_king()
         ),
     ] {
         let initial = BoardPosition::from_fen(fen, BoardEnumVariant::Chess960)?;
-        let definition = PuzzleDefinitionFixture::definition(initial, &[&[movement]])?;
+        let definition = PuzzleFixture::definition(initial, &[&[movement]])?;
         let node = definition
             .solution()
             .node(definition.solution().lines()[0].nodes()[0])
@@ -451,7 +414,7 @@ fn refuses_counter_overflow_and_moves_after_checkmate() -> Result<(), Box<dyn st
     let movement = maximum.parse_uci("e8e7")?;
     assert!(matches!(
         PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             maximum,
             vec![vec![movement]],
             PuzzleDefinitionMetadata::default()
@@ -463,11 +426,11 @@ fn refuses_counter_overflow_and_moves_after_checkmate() -> Result<(), Box<dyn st
         })
     ));
     let initial = BoardPosition::standard();
-    let mut mate = PuzzleDefinitionFixture::line(&initial, &["f2f3", "e7e5", "g2g4", "d8h4"])?;
+    let mut mate = PuzzleFixture::line(&initial, &["f2f3", "e7e5", "g2g4", "d8h4"])?;
     mate.push(initial.parse_uci("a2a3")?);
     assert!(matches!(
         PuzzleDefinition::new(
-            PuzzleDefinitionFixture::identity()?,
+            PuzzleFixture::identity()?,
             initial,
             vec![mate],
             PuzzleDefinitionMetadata::default()
@@ -544,13 +507,9 @@ fn validates_unsigned_difficulty_without_inventing_a_rating_range()
     let metadata =
         PuzzleDefinitionMetadata::new(Some(PuzzleDefinitionDifficulty::new(1250)), None)?;
     let initial = BoardPosition::standard();
-    let line = PuzzleDefinitionFixture::line(&initial, &["e2e4"])?;
-    let definition = PuzzleDefinition::new(
-        PuzzleDefinitionFixture::identity()?,
-        initial,
-        vec![line],
-        metadata,
-    )?;
+    let line = PuzzleFixture::line(&initial, &["e2e4"])?;
+    let definition =
+        PuzzleDefinition::new(PuzzleFixture::identity()?, initial, vec![line], metadata)?;
     assert_eq!(
         definition
             .metadata()

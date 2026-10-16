@@ -37,6 +37,14 @@ mod game_tree;
 
 #[path = "puzzle/definition.rs"]
 mod puzzle_definition;
+#[path = "puzzle/fixture.rs"]
+mod puzzle_fixture;
+#[path = "puzzle/solution.rs"]
+mod puzzle_solution;
+#[path = "puzzle/summary.rs"]
+mod puzzle_summary;
+#[path = "puzzle/timer.rs"]
+mod puzzle_timer;
 
 #[path = "capacity/budget.rs"]
 mod capacity_budget;
