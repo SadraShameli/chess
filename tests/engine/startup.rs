@@ -82,6 +82,12 @@ impl EngineProcess for EngineStartupProcess {
     async fn shutdown(&mut self) -> Result<(), EngineProcessError> {
         self.record("shutdown")
     }
+    async fn terminate(
+        &mut self,
+        _deadline: tokio::time::Instant,
+    ) -> Result<(), EngineProcessError> {
+        self.record("terminate")
+    }
 }
 
 #[tokio::test(start_paused = true)]

@@ -38,6 +38,19 @@ pub enum EngineProcessError {
     },
 }
 
+impl EngineProcessError {
+    fn combine(operation: Result<(), Self>, cleanup: Result<(), Self>) -> Result<(), Self> {
+        match (operation, cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(operation), Err(cleanup)) => Err(Self::Cleanup {
+                operation: Box::new(operation),
+                cleanup: Box::new(cleanup),
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineProcessEnumPipe {
     Stdout,
@@ -88,6 +101,10 @@ pub trait EngineProcess: Send {
         &mut self,
     ) -> impl Future<Output = Result<EngineProcessLine, EngineProcessError>> + Send;
     fn shutdown(&mut self) -> impl Future<Output = Result<(), EngineProcessError>> + Send;
+    fn terminate(
+        &mut self,
+        deadline: Instant,
+    ) -> impl Future<Output = Result<(), EngineProcessError>> + Send;
 }
 
 pub trait EngineProcessProvider {
@@ -158,14 +175,21 @@ impl EngineProcess for EngineNativeProcess {
             .shutdown_process(now + EngineProcessLimits::GRACEFUL_SHUTDOWN, deadline)
             .await;
         let cleanup = self.join_readers(deadline).await;
-        match (operation, cleanup) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-            (Err(operation), Err(cleanup)) => Err(EngineProcessError::Cleanup {
-                operation: Box::new(operation),
-                cleanup: Box::new(cleanup),
-            }),
+        EngineProcessError::combine(operation, cleanup)
+    }
+
+    async fn terminate(&mut self, deadline: Instant) -> Result<(), EngineProcessError> {
+        self.lines.close();
+        let operation = async {
+            self.child.start_kill()?;
+            timeout_at(deadline, self.child.wait())
+                .await
+                .map_err(|_elapsed| EngineProcessError::ShutdownTimeout)??;
+            Ok(())
         }
+        .await;
+        let cleanup = self.join_readers(deadline).await;
+        EngineProcessError::combine(operation, cleanup)
     }
 }
 
