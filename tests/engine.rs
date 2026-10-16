@@ -4,5 +4,7 @@ mod engine_lifecycle;
 mod engine_package_manifest;
 #[path = "engine/package_selection.rs"]
 mod engine_package_selection;
+#[path = "engine/retained_shutdown.rs"]
+mod engine_retained_shutdown;
 #[path = "engine/startup.rs"]
 mod engine_startup;

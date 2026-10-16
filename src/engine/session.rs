@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -33,6 +34,7 @@ pub enum EngineSessionError {
     UnexpectedResponse,
     #[error("Engine startup failed ({startup}); cleanup also failed ({cleanup})")]
     Cleanup {
+        #[source]
         startup: Box<Self>,
         cleanup: EngineProcessError,
     },
@@ -52,9 +54,14 @@ pub enum EngineSessionError {
     SearchMove(#[from] BoardMoveError),
     #[error("Engine operation failed ({operation}); forced cleanup also failed ({cleanup})")]
     OperationCleanup {
+        #[source]
         operation: Box<Self>,
         cleanup: EngineProcessError,
     },
+    #[error("The engine reported successful shutdown without observing all owned resources")]
+    ShutdownUnobserved,
+    #[error("Engine session shutdown previously failed: {0}")]
+    ShutdownFailed(#[source] Arc<Self>),
 }
 
 struct EngineSessionSearch {
@@ -79,6 +86,15 @@ enum EngineSessionEnumLifecycle {
     Failed,
 }
 
+#[derive(Clone, Copy)]
+enum EngineSessionEnumShutdown {
+    Running,
+    SendingStop,
+    Graceful,
+    Forced,
+    Complete,
+}
+
 pub struct EngineSession<P: EngineProcess> {
     process: Option<P>,
     identity: EngineIdentity,
@@ -86,6 +102,8 @@ pub struct EngineSession<P: EngineProcess> {
     generation: EngineSearchGeneration,
     variant: BoardEnumVariant,
     lifecycle: EngineSessionEnumLifecycle,
+    shutdown: EngineSessionEnumShutdown,
+    shutdown_failure: Option<Arc<EngineSessionError>>,
 }
 
 impl<P: EngineProcess> EngineSession<P> {
@@ -105,6 +123,8 @@ impl<P: EngineProcess> EngineSession<P> {
                 generation: EngineSearchGeneration::fresh(),
                 variant: BoardEnumVariant::Standard,
                 lifecycle: EngineSessionEnumLifecycle::Idle,
+                shutdown: EngineSessionEnumShutdown::Running,
+                shutdown_failure: None,
             }),
             Err(startup) => match process.shutdown().await {
                 Ok(()) => Err(startup),
@@ -283,46 +303,85 @@ impl<P: EngineProcess> EngineSession<P> {
     }
 
     pub async fn shutdown(mut self) -> Result<(), EngineSessionError> {
-        let state = self.state();
-        let interrupted = self.has_pending_stop_delivery();
-        let deadline = Instant::now() + EngineProcessLimits::SHUTDOWN;
+        self.shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
+            .await
+    }
+
+    pub fn is_shutdown_complete(&self) -> bool {
+        self.process
+            .as_ref()
+            .is_none_or(EngineProcess::is_shutdown_complete)
+    }
+
+    pub async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineSessionError> {
+        if self.process.is_none() {
+            return self.shutdown_result();
+        }
         let deadline = self.stop_request().map_or(deadline, |request| {
             deadline.min(request.termination_deadline())
         });
-        let Some(mut process) = self.process.take() else {
-            return Ok(());
-        };
-        if interrupted
-            || matches!(
-                state,
-                EngineSearchEnumState::Failed | EngineSearchEnumState::Preparing
-            )
-        {
-            process.terminate(deadline).await?;
-            return Ok(());
-        }
-        let result = timeout_at(deadline, async {
-            if matches!(
+        let send_stop = if matches!(self.shutdown, EngineSessionEnumShutdown::Running) {
+            let state = self.state();
+            self.shutdown = if self.has_pending_stop_delivery()
+                || matches!(
+                    state,
+                    EngineSearchEnumState::Failed | EngineSearchEnumState::Preparing
+                ) {
+                EngineSessionEnumShutdown::Forced
+            } else if matches!(
                 state,
                 EngineSearchEnumState::Searching | EngineSearchEnumState::Stopping
             ) {
-                process.send("stop").await?;
+                EngineSessionEnumShutdown::SendingStop
+            } else {
+                EngineSessionEnumShutdown::Graceful
+            };
+            matches!(self.shutdown, EngineSessionEnumShutdown::SendingStop)
+        } else {
+            if matches!(self.shutdown, EngineSessionEnumShutdown::SendingStop) {
+                self.shutdown = EngineSessionEnumShutdown::Forced;
             }
-            process.shutdown().await
-        })
+            false
+        };
+        self.lifecycle = EngineSessionEnumLifecycle::Failed;
+        let result = async {
+            if send_stop {
+                timeout_at(deadline, self.process_mut()?.send("stop"))
+                    .await
+                    .map_err(EngineProcessError::ShutdownDeadline)??;
+                self.shutdown = EngineSessionEnumShutdown::Graceful;
+            }
+            let graceful = matches!(self.shutdown, EngineSessionEnumShutdown::Graceful);
+            let process = self.process_mut()?;
+            let result = if graceful {
+                timeout_at(deadline, process.shutdown_retained(deadline)).await
+            } else {
+                timeout_at(deadline, process.terminate(deadline)).await
+            };
+            result.map_err(EngineProcessError::ShutdownDeadline)??;
+            if !process.is_shutdown_complete() {
+                return Err(EngineSessionError::ShutdownUnobserved);
+            }
+            Ok(())
+        }
         .await;
-        match result {
-            Ok(result) => result.map_err(EngineSessionError::Process),
-            Err(_elapsed) => {
-                let operation = EngineSessionError::Process(EngineProcessError::ShutdownTimeout);
-                match process.terminate(deadline).await {
-                    Ok(()) => Err(operation),
-                    Err(cleanup) => Err(EngineSessionError::OperationCleanup {
-                        operation: Box::new(operation),
-                        cleanup,
-                    }),
-                }
+        if self.is_shutdown_complete() {
+            self.process = None;
+            self.shutdown = EngineSessionEnumShutdown::Complete;
+            if let Err(error) = result {
+                self.shutdown_failure = Some(Arc::new(error));
             }
+            self.shutdown_result()
+        } else {
+            self.shutdown = EngineSessionEnumShutdown::Forced;
+            result
+        }
+    }
+
+    fn shutdown_result(&self) -> Result<(), EngineSessionError> {
+        match &self.shutdown_failure {
+            Some(error) => Err(EngineSessionError::ShutdownFailed(Arc::clone(error))),
+            None => Ok(()),
         }
     }
 

@@ -50,6 +50,7 @@ impl EngineProcessProvider for EngineStartupProvider {
         Ok(EngineStartupProcess {
             lines: self.lines.clone(),
             commands: Arc::clone(&self.commands),
+            shutdown_complete: false,
         })
     }
 }
@@ -57,6 +58,7 @@ impl EngineProcessProvider for EngineStartupProvider {
 struct EngineStartupProcess {
     lines: VecDeque<String>,
     commands: Arc<Mutex<Vec<String>>>,
+    shutdown_complete: bool,
 }
 
 impl EngineStartupProcess {
@@ -80,13 +82,28 @@ impl EngineProcess for EngineStartupProcess {
         }
     }
     async fn shutdown(&mut self) -> Result<(), EngineProcessError> {
-        self.record("shutdown")
+        self.record("shutdown")?;
+        self.shutdown_complete = true;
+        Ok(())
+    }
+    async fn shutdown_retained(
+        &mut self,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), EngineProcessError> {
+        tokio::time::timeout_at(deadline, self.shutdown())
+            .await
+            .map_err(EngineProcessError::ShutdownDeadline)?
+    }
+    fn is_shutdown_complete(&self) -> bool {
+        self.shutdown_complete
     }
     async fn terminate(
         &mut self,
         _deadline: tokio::time::Instant,
     ) -> Result<(), EngineProcessError> {
-        self.record("terminate")
+        self.record("terminate")?;
+        self.shutdown_complete = true;
+        Ok(())
     }
 }
 

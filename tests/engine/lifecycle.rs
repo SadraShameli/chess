@@ -160,6 +160,7 @@ impl EngineProcessProvider for EngineLifecycleProvider {
                 .ok_or_else(|| std::io::Error::other("fixture already spawned"))?,
             sent: self.sent.clone(),
             stall_stop_write: self.stall_stop_write,
+            shutdown_complete: false,
         })
     }
 }
@@ -169,6 +170,7 @@ struct EngineLifecycleProcess {
     output: mpsc::Receiver<EngineProcessLine>,
     sent: mpsc::Sender<String>,
     stall_stop_write: bool,
+    shutdown_complete: bool,
 }
 
 impl EngineLifecycleProcess {
@@ -219,11 +221,25 @@ impl EngineProcess for EngineLifecycleProcess {
     }
 
     async fn shutdown(&mut self) -> Result<(), EngineProcessError> {
-        self.send("shutdown").await
+        self.send("shutdown").await?;
+        self.shutdown_complete = true;
+        Ok(())
+    }
+
+    async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineProcessError> {
+        tokio::time::timeout_at(deadline, self.shutdown())
+            .await
+            .map_err(EngineProcessError::ShutdownDeadline)?
+    }
+
+    fn is_shutdown_complete(&self) -> bool {
+        self.shutdown_complete
     }
 
     async fn terminate(&mut self, _deadline: Instant) -> Result<(), EngineProcessError> {
-        self.send("terminate").await
+        self.send("terminate").await?;
+        self.shutdown_complete = true;
+        Ok(())
     }
 }
 

@@ -6,3 +6,5 @@ mod storage_schema;
 
 #[path = "storage/atomic_file.rs"]
 mod storage_atomic_file;
+#[path = "storage/retained_shutdown.rs"]
+mod storage_retained_shutdown;

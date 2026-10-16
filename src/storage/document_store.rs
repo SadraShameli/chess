@@ -8,6 +8,7 @@ use serde::de::IgnoredAny;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
@@ -43,6 +44,10 @@ pub enum StorageDocumentError {
     Channel(#[from] oneshot::error::RecvError),
     #[error("Database numeric value exceeds the supported range: {0}")]
     Range(#[from] TryFromIntError),
+    #[error("Database shutdown exceeded its absolute deadline: {0}")]
+    CloseDeadline(#[source] tokio::time::error::Elapsed),
+    #[error("Database shutdown previously failed: {0}")]
+    CloseFailed(#[source] Arc<Self>),
 }
 
 pub struct StorageDocument {
@@ -90,10 +95,11 @@ enum StorageDocumentEnumCommand {
 }
 
 pub struct StorageDocumentStore {
-    commands: mpsc::Sender<StorageDocumentEnumCommand>,
-    worker: JoinHandle<Result<(), StorageDocumentError>>,
+    commands: Option<mpsc::Sender<StorageDocumentEnumCommand>>,
+    worker: Option<JoinHandle<Result<(), StorageDocumentError>>>,
     memory: Arc<Semaphore>,
     admission: Arc<Semaphore>,
+    close_failure: Option<Arc<StorageDocumentError>>,
 }
 
 impl StorageDocumentStore {
@@ -136,10 +142,11 @@ impl StorageDocumentStore {
         });
         match ready_receiver.await {
             Ok(Ok(())) => Ok(Self {
-                commands,
-                worker,
+                commands: Some(commands),
+                worker: Some(worker),
                 memory,
                 admission: Arc::new(Semaphore::new(Self::QUEUE_CAPACITY)),
+                close_failure: None,
             }),
             Ok(Err(error)) => {
                 worker.await??;
@@ -178,12 +185,54 @@ impl StorageDocumentStore {
         receiver.await?
     }
 
-    pub async fn close(self) -> Result<(), StorageDocumentError> {
-        drop(self.commands);
-        self.worker.await?
+    pub async fn close(mut self) -> Result<(), StorageDocumentError> {
+        self.close_admission();
+        self.observe_close(None).await
+    }
+
+    pub async fn close_retained(&mut self, deadline: Instant) -> Result<(), StorageDocumentError> {
+        self.close_admission();
+        self.observe_close(Some(deadline)).await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.worker.is_none()
+    }
+
+    fn close_admission(&mut self) {
+        self.admission.close();
+        drop(self.commands.take());
+    }
+
+    async fn observe_close(
+        &mut self,
+        deadline: Option<Instant>,
+    ) -> Result<(), StorageDocumentError> {
+        if let Some(worker) = &mut self.worker {
+            let joined = match deadline {
+                Some(deadline) => timeout_at(deadline, worker)
+                    .await
+                    .map_err(StorageDocumentError::CloseDeadline)?,
+                None => worker.await,
+            };
+            self.worker = None;
+            let result = joined
+                .map_err(StorageDocumentError::Worker)
+                .and_then(|result| result);
+            if let Err(error) = result {
+                self.close_failure = Some(Arc::new(error));
+            }
+        }
+        match &self.close_failure {
+            Some(error) => Err(StorageDocumentError::CloseFailed(Arc::clone(error))),
+            None => Ok(()),
+        }
     }
 
     fn admit(&self) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
+        if self.commands.is_none() {
+            return Err(StorageDocumentError::Closed);
+        }
         Arc::clone(&self.admission)
             .try_acquire_owned()
             .map_err(|_error| StorageDocumentError::Saturated)
@@ -203,6 +252,8 @@ impl StorageDocumentStore {
 
     fn enqueue(&self, command: StorageDocumentEnumCommand) -> Result<(), StorageDocumentError> {
         self.commands
+            .as_ref()
+            .ok_or(StorageDocumentError::Closed)?
             .try_send(command)
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_command) => StorageDocumentError::Saturated,
