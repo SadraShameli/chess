@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": [
-      "ES2023",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
@@ -22,28 +18,13 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": [
-      "vite/client",
-      "node"
-    ],
+    "types": ["vite/client", "node"],
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@tests/*": [
-        "./tests/*"
-      ]
+      "@wdio/globals": ["./types/wdio-globals.d.ts"],
+      "@/*": ["./src/*"],
+      "@tests/*": ["./tests/*"]
     }
   },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.vue",
-    "tests/**/*.ts",
-    "tools/**/*.ts",
-    "*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ]
+  "include": ["src/**/*.ts", "src/**/*.vue", "tests/**/*.ts", "tools/**/*.ts", "*.ts"],
+  "exclude": ["node_modules", "dist"]
 }
