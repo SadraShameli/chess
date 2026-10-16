@@ -626,10 +626,14 @@ async fn cancelled_partial_stop_shutdown_never_appends_protocol_commands()
 }
 
 #[tokio::test(start_paused = true)]
-async fn malformed_or_illegal_bestmoves_fail_and_reap_without_becoming_results()
+async fn malformed_or_illegal_search_output_fails_and_reaps_without_becoming_results()
 -> Result<(), Box<dyn std::error::Error>> {
     let fixture = EnginePackageFixture::new()?;
     for output in [
+        "info depth 1 score cp 0 pv e2e5",
+        "info depth 1 score cp broken pv e2e4",
+        "info depth 1 score cp 0 pv e2e4 e2e3",
+        "info score cp 1 lowerbound upperbound",
         "bestmove e2e5",
         "bestmove 0000",
         "bestmove e2e4 ponder e7e5",

@@ -1,5 +1,7 @@
 #[path = "desktop/native/game_engine.rs"]
 mod desktop_native_game_engine;
+#[path = "engine/analysis.rs"]
+mod engine_analysis;
 #[path = "engine/lifecycle.rs"]
 mod engine_lifecycle;
 #[path = "engine/live_game.rs"]

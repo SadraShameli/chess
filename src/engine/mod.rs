@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod capabilities;
 pub mod enums;
 pub mod live_game;

@@ -1,4 +1,5 @@
 use crate::board::r#move::BoardMove;
+use crate::engine::analysis::EngineAnalysis;
 use crate::engine::process_provider::EngineProcessEnumPipe;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,7 +13,7 @@ pub enum EngineSearchEnumState {
 
 #[derive(Debug)]
 pub enum EngineSearchEnumOutput {
-    Info(String),
+    Info(EngineAnalysis),
     Diagnostic {
         pipe: EngineProcessEnumPipe,
         text: String,

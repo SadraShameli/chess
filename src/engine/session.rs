@@ -7,6 +7,7 @@ use tokio::time::{Instant, timeout, timeout_at};
 use crate::board::enums::BoardEnumVariant;
 use crate::board::r#move::BoardMoveError;
 
+use crate::engine::analysis::{EngineAnalysis, EngineAnalysisError};
 use crate::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError, EngineIdentity};
 use crate::engine::enums::EngineEnumOption;
 use crate::engine::package::selector::EnginePackageSelected;
@@ -26,6 +27,8 @@ use crate::engine::search::stop::EngineSearchStop;
 
 #[derive(Debug, Error)]
 pub enum EngineSessionError {
+    #[error(transparent)]
+    Analysis(#[from] EngineAnalysisError),
     #[error(transparent)]
     Process(#[from] EngineProcessError),
     #[error(transparent)]
@@ -649,7 +652,7 @@ impl<P: EngineProcess> EngineSession<P> {
         } else if text == "readyok" {
             EngineSearchEnumOutput::Readiness
         } else if text.starts_with("info ") {
-            EngineSearchEnumOutput::Info(text.to_owned())
+            EngineSearchEnumOutput::Info(EngineAnalysis::parse(text, active.position.current())?)
         } else if let Some(value) = text.strip_prefix("bestmove ") {
             if value.contains(char::is_whitespace) {
                 return Err(EngineSessionError::SearchResponse);

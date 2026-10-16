@@ -567,9 +567,9 @@ impl<P: EngineProcess, C: ClockTimeProvider> GameEngineProvider for EngineLiveGa
             return Err(self.fail_untimed_watchdog(active, budget).await);
         }
         match event.into_output() {
-            EngineSearchEnumOutput::Info(text) => Ok(GameEngineEnumEvent::Info {
+            EngineSearchEnumOutput::Info(analysis) => Ok(GameEngineEnumEvent::Info {
                 identity: active.identity,
-                text,
+                text: analysis.into_text(),
             }),
             EngineSearchEnumOutput::Diagnostic { pipe: _, text } => {
                 Ok(GameEngineEnumEvent::Diagnostic {
