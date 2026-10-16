@@ -132,7 +132,9 @@ async fn each_handshake_has_its_own_deadline_and_observed_cleanup()
         let mut provider = EngineStartupProvider::new();
         provider.lines.truncate(truncate);
         let result = EngineSession::start(&provider, fixture.select()?).await;
-        assert!(matches!(result, Err(EngineSessionError::Timeout(actual)) if actual == stage));
+        assert!(
+            matches!(result.as_ref().err().map(EngineSessionError::operation), Some(EngineSessionError::Timeout(actual)) if *actual == stage)
+        );
         assert_eq!(
             provider.commands()?.last().map(String::as_str),
             Some("shutdown")

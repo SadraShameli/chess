@@ -9,11 +9,12 @@ use crate::board::r#move::BoardMoveError;
 
 use crate::engine::analysis::{EngineAnalysis, EngineAnalysisError};
 use crate::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError, EngineIdentity};
+use crate::engine::diagnostics::EngineDiagnostics;
 use crate::engine::enums::EngineEnumOption;
 use crate::engine::package::selector::EnginePackageSelected;
 use crate::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
-    EngineProcessProvider,
+    EngineProcessLine, EngineProcessProvider,
 };
 use crate::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
 use crate::engine::search::enums::{EngineSearchEnumOutput, EngineSearchEnumState};
@@ -69,11 +70,33 @@ pub enum EngineSessionError {
     ShutdownUnobserved,
     #[error("Engine session shutdown previously failed: {0}")]
     ShutdownFailed(#[source] Arc<Self>),
+    #[error("{operation}")]
+    Diagnosed {
+        #[source]
+        operation: Box<Self>,
+        diagnostics: Box<EngineDiagnostics>,
+    },
     #[error("Engine initialization already started or its process was transferred or closed")]
     StartupUnavailable,
 }
 
 impl EngineSessionError {
+    pub fn operation(&self) -> &Self {
+        if let Self::Diagnosed { operation, .. } = self {
+            operation
+        } else {
+            self
+        }
+    }
+
+    pub fn diagnostics(&self) -> Option<&EngineDiagnostics> {
+        if let Self::Diagnosed { diagnostics, .. } = self {
+            Some(diagnostics)
+        } else {
+            None
+        }
+    }
+
     fn shutdown_result(failure: Option<&Arc<Self>>) -> Result<(), Self> {
         match failure {
             Some(error) => Err(Self::ShutdownFailed(Arc::clone(error))),
@@ -129,6 +152,7 @@ pub struct EngineSessionStartup<P: EngineProcess> {
     resources: Option<EngineSessionStartupProcess<P>>,
     state: EngineSessionStartupEnumState,
     shutdown_failure: Option<Arc<EngineSessionError>>,
+    diagnostics: EngineDiagnostics,
 }
 
 impl<P: EngineProcess> EngineSessionStartup<P> {
@@ -141,6 +165,7 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             resources: Some(EngineSessionStartupProcess { process, package }),
             state: EngineSessionStartupEnumState::Ready,
             shutdown_failure: None,
+            diagnostics: EngineDiagnostics::default(),
         })
     }
 
@@ -149,7 +174,12 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             return Err(EngineSessionError::StartupUnavailable);
         }
         self.state = EngineSessionStartupEnumState::Initializing;
-        let identity = EngineSession::<P>::handshake(self.process_mut()?).await?;
+        let process = &mut self
+            .resources
+            .as_mut()
+            .ok_or(EngineSessionError::StartupUnavailable)?
+            .process;
+        let identity = EngineSession::<P>::handshake(process, &mut self.diagnostics).await?;
         let resources = self
             .resources
             .take()
@@ -165,7 +195,16 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             lifecycle: EngineSessionEnumLifecycle::Idle,
             shutdown: EngineSessionEnumShutdown::Running,
             shutdown_failure: None,
+            diagnostics: std::mem::take(&mut self.diagnostics),
         })
+    }
+
+    pub fn diagnostics(&self) -> &EngineDiagnostics {
+        &self.diagnostics
+    }
+
+    pub fn take_diagnostics(&mut self) -> EngineDiagnostics {
+        std::mem::take(&mut self.diagnostics)
     }
 
     pub fn is_shutdown_complete(&self) -> bool {
@@ -183,8 +222,18 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             EngineSessionStartupEnumState::Ready | EngineSessionStartupEnumState::Initializing
         );
         self.state = EngineSessionStartupEnumState::Closing;
-        let result =
-            EngineSession::<P>::shutdown_process(self.process_mut()?, graceful, deadline).await;
+        let process = &mut self
+            .resources
+            .as_mut()
+            .ok_or(EngineSessionError::StartupUnavailable)?
+            .process;
+        let result = EngineSession::<P>::shutdown_process(
+            process,
+            &mut self.diagnostics,
+            graceful,
+            deadline,
+        )
+        .await;
         if self.is_shutdown_complete() {
             self.resources = None;
             self.shutdown_failure = result.err().map(Arc::new);
@@ -192,13 +241,6 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
         } else {
             result
         }
-    }
-
-    fn process_mut(&mut self) -> Result<&mut P, EngineSessionError> {
-        self.resources
-            .as_mut()
-            .map(|resources| &mut resources.process)
-            .ok_or(EngineSessionError::StartupUnavailable)
     }
 }
 
@@ -212,6 +254,7 @@ pub struct EngineSession<P: EngineProcess> {
     lifecycle: EngineSessionEnumLifecycle,
     shutdown: EngineSessionEnumShutdown,
     shutdown_failure: Option<Arc<EngineSessionError>>,
+    diagnostics: EngineDiagnostics,
 }
 
 impl<P: EngineProcess> EngineSession<P> {
@@ -224,13 +267,31 @@ impl<P: EngineProcess> EngineSession<P> {
         let mut owner = EngineSessionStartup::new(provider, package)?;
         match owner.initialize().await {
             Ok(session) => Ok(session),
-            Err(startup) => match owner.process_mut()?.shutdown().await {
-                Ok(()) => Err(startup),
-                Err(cleanup) => Err(EngineSessionError::Cleanup {
-                    startup: Box::new(startup),
-                    cleanup,
-                }),
-            },
+            Err(startup) => {
+                let process = &mut owner
+                    .resources
+                    .as_mut()
+                    .ok_or(EngineSessionError::StartupUnavailable)?
+                    .process;
+                let cleanup = process
+                    .shutdown_observed(
+                        Instant::now() + EngineProcessLimits::SHUTDOWN,
+                        &mut owner.diagnostics,
+                        true,
+                    )
+                    .await;
+                let operation = match cleanup {
+                    Ok(()) => startup,
+                    Err(cleanup) => EngineSessionError::Cleanup {
+                        startup: Box::new(startup),
+                        cleanup,
+                    },
+                };
+                Err(EngineSessionError::Diagnosed {
+                    operation: Box::new(operation),
+                    diagnostics: Box::new(owner.take_diagnostics()),
+                })
+            }
         }
     }
 
@@ -263,7 +324,7 @@ impl<P: EngineProcess> EngineSession<P> {
     pub async fn readiness(&mut self) -> Result<(), EngineSessionError> {
         self.require_idle()?;
         self.lifecycle = EngineSessionEnumLifecycle::Preparing;
-        let result = timeout(Self::HANDSHAKE, Self::ready(self.process_mut()?))
+        let result = timeout(Self::HANDSHAKE, self.ready_session())
             .await
             .map_err(|_elapsed| EngineSessionError::Timeout("readiness"))
             .and_then(|result| result);
@@ -299,7 +360,7 @@ impl<P: EngineProcess> EngineSession<P> {
                 )
                 .await?;
             }
-            Self::ready(self.process_mut()?).await
+            self.ready_session().await
         })
         .await
         .map_err(|_elapsed| EngineSessionError::Timeout("resource configuration"))
@@ -431,8 +492,24 @@ impl<P: EngineProcess> EngineSession<P> {
     }
 
     pub async fn shutdown(mut self) -> Result<(), EngineSessionError> {
-        self.shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
+        match self
+            .shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
             .await
+        {
+            Ok(()) => Ok(()),
+            Err(operation) => Err(EngineSessionError::Diagnosed {
+                operation: Box::new(operation),
+                diagnostics: Box::new(self.take_diagnostics()),
+            }),
+        }
+    }
+
+    pub fn diagnostics(&self) -> &EngineDiagnostics {
+        &self.diagnostics
+    }
+
+    pub fn take_diagnostics(&mut self) -> EngineDiagnostics {
+        std::mem::take(&mut self.diagnostics)
     }
 
     pub fn is_shutdown_complete(&self) -> bool {
@@ -480,7 +557,11 @@ impl<P: EngineProcess> EngineSession<P> {
                 self.shutdown = EngineSessionEnumShutdown::Graceful;
             }
             let graceful = matches!(self.shutdown, EngineSessionEnumShutdown::Graceful);
-            Self::shutdown_process(self.process_mut()?, graceful, deadline).await
+            let process = self
+                .process
+                .as_mut()
+                .ok_or(EngineSessionError::State(EngineSearchEnumState::Failed))?;
+            Self::shutdown_process(process, &mut self.diagnostics, graceful, deadline).await
         }
         .await;
         if self.is_shutdown_complete() {
@@ -498,14 +579,15 @@ impl<P: EngineProcess> EngineSession<P> {
 
     async fn shutdown_process(
         process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
         graceful: bool,
         deadline: Instant,
     ) -> Result<(), EngineSessionError> {
-        let result = if graceful {
-            timeout_at(deadline, process.shutdown_retained(deadline)).await
-        } else {
-            timeout_at(deadline, process.terminate(deadline)).await
-        };
+        let result = timeout_at(
+            deadline,
+            process.shutdown_observed(deadline, diagnostics, graceful),
+        )
+        .await;
         result.map_err(EngineProcessError::ShutdownDeadline)??;
         if !process.is_shutdown_complete() {
             return Err(EngineSessionError::ShutdownUnobserved);
@@ -571,7 +653,7 @@ impl<P: EngineProcess> EngineSession<P> {
             &option.acknowledgment(value),
         )
         .await?;
-        Self::ready(self.process_mut()?).await?;
+        self.ready_session().await?;
         self.variant = variant;
         Ok(())
     }
@@ -583,7 +665,7 @@ impl<P: EngineProcess> EngineSession<P> {
     ) -> Result<(), EngineSessionError> {
         self.process_mut()?.send(command).await?;
         loop {
-            let line = self.process_mut()?.receive().await?;
+            let line = self.receive_line().await?;
             if line.pipe() == EngineProcessEnumPipe::Stderr {
                 continue;
             }
@@ -632,11 +714,11 @@ impl<P: EngineProcess> EngineSession<P> {
             if request.has_expired(Instant::now()) {
                 return Err(EngineSessionError::StopDeadline);
             }
-            timeout_at(request.deadline(), self.process_mut()?.receive())
+            timeout_at(request.deadline(), self.receive_line())
                 .await
                 .map_err(|_elapsed| EngineSessionError::StopDeadline)??
         } else {
-            self.process_mut()?.receive().await?
+            self.receive_line().await?
         };
         if self
             .stop_request()
@@ -674,23 +756,54 @@ impl<P: EngineProcess> EngineSession<P> {
         Ok(EngineSearchEvent::new(tag, output))
     }
 
-    async fn handshake(process: &mut P) -> Result<EngineIdentity, EngineSessionError> {
-        let identity = timeout(Self::HANDSHAKE, Self::identify(process))
+    async fn receive_line(&mut self) -> Result<EngineProcessLine, EngineProcessError> {
+        let process = self
+            .process
+            .as_mut()
+            .ok_or(EngineProcessError::Closed(EngineProcessEnumPipe::Stdout))?;
+        Self::receive(process, &mut self.diagnostics).await
+    }
+
+    async fn receive(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<EngineProcessLine, EngineProcessError> {
+        let line = process.receive().await?;
+        diagnostics.record(&line);
+        Ok(line)
+    }
+
+    async fn ready_session(&mut self) -> Result<(), EngineSessionError> {
+        let process = self
+            .process
+            .as_mut()
+            .ok_or(EngineSessionError::State(EngineSearchEnumState::Failed))?;
+        Self::ready(process, &mut self.diagnostics).await
+    }
+
+    async fn handshake(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<EngineIdentity, EngineSessionError> {
+        let identity = timeout(Self::HANDSHAKE, Self::identify(process, diagnostics))
             .await
             .map_err(|_elapsed| EngineSessionError::Timeout("uci"))??;
-        timeout(Self::HANDSHAKE, Self::ready(process))
+        timeout(Self::HANDSHAKE, Self::ready(process, diagnostics))
             .await
             .map_err(|_elapsed| EngineSessionError::Timeout("readiness"))??;
         Ok(identity)
     }
 
-    async fn identify(process: &mut P) -> Result<EngineIdentity, EngineSessionError> {
+    async fn identify(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<EngineIdentity, EngineSessionError> {
         process.send("uci").await?;
         let mut name = None;
         let mut author = None;
         let mut capabilities = EngineCapabilities::default();
         loop {
-            let line = process.receive().await?;
+            let line = Self::receive(process, diagnostics).await?;
             if line.pipe() == EngineProcessEnumPipe::Stderr {
                 continue;
             }
@@ -717,10 +830,13 @@ impl<P: EngineProcess> EngineSession<P> {
         }
     }
 
-    async fn ready(process: &mut P) -> Result<(), EngineSessionError> {
+    async fn ready(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<(), EngineSessionError> {
         process.send("isready").await?;
         loop {
-            let line = process.receive().await?;
+            let line = Self::receive(process, diagnostics).await?;
             if line.pipe() == EngineProcessEnumPipe::Stderr {
                 continue;
             }

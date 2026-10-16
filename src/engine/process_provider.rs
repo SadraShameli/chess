@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout_at};
 
+use crate::engine::diagnostics::EngineDiagnostics;
 use crate::engine::package::selector::EnginePackageSelected;
 
 #[derive(Debug, Error)]
@@ -116,6 +117,20 @@ pub trait EngineProcess: Send {
         &mut self,
         deadline: Instant,
     ) -> impl Future<Output = Result<(), EngineProcessError>> + Send;
+    fn shutdown_observed(
+        &mut self,
+        deadline: Instant,
+        _diagnostics: &mut EngineDiagnostics,
+        graceful: bool,
+    ) -> impl Future<Output = Result<(), EngineProcessError>> + Send {
+        async move {
+            if graceful {
+                self.shutdown_retained(deadline).await
+            } else {
+                self.terminate(deadline).await
+            }
+        }
+    }
 }
 
 pub trait EngineProcessProvider {
@@ -145,22 +160,30 @@ impl EngineProcessProvider for EngineNativeProcessProvider {
             EngineProcessReader::spawn(stderr, EngineProcessEnumPipe::Stderr, sender),
         ]);
         Ok(EngineNativeProcess {
-            child,
-            input,
+            child: EngineProcessChild {
+                child,
+                input,
+                shutdown: EngineProcessEnumShutdown::Running,
+                status: None,
+                quit_failure: None,
+            },
             lines,
             readers,
-            shutdown: EngineProcessEnumShutdown::Running,
-            status: None,
-            quit_failure: None,
+            collection_failure: None,
         })
     }
 }
 
 pub struct EngineNativeProcess {
-    child: Child,
-    input: ChildStdin,
+    child: EngineProcessChild,
     lines: mpsc::Receiver<Result<EngineProcessLine, EngineProcessError>>,
     readers: EngineProcessReaders,
+    collection_failure: Option<Arc<EngineProcessError>>,
+}
+
+struct EngineProcessChild {
+    child: Child,
+    input: ChildStdin,
     shutdown: EngineProcessEnumShutdown,
     status: Option<ExitStatus>,
     quit_failure: Option<Arc<EngineProcessError>>,
@@ -177,13 +200,7 @@ enum EngineProcessEnumShutdown {
 
 impl EngineProcess for EngineNativeProcess {
     async fn send(&mut self, command: &str) -> Result<(), EngineProcessError> {
-        if command.len() > EngineProcessLimits::LINE_BYTES || command.contains(['\r', '\n']) {
-            return Err(EngineProcessError::InvalidCommand);
-        }
-        self.input.write_all(command.as_bytes()).await?;
-        self.input.write_all(b"\n").await?;
-        self.input.flush().await?;
-        Ok(())
+        self.child.send(command).await
     }
 
     async fn receive(&mut self) -> Result<EngineProcessLine, EngineProcessError> {
@@ -199,28 +216,89 @@ impl EngineProcess for EngineNativeProcess {
     }
 
     async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineProcessError> {
-        self.lines.close();
-        let operation = self.shutdown_process(deadline).await;
-        let cleanup = self.readers.join(deadline).await;
-        EngineProcessError::combine(operation, cleanup)
+        self.shutdown_observed(deadline, &mut EngineDiagnostics::default(), true)
+            .await
     }
 
     fn is_shutdown_complete(&self) -> bool {
-        self.status.is_some() && self.readers.is_complete()
+        self.child.status.is_some() && self.readers.is_complete()
     }
 
     async fn terminate(&mut self, deadline: Instant) -> Result<(), EngineProcessError> {
-        self.lines.close();
-        if self.status.is_none() {
-            self.shutdown = EngineProcessEnumShutdown::Forced;
+        self.shutdown_observed(deadline, &mut EngineDiagnostics::default(), false)
+            .await
+    }
+
+    async fn shutdown_observed(
+        &mut self,
+        deadline: Instant,
+        diagnostics: &mut EngineDiagnostics,
+        graceful: bool,
+    ) -> Result<(), EngineProcessError> {
+        if !graceful && self.child.status.is_none() {
+            self.child.shutdown = EngineProcessEnumShutdown::Forced;
         }
-        let operation = self.shutdown_process(deadline).await;
-        let cleanup = self.readers.join(deadline).await;
-        EngineProcessError::combine(operation, cleanup)
+        let (operation, cleanup, collection) = tokio::join!(
+            self.child.shutdown_process(deadline),
+            self.readers.join(deadline),
+            Self::collect_diagnostics(
+                &mut self.lines,
+                diagnostics,
+                &mut self.collection_failure,
+                deadline
+            ),
+        );
+        EngineProcessError::combine(EngineProcessError::combine(operation, cleanup), collection)
     }
 }
 
 impl EngineNativeProcess {
+    async fn collect_diagnostics(
+        lines: &mut mpsc::Receiver<Result<EngineProcessLine, EngineProcessError>>,
+        diagnostics: &mut EngineDiagnostics,
+        failure: &mut Option<Arc<EngineProcessError>>,
+        deadline: Instant,
+    ) -> Result<(), EngineProcessError> {
+        loop {
+            match timeout_at(deadline, lines.recv()).await {
+                Ok(Some(Ok(line))) => diagnostics.record(&line),
+                Ok(Some(Err(EngineProcessError::Closed(_pipe)))) => {}
+                Ok(Some(Err(error))) => {
+                    failure.get_or_insert_with(|| Arc::new(error));
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    return EngineProcessError::combine(
+                        Self::collection_result(failure.as_ref()),
+                        Err(EngineProcessError::ShutdownDeadline(error)),
+                    );
+                }
+            }
+        }
+        Self::collection_result(failure.as_ref())
+    }
+
+    fn collection_result(
+        failure: Option<&Arc<EngineProcessError>>,
+    ) -> Result<(), EngineProcessError> {
+        match failure {
+            Some(error) => Err(EngineProcessError::ShutdownFailed(Arc::clone(error))),
+            None => Ok(()),
+        }
+    }
+}
+
+impl EngineProcessChild {
+    async fn send(&mut self, command: &str) -> Result<(), EngineProcessError> {
+        if command.len() > EngineProcessLimits::LINE_BYTES || command.contains(['\r', '\n']) {
+            return Err(EngineProcessError::InvalidCommand);
+        }
+        self.input.write_all(command.as_bytes()).await?;
+        self.input.write_all(b"\n").await?;
+        self.input.flush().await?;
+        Ok(())
+    }
+
     async fn shutdown_process(&mut self, deadline: Instant) -> Result<(), EngineProcessError> {
         match self.shutdown {
             EngineProcessEnumShutdown::Running => {
@@ -408,12 +486,140 @@ mod tests {
     use std::task::{Context, Waker};
     use std::time::Duration;
 
+    use crate::engine::diagnostics::EngineDiagnostics;
     use crate::engine::process_provider::{
-        EngineProcessError, EngineProcessLimits, EngineProcessReader, EngineProcessReaders,
+        EngineNativeProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
+        EngineProcessLine, EngineProcessReader, EngineProcessReaders,
     };
     use tokio::io::BufReader;
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot};
     use tokio::time::Instant;
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_collection_drains_beyond_queue_capacity_and_retains_latest_cross_pipe_output()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, mut lines) = mpsc::channel(EngineProcessLimits::PENDING_LINES);
+        let mut diagnostics = EngineDiagnostics::default();
+        let mut failure = None;
+        let producer = async move {
+            for index in 0..EngineDiagnostics::MAX_ENTRIES * 2 {
+                let pipe = if index % 2 == 0 {
+                    EngineProcessEnumPipe::Stdout
+                } else {
+                    EngineProcessEnumPipe::Stderr
+                };
+                sender
+                    .send(EngineProcessLine::new(pipe, String::new()))
+                    .await?;
+            }
+            sender
+                .send(EngineProcessLine::new(
+                    EngineProcessEnumPipe::Stdout,
+                    "last stdout 界".to_owned(),
+                ))
+                .await?;
+            sender
+                .send(EngineProcessLine::new(
+                    EngineProcessEnumPipe::Stderr,
+                    "last stderr λ".to_owned(),
+                ))
+                .await?;
+            sender
+                .send(Err(EngineProcessError::Closed(
+                    EngineProcessEnumPipe::Stdout,
+                )))
+                .await?;
+            sender
+                .send(Err(EngineProcessError::Closed(
+                    EngineProcessEnumPipe::Stderr,
+                )))
+                .await?;
+            Ok::<(), Box<dyn std::error::Error>>(())
+        };
+        let (produced, collected) = tokio::join!(
+            producer,
+            EngineNativeProcess::collect_diagnostics(
+                &mut lines,
+                &mut diagnostics,
+                &mut failure,
+                Instant::now() + EngineProcessLimits::SHUTDOWN,
+            )
+        );
+        produced?;
+        collected?;
+        assert!(diagnostics.owned_bytes() <= EngineDiagnostics::MAX_OWNED_BYTES);
+        assert_eq!(diagnostics.entries().len(), EngineDiagnostics::MAX_ENTRIES);
+        assert!(diagnostics.evicted_lines() > 0);
+        let mut latest = diagnostics.entries().rev();
+        assert_eq!(
+            latest.next().map(|entry| (entry.pipe(), entry.text())),
+            Some((EngineProcessEnumPipe::Stderr, "last stderr λ"))
+        );
+        assert_eq!(
+            latest.next().map(|entry| (entry.pipe(), entry.text())),
+            Some((EngineProcessEnumPipe::Stdout, "last stdout 界"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelled_shutdown_collection_keeps_tail_and_failure_until_observed_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, mut lines) = mpsc::channel(EngineProcessLimits::PENDING_LINES);
+        sender
+            .send(EngineProcessLine::new(
+                EngineProcessEnumPipe::Stderr,
+                "before cancellation".to_owned(),
+            ))
+            .await?;
+        sender.send(Err(EngineProcessError::OversizedLine)).await?;
+        let mut diagnostics = EngineDiagnostics::default();
+        let mut failure = None;
+        let deadline = Instant::now() + EngineProcessLimits::SHUTDOWN;
+        {
+            let mut collecting = std::pin::pin!(EngineNativeProcess::collect_diagnostics(
+                &mut lines,
+                &mut diagnostics,
+                &mut failure,
+                deadline
+            ));
+            assert!(
+                collecting
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        assert!(matches!(
+            failure.as_deref(),
+            Some(EngineProcessError::OversizedLine)
+        ));
+        sender
+            .send(EngineProcessLine::new(
+                EngineProcessEnumPipe::Stdout,
+                "after cancellation".to_owned(),
+            ))
+            .await?;
+        drop(sender);
+        let result = EngineNativeProcess::collect_diagnostics(
+            &mut lines,
+            &mut diagnostics,
+            &mut failure,
+            deadline,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(EngineProcessError::ShutdownFailed(error)) if matches!(*error, EngineProcessError::OversizedLine))
+        );
+        assert_eq!(
+            diagnostics
+                .entries()
+                .map(|entry| entry.text())
+                .collect::<Vec<_>>(),
+            ["before cancellation", "after cancellation"]
+        );
+        Ok(())
+    }
 
     #[tokio::test(start_paused = true)]
     async fn cancelled_reader_join_retains_only_unobserved_handles()

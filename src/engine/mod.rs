@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod capabilities;
+pub mod diagnostics;
 pub mod enums;
 pub mod live_game;
 pub mod package;

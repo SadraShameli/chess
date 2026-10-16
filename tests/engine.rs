@@ -4,6 +4,8 @@ mod desktop_native_game_engine;
 mod engine_analysis;
 #[path = "engine/capabilities.rs"]
 mod engine_capabilities;
+#[path = "engine/diagnostics.rs"]
+mod engine_diagnostics;
 #[path = "engine/lifecycle.rs"]
 mod engine_lifecycle;
 #[path = "engine/live_game.rs"]
