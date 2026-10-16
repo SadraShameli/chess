@@ -7,4 +7,4 @@ export interface NativeTestBrowser {
   $(selector: string): Promise<NativeTestElement>;
 }
 
-export const browser: NativeTestBrowser;
+export declare const browser: NativeTestBrowser;

@@ -25,6 +25,13 @@
       "@tests/*": ["./tests/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "tests/**/*.ts", "tools/**/*.ts", "*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "types/**/*.d.ts",
+    "tests/**/*.ts",
+    "tools/**/*.ts",
+    "*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

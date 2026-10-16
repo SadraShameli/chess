@@ -1,0 +1,10 @@
+{
+  "build": {
+    "beforeBuildCommand": "bun run build:native",
+    "frontendDist": "ui/dist-native"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": { "capabilities": ["main", "test"] }
+  }
+}

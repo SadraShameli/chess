@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "bun --bun vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "bun run typecheck && bun --bun vite build",
+    "build:native": "bun run typecheck && bun --bun vite build --mode native-test --outDir dist-native",
     "typecheck": "node node_modules/vue-tsc/bin/vue-tsc.js --noEmit",
     "format": "bun --bun prettier --write .",
     "format:check": "bun --bun prettier --check .",
@@ -14,8 +15,8 @@
     "lint:eslint": "bun --bun eslint . --max-warnings 0",
     "lint:styles": "bun --bun stylelint src/**/*.css",
     "test": "bun --bun vitest run",
-    "test:native": "bun --bun wdio run wdio.conf.ts",
-    "tauri": "bun node_modules/@tauri-apps/cli/tauri.js"
+    "test:native": "TSX_TSCONFIG_PATH=tsconfig.runtime.json node node_modules/@wdio/cli/bin/wdio.js run wdio.conf.ts",
+    "tauri": "cd .. && TAURI_APP_PATH=. TAURI_FRONTEND_PATH=ui bun ui/node_modules/@tauri-apps/cli/tauri.js"
   },
   "dependencies": {
     "@tauri-apps/api": "2.12.4",

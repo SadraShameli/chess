@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "nl.sadra.chess",
   "build": {
-    "beforeDevCommand": "bun --cwd ui run dev",
-    "beforeBuildCommand": "bun --cwd ui run build",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "ui/dist"
   },

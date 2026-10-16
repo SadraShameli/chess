@@ -5,6 +5,9 @@ edition = "2024"
 rust-version = "1.99"
 default-run = "chess"
 
+[features]
+native-test = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
 [dependencies]
 pgn-reader = "=0.29.1"
 rayon = "=1.12.0"
@@ -14,14 +17,16 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"
 shakmaty = "=0.30.2"
-tauri = "=2.12.4"
+tauri = { version = "=2.12.4", features = [] }
 tauri-plugin-dialog = "=2.8.3"
+tauri-plugin-wdio = { version = "=1.5.0", optional = true }
+tauri-plugin-wdio-webdriver = { version = "=1.5.0", optional = true }
 thiserror = "=2.0.21"
 tokio = { version = "=1.53.3", features = ["fs", "io-util", "macros", "process", "sync", "time"] }
 uuid = { version = "=1.28.0", features = ["serde", "v4"] }
 
 [build-dependencies]
-tauri-build = "=2.7.3"
+tauri-build = { version = "=2.7.3", features = [] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
