@@ -101,6 +101,14 @@ pub struct PuzzleSessionContext {
 }
 
 impl PuzzleSessionContext {
+    pub const fn session_id(&self) -> PuzzleSessionId {
+        self.session
+    }
+
+    pub const fn revision(&self) -> PuzzleSessionRevision {
+        self.revision
+    }
+
     pub const fn new(
         session: PuzzleSessionId,
         attempt: PuzzleAttemptId,
@@ -226,11 +234,10 @@ impl PuzzleSession {
         self.transition(expected, |attempt| attempt.record_timeout(mode))
     }
 
-    fn transition<T>(
-        &mut self,
+    pub(super) fn validate_context(
+        &self,
         expected: &PuzzleSessionContext,
-        operation: impl FnOnce(&mut PuzzleAttempt) -> Result<T, PuzzleAttemptError>,
-    ) -> Result<T, PuzzleSessionError> {
+    ) -> Result<(), PuzzleSessionError> {
         if expected.session != self.id || expected.attempt != self.attempt.id() {
             return Err(PuzzleSessionError::IdentityMismatch);
         }
@@ -243,6 +250,29 @@ impl PuzzleSession {
                 actual: self.revision,
             });
         }
+        Ok(())
+    }
+
+    pub(super) fn set_revision(&mut self, revision: PuzzleSessionRevision) {
+        self.revision = revision;
+    }
+
+    pub(super) fn replace_attempt(
+        &mut self,
+        id: PuzzleAttemptId,
+        definition: PuzzleDefinition,
+        revision: PuzzleSessionRevision,
+    ) -> PuzzleAttempt {
+        self.revision = revision;
+        std::mem::replace(&mut self.attempt, PuzzleAttempt::new(id, definition))
+    }
+
+    fn transition<T>(
+        &mut self,
+        expected: &PuzzleSessionContext,
+        operation: impl FnOnce(&mut PuzzleAttempt) -> Result<T, PuzzleAttemptError>,
+    ) -> Result<T, PuzzleSessionError> {
+        self.validate_context(expected)?;
         let revision = self.revision.next()?;
         let result = operation(&mut self.attempt)?;
         self.revision = revision;

@@ -35,10 +35,14 @@ mod game_transition_fixture;
 #[path = "game/tree.rs"]
 mod game_tree;
 
+#[path = "puzzle/checkpoint.rs"]
+mod puzzle_checkpoint;
 #[path = "puzzle/definition.rs"]
 mod puzzle_definition;
 #[path = "puzzle/fixture.rs"]
 mod puzzle_fixture;
+#[path = "puzzle/run.rs"]
+mod puzzle_run;
 #[path = "puzzle/selection.rs"]
 mod puzzle_selection;
 #[path = "puzzle/solution.rs"]
