@@ -1,5 +1,6 @@
 pub mod accessibility;
 pub mod action;
+pub mod analysis;
 pub mod app;
 pub mod board;
 pub mod game;

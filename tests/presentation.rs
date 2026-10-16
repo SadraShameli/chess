@@ -10,6 +10,8 @@ mod presentation_board;
 mod game_transition_fixture;
 #[path = "presentation/action/registry.rs"]
 mod presentation_action_registry;
+#[path = "presentation/analysis.rs"]
+mod presentation_analysis;
 #[path = "presentation/game/controller.rs"]
 mod presentation_game_controller;
 #[path = "presentation/game/new_game.rs"]
