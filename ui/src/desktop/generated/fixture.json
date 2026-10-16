@@ -1,0 +1,622 @@
+{
+  "request": {
+    "protocol_version": 1,
+    "request_id": "123e4567-e89b-42d3-a456-426614174000",
+    "expected_revision": "18446744073709551615",
+    "payload": {
+      "operation": "bootstrap"
+    }
+  },
+  "response": {
+    "protocol_version": 1,
+    "request_id": "123e4567-e89b-42d3-a456-426614174000",
+    "result": {
+      "status": "success",
+      "value": {
+        "operation": "bootstrap",
+        "value": {
+          "protocol_version": 1,
+          "app_version": "0.1.0",
+          "revision": "0",
+          "board": {
+            "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "variant": "standard",
+            "turn": "white",
+            "is_check": false,
+            "pieces": [
+              {
+                "square": 0,
+                "color": "white",
+                "kind": "rook"
+              },
+              {
+                "square": 1,
+                "color": "white",
+                "kind": "knight"
+              },
+              {
+                "square": 2,
+                "color": "white",
+                "kind": "bishop"
+              },
+              {
+                "square": 3,
+                "color": "white",
+                "kind": "queen"
+              },
+              {
+                "square": 4,
+                "color": "white",
+                "kind": "king"
+              },
+              {
+                "square": 5,
+                "color": "white",
+                "kind": "bishop"
+              },
+              {
+                "square": 6,
+                "color": "white",
+                "kind": "knight"
+              },
+              {
+                "square": 7,
+                "color": "white",
+                "kind": "rook"
+              },
+              {
+                "square": 8,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 9,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 10,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 11,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 12,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 13,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 14,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 15,
+                "color": "white",
+                "kind": "pawn"
+              },
+              {
+                "square": 48,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 49,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 50,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 51,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 52,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 53,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 54,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 55,
+                "color": "black",
+                "kind": "pawn"
+              },
+              {
+                "square": 56,
+                "color": "black",
+                "kind": "rook"
+              },
+              {
+                "square": 57,
+                "color": "black",
+                "kind": "knight"
+              },
+              {
+                "square": 58,
+                "color": "black",
+                "kind": "bishop"
+              },
+              {
+                "square": 59,
+                "color": "black",
+                "kind": "queen"
+              },
+              {
+                "square": 60,
+                "color": "black",
+                "kind": "king"
+              },
+              {
+                "square": 61,
+                "color": "black",
+                "kind": "bishop"
+              },
+              {
+                "square": 62,
+                "color": "black",
+                "kind": "knight"
+              },
+              {
+                "square": 63,
+                "color": "black",
+                "kind": "rook"
+              }
+            ],
+            "legal_moves": [
+              {
+                "origin": 8,
+                "destination": 16,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 9,
+                "destination": 17,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 10,
+                "destination": 18,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 11,
+                "destination": 19,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 12,
+                "destination": 20,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 13,
+                "destination": 21,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 14,
+                "destination": 22,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 15,
+                "destination": 23,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 8,
+                "destination": 24,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 9,
+                "destination": 25,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 10,
+                "destination": 26,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 11,
+                "destination": 27,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 12,
+                "destination": 28,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 13,
+                "destination": 29,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 14,
+                "destination": 30,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 15,
+                "destination": 31,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 1,
+                "destination": 16,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 1,
+                "destination": 18,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 6,
+                "destination": 21,
+                "promotion": null,
+                "castling_rook": null
+              },
+              {
+                "origin": 6,
+                "destination": 23,
+                "promotion": null,
+                "castling_rook": null
+              }
+            ]
+          },
+          "cpu_threads": 1
+        }
+      },
+      "revision": null
+    }
+  },
+  "event": {
+    "protocol_version": 1,
+    "subscription_id": "123e4567-e89b-42d3-a456-426614174000",
+    "sequence": "1",
+    "class": "snapshot",
+    "payload": {
+      "kind": "snapshot",
+      "value": {
+        "protocol_version": 1,
+        "app_version": "0.1.0",
+        "revision": "0",
+        "board": {
+          "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "variant": "standard",
+          "turn": "white",
+          "is_check": false,
+          "pieces": [
+            {
+              "square": 0,
+              "color": "white",
+              "kind": "rook"
+            },
+            {
+              "square": 1,
+              "color": "white",
+              "kind": "knight"
+            },
+            {
+              "square": 2,
+              "color": "white",
+              "kind": "bishop"
+            },
+            {
+              "square": 3,
+              "color": "white",
+              "kind": "queen"
+            },
+            {
+              "square": 4,
+              "color": "white",
+              "kind": "king"
+            },
+            {
+              "square": 5,
+              "color": "white",
+              "kind": "bishop"
+            },
+            {
+              "square": 6,
+              "color": "white",
+              "kind": "knight"
+            },
+            {
+              "square": 7,
+              "color": "white",
+              "kind": "rook"
+            },
+            {
+              "square": 8,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 9,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 10,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 11,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 12,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 13,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 14,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 15,
+              "color": "white",
+              "kind": "pawn"
+            },
+            {
+              "square": 48,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 49,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 50,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 51,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 52,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 53,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 54,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 55,
+              "color": "black",
+              "kind": "pawn"
+            },
+            {
+              "square": 56,
+              "color": "black",
+              "kind": "rook"
+            },
+            {
+              "square": 57,
+              "color": "black",
+              "kind": "knight"
+            },
+            {
+              "square": 58,
+              "color": "black",
+              "kind": "bishop"
+            },
+            {
+              "square": 59,
+              "color": "black",
+              "kind": "queen"
+            },
+            {
+              "square": 60,
+              "color": "black",
+              "kind": "king"
+            },
+            {
+              "square": 61,
+              "color": "black",
+              "kind": "bishop"
+            },
+            {
+              "square": 62,
+              "color": "black",
+              "kind": "knight"
+            },
+            {
+              "square": 63,
+              "color": "black",
+              "kind": "rook"
+            }
+          ],
+          "legal_moves": [
+            {
+              "origin": 8,
+              "destination": 16,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 9,
+              "destination": 17,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 10,
+              "destination": 18,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 11,
+              "destination": 19,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 12,
+              "destination": 20,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 13,
+              "destination": 21,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 14,
+              "destination": 22,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 15,
+              "destination": 23,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 8,
+              "destination": 24,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 9,
+              "destination": 25,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 10,
+              "destination": 26,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 11,
+              "destination": 27,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 12,
+              "destination": 28,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 13,
+              "destination": 29,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 14,
+              "destination": 30,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 15,
+              "destination": 31,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 1,
+              "destination": 16,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 1,
+              "destination": 18,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 6,
+              "destination": 21,
+              "promotion": null,
+              "castling_rook": null
+            },
+            {
+              "origin": 6,
+              "destination": 23,
+              "promotion": null,
+              "castling_rook": null
+            }
+          ]
+        },
+        "cpu_threads": 1
+      }
+    }
+  }
+}

@@ -17,6 +17,16 @@ pub enum BoardSquareError {
 #[serde(try_from = "u8", into = "u8")]
 pub struct BoardSquare(pub(super) Square);
 
+impl JsonSchema for BoardSquare {
+    fn schema_name() -> Cow<'static, str> {
+        "BoardSquare".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({"type": "integer", "minimum": 0, "maximum": 63})
+    }
+}
+
 impl TryFrom<u8> for BoardSquare {
     type Error = BoardSquareError;
 
@@ -48,3 +58,5 @@ impl Display for BoardSquare {
         Display::fmt(&self.0, formatter)
     }
 }
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use std::borrow::Cow;

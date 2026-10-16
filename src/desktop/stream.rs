@@ -18,6 +18,7 @@ pub enum DesktopEnumStreamClass {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DesktopStreamEvent<T> {
     protocol_version: DesktopProtocolVersion,
     subscription_id: DesktopRequestId,

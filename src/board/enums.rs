@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use shakmaty::{CastlingMode, Color, Role};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardEnumVariant {
     Standard,
@@ -17,7 +17,7 @@ impl BoardEnumVariant {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardEnumColor {
     White,
@@ -51,7 +51,7 @@ impl From<BoardEnumColor> for Color {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardEnumPieceKind {
     Pawn,
@@ -80,3 +80,4 @@ impl From<Role> for BoardEnumPieceKind {
         }
     }
 }
+use schemars::JsonSchema;

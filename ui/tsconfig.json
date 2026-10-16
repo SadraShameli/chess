@@ -22,7 +22,8 @@
     "paths": {
       "@wdio/globals": ["./types/wdio-globals.d.ts"],
       "@/*": ["./src/*"],
-      "@tests/*": ["./tests/*"]
+      "@tests/*": ["./tests/*"],
+      "@resources/*": ["../resources/*"]
     }
   },
   "include": [

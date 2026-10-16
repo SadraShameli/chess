@@ -6,6 +6,9 @@ use shakmaty::{
 };
 use thiserror::Error;
 
+use crate::board::piece::BoardPiece;
+use crate::board::square::BoardSquare;
+
 use crate::board::enums::{BoardEnumColor, BoardEnumVariant};
 
 #[derive(Debug, Error)]
@@ -94,6 +97,13 @@ impl BoardPosition {
 
     pub fn placement(&self) -> String {
         self.chess.board().to_string()
+    }
+
+    pub fn pieces(&self) -> impl Iterator<Item = (BoardSquare, BoardPiece)> + '_ {
+        self.chess
+            .board()
+            .iter()
+            .map(|(square, piece)| (BoardSquare(square), piece.into()))
     }
 
     pub fn identity(&self) -> BoardPositionIdentity {

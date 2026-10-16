@@ -1,4 +1,3 @@
-import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 import type { Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
@@ -21,12 +20,7 @@ const nativeTest: Plugin = {
 
 export default defineConfig({
   plugins: [vue(), tailwindcss(), nativeTest],
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "@tests": fileURLToPath(new URL("./tests", import.meta.url)),
-    },
-  },
+  resolve: { tsconfigPaths: true },
   clearScreen: false,
   server: { host: "127.0.0.1", port: 1420, strictPort: true },
   build: { target: "es2023", sourcemap: true },

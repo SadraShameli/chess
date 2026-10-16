@@ -5,6 +5,10 @@ edition = "2024"
 rust-version = "1.99"
 default-run = "chess"
 
+[[bin]]
+name = "chess-tools"
+path = "tools/main.rs"
+
 [features]
 native-test = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
