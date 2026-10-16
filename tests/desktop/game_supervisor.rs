@@ -36,6 +36,8 @@ use chess::storage::document_store::StorageDocumentStore;
 use chess::storage::game_document::StorageGameDocumentRepository;
 use tokio::time::Instant;
 
+use crate::desktop_game_supervisor_storage::DesktopGameSupervisorFixtureStorage;
+
 type DesktopGameSupervisorTestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[derive(Default)]
@@ -250,13 +252,6 @@ async fn failed_engine_creation_observes_retained_cleanup_before_allowing_anothe
     fixture.close().await
 }
 
-pub(crate) struct DesktopGameSupervisorFixtureStorage {
-    directory: tempfile::TempDir,
-    pub(crate) budget: CapacityBudget,
-    pub(crate) executor: Arc<CapacityExecutor>,
-    pub(crate) store: StorageDocumentStore,
-}
-
 type DesktopGameSupervisorFixtureActor = DesktopGameSupervisor<
     DesktopGameSupervisorFixtureFactory,
     DesktopGameSupervisorFixtureClock,
@@ -264,19 +259,22 @@ type DesktopGameSupervisorFixtureActor = DesktopGameSupervisor<
 >;
 
 impl DesktopGameSupervisorFixtureStorage {
-    pub(crate) async fn new(workers: usize) -> Result<Self, Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let budget = CapacityBudget::new(NonZeroUsize::new(workers).ok_or("invalid capacity")?)?;
-        let executor = Arc::new(CapacityExecutor::new(budget.clone())?);
-        let store =
-            StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget.clone())
-                .await?;
-        Ok(Self {
-            directory,
-            budget,
-            executor,
-            store,
-        })
+    pub(crate) async fn set_save_failure(&self, enabled: bool) -> DesktopGameSupervisorTestResult {
+        let path = self.directory.path().join("library.sqlite3");
+        let sql = if enabled {
+            "CREATE TRIGGER game_supervisor_save_failure BEFORE INSERT ON documents BEGIN SELECT RAISE(FAIL, 'injected autosave failure'); END;"
+        } else {
+            "DROP TRIGGER game_supervisor_save_failure;"
+        };
+        self.executor
+            .submit_waiting(move |_cancellation| {
+                let connection = rusqlite::Connection::open(path)?;
+                connection.execute_batch(sql)
+            })
+            .await?
+            .join()
+            .await??;
+        Ok(())
     }
 
     async fn supervisor(
@@ -296,34 +294,6 @@ impl DesktopGameSupervisorFixtureStorage {
             search_config: GameEngineSearchConfig::initial_default(),
         })
         .await?)
-    }
-
-    pub(crate) async fn set_save_failure(&self, enabled: bool) -> DesktopGameSupervisorTestResult {
-        let path = self.directory.path().join("library.sqlite3");
-        let sql = if enabled {
-            "CREATE TRIGGER game_supervisor_save_failure BEFORE INSERT ON documents BEGIN SELECT RAISE(FAIL, 'injected autosave failure'); END;"
-        } else {
-            "DROP TRIGGER game_supervisor_save_failure;"
-        };
-        self.executor
-            .submit_waiting(move |_cancellation| {
-                let connection = rusqlite::Connection::open(path)?;
-                connection.execute_batch(sql)
-            })
-            .await?
-            .join()
-            .await??;
-        Ok(())
-    }
-
-    pub(crate) async fn close(self) -> DesktopGameSupervisorTestResult {
-        self.store.close().await?;
-        Arc::try_unwrap(self.executor)
-            .map_err(|_owner| "executor still borrowed")?
-            .shutdown()
-            .await?;
-        self.directory.close()?;
-        Ok(())
     }
 }
 

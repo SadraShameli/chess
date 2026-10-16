@@ -1,51 +1,71 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
 use chess::board::enums::BoardEnumColor;
 use chess::board::position::BoardPosition;
+use chess::board::start::BoardStart;
 use chess::capacity::budget::CapacityBudget;
 use chess::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
-use chess::clock::state::ClockState;
+use chess::clock::state::{ClockState, ClockStateEnumStatus};
 use chess::clock::time_control::ClockTimeControl;
 use chess::clock::time_provider::ClockTimeProvider;
+use chess::desktop::game_commands::{DesktopGameCommandsEnumAction, DesktopGameCommandsRequest};
+use chess::desktop::game_snapshot::DesktopGameSnapshot;
 use chess::desktop::game_supervisor::{
-    DesktopGameSupervisorEngineFactory, DesktopGameSupervisorEngineProvider,
+    DesktopGameSupervisor, DesktopGameSupervisorEngineFactory, DesktopGameSupervisorEngineProvider,
+    DesktopGameSupervisorError, DesktopGameSupervisorOptions, DesktopGameSupervisorPort,
 };
+use chess::desktop::game_transition::DesktopGameTransitionError;
+use chess::desktop::identity::DesktopRequestId;
 use chess::desktop::native::game_engine::{
-    DesktopNativeGameEngineAllocation, DesktopNativeGameEngineFactory,
-    DesktopNativeGameEngineFactoryOptions, DesktopNativeGameEngineResources,
+    DesktopNativeGameEngineAllocation, DesktopNativeGameEngineError,
+    DesktopNativeGameEngineFactory, DesktopNativeGameEngineFactoryOptions,
+    DesktopNativeGameEngineResources,
 };
 use chess::engine::capabilities::EngineIdentity;
 use chess::engine::enums::EngineEnumOption;
+use chess::engine::live_game::EngineLiveGameError;
 use chess::engine::package::selector::EnginePackageSelected;
 use chess::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLine,
     EngineProcessProvider,
 };
 use chess::engine::resource_config::EngineResourceConfig;
+use chess::engine::session::EngineSessionError;
+use chess::game::adjudication::{
+    GameAdjudicationEnumMateProof, GameAdjudicationEnumMateQuestion,
+    GameAdjudicationMateProofProvider,
+};
 use chess::game::engine_provider::{
     GameEngineContext, GameEngineEnumEvent, GameEngineProvider, GameEngineRequest,
     GameEngineSearchConfig,
 };
-use chess::game::enums::GameRevision;
+use chess::game::enums::{GameEnumMode, GameEnumPhase, GameEnumSeat, GameRevision};
+use chess::game::pause::{GamePauseEnumFault, GamePauseError};
+use chess::game::session::{
+    GameMetadata, GameSeats, GameSession, GameSessionEnumInterruption, GameSessionError,
+    GameSessionOptions,
+};
+use chess::game::storage_repository::GameStorageRevision;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
+use crate::desktop_game_supervisor_storage::DesktopGameSupervisorFixtureStorage;
 use crate::engine_package_selection::EnginePackageFixture;
 
 type DesktopNativeGameEngineTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Default)]
-struct DesktopNativeGameEngineFixtureClock;
+struct DesktopNativeGameEngineFixtureClock(AtomicU64);
 
 impl ClockTimeProvider for DesktopNativeGameEngineFixtureClock {
     fn now(&self) -> Result<ClockInstant, ClockDurationError> {
-        Ok(ClockInstant::from_nanos(0))
+        Ok(ClockInstant::from_nanos(self.0.load(Ordering::SeqCst)))
     }
 }
 
@@ -57,6 +77,10 @@ struct DesktopNativeGameEngineFixtureObservations {
     live: AtomicUsize,
     incomplete_drop: AtomicBool,
     acknowledge: AtomicBool,
+    changed: Notify,
+    block_cleanup: AtomicBool,
+    cleanup_entered: Notify,
+    cleanup_ready: Notify,
 }
 
 impl DesktopNativeGameEngineFixtureObservations {
@@ -104,6 +128,7 @@ impl EngineProcess for DesktopNativeGameEngineFixtureProcess {
             .lock()
             .map_err(|_poisoned| std::io::Error::other("command lock unavailable"))?
             .push(command.to_owned());
+        self.observations.changed.notify_one();
         match command {
             "uci" => {
                 self.observations
@@ -120,7 +145,9 @@ impl EngineProcess for DesktopNativeGameEngineFixtureProcess {
                 self.observations.emit("uciok".to_owned())?;
             }
             "isready" => self.observations.emit("readyok".to_owned())?,
-            "stop" => self.observations.emit("bestmove e2e4".to_owned())?,
+            "stop" => {
+                self.observations.emit("bestmove g1f3".to_owned())?;
+            }
             value if self.observations.acknowledge.load(Ordering::SeqCst) => {
                 for option in EngineEnumOption::ALL {
                     if let Some(number) =
@@ -167,6 +194,10 @@ impl EngineProcess for DesktopNativeGameEngineFixtureProcess {
     }
 
     async fn shutdown(&mut self) -> Result<(), EngineProcessError> {
+        self.observations.cleanup_entered.notify_one();
+        while self.observations.block_cleanup.load(Ordering::SeqCst) {
+            self.observations.cleanup_ready.notified().await;
+        }
         self.complete = true;
         Ok(())
     }
@@ -308,7 +339,7 @@ impl DesktopNativeGameEngineFixture {
             DesktopNativeGameEngineFactoryOptions {
                 processes: DesktopNativeGameEngineFixtureProcesses(observations),
                 package: package.select()?,
-                clock: Arc::new(DesktopNativeGameEngineFixtureClock),
+                clock: Arc::new(DesktopNativeGameEngineFixtureClock::default()),
                 resources,
             },
         ))
@@ -856,5 +887,817 @@ async fn failed_initialization_cannot_replace_a_child_before_retained_cleanup()
     assert_eq!(observations.live.load(Ordering::SeqCst), 0);
     assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
     assert_eq!(resources.budget.available(), 4);
+    Ok(())
+}
+
+struct DesktopNativeGameEngineFixtureSequence {
+    processes: Mutex<VecDeque<Arc<DesktopNativeGameEngineFixtureObservations>>>,
+}
+
+impl EngineProcessProvider for DesktopNativeGameEngineFixtureSequence {
+    type Process = DesktopNativeGameEngineFixtureProcess;
+
+    fn spawn(&self, _package: &EnginePackageSelected) -> Result<Self::Process, EngineProcessError> {
+        let observations = self
+            .processes
+            .lock()
+            .map_err(|_poisoned| std::io::Error::other("process sequence lock unavailable"))?
+            .pop_front()
+            .ok_or_else(|| std::io::Error::other("unexpected automatic engine replacement"))?;
+        observations.live.fetch_add(1, Ordering::SeqCst);
+        Ok(DesktopNativeGameEngineFixtureProcess {
+            observations,
+            complete: false,
+        })
+    }
+}
+
+struct DesktopNativeGameEngineFixtureProof;
+
+impl GameAdjudicationMateProofProvider for DesktopNativeGameEngineFixtureProof {
+    fn prove(
+        &self,
+        _position: &BoardPosition,
+        _question: GameAdjudicationEnumMateQuestion,
+    ) -> GameAdjudicationEnumMateProof {
+        GameAdjudicationEnumMateProof::Possible
+    }
+}
+
+type DesktopNativeGameEngineFixtureSupervisor = DesktopGameSupervisor<
+    DesktopNativeGameEngineFactory<
+        DesktopNativeGameEngineFixtureSequence,
+        DesktopNativeGameEngineFixtureClock,
+        DesktopNativeGameEngineFixtureResources,
+    >,
+    DesktopNativeGameEngineFixtureClock,
+    DesktopNativeGameEngineFixtureProof,
+>;
+
+impl DesktopNativeGameEngineFixture {
+    fn sequence_factory(
+        package: &EnginePackageFixture,
+        resources: Arc<DesktopNativeGameEngineFixtureResources>,
+        observations: Vec<Arc<DesktopNativeGameEngineFixtureObservations>>,
+        clock: Arc<DesktopNativeGameEngineFixtureClock>,
+    ) -> DesktopNativeGameEngineTestResult<
+        DesktopNativeGameEngineFactory<
+            DesktopNativeGameEngineFixtureSequence,
+            DesktopNativeGameEngineFixtureClock,
+            DesktopNativeGameEngineFixtureResources,
+        >,
+    > {
+        Ok(DesktopNativeGameEngineFactory::new(
+            DesktopNativeGameEngineFactoryOptions {
+                processes: DesktopNativeGameEngineFixtureSequence {
+                    processes: Mutex::new(observations.into()),
+                },
+                package: package.select()?,
+                clock,
+                resources,
+            },
+        ))
+    }
+
+    async fn supervisor(
+        storage: &DesktopGameSupervisorFixtureStorage,
+        factory: DesktopNativeGameEngineFactory<
+            DesktopNativeGameEngineFixtureSequence,
+            DesktopNativeGameEngineFixtureClock,
+            DesktopNativeGameEngineFixtureResources,
+        >,
+        clock: Arc<DesktopNativeGameEngineFixtureClock>,
+    ) -> DesktopNativeGameEngineTestResult<(
+        DesktopNativeGameEngineFixtureSupervisor,
+        DesktopGameSupervisorPort,
+    )> {
+        let session = GameSession::new(GameSessionOptions {
+            id: Self::context(GameRevision::ZERO)?.game(),
+            root: uuid::Uuid::from_u128(101).to_string().parse()?,
+            start: BoardStart::standard(),
+            seats: GameSeats::new(
+                GameEnumMode::HumanVersusEngine,
+                GameEnumSeat::Reckless,
+                GameEnumSeat::Human,
+            )?,
+            clock: ClockState::new(ClockTimeControl::initial_default(), BoardEnumColor::White),
+            metadata: GameMetadata::default(),
+        })?;
+        Ok(DesktopGameSupervisor::new(DesktopGameSupervisorOptions {
+            session,
+            storage_revision: GameStorageRevision::INITIAL,
+            storage: storage.store.client(),
+            executor: Arc::clone(&storage.executor),
+            clock,
+            proof: Arc::new(DesktopNativeGameEngineFixtureProof),
+            factory,
+            search_config: GameEngineSearchConfig::initial_default(),
+        })
+        .await?)
+    }
+
+    fn command(
+        port: &DesktopGameSupervisorPort,
+        action: DesktopGameCommandsEnumAction,
+    ) -> DesktopGameCommandsRequest {
+        DesktopGameCommandsRequest {
+            request_id: DesktopRequestId::new(),
+            expected_revision: port.snapshot().snapshot.revision(),
+            received_at: ClockInstant::from_nanos(0),
+            action,
+        }
+    }
+
+    async fn wait_commands(
+        observations: &DesktopNativeGameEngineFixtureObservations,
+        prefix: &str,
+        count: usize,
+    ) -> DesktopNativeGameEngineTestResult {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let changed = observations.changed.notified();
+                if observations
+                    .commands()?
+                    .iter()
+                    .filter(|command| command.starts_with(prefix))
+                    .count()
+                    >= count
+                {
+                    return Ok(());
+                }
+                changed.await;
+            }
+        })
+        .await?
+    }
+
+    async fn wait_snapshot(
+        port: &DesktopGameSupervisorPort,
+        predicate: impl Fn(&DesktopGameSnapshot) -> bool,
+    ) -> DesktopNativeGameEngineTestResult<DesktopGameSnapshot> {
+        let mut events = port.events();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let snapshot = events.borrow().snapshot.clone();
+                if predicate(&snapshot) {
+                    return Ok(snapshot);
+                }
+                events.changed().await?;
+            }
+        })
+        .await?
+    }
+
+    async fn playing(
+        port: &DesktopGameSupervisorPort,
+        observations: &DesktopNativeGameEngineFixtureObservations,
+    ) -> DesktopNativeGameEngineTestResult<DesktopGameSnapshot> {
+        port.try_submit(Self::command(port, DesktopGameCommandsEnumAction::Start))?
+            .wait()
+            .await?;
+        Self::wait_commands(observations, "go ", 1).await?;
+        observations.emit("bestmove e2e4".to_owned())?;
+        Self::wait_snapshot(port, |snapshot| snapshot.moves().len() == 1).await?;
+        let moved = port
+            .try_submit(Self::command(
+                port,
+                DesktopGameCommandsEnumAction::Play {
+                    node: uuid::Uuid::from_u128(102).to_string().parse()?,
+                    origin: "e7".parse()?,
+                    destination: "e5".parse()?,
+                    promotion: None,
+                    color: BoardEnumColor::Black,
+                },
+            ))?
+            .wait()
+            .await?;
+        Self::wait_commands(observations, "go ", 2).await?;
+        Ok(moved)
+    }
+
+    fn preserved(before: &DesktopGameSnapshot, after: &DesktopGameSnapshot) {
+        assert_eq!(after.board().fen(), before.board().fen());
+        assert_eq!(after.root(), before.root());
+        assert_eq!(after.live(), before.live());
+        assert_eq!(after.view(), before.view());
+        assert_eq!(after.outcome(), before.outcome());
+        assert_eq!(
+            after
+                .moves()
+                .iter()
+                .map(|movement| (movement.id(), movement.san()))
+                .collect::<Vec<_>>(),
+            before
+                .moves()
+                .iter()
+                .map(|movement| (movement.id(), movement.san()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    async fn quit(
+        port: DesktopGameSupervisorPort,
+        worker: tokio::task::JoinHandle<(
+            DesktopNativeGameEngineFixtureSupervisor,
+            Result<(), DesktopGameSupervisorError>,
+        )>,
+    ) -> DesktopNativeGameEngineTestResult {
+        port.try_submit(Self::command(&port, DesktopGameCommandsEnumAction::Quit))?
+            .wait()
+            .await?;
+        let (supervisor, result) = worker.await?;
+        result?;
+        assert!(supervisor.is_shutdown_complete());
+        drop((supervisor, port));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn failed_search_retry_reaps_validation_process_before_explicit_resume_recreates_play()
+-> DesktopNativeGameEngineTestResult {
+    let package = EnginePackageFixture::new()?;
+    let storage = DesktopGameSupervisorFixtureStorage::new(2).await?;
+    let resources = DesktopNativeGameEngineFixture::resources()?;
+    let old = DesktopNativeGameEngineFixture::observations();
+    let validation = DesktopNativeGameEngineFixture::observations();
+    let resumed = DesktopNativeGameEngineFixture::observations();
+    let clock = Arc::new(DesktopNativeGameEngineFixtureClock::default());
+    let factory = DesktopNativeGameEngineFixture::sequence_factory(
+        &package,
+        Arc::clone(&resources),
+        vec![
+            Arc::clone(&old),
+            Arc::clone(&validation),
+            Arc::clone(&resumed),
+        ],
+        Arc::clone(&clock),
+    )?;
+    let (mut supervisor, port) =
+        DesktopNativeGameEngineFixture::supervisor(&storage, factory, clock).await?;
+    let worker = tokio::spawn(async move {
+        let result = supervisor.run().await;
+        (supervisor, result)
+    });
+    let playing = DesktopNativeGameEngineFixture::playing(&port, &old).await?;
+    old.emit("unexpected search response".to_owned())?;
+    let failed = DesktopNativeGameEngineFixture::wait_snapshot(&port, |snapshot| {
+        snapshot.interruption()
+            == Some(GameSessionEnumInterruption::RecoveryRequired(
+                GamePauseEnumFault::Engine,
+            ))
+    })
+    .await?;
+    DesktopNativeGameEngineFixture::preserved(&playing, &failed);
+    assert_eq!(failed.clock().status(), ClockStateEnumStatus::Paused);
+    assert_eq!(old.live.load(Ordering::SeqCst), 0);
+    assert_eq!(resources.budget.available(), 4);
+    assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+    assert!(validation.commands()?.is_empty());
+    let notice = port
+        .snapshot()
+        .notice
+        .ok_or("missing typed engine failure")?;
+    let DesktopGameSupervisorError::Engine { source } = notice.as_ref() else {
+        return Err("wrong supervisor fault".into());
+    };
+    assert!(
+        matches!(source.downcast_ref::<DesktopNativeGameEngineError<std::io::Error>>(), Some(DesktopNativeGameEngineError::Engine(EngineLiveGameError::Session(error))) if matches!(error.operation(), EngineSessionError::SearchResponse))
+    );
+    let mut stale =
+        DesktopNativeGameEngineFixture::command(&port, DesktopGameCommandsEnumAction::RetryEngine);
+    stale.expected_revision = playing.revision();
+    let error = port
+        .try_submit(stale)?
+        .wait()
+        .await
+        .err()
+        .ok_or("stale Retry accepted")?;
+    assert!(matches!(
+        error.as_ref(),
+        DesktopGameSupervisorError::Revision(_)
+    ));
+    assert!(validation.commands()?.is_empty());
+    let recovered = tokio::time::timeout(
+        Duration::from_secs(3),
+        port.try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::RetryEngine,
+        ))?
+        .wait(),
+    )
+    .await??;
+    assert_eq!(
+        recovered.interruption(),
+        Some(GameSessionEnumInterruption::Recovered(
+            GamePauseEnumFault::Engine
+        ))
+    );
+    assert_eq!(recovered.phase(), GameEnumPhase::Interrupted);
+    assert_eq!(recovered.clock(), failed.clock());
+    DesktopNativeGameEngineFixture::preserved(&failed, &recovered);
+    assert_eq!(validation.live.load(Ordering::SeqCst), 0);
+    assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+    assert_eq!(resources.budget.available(), 4);
+    let ready_commands = validation.commands()?;
+    assert_eq!(
+        ready_commands
+            .iter()
+            .filter(|command| command.as_str() == "uci")
+            .count(),
+        1
+    );
+    assert!(
+        ready_commands
+            .iter()
+            .filter(|command| command.as_str() == "isready")
+            .count()
+            >= 2
+    );
+    assert!(ready_commands.contains(&"setoption name Hash value 64".to_owned()));
+    assert!(ready_commands.contains(&"setoption name Threads value 4".to_owned()));
+    assert!(
+        !validation
+            .commands()?
+            .iter()
+            .any(|command| command.starts_with("go "))
+    );
+    assert!(resumed.commands()?.is_empty());
+    old.emit("bestmove g1f3".to_owned())?;
+    let error = port
+        .try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::RetryEngine,
+        ))?
+        .wait()
+        .await
+        .err()
+        .ok_or("duplicate recovery accepted")?;
+    assert!(matches!(
+        error.as_ref(),
+        DesktopGameSupervisorError::Transition(DesktopGameTransitionError::Session(
+            GameSessionError::Pause(GamePauseError::WrongRecovery)
+        ))
+    ));
+    assert_eq!(validation.live.load(Ordering::SeqCst), 0);
+    assert!(resumed.commands()?.is_empty());
+    port.try_submit(DesktopNativeGameEngineFixture::command(
+        &port,
+        DesktopGameCommandsEnumAction::Resume,
+    ))?
+    .wait()
+    .await?;
+    DesktopNativeGameEngineFixture::wait_commands(&resumed, "go ", 1).await?;
+    DesktopNativeGameEngineFixture::preserved(&recovered, &port.snapshot().snapshot);
+    assert_eq!(resources.budget.available(), 0);
+    assert_eq!(validation.live.load(Ordering::SeqCst), 0);
+    assert_eq!(resumed.live.load(Ordering::SeqCst), 1);
+    assert_eq!(resources.registrations.load(Ordering::SeqCst), 1);
+    assert!(
+        !validation
+            .commands()?
+            .iter()
+            .any(|command| command.starts_with("go "))
+    );
+    resumed.emit("info depth 1 score cp 0 pv g1f3".to_owned())?;
+    DesktopNativeGameEngineFixture::quit(port, worker).await?;
+    assert!(!old.incomplete_drop.load(Ordering::SeqCst));
+    assert!(!validation.incomplete_drop.load(Ordering::SeqCst));
+    assert!(!resumed.incomplete_drop.load(Ordering::SeqCst));
+    assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+    drop(resources);
+    assert_eq!(storage.budget.available(), 2);
+    storage.close().await
+}
+
+#[tokio::test]
+async fn resume_before_explicit_retry_never_spawns_a_replacement()
+-> DesktopNativeGameEngineTestResult {
+    let package = EnginePackageFixture::new()?;
+    let storage = DesktopGameSupervisorFixtureStorage::new(2).await?;
+    let resources = DesktopNativeGameEngineFixture::resources()?;
+    let old = DesktopNativeGameEngineFixture::observations();
+    let fresh = DesktopNativeGameEngineFixture::observations();
+    let clock = Arc::new(DesktopNativeGameEngineFixtureClock::default());
+    let factory = DesktopNativeGameEngineFixture::sequence_factory(
+        &package,
+        Arc::clone(&resources),
+        vec![Arc::clone(&old), Arc::clone(&fresh)],
+        Arc::clone(&clock),
+    )?;
+    let (mut supervisor, port) =
+        DesktopNativeGameEngineFixture::supervisor(&storage, factory, clock).await?;
+    let worker = tokio::spawn(async move {
+        let result = supervisor.run().await;
+        (supervisor, result)
+    });
+    DesktopNativeGameEngineFixture::playing(&port, &old).await?;
+    old.emit("unexpected search response".to_owned())?;
+    let failed = DesktopNativeGameEngineFixture::wait_snapshot(&port, |snapshot| {
+        snapshot.phase() == GameEnumPhase::Interrupted
+    })
+    .await?;
+    let error = port
+        .try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::Resume,
+        ))?
+        .wait()
+        .await
+        .err()
+        .ok_or("unrecovered Resume accepted")?;
+    assert!(
+        fresh.commands()?.is_empty(),
+        "Resume created an engine before explicit Retry"
+    );
+    assert!(matches!(
+        error.as_ref(),
+        DesktopGameSupervisorError::Transition(DesktopGameTransitionError::Session(
+            GameSessionError::Pause(GamePauseError::RecoveryRequired(GamePauseEnumFault::Engine))
+        ))
+    ));
+    assert_eq!(port.snapshot().snapshot.clock(), failed.clock());
+    DesktopNativeGameEngineFixture::quit(port, worker).await?;
+    drop(resources);
+    assert_eq!(storage.budget.available(), 2);
+    storage.close().await
+}
+
+#[tokio::test]
+async fn saturated_search_controls_keep_receipt_deadlines_and_settle_every_admitted_request()
+-> DesktopNativeGameEngineTestResult {
+    let package = EnginePackageFixture::new()?;
+    let storage = DesktopGameSupervisorFixtureStorage::new(2).await?;
+    let resources = DesktopNativeGameEngineFixture::resources()?;
+    let old = DesktopNativeGameEngineFixture::observations();
+    let clock = Arc::new(DesktopNativeGameEngineFixtureClock::default());
+    let factory = DesktopNativeGameEngineFixture::sequence_factory(
+        &package,
+        Arc::clone(&resources),
+        vec![Arc::clone(&old)],
+        Arc::clone(&clock),
+    )?;
+    let (mut supervisor, port) =
+        DesktopNativeGameEngineFixture::supervisor(&storage, factory, Arc::clone(&clock)).await?;
+    let worker = tokio::spawn(async move {
+        let result = supervisor.run().await;
+        (supervisor, result)
+    });
+    let playing = DesktopNativeGameEngineFixture::playing(&port, &old).await?;
+    let mut queued = Vec::new();
+    for _ in 0..DesktopGameSupervisorPort::ORDINARY_CAPACITY {
+        queued.push(port.try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::Navigate {
+                node: playing.root(),
+            },
+        ))?);
+    }
+    assert!(matches!(
+        port.try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::RetryEngine
+        )),
+        Err(DesktopGameSupervisorError::Busy)
+    ));
+    let stop = port.try_submit(DesktopNativeGameEngineFixture::command(
+        &port,
+        DesktopGameCommandsEnumAction::Stop,
+    ))?;
+    let pause = port.try_submit(DesktopNativeGameEngineFixture::command(
+        &port,
+        DesktopGameCommandsEnumAction::Pause {
+            cause: chess::game::pause::GamePauseEnumCause::Manual,
+        },
+    ))?;
+    assert!(matches!(
+        port.try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::Stop
+        )),
+        Err(DesktopGameSupervisorError::Busy)
+    ));
+    assert!(matches!(
+        port.try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::Pause {
+                cause: chess::game::pause::GamePauseEnumCause::Manual
+            }
+        )),
+        Err(DesktopGameSupervisorError::Busy)
+    ));
+    clock.0.store(3_000_000_000, Ordering::SeqCst);
+    let stopped = stop.wait().await;
+    assert!(
+        matches!(stopped, Err(ref error) if matches!(error.as_ref(), DesktopGameSupervisorError::Engine { source } if matches!(source.downcast_ref::<DesktopNativeGameEngineError<std::io::Error>>(), Some(DesktopNativeGameEngineError::Engine(EngineLiveGameError::Session(error))) if matches!(error.operation(), EngineSessionError::StopDeadline))))
+    );
+    assert!(!old.commands()?.iter().any(|command| command == "stop"));
+    let paused = pause.wait().await;
+    assert!(paused.is_err());
+    let failed = DesktopNativeGameEngineFixture::wait_snapshot(&port, |snapshot| {
+        snapshot.interruption()
+            == Some(GameSessionEnumInterruption::RecoveryRequired(
+                GamePauseEnumFault::Engine,
+            ))
+    })
+    .await?;
+    DesktopNativeGameEngineFixture::preserved(&playing, &failed);
+    assert_eq!(resources.budget.available(), 4);
+    let mut quit =
+        DesktopNativeGameEngineFixture::command(&port, DesktopGameCommandsEnumAction::Quit);
+    quit.received_at = clock.now()?;
+    port.try_submit(quit)?.wait().await?;
+    let (supervisor, result) = worker.await?;
+    result?;
+    assert!(supervisor.is_shutdown_complete());
+    for receipt in queued {
+        let result = receipt.wait().await;
+        assert!(
+            matches!(result, Err(ref error) if matches!(error.as_ref(), DesktopGameSupervisorError::Closed | DesktopGameSupervisorError::Revision(_)))
+        );
+    }
+    assert!(!old.incomplete_drop.load(Ordering::SeqCst));
+    drop((supervisor, port, resources));
+    storage.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_validation_and_resumed_session_use_distinct_generations_and_isolate_old_output()
+-> DesktopNativeGameEngineTestResult {
+    let package = EnginePackageFixture::new()?;
+    let resources = DesktopNativeGameEngineFixture::resources()?;
+    let old = DesktopNativeGameEngineFixture::observations();
+    let validation = DesktopNativeGameEngineFixture::observations();
+    let resumed = DesktopNativeGameEngineFixture::observations();
+    let mut factory = DesktopNativeGameEngineFixture::sequence_factory(
+        &package,
+        Arc::clone(&resources),
+        vec![
+            Arc::clone(&old),
+            Arc::clone(&validation),
+            Arc::clone(&resumed),
+        ],
+        Arc::new(DesktopNativeGameEngineFixtureClock::default()),
+    )?;
+    let context = DesktopNativeGameEngineFixture::context(GameRevision::ZERO)?;
+    let mut engine = factory.create(context).await?;
+    let former = engine
+        .start(DesktopNativeGameEngineFixture::request(GameRevision::ZERO)?)
+        .await?;
+    old.emit("unexpected search response".to_owned())?;
+    assert!(
+        matches!(engine.next_event(context).await, Err(DesktopNativeGameEngineError::Engine(EngineLiveGameError::Session(error))) if matches!(error.operation(), EngineSessionError::SearchResponse))
+    );
+    engine
+        .shutdown_retained(Instant::now() + Duration::from_secs(3))
+        .await?;
+    assert!(engine.is_shutdown_complete());
+    assert_eq!(old.live.load(Ordering::SeqCst), 0);
+    let mut validated = factory.create(context).await?;
+    assert!(validated.is_idle());
+    let ready = validated
+        .quiesce(context, Instant::now().into_std())
+        .await?;
+    assert_ne!(former.generation(), ready.generation());
+    assert!(ready.stopped_search().is_none());
+    assert!(
+        !validation
+            .commands()?
+            .iter()
+            .any(|command| command.starts_with("go "))
+    );
+    validated
+        .shutdown_retained(Instant::now() + Duration::from_secs(3))
+        .await?;
+    assert!(validated.is_shutdown_complete());
+    assert_eq!(validation.live.load(Ordering::SeqCst), 0);
+    assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+    assert_eq!(resources.budget.available(), 4);
+    assert!(resumed.commands()?.is_empty());
+    let mut replacement = factory.create(context).await?;
+    assert!(replacement.is_idle());
+    assert!(
+        !resumed
+            .commands()?
+            .iter()
+            .any(|command| command.starts_with("go "))
+    );
+    let current = replacement
+        .start(DesktopNativeGameEngineFixture::request(GameRevision::ZERO)?)
+        .await?;
+    assert_ne!(former.generation(), current.generation());
+    assert_ne!(ready.generation(), current.generation());
+    assert_ne!(former.search(), current.search());
+    assert_eq!(former.context(), current.context());
+    assert!(matches!(
+        replacement.stop(former, Instant::now().into_std()).await,
+        Err(DesktopNativeGameEngineError::Engine(
+            EngineLiveGameError::StaleSearch
+        ))
+    ));
+    assert!(!resumed.commands()?.iter().any(|command| command == "stop"));
+    old.emit("bestmove e2e4".to_owned())?;
+    validation.emit("bestmove e2e4".to_owned())?;
+    resumed.emit("info depth 1 score cp 0 pv d2d4".to_owned())?;
+    assert!(
+        matches!(replacement.next_event(context).await?, GameEngineEnumEvent::Info { identity, .. } if identity == current)
+    );
+    replacement.stop(current, Instant::now().into_std()).await?;
+    replacement
+        .shutdown_retained(Instant::now() + Duration::from_secs(3))
+        .await?;
+    assert_eq!(resources.budget.available(), 4);
+    assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+    assert!(!old.incomplete_drop.load(Ordering::SeqCst));
+    assert!(!validation.incomplete_drop.load(Ordering::SeqCst));
+    assert!(!resumed.incomplete_drop.load(Ordering::SeqCst));
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_and_cancelled_retry_hold_owned_resources_until_cleanup_and_allow_later_retry()
+-> DesktopNativeGameEngineTestResult {
+    for cancel in [false, true] {
+        let package = EnginePackageFixture::new()?;
+        let storage = DesktopGameSupervisorFixtureStorage::new(2).await?;
+        let resources = DesktopNativeGameEngineFixture::resources()?;
+        let old = DesktopNativeGameEngineFixture::observations();
+        let rejected = DesktopNativeGameEngineFixture::observations();
+        let fresh = DesktopNativeGameEngineFixture::observations();
+        let clock = Arc::new(DesktopNativeGameEngineFixtureClock::default());
+        let factory = DesktopNativeGameEngineFixture::sequence_factory(
+            &package,
+            Arc::clone(&resources),
+            vec![Arc::clone(&old), Arc::clone(&rejected), Arc::clone(&fresh)],
+            Arc::clone(&clock),
+        )?;
+        let (mut supervisor, port) =
+            DesktopNativeGameEngineFixture::supervisor(&storage, factory, clock).await?;
+        let worker = tokio::spawn(async move {
+            let result = supervisor.run().await;
+            (supervisor, result)
+        });
+        DesktopNativeGameEngineFixture::playing(&port, &old).await?;
+        old.emit("unexpected search response".to_owned())?;
+        let failed = DesktopNativeGameEngineFixture::wait_snapshot(&port, |snapshot| {
+            snapshot.phase() == GameEnumPhase::Interrupted
+        })
+        .await?;
+        rejected.block_cleanup.store(true, Ordering::SeqCst);
+        if cancel {
+            rejected.acknowledge.store(false, Ordering::SeqCst);
+        } else {
+            rejected.emit("unexpected startup response".to_owned())?;
+        }
+        let mut retry = port.try_submit(DesktopNativeGameEngineFixture::command(
+            &port,
+            DesktopGameCommandsEnumAction::RetryEngine,
+        ))?;
+        let control = if cancel {
+            DesktopNativeGameEngineFixture::wait_commands(&rejected, "setoption name Threads", 1)
+                .await?;
+            Some(port.try_submit(DesktopNativeGameEngineFixture::command(
+                &port,
+                DesktopGameCommandsEnumAction::Stop,
+            ))?)
+        } else {
+            None
+        };
+        tokio::time::timeout(Duration::from_secs(3), rejected.cleanup_entered.notified()).await?;
+        assert!(retry.try_result()?.is_none());
+        assert_eq!(rejected.live.load(Ordering::SeqCst), 1);
+        assert_eq!(resources.registrations.load(Ordering::SeqCst), 1);
+        assert_eq!(resources.budget.available(), 0);
+        assert!(fresh.commands()?.is_empty());
+        assert_eq!(port.snapshot().snapshot.clock(), failed.clock());
+        rejected.block_cleanup.store(false, Ordering::SeqCst);
+        rejected.cleanup_ready.notify_one();
+        let error = retry.wait().await.err().ok_or("failed Retry succeeded")?;
+        if let Some(control) = control {
+            assert!(matches!(error.as_ref(), DesktopGameSupervisorError::Closed));
+            let stopped = control.wait().await?;
+            assert_eq!(stopped.interruption(), failed.interruption());
+            assert_eq!(stopped.revision(), failed.revision());
+        } else {
+            assert!(
+                matches!(error.as_ref(), DesktopGameSupervisorError::Factory { source } if matches!(source.downcast_ref::<DesktopNativeGameEngineError<std::io::Error>>(), Some(DesktopNativeGameEngineError::Startup(error)) if matches!(error.operation(), EngineSessionError::UnexpectedResponse)))
+            );
+        }
+        assert_eq!(rejected.live.load(Ordering::SeqCst), 0);
+        assert_eq!(resources.budget.available(), 4);
+        assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+        assert_eq!(port.snapshot().snapshot.revision(), failed.revision());
+        assert_eq!(
+            port.snapshot().snapshot.interruption(),
+            failed.interruption()
+        );
+        DesktopNativeGameEngineFixture::preserved(&failed, &port.snapshot().snapshot);
+        assert!(
+            !rejected
+                .commands()?
+                .iter()
+                .any(|command| command.starts_with("go "))
+        );
+        let recovered = port
+            .try_submit(DesktopNativeGameEngineFixture::command(
+                &port,
+                DesktopGameCommandsEnumAction::RetryEngine,
+            ))?
+            .wait()
+            .await?;
+        assert_eq!(recovered.phase(), GameEnumPhase::Interrupted);
+        assert_eq!(recovered.clock(), failed.clock());
+        assert_eq!(fresh.live.load(Ordering::SeqCst), 0);
+        assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+        assert_eq!(resources.budget.available(), 4);
+        assert!(!fresh.incomplete_drop.load(Ordering::SeqCst));
+        assert!(
+            !fresh
+                .commands()?
+                .iter()
+                .any(|command| command.starts_with("go "))
+        );
+        DesktopNativeGameEngineFixture::quit(port, worker).await?;
+        assert!(!rejected.incomplete_drop.load(Ordering::SeqCst));
+        assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+        drop(resources);
+        assert_eq!(storage.budget.available(), 2);
+        storage.close().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn reserved_stop_pause_and_quit_progress_while_a_search_and_ordinary_queue_are_full()
+-> DesktopNativeGameEngineTestResult {
+    for action in [
+        DesktopGameCommandsEnumAction::Stop,
+        DesktopGameCommandsEnumAction::Pause {
+            cause: chess::game::pause::GamePauseEnumCause::Manual,
+        },
+        DesktopGameCommandsEnumAction::Quit,
+    ] {
+        let package = EnginePackageFixture::new()?;
+        let storage = DesktopGameSupervisorFixtureStorage::new(2).await?;
+        let resources = DesktopNativeGameEngineFixture::resources()?;
+        let old = DesktopNativeGameEngineFixture::observations();
+        let clock = Arc::new(DesktopNativeGameEngineFixtureClock::default());
+        let factory = DesktopNativeGameEngineFixture::sequence_factory(
+            &package,
+            Arc::clone(&resources),
+            vec![Arc::clone(&old)],
+            Arc::clone(&clock),
+        )?;
+        let (mut supervisor, port) =
+            DesktopNativeGameEngineFixture::supervisor(&storage, factory, clock).await?;
+        let worker = tokio::spawn(async move {
+            let result = supervisor.run().await;
+            (supervisor, result)
+        });
+        let playing = DesktopNativeGameEngineFixture::playing(&port, &old).await?;
+        let mut queued = Vec::new();
+        for _ in 0..DesktopGameSupervisorPort::ORDINARY_CAPACITY {
+            queued.push(port.try_submit(DesktopNativeGameEngineFixture::command(
+                &port,
+                DesktopGameCommandsEnumAction::RetryEngine,
+            ))?);
+        }
+        assert!(matches!(
+            port.try_submit(DesktopNativeGameEngineFixture::command(
+                &port,
+                DesktopGameCommandsEnumAction::RetryEngine
+            )),
+            Err(DesktopGameSupervisorError::Busy)
+        ));
+        let interrupted = port
+            .try_submit(DesktopNativeGameEngineFixture::command(
+                &port,
+                action.clone(),
+            ))?
+            .wait()
+            .await?;
+        DesktopNativeGameEngineFixture::preserved(&playing, &interrupted);
+        assert_eq!(interrupted.phase(), GameEnumPhase::Interrupted);
+        assert_eq!(interrupted.clock().status(), ClockStateEnumStatus::Paused);
+        if action == DesktopGameCommandsEnumAction::Quit {
+            let (supervisor, result) = worker.await?;
+            result?;
+            assert!(supervisor.is_shutdown_complete());
+            drop(supervisor);
+        } else {
+            DesktopNativeGameEngineFixture::quit(port.clone(), worker).await?;
+        }
+        for receipt in queued {
+            assert!(
+                matches!(receipt.wait().await, Err(ref error) if matches!(error.as_ref(), DesktopGameSupervisorError::Closed | DesktopGameSupervisorError::Revision(_)))
+            );
+        }
+        assert_eq!(old.live.load(Ordering::SeqCst), 0);
+        assert_eq!(resources.budget.available(), 4);
+        assert_eq!(resources.registrations.load(Ordering::SeqCst), 0);
+        assert!(!old.incomplete_drop.load(Ordering::SeqCst));
+        drop((port, resources));
+        storage.close().await?;
+    }
     Ok(())
 }

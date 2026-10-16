@@ -29,7 +29,7 @@ use crate::desktop_game_registry_fixture::{
     DesktopGameRegistryFixtureProof, DesktopGameRegistryFixtureRuntime,
     DesktopGameRegistryTestResult,
 };
-use crate::desktop_game_supervisor::DesktopGameSupervisorFixtureStorage;
+use crate::desktop_game_supervisor_storage::DesktopGameSupervisorFixtureStorage;
 
 struct DesktopNativeGameRuntimeFixture;
 

@@ -75,12 +75,10 @@ All new fixtures use controlled futures, in-memory channels or paused Tokio time
 
 ## Remaining acceptance
 
-T076 remains open. `EngineProcessLimits::PENDING_LINES` bounds output lines with
-channel backpressure; it does not establish the task's engine control-message
-mailbox and typed saturation/refusal behavior. Existing lifecycle cases prove
-separate starts receive new generations and failed sessions cannot be reused,
-but a complete explicit failed-engine Retry/readiness/paused-until-Resume path
-still needs its own end-to-end acceptance. This increment adds no automatic retry.
+The control-bound and explicit failed-engine Retry gaps recorded by this increment
+are now closed by [engine Retry and bounded controls](engine-retry-controls.md).
+That follow-up traces the actual engine-facing command owner and records the
+new regression, cleanup, generation and paused-until-Resume acceptance.
 
 T077 remains incomplete: full eight-option application, tablebase path/load and
 configuration UI remain future work. T062, T071, platform and release gates stay

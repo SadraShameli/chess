@@ -828,7 +828,7 @@ where
                 } else if self.save_failure.is_some()
                     && !self.events.borrow().snapshot.is_save_required()
                 {
-                    let engine = match self.barrier().await {
+                    let engine = match self.barrier(Instant::now().into_std()).await {
                         Ok(engine) => engine,
                         Err(error) => {
                             self.publish_notice(Arc::new(error));
@@ -943,7 +943,7 @@ where
                 }
                 () = Self::wait_deadline(deadline), if deadline.is_some() && self.computing.is_none() => {
                     self.search_request = None;
-                    if self.active_search.is_some() { let _barrier = self.barrier().await?; }
+                    if self.active_search.is_some() { let _barrier = self.barrier(Instant::now().into_std()).await?; }
                     self.schedule(DesktopGameSupervisorEnumComputation::Clock, None);
                 }
                 ordinary = self.ordinary.recv(), if !self.ordinary_closed && self.computing.is_none() && self.saving.is_none() && self.writes.is_empty() && self.factory_request.is_none() => {
@@ -967,7 +967,7 @@ where
                 self.preparation = Some(generation);
                 self.search_request = None;
                 if self.engine.is_some() {
-                    let _barrier = self.barrier().await?;
+                    let _barrier = self.barrier(Instant::now().into_std()).await?;
                 }
                 self.cancel_factory_request().await?;
                 response.complete(Ok(self.events.borrow().snapshot.clone()));
@@ -1026,10 +1026,28 @@ where
         if engine_mode
             && matches!(
                 response.request.action,
-                DesktopGameCommandsEnumAction::RetryEngine
+                DesktopGameCommandsEnumAction::RetryEngine | DesktopGameCommandsEnumAction::Resume
             )
         {
-            self.retire_engine().await?;
+            let state = self.session.take()?;
+            let validation = if matches!(
+                response.request.action,
+                DesktopGameCommandsEnumAction::RetryEngine
+            ) {
+                state.validate_recovery(
+                    response.request.expected_revision,
+                    GamePauseEnumFault::Engine,
+                )
+            } else {
+                state.validate_resume(response.request.expected_revision)
+            };
+            self.session.replace(state)?;
+            if let Err(error) = validation {
+                response.complete(Err(Arc::new(DesktopGameSupervisorError::Transition(
+                    error.into(),
+                ))));
+                return Ok(());
+            }
         }
         if engine_mode
             && self.engine.is_none()
@@ -1062,7 +1080,15 @@ where
             ) {
             self.search_request = None;
             self.pending_engine_move = None;
-            match self.barrier().await {
+            let now = Instant::now();
+            let elapsed = self
+                .clock
+                .now()?
+                .elapsed_since(response.request.received_at)?;
+            let received_at = now
+                .checked_sub(elapsed.as_duration())
+                .ok_or(DesktopGameSupervisorError::StateUnavailable)?;
+            match self.barrier(received_at.into_std()).await {
                 Ok(engine) => engine,
                 Err(error) => {
                     response.complete(Err(Arc::new(error)));
@@ -1092,12 +1118,15 @@ where
         Ok(())
     }
 
-    async fn barrier(&mut self) -> Result<GamePauseEnumEngineBarrier, DesktopGameSupervisorError> {
+    async fn barrier(
+        &mut self,
+        received_at: StandardInstant,
+    ) -> Result<GamePauseEnumEngineBarrier, DesktopGameSupervisorError> {
         let context = self.context();
         match &mut self.engine {
             Some(engine) => {
                 let receipt = engine
-                    .quiesce(context, StandardInstant::now())
+                    .quiesce(context, received_at)
                     .await
                     .map_err(|source| DesktopGameSupervisorError::Engine {
                         source: Box::new(source),

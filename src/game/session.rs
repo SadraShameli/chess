@@ -1359,17 +1359,26 @@ impl GameSession {
         })
     }
 
+    pub(crate) fn validate_recovery(
+        &self,
+        expected: GameRevision,
+        fault: GamePauseEnumFault,
+    ) -> Result<(), GameSessionError> {
+        self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
+        if self.interruption() != Some(GameSessionEnumInterruption::RecoveryRequired(fault)) {
+            return Err(GamePauseError::WrongRecovery.into());
+        }
+        Ok(())
+    }
+
     pub fn mark_recovered(
         &mut self,
         expected: GameRevision,
         fault: GamePauseEnumFault,
         now: ClockInstant,
     ) -> Result<GameSessionTransition, GameSessionError> {
-        self.revision.check_expected(expected)?;
-        self.save_status.validate()?;
-        if self.interruption() != Some(GameSessionEnumInterruption::RecoveryRequired(fault)) {
-            return Err(GamePauseError::WrongRecovery.into());
-        }
+        self.validate_recovery(expected, fault)?;
         let revision = self.revision.next()?;
         self.finish_state(GameSessionStateTransition {
             revision,
@@ -1380,12 +1389,8 @@ impl GameSession {
         })
     }
 
-    pub fn resume<P: GameAdjudicationMateProofProvider + ?Sized>(
-        &mut self,
-        request: GameResumeRequest,
-        proof: &P,
-    ) -> Result<GameSessionTransition, GameSessionError> {
-        self.revision.check_expected(request.expected_revision)?;
+    pub(crate) fn validate_resume(&self, expected: GameRevision) -> Result<(), GameSessionError> {
+        self.revision.check_expected(expected)?;
         self.save_status.validate()?;
         let Some(interruption) = self.interruption() else {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -1393,6 +1398,15 @@ impl GameSession {
         if let GameSessionEnumInterruption::RecoveryRequired(fault) = interruption {
             return Err(GamePauseError::RecoveryRequired(fault).into());
         }
+        Ok(())
+    }
+
+    pub fn resume<P: GameAdjudicationMateProofProvider + ?Sized>(
+        &mut self,
+        request: GameResumeRequest,
+        proof: &P,
+    ) -> Result<GameSessionTransition, GameSessionError> {
+        self.validate_resume(request.expected_revision)?;
         self.seats.validate_readiness(request.readiness)?;
         let revision = self.revision.next()?;
         let decision = match self.clock.status() {

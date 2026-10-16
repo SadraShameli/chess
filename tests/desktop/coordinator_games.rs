@@ -30,7 +30,7 @@ use crate::desktop_coordinator::{DesktopCoordinatorFixture, DesktopCoordinatorTe
 use crate::desktop_game_registry_fixture::{
     DesktopGameRegistryFixtureClock, DesktopGameRegistryFixtureProof,
 };
-use crate::desktop_game_supervisor::DesktopGameSupervisorFixtureStorage;
+use crate::desktop_game_supervisor_storage::DesktopGameSupervisorFixtureStorage;
 use crate::game_transition_fixture::{GameTransitionFixture, GameTransitionFixtureProof};
 
 struct DesktopCoordinatorGamesState {

@@ -62,3 +62,6 @@ mod desktop_stream;
 mod game_config_persistence;
 #[path = "game/transition_fixture.rs"]
 mod game_transition_fixture;
+
+#[path = "desktop/game_supervisor_storage.rs"]
+mod desktop_game_supervisor_storage;
