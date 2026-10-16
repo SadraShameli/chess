@@ -18,3 +18,5 @@ mod presentation_game_controller;
 mod presentation_game_new_game;
 #[path = "presentation/game/play.rs"]
 mod presentation_game_play;
+#[path = "presentation/workbench.rs"]
+mod presentation_workbench;

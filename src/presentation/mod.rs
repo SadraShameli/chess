@@ -5,3 +5,4 @@ pub mod app;
 pub mod board;
 pub mod game;
 pub mod theme;
+pub mod workbench;

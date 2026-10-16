@@ -183,7 +183,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 - [X] T082 [US2] Implement isolated inspector/raw eval/compiler/perft-divide/45-position bench operations and kill/reap cancellation in `src/workbench/executor.rs`; keep live processes isolated and preserve benchmark upstream defaults. Accepted evidence: [isolated workbench execution](evidence/workbench-execution.md).
 - [ ] T083 [US2] Implement analysis/configure/clear-hash/tablebase/workbench handlers and typed native messages in `src/desktop/engine_commands.rs` and `src/desktop/workbench_commands.rs`.
 - [X] T084 [US2] Implement ranked analysis lines, cp/mate/bound labels, complete optional statistics and explicit search modes/Stop in `src/presentation/analysis/view.rs` and `src/presentation/analysis/controller.rs`, with an evaluation bar only in analysis/review. Accepted mounted component evidence: [native analysis panel](evidence/native-analysis-panel.md); T083/T089 retain desktop/application wiring.
-- [ ] T085 [US2] Implement the typed advanced engine configuration, tablebase status and diagnostic workbench UI in `src/presentation/workbench/view.rs` and `src/presentation/workbench/controller.rs`, exposing prerequisites, progress, cancellation and exportable results.
+- [X] T085 [US2] Implement the typed advanced engine configuration, tablebase status and diagnostic workbench UI in `src/presentation/workbench/view.rs` and `src/presentation/workbench/controller.rs`, exposing prerequisites, progress, cancellation and exportable results. Accepted mounted component evidence: [native workbench panel](evidence/native-workbench-panel.md); T083/T089 retain desktop/application wiring.
 - [ ] T086 [US2] Implement reproducible diagnostic exports with engine/profile/model/configuration identity in `src/workbench/export.rs` and `src/presentation/workbench/results.rs`, safely preserving bounded informational output.
 - [ ] T087 [US2] Document and verify DEV-06 queued arguments, DEV-07 controlled PGO instrument/train/merge/rebuild comparison and DEV-08 controlled SPSA compile status in `tools/engine/pgo.rs`, `tools/engine/spsa_check.rs` and `docs/engine-workflows.md`; record upstream failure as unavailable rather than editing vendor code.
 - [ ] T088 [US2] Implement the capability coverage runner and evidence schema in `tools/engine/coverage.rs` and `tests/fixtures/engine-capabilities.json`, deriving completeness from the typed registry and the pinned inventory IDs rather than a separate discovery list.
@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 8 analysis tasks completed, 1 puzzle task completed and 224 pending.
+**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 9 analysis tasks completed, 1 puzzle task completed and 223 pending.
 **Active parallel tasks**: 43 across disjoint contract-test files; three additional
 `[P]` markers belong to historical completed rows. No native task is accepted
 merely by this generation.
