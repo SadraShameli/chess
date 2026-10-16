@@ -22,34 +22,41 @@ artifacts and native installation behavior remain unvalidated.
 
 | Target | Native builder and artifacts | Acceptance |
 | --- | --- | --- |
-| Windows 11 x86-64 | MSVC Windows runner; NSIS installer and matching `.exe` sidecar | Clean install, WebView2/offline prerequisite path, play/analysis/save, documented unsigned OS warnings, OTA signature verification |
+| Windows 11 x86-64 | MSVC native builder; NSIS installer, engine/helper `.exe` | Native GPU driver and CRT, offline play/save, unsigned OS warnings, signed OTA |
 | macOS 14+ ARM64 | Apple Silicon runner; `.app` and DMG | Minimum supported ARM Mac, ad-hoc-sign nested engine/app, validate manual OS approval, offline first run |
-| Ubuntu 22.04+ x86-64 | Oldest declared baseline, WebKitGTK 4.1; `.deb` and AppImage | Actual minimum WebKit/CSS compatibility, X11/Wayland, supported Ubuntu releases |
+| Ubuntu 22.04+ x86-64 | Oldest declared glibc baseline; `.deb` and AppImage | Native GPU driver, X11/Wayland, portals/dialogs, package/system dependencies |
 
 Do not ship Intel macOS or a universal Mac package. Windows ARM64 is outside the
 initial target set. Linux ARM64 is also outside the initial target set. Linux distribution coverage is limited to tested runtime
-baselines; AppImage does not remove glibc, graphics, or WebView dependencies.
-If Tailwind's current CSS requirements exceed a stock minimum OS WebView,
-require an available supported runtime update or raise the documented minimum;
-do not silently ship broken styles or downgrade the chosen stack.
+baselines; AppImage does not remove glibc, native GPU driver, window-system,
+portal dependencies or secure-service needs for persistent credentials. Credential
+storage is optional for offline chess; FR-026 permits explicit session-only
+update credentials when secure storage is unavailable. Mac ARM64 uses native Metal through the selected engine/backend; no forced
+Vulkan portability loader/library is required. The final application does not require WebView2 or WebKitGTK.
 
 ## Reproducible inputs
 
-- Root Cargo.lock and existing Rust toolchain pin; UI package manifest plus
-  text `bun.lock`, pinned Bun, frozen installs, and compatible stable tagged
-  Tauri/Vue/Tailwind/shadcn-vue/lint/formatter/test tool versions.
-- Reckless v0.9.0 commit and all required submodule/source inputs, stable
-  compiler, explicit target, Cargo features, build flags, and binary digest.
-- Exact network identity/hash from research, supplied as a verified build input
-  through `EVALFILE`; no opportunistic build-script network fetch.
-- Fathom/Clang/libclang prerequisites for default Syzygy builds. All production
-  profiles retain Syzygy. No `--no-default-features` shortcut to avoid packaging it.
-- Asset licenses, source bundles, dependency notices, and target runtime inventory.
+- Root Cargo.lock, exact Rust toolchain, Bevy 0.20.0, bevy_egui 0.43.1 and its
+  matching egui/render graph, build-time cargo-packager 0.11.8 and installer tools.
+- Selected native graphics dependency inventory and resource paths, with ad-hoc
+  signing of any nested native libraries in the macOS package.
+- Reckless v0.9.0 commit, source/submodules, compiler, target, features, flags and
+  binary digest; verified NNUE EVALFILE input, without a build-time network fetch.
+- Fathom/Clang/libclang for production Syzygy builds; no feature-removal shortcut.
+- Original GLB/fonts/sounds, starter datasets, source bundles and license notices.
+- Asset generation migrated from the obsolete Bun tool to reproducible native
+  tooling, preserving asset hashes or explicitly validating any replacement.
 
-Build the external engine in an isolated build checkout/cache, without changing
-vendor source. Override its host-native compiler configuration explicitly.
-The application manifest maps resource names to target-specific executable paths;
-the frontend never supplies those paths. Verify binary hashes before launch.
+Use framework-independent cargo-packager for NSIS, app/DMG, deb and prospective
+AppImage assembly. Its AppImage backend fetches rolling tools without checked
+hashes. A maintained stable-tagged AppImage toolchain satisfying project rules
+has not yet been verified: this remains a release blocker, not permission to
+silently fetch continuous/alpha tools or drop AppImage. Hashes alone do not make
+a prerelease stable. Resolve this tooling gate before accepting that package.
+
+Build the external engine in its isolated checkout/cache without vendor changes.
+Override host-native compiler flags. Package manifests own executable paths and
+hashes; presentation cannot select an arbitrary executable.
 
 ## Engine CPU profiles
 
@@ -101,28 +108,62 @@ observed move; generate only from standard-initial-position games. See
 [book decisions](../decisions.md#book-generation-and-explorer-semantics).
 No automatic first-launch download is approved.
 
-Bundle UI assets, the selected sculpted-piece assets, bundled fonts, engine,
-and embedded network. The owner selected real-time 3D; package all required
-models/textures and rendering resources for offline use after their formats,
-sources, and licenses are approved. Direct Three.js with WebGL2 is selected;
-graphics prerequisites still need validation. Validate compatibility and graphics failure handling
-in each supported system WebView. The board is 3D-only, without a 2D fallback;
-graphics failure during live play preserves game state, pauses clocks, and offers
-Retry with explicit resume required after recovery. Initialization, context-loss,
-asset/shader failure handling and 10-second retry deadline follow
-[presentation decisions](../decisions.md#presentation-assets-and-input). WebView2 or
-WebKit system prerequisites must be covered by the installer/documentation and
-validated on a clean machine. For offline Windows installation, include an
-offline Evergreen WebView2 runtime installer and validate its integration and
-redistribution license, rather than relying on a network bootstrapper. Linux
-installation may use internet access for missing system dependencies; document
-offline preparation. Running chess after installation remains offline. Installation prerequisites and
-application offline behavior are tested separately.
+Bundle local original meshes, fonts, shaders, audio, engines and NNUE. The native
+scene remains 3D-only; packaged GPU/resource failures preserve game state, pause
+clocks and offer Retry, then require explicit Resume. Shader/assets and a hardware
+graphics adapter must be validated on every minimum target. Test the actual native Metal backend on Apple Silicon. Do not claim backend
+support from a successful build alone.
 
-Use stable test-only WebdriverIO/Tauri embedded WebDriver tooling for integration
-tests on all targets. Current official guidance supports macOS via this path;
-direct tauri-driver alone has narrower coverage. Release artifacts must exclude
-the WebDriver plugin, listener, permissions, development URL, and debug tooling.
+Windows installation no longer bundles WebView2. Validate the native CRT and
+native GPU runtime/driver requirements on a clean supported machine, with offline
+preparation guidance. Linux may install system prerequisites online; document
+how to prepare them offline. Running chess after installation remains offline.
+Resource resolution must work from installed app locations, including spaces
+and non-ASCII paths, without depending on a developer checkout. Set Bevy
+AssetPlugin file_path from the typed package-resource resolver; the default
+executable-parent lookup does not find macOS Contents/Resources. Do not mutate
+process environment to configure it. Release packages disable Bevy dynamic
+linking, asset watchers/processors and development paths. Package native audio,
+window-system and portal dependencies only for selected enabled features;
+the approved PCM WAV sounds require a verified WAV decoder feature.
+Disabling a feature cannot silently remove a product requirement.
+
+Use native egui semantic/input tests plus the real production native GPU
+smoke executable and screen-reader checks. Release artifacts exclude test-only
+orchestration, listeners and development assets. Native dialogs, sleep events,
+credentials, GPU drivers and package installation need actual platform tests.
+
+### Dependency availability and failure scope
+
+Derive the final per-package native library/runtime inventory and preparation
+instructions from the actual locked build and clean-install validation. Naming
+a platform baseline does not prove every library or service is present. Record
+missing-component failures as part of that validation before claiming support.
+
+| Dependency | Required behavior when unavailable or invalid |
+| --- | --- |
+| Supported OS/architecture, native window/graphics runtime and required package libraries | Actionable setup failure; preserve data and do not start or resume games. If the renderer cannot draw recovery UI, use OS-native recovery controls under the UI contract. |
+| Packaged engine, embedded model or presentation assets | Refuse use of the invalid resource and explain repair; affected games remain preserved/paused. Never substitute an unverified binary, empty model or another board mode. |
+| OS credential store | Follow FR-026's setup guidance and explicit session-only option. No plaintext fallback and no offline-chess dependency. |
+| File dialog/desktop portal | Refuse the affected file-selection operation with setup guidance; preserve data and keep unrelated offline chess available. Do not infer that missing optional dialog services make the profile corrupt. |
+| Audio device/service | Show sound-unavailable status and retain visual feedback and normal play; do not turn device failure into a silent preference change. Revalidate the selected sound behavior on supported systems. |
+| Bundled opening/book/puzzle collection | Treat missing/corrupt data as an integrity failure: refuse affected queries or puzzle starts, identify the collection and offer repair guidance. Preserve user library/history and unaffected offline play; do not show fabricated zero counts or misleading partial statistics. |
+| Personal import or referenced external dataset | Explain missing/invalid source; stage no partial acceptance without the selected preview/confirmation and retain existing accepted data. |
+| Optional Syzygy files or Linux NUMA runtime/topology | Show the specific unavailable facility and retain compatible ordinary engine play under the capability contract; acquire no table files automatically. |
+
+All shipped starter collections remain required package contents. Feature-local
+failure handling preserves working user data; it does not excuse an incomplete
+release or permit dropping bundled datasets, audio or another approved feature.
+
+### Installed profile identity
+
+All native packages resolve the existing `nl.sadra.chess` user data explicitly;
+do not silently create a different directory through framework naming defaults.
+The [profile ownership protocol](../decisions.md#local-profile-ownership-and-activation)
+is applied before migrations, restore-journal recovery or startup update work.
+Its stable control directory is not replaced by user-data restore and is not a
+backup payload. Clean-install/upgrade tests cover installed paths with aliases,
+spaces and Unicode, simultaneous launches and supported local filesystem locks.
 
 ## License and corresponding-source gate
 
@@ -154,7 +195,7 @@ authorized inquiry. Signing credentials and publication are later owner actions.
 
 ## Release checklist ownership
 
-Implementation evidence must cover package installation/removal, OS/WebView/CPU
+Implementation evidence must cover package installation/removal, OS/GPU-driver/CPU
 baseline, real offline game/analysis, every applicable capability matrix row,
 resource/latency measurements, accessibility/visual review, process cleanup,
 atomic-save recovery, license/source gate, and signed artifact verification.
@@ -164,36 +205,114 @@ Do not mark the release ready while any required target or capability is unteste
 ## Desktop OTA and GitHub Actions
 
 The owner included desktop OTA updates built and released through GitHub Actions.
-Use the [Tauri updater](https://v2.tauri.app/plugin/updater/) contract: update
-signatures are mandatory, the app receives the public verification key, and
-release signing uses a protected private key. These signatures are separate from
-Windows executable signing and macOS code signing/notarization.
+Use an application-owned native updater state machine with framework-independent
+installer artifacts. cargo-packager 0.11.8 builds packages; reqwest 0.13.5 owns
+async HTTPS streaming; keyring 4.2.0 supplies OS credential storage; minisign-verify
+0.3.0 verifies signed update manifests. Future release tooling uses minisign
+0.10.0. These signatures are separate from OS code signing. Do not retain Tauri
+or assume cargo-packager-updater meets the selected safety/lifecycle policy.
 
-The [official action](https://github.com/tauri-apps/tauri-action) documents release
-assets, updater signatures, and updater JSON generation. Exact action/plugin
-pins, workflow permissions, per-target jobs, matching updater artifacts, signing-key
-rotation/access controls, pin verification and pipeline gates follow
-[updater decisions](../decisions.md#updater-completion-and-zero-cost-ci).
-Store the OTA signing key and passphrase in GitHub Actions encrypted secrets,
-with an offline backup on passphrase-encrypted removable storage kept disconnected
-and controlled by the owner. Approve the exact backup procedure separately. This does not select Windows or
-macOS code-signing credentials or create any secrets during planning. Windows
-installers are unsigned and macOS personal builds are locally ad-hoc-signed,
-without Developer ID/notarization. Mandatory OTA signatures remain in scope
-without a paid signing service. Linux ships .deb and AppImage on x86-64 only;
-validate AppImage OTA. For .deb updates, download and verify the package, then
-open the system installer only after confirmed pause/save/backup; request OS
-approval where required. Validate this separate integration rather than claiming
-.deb native self-updating. Use only included standard GitHub hosted-runner
-allowance; verify account limits and controls preventing paid overages before
-enabling workflows. Stop builds when the allowance is exhausted. The selected
-CI policy is not evidence that account billing controls have been verified.
-Use NSIS .exe installers for Windows and Apple Silicon .dmg packages containing
-the macOS app; matching updater artifacts require source-pinned validation. Stable releases only
-are selected, with vMAJOR.MINOR.PATCH tags matching the application version.
-Verify native updater support
-for each selected installer format; do not assume every Linux package supports
-self-updating or that minimum-platform behavior has been tested.
+### Signed manifest and private transport
+
+A release contains a bounded versioned JSON manifest, its detached Minisign
+signature and target-specific packages. Sign the exact UTF-8 bytes. Verify them
+before parsing with the embedded trusted public key. The validated manifest
+binds schema, stable version, allowed channel, target triple, artifact kind,
+GitHub asset identity/name, exact length, SHA-256 and compatible data schema.
+Use a 1 MiB manifest and 16 KiB signature-file bound. Reject duplicate/unknown
+critical fields, unsupported schema/target, version downgrade, unexpected assets
+and invalid signatures before downloading/executing. Length/digest bind payloads
+to the signed manifest; check both again immediately before handoff. No unsigned
+GitHub metadata can authorize installer bytes. Key rotation requires an update
+trusted by an existing key; loss of all signing keys requires manual recovery.
+
+Resolve this repository's release/asset IDs through authenticated GitHub API
+calls. Use HTTPS-only, explicit manual redirect validation and no automatic
+transport retry: reqwest ClientBuilder::retry(reqwest::retry::never()) disables
+its default protocol-NACK retries. Stream Response::chunk into bounded private
+staging. Never forward Authorization to a different origin. Approved asset
+redirects follow without the GitHub credential, never arbitrary manifest URLs.
+Preserve all owner-approved deadlines, cancellation and approval rules below.
+
+The client safety cap remains 6 GiB, but [GitHub's release limit](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas)
+requires each actual asset under 2 GiB. Measure compressed installer sizes.
+If a full package exceeds that limit, publication remains blocked until the
+package/data layout is revised and validated within the approved offline scope.
+Do not silently omit starter features or rely on paid hosting.
+
+### Native installation adapters
+
+An owned helper and typed handoff receipt bind verified package bytes, destination,
+version, backup identity and parent process. Revalidate data at handoff, prevent
+path traversal/symlink substitution, wait for app exit and check package outcome.
+Never execute a shell command assembled from user or manifest text.
+
+| Package | Installation/update path |
+| --- | --- |
+| Windows NSIS | Launch verified installer after save/backup/exit; respect OS approval, wait for outcome and relaunch only on confirmed success where supported |
+| macOS ARM64 | DMG for initial install; signed-manifest `.app.tar.gz` payload for updates. Helper stages a validated app beside destination, ad-hoc-signs/validates required nested resources during packaging, waits for exit and replaces with recovery-aware rename; protected destinations may require user action |
+| Linux AppImage | Validate outer APPIMAGE path, not current_exe inside its mounted image; stage replacement on same filesystem, preserve executable permissions and use recovery-aware replacement after exit |
+| Linux .deb | Verify package, then open the supported system installer after confirmed pause/save/backup; OS handles administrator approval. Do not claim generic in-place self-update or guaranteed automatic relaunch |
+
+Mac packaging uses an app-then-DMG step with explicit nested ad-hoc signing
+without timestamp/notarization and a validated final DMG. Restore prior files
+only if safe before successful commit; installation failure does not imply
+universal binary rollback. Persist a handoff receipt for next-start diagnostics.
+Helper termination, full disk, permission denial, interruption and package-manager
+failure require explicit tested recovery. Temporary ownership/process helpers
+are integration work, not functionality supplied by egui.
+
+### Profile ownership during installation
+
+The application retains its profile lease while resolving confirmations,
+pause/save, fresh safety backup and package revalidation. While still holding
+it, fsync a durable Prepared install intent binding the destination profile, expected
+owner/helper generation, target package digest/version, backup and schema.
+The helper acknowledges readiness over an owned private channel; arbitrary
+activation requests cannot create or complete this intent. After readiness and
+all prerequisites, fsync the same intent as Committed before final shutdown.
+Only a matching Committed intent authorizes helper installation; Prepared is
+never sufficient, including if the parent exits unexpectedly. Before commit,
+cancellation/failure confirms helper shutdown and revokes Prepared under the
+held guard. Lost readiness acknowledgment or unconfirmed helper shutdown keeps
+recovery status and the app/lease available, without installation or silent
+intent clearance. No late helper may act on a revoked generation.
+
+After orderly app shutdown, the helper observes actual parent-process exit,
+acquires the same exclusive profile lease and revalidates the Committed intent and bytes
+before replacing files or starting a system installer. Every ordinary launch
+that acquires the guard during this gap reads the intent before database open,
+shows installation/busy guidance, releases the guard and exits. It cannot run
+migration, restore, backups, updates or games. No timeout clears the intent or
+proves parent/helper exit. The helper does not inherit the parent's lock handle.
+
+Keep the lease while an owned installer is running; record its confirmed outcome
+durably before release and relaunch. A .deb adapter without observable system-
+installer completion retains unresolved status, never guesses success from the
+launcher exiting. A helper crash or interrupted replacement leaves recovery
+state for the next lock holder, with explicit safe Retry/manual guidance and
+no normal startup or automatic install replay. Before Retry or intent clearance,
+confirm the quiescence/outcome of every launched helper and external installer;
+release of the helper's file lock does not prove its installer has exited. If
+completion cannot be established, retain the barrier and give manual recovery
+guidance. Ordinary status launches release the lease before displaying status;
+an explicit recovery controller reacquires it and confirms this quiescence
+before changing the intent or launching any retry. A confirmed-success receipt lets
+the next owner validate installed identity and run supported migration; clear
+the intent only after successful startup validation. Failed migration remains
+recovery-only and preserves the pre-update backup/data.
+
+Actual parent-exit observation, helper crash recovery, native installer outcome
+and focus behavior are target-platform acceptance gates. This is a coordinated
+protocol, not a promise that egui or a package manager supplies these safeguards.
+
+Store signing key/passphrase in GitHub Actions encrypted secrets with the
+owner-controlled encrypted removable offline backup. No credential is created
+here. Windows remains unsigned; macOS remains ad-hoc without paid membership.
+Version tags vMAJOR.MINOR.PATCH must match Cargo/package/manifest versions.
+Only after verified zero-cost controls may native Actions jobs build/test/package,
+sign manifests and publish one complete private stable release; use immutable
+verified action revisions and retain releases/assets until owner deletion.
 
 Keep update binaries private. Version-tag pushes trigger automatic build and
 release publication. Check nonblockingly at startup and expose Check for Updates

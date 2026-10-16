@@ -1,6 +1,7 @@
 # Data Model: Reckless Desktop Chess
 
-**Status**: Selected design under owner delegation; implementation unperformed.
+**Status**: Native-egui design revision; reusable backend implementation exists.
+Native presentation migration and complete feature acceptance remain unperformed.
 
 [Resolved decisions](decisions.md) supplies exact algorithms/defaults and the
 release evidence register. [Review](review.md) records direct owner choices.
@@ -23,25 +24,100 @@ proposed owning types, not generated source or permission to scaffold them all.
 | Puzzle | Puzzle positions, accepted solutions, attempt feedback | Board and approved dataset |
 | Workbench | Diagnostics and benchmark jobs | Engine package and capacity coordinator |
 | Desktop | User intents and native orchestration | Public APIs and injected component ports |
-| UI | Presentation, focus, animation, subscriptions | Generated desktop contract only |
+| Desktop profile | Canonical local identity, exclusive lease, activation and startup admission | Injected filesystem lock, OS identity and local-transport ports |
+| Presentation | egui widgets, focus, layout, animation, subscriptions | Typed desktop application ports and scene interface |
+| Scene | Bevy asset instances, materials, camera, picking and GPU lifecycle | Validated snapshots and the single Bevy render device |
+| Update | Authenticated staging, verification and installation state | HTTP, credentials, signature, backup and OS installer ports |
 
-Main constructs the native object graph. UI bootstrap constructs the view-model
-graph and injects typed ports/view models into Vue presentation components. Render
-methods cannot open files, construct engine clients, or adjudicate chess.
+Main constructs one Bevy App, the object graph and one async runtime, injecting
+typed ports/view models into egui presentation and Bevy adapter resources. Plain
+Rust application actors retain authoritative state. ECS entities represent
+view/asset/camera instances; their IDs never enter domain or persistence types.
+Render passes consume snapshots and emit single action identities. They cannot
+open files, construct engine clients, await I/O or adjudicate chess.
 
-## Identifiers and wire values
+## Identifiers, messages and external values
 
-- `GameId`, `GameMoveId`, `EngineSessionId`, and `EngineSearchId` are opaque
-  validated identifiers. Wire representation is a canonical string.
-- Revisions and cumulative 64-bit counters use canonical unsigned decimal strings
-  across JavaScript IPC to avoid precision loss. Bounded durations and square
-  indexes can use JSON safe integers with explicit schema bounds.
-- Type names follow their source component: `BoardPosition`, `BoardEnumColor`,
-  `GameSession`, `ClockTimeControl`, `EngineSearchLimit`, `CapacityLease`,
-  `StorageGameDocument`, and `WorkbenchJob`. The canonical naming rule owns naming
-  policy; this list records this design's actual owners.
-- Persistence schema version and IPC protocol version are separate. Reject an
-  unsupported future version with a typed error; do not silently reinterpret it.
+- `GameId`, `GameMoveId`, `EngineSessionId` and `EngineSearchId` remain opaque
+  validated identifiers. Presentation shares their actual Rust types.
+- Revisions, nanosecond durations and cumulative counters use checked native
+  integer/newtype values. In-process messages have no JavaScript precision limit.
+- Existing persisted canonical strings remain readable. External serialization
+  adapters own schema-specific encodings and migrations; the UI change alone
+  must not rewrite saved data or backups.
+- Concrete owners include `BoardPosition`, `BoardEnumColor`, `GameSession`,
+  `ClockTimeControl`, `EngineSearchLimit`, `CapacityLease`, `StorageGameDocument`,
+  `WorkbenchJob` and `DesktopCommand`. The canonical naming rule owns policy.
+- Persistence, settings, backup and signed-update schemas have separate versions.
+  Internal Rust command compatibility is compile-time within one binary; startup
+  does not negotiate a browser bridge protocol. Reject unsupported future file
+  versions before mutation.
+
+`DesktopRequest` contains an action identity, typed operation/payload and expected
+revision. `DesktopEvent` contains subscription/sequence plus relevant game,
+revision, session/search/job identities. Native bounded channel subscriptions,
+latest-value telemetry and immutable snapshots follow
+[the message contract](contracts/desktop-ipc.md). No direct egui/game mutex or
+independent presentation clock is an authoritative state owner.
+
+## DesktopProfile and startup admission
+
+The destination-local profile denotes the existing local collection, not an
+account or a new profile-selection feature. Its
+[ownership decision](decisions.md#local-profile-ownership-and-activation) owns
+bootstrap ordering, resource lifetime, authentication and limits.
+
+| Value | Meaning and validation |
+| --- | --- |
+| `DesktopProfileIdentity` | Canonical existing data-directory identity plus destination-local ID; path aliases resolve to one lock anchor |
+| `DesktopProfileLease` | One root-owned un-cloned exclusive OS file-lock handle; never serialized, inherited by children or owned solely by Bevy |
+| `DesktopProfileOwnerRecord` | Separate bounded versioned metadata: profile ID, fresh owner generation, endpoint and diagnostic PID; atomically published after bind; no ownership authority |
+| `DesktopProfileActivationRequest` | Version, matching profile/generation, request ID and closed Activate operation; no mutable app payload |
+| `DesktopProfileEnumPhase` | Starting, Ready, Recovery, ShuttingDown or InstallPending, reachable only while holding the lease |
+| `DesktopProfileEnumAdmission` | Owned lease, ExistingOwner activation result, Busy or typed startup failure; only Owned admits application services |
+| `UpdateInstallIntent` | Durable profile/owner/helper generation, package digest/version, backup and schema binding; Prepared, Committed and recorded outcome follow the packaging contract |
+
+No owner record or heartbeat can stand in for OS exclusion. The lease is acquired
+before any user database or migration/restore recovery. Its control directory
+survives restore/replacement and is excluded from backups; restoring another
+machine's data retains the destination profile identity. Repeated launches
+cannot clone game clocks or capacity coordinators. An owner in Starting coalesces
+activation until its window is ready; activation changes no game/run phase.
+
+Owned startup follows `Starting -> Ready` or `Starting -> Recovery` after storage
+and presentation checks. A canceled or failed quit returns to its prior owned
+phase; successful `ShuttingDown` drains all effects before final process teardown.
+An acquired lease with a pending install intent admits only the helper/recovery
+path in [packaging](contracts/packaging.md#profile-ownership-during-installation),
+never ordinary initialization. A contending/unreachable launch cannot change
+these states. After confirmed owner exit, the new owner performs saved-state
+recovery with unfinished games/puzzle runs paused.
+An installer may outlive its helper; lock acquisition alone cannot clear that
+barrier. Prepared intent never authorizes installation, and safe cancellation
+or recovery must establish helper/installer quiescence before revoking it.
+
+## Native presentation and scene state
+
+`PresentationApp` owns selected workspace/game, widget focus, transient edits,
+confirmation state and received snapshots. Settings, draft and note buffers
+preserve their distinct Save/Discard/Stay policies. Clock repaint deadlines are
+presentation-only. One input action yields one retained request identity even
+when egui performs multiple passes.
+
+`SceneRenderer` owns Bevy asset/entity mappings, the board camera, offscreen
+image target, immutable presentation snapshots and their render generation.
+Bevy render resources own actual GPU object allocation/destruction. `SceneCamera` owns yaw offset, tilt,
+zoom and fit, separate from White/Black orientation. `SceneEnumLifecycle` covers
+initializing, ready, failed and retrying states. A failed generation invalidates
+pending picks/animations and emits one native interruption. The application
+pauses games; retry readiness never resumes them.
+
+GPU objects follow Bevy render scheduling/lifetime, without a second device or
+custom GL context. CPU asset preparation is bounded through the capacity
+partition. Bevy scene hierarchy/name components identify the 12 color/kind GLB
+parents and their descendants; do not select pieces by brittle entity indices.
+Logical egui points become framebuffer pixels only at the renderer boundary;
+resize, display-scale and viewport clipping changes recreate sized targets.
 
 ## BoardPosition and BoardMove
 
@@ -53,7 +129,7 @@ methods cannot open files, construct engine clients, or adjudicate chess.
 | En passant | Validated target and legal-context normalization |
 | Halfmove/fullmove counters | Checked bounded integers |
 | Variant | Standard or Chess960 castling interpretation |
-| Legal moves | Derived from the authoritative position, never browser declarations |
+| Legal moves | Derived from the authoritative position, never presentation declarations |
 | Repetition identity | Board, turn, castling, and relevant en passant rights; counters excluded |
 
 `BoardPosition` wraps the selected library behind fallible constructors and typed
@@ -198,7 +274,7 @@ snapshots atomically so recovery cannot combine different transitions.
 | Active | Browse history | Active; only viewed cursor changes; clocks/game/search continue and UI offers Return to Live |
 | Active | Branch from history | Separate analysis branch; live clock remains explicit |
 | Active | Manual pause, engine/graphics failure, or OS suspension | Interrupted; freeze native clocks and record snapshot/reason; stop game search; faults offer explicit Retry without automatic restart/resume |
-| Interrupted | Confirm resume | Active with reconstructed engine state and explicit clock decision |
+| Interrupted | Confirm resume | Active only after any required Retry restores readiness, with reconstructed engine state and explicit clock decision |
 | Active | Accepted result | Completed; stop engine and freeze clock |
 | Completed | Analyze | Analysis branch without rewriting recorded result |
 | Any saved phase | Reopen | Paused review/interrupted state, never silent timed resume |
@@ -232,7 +308,8 @@ option after accepted moves; orientation is presentation state, not clock state.
 - Increment applies once after a legal accepted move. Engine `MoveOverhead` is
   separate from player clock bookkeeping and is never subtracted twice.
 - App focus loss does not pause live clocks or engine play. On computer sleep,
-  interrupt timed play, preserve remaining time, and require explicit Resume.
+  interrupt all live games and engine searches, preserve remaining time, and
+  require explicit Resume.
   This policy is separate from puzzle focus-loss pauses and graphics failures.
 - Reckless natively accepts remaining times, Fischer increments, and `movestogo`.
   It has no delay field. Delay accounting belongs to the application; use the
@@ -394,9 +471,13 @@ is included. The palette exposes all applicable user actions, preserving require
 confirmations and unavailable-state explanations. Exact focus/context and OS
 reserved-key rules need validation.
 
-OTA updates are included through GitHub Actions and Tauri signed updater
-artifacts. Native update state and migration/recovery contracts require further
-design and approved policies before implementation. Update binaries are private; version-tag pushes automatically
+OTA updates use private GitHub release assets, a signed versioned manifest and
+native download/signature/installer adapters. Cargo-packager creates installers;
+it does not own update policy. `UpdateSession` carries check/download attempt,
+release/asset identity, target, verified manifest digest, cache receipt and phase.
+Its typed states distinguish awaiting network approval, downloading, downloaded,
+install prerequisites, handoff, failed and cancelled. Retries create new attempts
+and cannot reuse expired metered-connection approval. See [packaging](contracts/packaging.md). Update binaries are private; version-tag pushes automatically
 build/publish releases. Check nonblockingly at startup and expose Check for
 Updates in Settings. Use a user-provided fine-grained GitHub token restricted
 to this repository with Contents read permission in the OS credential store.
@@ -431,7 +512,7 @@ compatible app reinstall may be required, without a guaranteed binary rollback.
 Installation failures expose explicit Retry where safe, otherwise manual-recovery
 guidance; do not retry automatically. Recovery follows the staged migration,
 journal and confirmed backup policy in resolved decisions. Keep credential material outside
-ordinary preferences, exports, backups, and frontend payloads. Missing, expired,
+ordinary preferences, exports, backups and general presentation snapshots. Missing, expired,
 or rejected tokens produce a persistent Settings status with add/replace-token
 controls and no blocking prompt. Offline chess remains usable. Failed downloads
 stop and expose Retry; no automatic download retries. Successful installation
@@ -528,7 +609,7 @@ options, preview supported changes and list unavailable options explicitly; appl
 supported fields only after confirmation.
 Distinguish saved preferences from
 pending/effective runtime configuration. No executable path supplied by the
-browser is trusted. Preferences include approved configurable board aids and
+presentation is trusted. Preferences include approved configurable board aids and
 optional move/check/result sounds. Remember window size/position, navigation
 collapse, panel widths, and selected side-panel tab; Reset Layout is included.
 Fit restored windows to current displays/minimum size. Coordinates are initially
@@ -561,8 +642,9 @@ Allow full 360-degree yaw and tilt 0..45 degrees, preserving full-board framing.
 Button steps are 15-degree yaw, 5-degree tilt, and 10% zoom. Auto-flip rotates
 180 degrees over 180 ms, retaining tilt/zoom, respecting reduced motion, and
 leaving native clocks running. Framing margins, quality presets and adaptation
-thresholds follow the selected presentation policy. Use direct Three.js inside Vue
-with a dedicated scene controller and WebGL2. Automatic quality adapts during use
+thresholds follow the selected presentation policy. Use a native scene owner with the selected Rust UI/engine integration;
+[renderer research](research.md#native-egui-renderer-and-integration) owns its
+exact integration and dependency pins. Automatic quality adapts during use
 to sustained frame-time changes, with safeguards against rapid switching.
 Initially target 60 fps during active rendering; render on demand while unchanged,
 with clocks updating separately. Reduce shadows/effects before internal resolution.
@@ -584,6 +666,18 @@ notation-boundary values; HTML is never rendered from imported comments. Export
 escaping and variation order must round-trip through the fixed corpus.
 
 ## Selected starter-data direction
+
+The preparation manifest extends the existing dataset provenance owner, with
+policy version, frozen source digests, observed typed strata/counts, selected
+prefix lengths, selection-sequence digests and ordered byte-cap reductions.
+Each selected record retains its canonical source identity, full game identity
+where applicable, source metadata and derived preparation stratum. Missing
+metadata remains typed unavailable with a reason, not a fabricated rating,
+time class or theme. The complete source theme set and raw TimeControl remain
+available independently of preparation labels. These are dataset/preparation
+values; they neither enter GameSession nor change explorer-filter semantics.
+Normalization, exact boundaries, ordering and cap transitions have one owner in
+[starter subset selection v1](decisions.md#starter-subset-selection-v1).
 
 Follow [starter provenance/selection](decisions.md#starter-datasets-and-provenance),
 [puzzle interchange](decisions.md#puzzle-interchange-and-lifecycle), and

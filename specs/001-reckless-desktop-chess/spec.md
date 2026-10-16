@@ -6,16 +6,21 @@
 
 **Created**: 2026-10-16
 
-**Status**: Specification refined and validated against the agreed first-release
-scope. Planning decisions are resolved; implementation and runtime acceptance
-remain unperformed.
+**Status**: Specification updated and reviewed for native desktop delivery on
+2026-10-16. Approved first-release scope and requirement IDs are preserved;
+acceptance now explicitly covers native installation, display/input consistency,
+accessibility, lifecycle recovery and existing-data continuity. Partial
+implementation exists; native UI migration and runtime acceptance remain
+unperformed.
 
 [Review](review.md) preserves direct owner choices. Remaining choices were
 explicitly delegated to the assistant and are recorded in
 [resolved decisions](decisions.md). This invocation updates the existing feature
 from that agreed description. It does not create another feature or branch.
 Technical selections remain in [the plan](plan.md) and its contracts; this
-specification defines player outcomes and observable behavior.
+specification defines player outcomes and observable behavior. The native desktop
+revision preserves the fully 3D board, accessibility, offline features and update
+requirements.
 
 **Input**: A beautiful, modern desktop chess application using the complete
 Reckless engine on Windows, Apple Silicon macOS, and Linux. The owner selected
@@ -30,6 +35,20 @@ study-only opening book. The owner selected a premium dark-first
 workspace with a light theme and a real-time, fully three-dimensional board.
 Keep personal data local, support the selected desktop platforms and require
 zero payments for the first release.
+The updated direction is a native desktop application using each target's
+supported graphics capabilities without requiring the player to choose a
+graphics backend. Preserve the approved presentation, interactions and saved
+data through this revision.
+
+## Clarifications
+
+### Session 2026-10-16
+
+The following decision was selected under the owner's earlier instruction to
+choose the recommended option for remaining questions; no new owner answer
+was requested or inferred.
+
+- Q: What should happen when the app is launched twice against the same local data? → A: Keep one writable application owner per local profile and activate its existing window. If a live owner is unreachable, refuse a competing session with recovery guidance; after confirmed owner exit, normal paused recovery applies.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -142,9 +161,11 @@ scales, with keyboard-only input, reduced motion, and a screen reader.
 
 **Acceptance Scenarios**:
 
-1. **Given** a resized window or changed display scale, **When** the workspace
-   updates, **Then** pieces, coordinates, clocks, history, and controls remain
-   sharp and operable without overlap.
+1. **Given** a resized window, changed display scale or move between displays,
+   **When** the workspace updates, **Then** pieces, coordinates, clocks, history,
+   and controls remain sharp and operable without overlap; selecting or dragging
+   on each of the 64 squares targets that square at every allowed camera pose
+   and either side orientation, and panel input never submits a board move.
 2. **Given** either theme, **When** selection, check, a move, or an error is
    shown, **Then** its meaning is available without relying only on color.
 3. **Given** keyboard-only input, **When** starting a game, selecting a move,
@@ -162,6 +183,11 @@ scales, with keyboard-only input, reduced motion, and a screen reader.
 7. **Given** Automatic quality during sustained slow frames, **When** quality
    adapts, **Then** shadows and effects reduce before board resolution and
    settings do not rapidly alternate; manual quality remains selectable.
+8. **Given** a supported screen reader and either board orientation, **When**
+   the player navigates the board and activates its controls, **Then** all 64
+   squares expose their coordinates, occupants or emptiness and current state;
+   selecting moves, choosing promotions and hearing turn, check and result
+   feedback work without sight or pointer input, regardless of camera angle.
 
 ### User Story 5 - Install and recover on every target (Priority: P1)
 
@@ -175,8 +201,10 @@ play and analysis, and verify recovery from an engine failure.
 
 **Acceptance Scenarios**:
 
-1. **Given** a clean target installation, **When** it launches offline,
-   **Then** the bundled engine and neural network work without downloads.
+1. **Given** a clean supported target installation, **When** it launches offline,
+   **Then** the board, panels, bundled engine, neural network, fonts, sounds and
+   starter data work without application-resource downloads or a browser-runtime
+   prerequisite; documented operating-system and graphics requirements apply.
 2. **Given** CPU or optional-system limitations, **When** an engine package is
    selected, **Then** compatibility is checked before execution and a compatible
    build or specific error is presented.
@@ -190,6 +218,16 @@ play and analysis, and verify recovery from an engine failure.
 6. **Given** a live game that was saved before an unexpected exit, **When** the
    app reopens, **Then** the last saved position and clocks return paused and no
    downtime is charged.
+7. **Given** missing graphics support, corrupt presentation assets or an
+   initialization failure, **When** startup cannot present a usable board,
+   **Then** an actionable failure and Retry are offered, saved data remains
+   intact and no game begins or resumes. A Retry that cannot finish within
+   10 seconds returns to the failure state with setup guidance.
+8. **Given** compatible local data from an earlier application version, **When**
+   the native revision opens it, **Then** games, annotations, reports, drafts,
+   puzzle progress and preferences remain available without manual export and
+   reimport; unfinished games and puzzle runs remain paused. Unsupported or
+   failed migrations preserve the original data and enter explicit recovery.
 
 ### User Story 6 - Construct and annotate study positions (Priority: P1)
 
@@ -330,6 +368,22 @@ switch tabs, pause and resume them, and exercise save and capacity failures.
    Save available; close, quit and update cannot silently discard it.
 5. **Given** running games, **When** closing a tab or quitting is confirmed,
    **Then** the required games pause and save before closing and reopen paused.
+6. **Given** running games in selected and unselected tabs, **When** app focus
+   is lost or the window is minimized, **Then** live clocks and admitted engine
+   searches continue while puzzle and sound behavior follows their separate
+   policies. Computer sleep pauses all live games, and wake requires explicit
+   Resume without charging sleep time.
+7. **Given** running games, **When** quit is requested through the window close
+   control, application menu or operating-system shortcut, **Then** the same
+   confirmation and successful pause/save are required; cancellation or failed
+   saving keeps the application and current in-memory games available.
+8. **Given** an existing local profile, **When** the app is launched again while
+   its owner is running, **Then** the existing window is activated without a
+   second writable session, duplicate games or competing engine allocations. If
+   that owner is alive but unreachable, show a busy/recovery explanation without
+   taking ownership or starting migration, restore, backup or installation work.
+   After confirmed owner exit, the next launch follows normal saved-state/crash
+   recovery and leaves unfinished games and puzzle runs paused.
 
 ### User Story 10 - Configure a personal workspace (Priority: P1)
 
@@ -422,6 +476,10 @@ canceled and verified downloaded updates with recoverable live games.
    **When** every platform release check succeeds, **Then** one complete private
    signed release is published; failed checks leave it unpublished and exhausted
    included allowance never starts paid work.
+8. **Given** an unavailable operating-system credential service, **When** update
+   credentials are configured, **Then** setup guidance and explicit session-only
+   use are available, no plaintext credential is saved, and session-only access
+   requires reentry after restarting the app.
 
 ### User Story 13 - Study offline with bundled and personal data (Priority: P1)
 
@@ -486,6 +544,16 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
 - Missing update credentials, malicious or corrupt installers, unknown network
   cost, canceled partial downloads, stale cached versions, failed migrations,
   and exhausted free release-building allowance.
+- Graphics initialization or device failure, repeated unsuccessful Retry,
+  missing presentation assets and late results from an interrupted search.
+- Display-scale changes while dragging, camera rotation with either orientation,
+  overlapping board/panel input and inaccessible squares in a fully 3D view.
+- Clock updates and engine completion while minimized or unfocused; sleep and
+  wake across several live games, and quit requests while saving is unavailable.
+- Existing supported local data opened by the native revision, including paused
+  games and puzzle runs; failed migration must not replace the last valid data.
+- Repeated launches while a profile owns live games, migration, restore or an
+  update; unreachable live owners versus confirmed exits and crash recovery.
 
 ## Requirements *(mandatory)*
 
@@ -498,7 +566,7 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   Stage/delay accounting and engine search-time allocation follow
   [the selected clock policy](decisions.md#clocks-starts-claims-and-races). The adjustable initial new-game
   preset is 10 minutes per side plus 5 seconds per move. Keep clocks running on app
-  focus loss; pause timed play on computer sleep and require explicit Resume.
+  focus loss; pause all live games on computer sleep and require explicit Resume.
   Offer manual Pause in both game modes, pausing clocks and active engine search
   until explicit Resume. Initially select White for the human against Reckless
   and Standard chess in New Game; retain side and variant selection. Offer
@@ -609,6 +677,17 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   explicitly and offer Save, Discard, and Stay before leaving unsaved edits.
   Confirm analysis-variation deletion, identifying the entire branch and its
   descendants; do not delete running-game played history through this action.
+  Preserve supported existing libraries and associated user data when upgrading
+  to the native revision, without requiring manual export/reimport. Reopen
+  unfinished games and puzzle runs paused; unsuccessful migration follows the
+  data-preserving recovery policy in FR-026. Only one application instance
+  may own a local profile for writes, live clocks, engine allocations and
+  migration/restore/backup/update coordination. A second launch targeting that
+  profile activates the existing window without creating a competing session.
+  If a live owner cannot be reached, explain the busy/recovery state and refuse
+  competing ownership. Recover ownership only after the previous owner has
+  exited; apply the normal saved-state/crash policy with unfinished games and
+  puzzle runs paused. Do not infer owner exit from a response timeout.
 - **FR-005**: Account for every released supported Reckless option, search mode,
   output field, position diagnostic, and maintenance capability in a versioned
   inventory, with an appropriate workflow and verification scenario per entry.
@@ -630,6 +709,9 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   recover without stale mutations.
 - **FR-010**: Use available processing capacity for engine work while preserving
   interactive controls, respecting engine limits and realistic memory allocations.
+  Board feedback, clocks, search cancellation and Settings remain responsive
+  during maximum-capacity search and admitted background work. Include graphics
+  and preparation work when assessing the application's total resource use.
 - **FR-011**: Deliver a board-first visual system with light/dark themes, sharp
   original or licensed sculpted 3D-style pieces, coherent typography/spacing, optional smooth
   animation, and deliberate loading, empty, and failure states. Use the approved
@@ -649,7 +731,8 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   [presentation decisions](decisions.md#presentation-assets-and-input). Render
   the board and sculpted pieces in real time, with camera rotation
   and zoom, ivory/ebony satin piece materials, and a minimum usable window of
-  1280x800 CSS pixels. Initially center the camera at 20 degrees from top-down,
+  1280x800 logical display units, preserving the approved apparent size at
+  scale 1.0 and adapting correctly to OS display scaling. Initially center the camera at 20 degrees from top-down,
   showing all squares. Keep the entire board visible at maximum manual zoom-in.
   Reset View restores default pose/framing/tilt while retaining current White/
   Black orientation. Permit full 360-degree yaw and tilt from 0 to 45 degrees,
@@ -667,16 +750,37 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   internal resolution, preserving crisp board rendering as long as possible.
   Exact presets, thresholds, resolution limits and baseline follow
   [presentation decisions](decisions.md#presentation-assets-and-input).
+  Preserve square selection and drawing accuracy through permitted camera,
+  layout and display-scale changes; interactions with panels never submit board
+  input. A geometry, scale, camera or orientation change during a pointer gesture
+  cancels that gesture without submitting a move or marking; require fresh input
+  against the updated board mapping. Hardware rendering uses a supported path selected for the target without
+  requiring players to choose a graphics backend.
 - **FR-012**: Provide keyboard-complete flows, screen-reader position/move
   feedback, visible focus, sufficient contrast, and reduced-motion support.
+  Make all 64 squares individually discoverable and actionable with coordinates,
+  piece or empty status, selection and relevant state. Screen-reader actions
+  support move entry and promotion, and announce turn, check and result changes.
+  Camera pose and orientation must not make board controls inaccessible.
 - **FR-013**: Package and validate Windows, Apple Silicon macOS, and Linux builds
-  with the correct engine and neural network included.
+  with the correct engine, neural network and all required application resources
+  included. The native application has no browser-runtime prerequisite. Document
+  actual graphics and operating-system prerequisites and validate the minimum
+  supported targets; unsupported hardware produces an actionable failure.
 - **FR-014**: Preserve games and preferences through engine failures and restart;
   do not silently resume timed play. Engine faults preserve the game and pause
   clocks; restart only when the user selects Retry, with explicit Resume required
   after recovery. For graphics failure during a live game,
-  preserve game state, pause clocks, offer Retry, and require explicit user resume
-  after graphics recovery.
+  preserve game state, pause affected clocks and engine searches, offer Retry,
+  and require explicit user resume after graphics recovery. A shared graphics
+  failure affects every live game dependent on that renderer. Failed graphics
+  startup never starts a game or silently discards saved data. Repeated Retry
+  failures keep games preserved and paused, with an actionable explanation.
+  Bound each graphics Retry to 10 seconds before returning to the failure state
+  with setup guidance, including missing or corrupt presentation resources.
+  Window close, application-menu quit and operating-system quit shortcuts follow
+  the same confirmation and pause/save policy; cancellation or failed saving
+  leaves the application open with the current in-memory games retained.
 - **FR-015**: Expose engine identity, build capabilities, dependency notices, and
   the exact corresponding-source materials required for distribution.
 - **FR-016**: Require no account, telemetry, cloud service, or network connection
@@ -750,7 +854,10 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   per-puzzle countdown modes, with configurable defaults of 5 minutes per session
   and 60 seconds per puzzle. Select one countdown mode per timed run. Support
   manual pause and automatic pause on app focus loss, hiding the board/solution
-  until resumed. Session expiry ends the run; per-puzzle expiry records a timeout
+  until resumed. Minimizing or hiding the puzzle window also pauses the run and
+  hides its board and solution, even if another app-owned window retains focus.
+  Restoring visibility or focus never resumes the run automatically.
+  Session expiry ends the run; per-puzzle expiry records a timeout
   and advances. Hints progress through source square, destination square, and
   next-move reveal, marking attempts assisted. Record failed attempts and allow
   practice retries on the existing continuing countdown. Accept listed solution
@@ -868,8 +975,11 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
 
   Check nonblockingly at startup and provide Check for Updates in Settings.
   Offline chess remains available. Use a user-provided read-only download
-  credential restricted to the private repository and kept in the operating
-  system's secure credential store, outside exports, backups and diagnostics.
+  credential restricted to the private repository. Persist it only in the
+  operating system's secure credential store, outside exports, backups and
+  diagnostics. When that service is unavailable, show setup guidance and permit
+  explicitly selected session-only use; require reentry after app restart and
+  never save a plaintext fallback.
   Missing, expired or rejected credentials produce a persistent Settings notice
   with add/replace controls and no blocking prompt. Check attempts have a total
   15-second deadline, excluding the installer download.
@@ -905,14 +1015,17 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
   signed Apple Silicon macOS .dmg, and Linux x86-64 .deb and AppImage. Document
   Windows warnings and manual macOS approval; paid signing/notarization is
   excluded while cryptographic update signatures remain mandatory. Windows
-  setup includes its required offline runtime installer. Linux may fetch missing
-  system dependencies, with offline-preparation guidance. Protect the signing
-  key with an owner-controlled passphrase-encrypted removable backup kept
-  disconnected. Operational delivery details remain in
+  setup includes any required redistributable application runtimes for offline
+  installation, as established by clean-install validation under FR-013. Linux
+  may fetch missing system dependencies, with offline-preparation guidance.
+  Protect the signing key with an owner-controlled passphrase-encrypted removable
+  backup kept disconnected. Operational delivery details remain in
   [the packaging contract](contracts/packaging.md).
 
 ### Key Entities *(include if feature involves data)*
 
+- **Local profile**: The user's local collection of games, history, preferences
+  and recovery state, with one writable application owner.
 - **Game**: Variant, players, initial position, move tree, clocks, result,
   annotations, metadata, and viewed position.
 - **Position**: Pieces, turn, castling, en passant, counters, and validated context.
@@ -956,27 +1069,51 @@ and puzzles, then preview and import valid, duplicate and malformed personal dat
 - **SC-003**: Visible move feedback is at most 100 ms at the 95th percentile and
   active board presentation meets the 60 Hz target with 95th-percentile frame
   intervals at most 16.7 ms in Automatic quality during full-capacity search on
-  recorded reference machines; reduced motion stays fully usable.
+  recorded reference machines; reduced motion stays fully usable. Board-input
+  fixtures at 100%, 150% and 200% display scales, both orientations and camera
+  bounds target the intended square with zero unintended panel-to-board actions.
+  Rejected-input feedback has the same 100 ms p95 bound. Sampling, actual
+  presentation boundaries and workload definitions follow
+  [the measurement protocol](decisions.md#acceptance-measurement-protocol).
 - **SC-004**: An offline game can start within 3 seconds after launch on those
-  machines, excluding OS installation prompts.
+  machines, excluding OS installation prompts. The
+  [measurement protocol](decisions.md#acceptance-measurement-protocol) includes
+  clean-profile initialization, required local preparation and engine readiness,
+  while excluding human reaction time through immediate automated Start.
 - **SC-005**: Search stop completes within 1 second at the 95th percentile on the
   fixed corpus; 1,000 controlled stop/change/restart cycles apply zero stale results.
+  Normal completion, forced termination and stale-mutation accounting remain
+  separate under [the measurement protocol](decisions.md#acceptance-measurement-protocol).
 - **SC-006**: Every supported packaged target passes clean installation, offline
   play, analysis, save/reopen, shutdown and the applicable verified update path.
   All update failure/approval fixtures preserve data and prevent installation
   when verification, save, backup or confirmation is missing; free-allowance
-  exhaustion fixtures start zero paid work.
+  exhaustion fixtures start zero paid work. Graphics startup/recovery, sleep/
+  wake and every supported quit entry point preserve game state, clocks and
+  explicit-resume safeguards. Supported upgrade fixtures retain all included
+  user data without manual interchange; failed migrations preserve the last
+  valid snapshot. Clean-install fixtures require no browser runtime. Repeated-
+  launch fixtures create zero competing profile writers, duplicate live games
+  or independent engine allocations; unreachable live owners cannot trigger
+  takeover, migration, restore, backup or installation from the new launch.
+  Confirmed-owner-exit fixtures recover saved games and puzzle runs paused.
 - **SC-007**: Game round trips preserve supported moves, variations, annotations,
   and metadata across the fixed import/export corpus. Every compatible backup
   fixture restores all included user data/settings, while corrupt, incompatible
   and interrupted-restore cases preserve a complete recoverable snapshot.
 - **SC-008**: Core flows pass keyboard-only review; themes meet WCAG AA contrast
   targets and the visual checklist at 100%, 150%, and 200% display scales.
+  VoiceOver on macOS, NVDA on Windows and Orca on Linux can discover all 64
+  squares, enter legal moves and promotions, and report turn/check/result state
+  through the actual application window in both orientations.
 - **SC-009**: Fixed-workload measurements compare one-worker and full-capacity
   search, recording throughput, responsiveness, and memory without assuming
   linear scaling. Concurrent-game fixtures show zero thread/hash-budget
   violations and preserve every game's clock/turn identity. An unchanged idle
-  workspace uses less than 1% of one logical core on the reference machines.
+  workspace with no active games, jobs, countdowns, animations or transfers uses
+  less than 1% of one logical core on the reference machines.
+  Use [the measurement protocol](decisions.md#acceptance-measurement-protocol)
+  for whole-process/child scope, CPU denominator, sampling and scaling comparisons.
 - **SC-010**: Editor/FEN and annotated-game round trips preserve the accepted
   position, notes, and variation structure across the reference corpus.
 - **SC-011**: Every completed report entry matches its source game position,

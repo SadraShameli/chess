@@ -6,7 +6,10 @@ Use [the resolved decisions](../decisions.md) for concrete defaults, algorithms
 and former draft questions; [the review](../review.md) records owner choices.
 
 Implements FR-003, FR-007, FR-011, FR-012, FR-023, and FR-024 from [the specification](../spec.md).
-Stack: Tauri 2, Vue 3, strict TypeScript, Tailwind CSS, and shadcn-vue/Reka UI.
+Stack: Bevy 0.20.0 + bevy_egui 0.43.1, using the plugin-compatible egui 0.36
+family. Bevy owns the window, native GPU selection and 3D scene; egui provides
+the styled application panels. No eframe host or browser runtime is selected.
+See [renderer integration](../research.md#native-egui-renderer-and-integration).
 
 ## Visual direction
 
@@ -21,12 +24,13 @@ pieces, bundled Inter UI/notation with tabular clock digits, and
 configurable 180 ms piece moves/160 ms panel transitions with subtle elevation.
 The board and pieces render in real time with camera rotation and zoom. Pieces
 use ivory/ebony materials with subtle satin highlights. The minimum usable window
-is 1280x800 CSS pixels. The first-release interface is English. Offer letter and
+is 1280x800 native logical points. The first-release interface is English. Offer letter and
 figurine move display, defaulting to letters; PGN retains standard letters.
 Exact tokens, original assets, Inter 4.1/SVG figurines, dimensions, renderer pin,
 camera framing, input and quality follow
-[presentation decisions](../decisions.md#presentation-assets-and-input). Direct Three.js with a dedicated scene controller and WebGL2 is
-selected for the first release.
+[presentation decisions](../decisions.md#presentation-assets-and-input). Bevy supplies the native scene and automatic platform graphics selection;
+[renderer research](../research.md#native-egui-renderer-and-integration) records
+the delegated choice, exact compatibility and acceptance limits.
 
 | Element | Direction | Acceptance |
 | --- | --- | --- |
@@ -35,25 +39,29 @@ selected for the first release.
 | Board | Approved real-time 3D board with green/cream squares; coordinates and marker styling selected in decisions.md | Equal square dimensions and clear piece contrast at every supported scale |
 | Pieces | Approved real-time sculpted 3D with ivory/ebony satin materials; original generated GLB meshes selected | All six kinds distinguishable at the smallest supported square size |
 | Typography | Bundled Inter UI/notation with tabular clock digits; English interface; letters/figurines with letters default; Inter 4.1 with original SVG figurines selected | No layout shift as clocks/statistics change; readable notation |
-| Layout | Approved left navigation, large board/player bars/clocks, resizable right tabs | Approved minimum 1280x800 CSS pixels; 1440x900 default with selected panel sizes/reflow |
+| Layout | Approved left navigation, large board/player bars/clocks, resizable right tabs | Approved minimum 1280x800 native logical points; 1440x900 default with selected panel sizes/reflow |
 | Motion | Approved configurable 180 ms moves, 160 ms panels, subtle elevation; respect reduced motion | No animation delays authoritative moves or prevents the next action |
 
-Tailwind theme tokens are the shared design source. Use shadcn-vue primitives
-for keyboard/focus-aware controls and customize them through that token system.
-Do not scatter arbitrary color, spacing, or duration values through components.
-Tailwind v4 uses its official Vite integration; do not add Sass as a parallel
-styling pipeline. Small custom CSS belongs to its owning component and follows
-applicable owner rules, with linting appropriate to Tailwind syntax.
+One typed Rust theme/layout owner supplies egui Style/Visuals and Bevy material/scene tokens.
+Build reusable styled widget components for dialogs, menus, tabs, forms,
+tooltips and clock/player bars. Premium typography, spacing, focus and surfaces
+are designed explicitly; stock egui appearance is not the acceptance target.
+Retain the selected tokens/durations in decisions.md rather than duplicating
+values across widgets and shaders. Native logical points preserve the former
+CSS dimensions' apparent size at scale 1.0. Resolve OS scale and pixels_per_point
+once at the scene framebuffer boundary.
 
 ## Real-time 3D rendering and camera
 
 The owner selected real-time rendering for both board and sculpted pieces, with
 camera rotation and zoom. Ivory/ebony satin materials apply to the pieces; the
-board retains its approved green/cream square palette. Use direct Three.js inside
-Vue, owned by a dedicated scene controller, with WebGL2 for the first release.
-Three.js 0.186.1, original GLB models, lighting/shadows, quality presets and
-framing margins follow the selected presentation decisions; validate actual
-GPU/WebView compatibility. Initially
+board retains its approved green/cream square palette. Use Bevy with platform-appropriate native backend selection:
+Metal on macOS and supported Vulkan/Direct3D paths on other targets. No Vulkan-only
+mask or required Vulkan-to-Metal portability layer is selected. The selected
+Bevy scene owner supplies GLB loading, instancing, depth, lighting/materials, shadows,
+picking, cached render targets and device generations. Follow
+[renderer research](../research.md#native-egui-renderer-and-integration) for the
+selected engine integration and remaining acceptance work. Initially
 center the camera at 20 degrees from top-down with all squares visible. Keep the
 entire board visible at maximum manual zoom-in. Drag pieces normally,
 right-drag to draw, and use visible camera controls to rotate/zoom. Allow full
@@ -76,7 +84,7 @@ updating separately. Reduce shadows/effects before internal resolution to retain
 crisp board rendering as long as possible. Distinguish intentional idle periods
 from active-frame performance samples. Use the selected tiers, p95 thresholds,
 2-second sample windows, cooldown and resolution limits in presentation decisions.
-Hardware WebGL2 features and reference-system performance require actual tests;
+Native GPU adapter features and reference-system performance require actual tests;
 no measured claim is established by naming presets.
 
 Camera movement changes presentation only. Picking and drawing must map back to
@@ -92,11 +100,35 @@ and offer Retry. Successful graphics recovery does not resume gameplay or clocks
 until the user explicitly resumes. Record the interruption through the native
 game owner; the scene cannot adjudicate clocks or accept stale pending moves.
 Context/initialization/shader/asset failures interrupt native state. Initial
-startup shows Retry/setup guidance; Retry has a 10-second initialization deadline. Validate recovery in each supported Tauri WebView.
+startup shows Retry/setup guidance; Retry has a 10-second initialization
+deadline. Validate device/surface/asset/shader failure and window recreation on
+every supported native graphics target. Expose the selected hardware adapter/backend and explain unsupported graphics.
 Measure GPU/CPU
 usage, frame pacing, resource loading, and board input while Reckless searches.
 Rendering performance has not been measured. Animation durations are presentation
 defaults, not measured frame pacing or permission to delay input.
+
+If the failed renderer cannot display egui, provide OS-native recovery controls
+for the error, Retry and safe quit. Recovery guidance must remain usable without
+the failed graphics device; these controls do not supply another board mode.
+
+## Repeated launch and profile status
+
+A second launch requests the existing main window without creating another
+game session, resource coordinator or writable library. Retain the selected tab,
+unsaved edits, confirmations and recovery state; activation never resumes a
+paused game or puzzle. While the owner initializes, coalesce activation until
+its window is ready. During migration/restore, show that owner's progress/status.
+
+The [activation response](desktop-ipc.md#local-activation-interface) distinguishes
+observed focus from a request the OS has not confirmed. If a compositor refuses
+raising or restoring the window, explain how to select it from the desktop;
+do not claim it is focused. If the owner cannot respond, show a short Busy
+explanation with guidance to return to or close the existing app and relaunch.
+Do not offer Force Takeover, delete-lock or timeout-based recovery controls.
+Pending installation shows installation/recovery status rather than a fresh
+workspace. After confirmed owner exit, normal saved-state recovery reopens
+unfinished games and puzzle runs paused.
 
 ## Workspaces
 
@@ -135,7 +167,7 @@ engine search budget where relevant. Do not offer a fictional Elo slider.
 The owner approved a Chess.com-inspired board layout using the project's premium
 dark/light styling. Use collapsible left navigation, a large central board with
 player bars/clocks, and resizable right-side tabs for moves, analysis, and opening
-study. The minimum usable window is 1280x800 CSS pixels. Exact panel dimensions,
+study. The minimum usable window is 1280x800 native logical points. Exact panel dimensions,
 reflow details follow presentation decisions. Remember window size/position, navigation
 collapse, panel widths, and selected side-panel tab across launches. Include
 Reset Layout. Fit restored windows to current displays and respect the approved
@@ -240,6 +272,10 @@ Puzzle runs and remaining time survive sleep/relaunch; always require explicit
 Resume, including on focus return. Remaining puzzle policies follow resolved decisions;
 live chess clocks retain their separate policy.
 
+Minimizing or hiding the puzzle window also pauses the run and hides its board
+and solution, including while another app-owned window retains focus. Restoring
+visibility or focus never substitutes for explicit Resume.
+
 Persist accepted preferences and validate input before committing it. Clearly
 show saved preferences separately from pending runtime application when those
 states differ. Engine changes respect the idle barrier in
@@ -248,7 +284,7 @@ clock sequencing. Unsupported engine options remain tied to detected capabilitie
 A changed default does not rewrite an existing report's recorded configuration.
 
 Use the existing preferences schema and update operation from
-[desktop IPC](desktop-ipc.md) rather than a separate settings transport.
+[desktop messages](desktop-ipc.md) rather than a separate settings transport.
 Validate persistence, invalid-input handling, and effective-state presentation
 according to SC-014. Verify immediate appearance changes separately from
 Save-controlled changes and deferred engine application.
@@ -263,8 +299,14 @@ Save-controlled changes and deferred engine application.
   handle rotation/zoom. Rejected moves restore the authoritative board.
 - Arrow keys move focus in visual orientation; selection/confirmation is explicit.
   Announce square, piece, selection, legal destinations, check, and accepted move.
-- Promotion opens a shadcn-vue dialog with all four choices, initial focus,
+- Promotion opens a styled egui modal with all four choices, initial focus,
   keyboard selection, cancellation, and focus return to the originating board.
+- Resize, OS-scale, camera, orientation or displayed-board-rectangle changes
+  invalidate an in-flight move/drawing gesture. Clear its preview, consume its
+  eventual release without submitting anything and require a fresh press using
+  the new mapping. Retain the selected square and already saved markings.
+  Board picking and overlays use the same current rectangle, scale and clipping;
+  panels or modals consuming input never forward it to the board.
 - Chess960 castling uses explicit legal affordances where a king's final square
   is ambiguous. Display ordinary final piece placement, not UCI rook-target notation.
 - Local games initially keep fixed orientation with per-game Auto-flip available;
@@ -282,7 +324,13 @@ Save-controlled changes and deferred engine application.
   acceptance restores the snapshots. Cancel pending consent when another move
   is accepted; allow a new request against the updated game. Local requests have
   no expiry timer; await response, cancellation, or another accepted move.
-  Engine-game takebacks apply immediately without an extra confirmation dialog.
+  Activating an engine-game takeback immediately submits one revision-checked
+  `game.undo` intent without an extra confirmation dialog. The game owner still
+  completes its search-stop/completion barrier before mutation. Menu, palette
+  and shortcut activation use the same mode-specific policy; a generic action
+  category cannot add a confirmation. Draw claims remain explicit validation
+  actions. Queuing/replacing a premove adds no generic confirmation, while a
+  promotion premove still requires choosing its piece before queuing.
   Always confirm resignation in both modes. Terminal results cancel pending
   consent; serialize revisions and reuse matching variations in stable order. Retain removed
   moves as an alternative variation. The initial adjustable new-game
@@ -291,7 +339,8 @@ Save-controlled changes and deferred engine application.
   increment, staged/cyclic, simple-delay, and Bronstein-delay controls. Exact
   stage/delay rules and engine time allocation follow the resolved clock policy. App focus loss keeps live
   clocks running; computer sleep
-  pauses timed play and requires explicit Resume, independently of puzzle rules.
+  pauses all live games and engine searches, requiring explicit Resume,
+  independently of puzzle rules.
 - New Game initially selects White for the human against Reckless and Standard
   chess. Allow changing the side and selecting Chess960/FRC or DFRC. Chess960
   defaults to random with numbered-position selection also available. DFRC
@@ -342,13 +391,28 @@ Save-controlled changes and deferred engine application.
 
 ## Accessibility and state
 
-Use native semantics and the Reka UI interaction contracts; installing a component
-library does not prove accessibility. Test keyboard traps, dialog focus return,
-menus, screen-reader labels, and panel reflow in the real system WebViews.
-Meet WCAG AA text/control contrast and 24 CSS pixel minimum targets where
+Use egui AccessKit semantics and explicit widget interaction contracts. A custom
+3D callback does not supply accessible square semantics. Provide 64 named, stable,
+focusable squares in the visible board accessibility container; invisible widgets
+may be omitted from AccessKit. Enable bevy_egui AccessKit and the platform
+adapter, and forward native accessibility actions into egui explicitly; the
+pinned plugin does not supply that action bridge automatically. Test keyboard traps, dialog focus return, menus,
+screen-reader actions/labels and reflow in the actual native app. Installing the
+library or passing headless semantic tests does not prove OS accessibility.
+Meet WCAG AA text/control contrast and 24 logical-point minimum targets where
 applicable; prefer larger move and promotion controls.
 
+Every modal has explicit initial focus, contained keyboard focus, reachable
+confirm/cancel actions and focus return to the invoking control. Provide visible,
+keyboard-operable marking actions for choosing a source/destination and color;
+right-drag and modifier keys cannot be the only annotation controls. Validate
+the actual native ActionRequest path with VoiceOver, NVDA and Orca, including
+Orca on both supported X11 and Wayland sessions.
+
 Respect OS reduced motion and theme; allow explicit preference overrides.
+When reduced motion is effective, apply piece moves, board flips, panel changes
+and camera resets immediately to their final state without interpolated travel
+or decorative motion; retain selection, state feedback and announcements.
 Live analysis announcements are throttled and player-controlled so a screen
 reader is not flooded. Announce moves/results/errors promptly; do not announce
 every depth or node count. Keep focus stable when analysis updates.
@@ -361,18 +425,18 @@ An engine failure preserves the board and offers a specific recovery action.
 
 Record screenshots and interaction recordings for play, analysis, promotion,
 settings, workbench, command palette, board markings, errors, and completed games
-in both themes. Validate at the approved 1280x800 CSS-pixel minimum, 1440x900,
+in both themes. Validate at the approved 1280x800 native logical-point minimum, 1440x900,
 and a large desktop size; include 100%, 150%, and 200% display
-scales on the declared target systems. Test current Tailwind browser requirements
-against the actual WebView versions before claiming the OS baseline.
+scales on the declared target systems. Test actual native GPU driver, display
+scaling and native font/widget rendering before claiming the OS baseline.
 
 Review using keyboard only and VoiceOver on macOS, NVDA on Windows, and Orca on
 Linux. Measure frame pacing and input latency while Reckless uses the maximum
 assigned capacity. Compare against the budgets in the specification; do not
 claim smoothness from screenshots alone. Exercise camera rotation/zoom, square
 picking, drawing, occlusion/readability, promotion controls, and keyboard focus
-in all permitted views. Test graphics initialization/context recovery after the
-remaining fault-detection/retry details are selected. Confirm game/clock pause,
+in all permitted views. Test graphics initialization/context recovery using the
+selected fault and Retry policy. Confirm game/clock pause,
 Retry behavior, explicit resume, remembered camera/Reset View, and quality
 selection. Verify bundled models/textures load offline.
 
