@@ -11,6 +11,8 @@ pub enum EngineEnumOption {
 }
 
 impl EngineEnumOption {
+    const THREADS_BOUND_MULTIPLIER: u32 = 4;
+
     pub const ALL: [Self; 8] = [
         Self::Hash,
         Self::Threads,
@@ -57,6 +59,31 @@ impl EngineEnumOption {
 
     pub fn descriptor(self) -> String {
         self.typed_descriptor().descriptor()
+    }
+
+    pub(crate) fn parse_descriptor(self, advertised: &str) -> Option<EngineOptionEnumDescriptor> {
+        let mut descriptor = self.typed_descriptor();
+        if self == Self::Threads {
+            let EngineOptionEnumDescriptor::Spin(range) = descriptor else {
+                return None;
+            };
+            let prefix = format!(
+                "spin default {} min {} max ",
+                range.default_value(),
+                range.minimum()
+            );
+            let maximum: u32 = advertised.strip_prefix(&prefix)?.parse().ok()?;
+            if maximum < range.maximum() || !maximum.is_multiple_of(Self::THREADS_BOUND_MULTIPLIER)
+            {
+                return None;
+            }
+            descriptor = EngineOptionEnumDescriptor::Spin(EngineOptionSpinDescriptor::new(
+                range.default_value(),
+                range.minimum(),
+                maximum,
+            ));
+        }
+        (descriptor.descriptor() == advertised).then_some(descriptor)
     }
 
     pub(crate) fn set_value_command(self, value: impl Display) -> String {

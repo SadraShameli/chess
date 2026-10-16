@@ -3,10 +3,13 @@ use std::num::TryFromIntError;
 use thiserror::Error;
 
 use crate::clock::duration::{ClockDuration, ClockDurationError};
+use crate::engine::capabilities::EngineCapabilities;
 use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 
 #[derive(Debug, Error)]
 pub enum EngineResourceConfigError {
+    #[error("The engine thread request must be positive")]
+    EmptyThreads,
     #[error("Engine option {option:?} value {value} must be between {minimum} and {maximum}")]
     Range {
         option: EngineEnumOption,
@@ -16,6 +19,8 @@ pub enum EngineResourceConfigError {
     },
     #[error("Engine option {0:?} is not a numeric resource option")]
     NonNumericOption(EngineEnumOption),
+    #[error("The engine did not advertise resource option {0:?}")]
+    MissingOption(EngineEnumOption),
     #[error("Move overhead must be an exact whole number of milliseconds")]
     FractionalMoveOverhead,
     #[error("The engine resource value cannot be represented: {0}")]
@@ -37,10 +42,21 @@ impl EngineResourceConfig {
         hash_mib: u32,
         move_overhead: ClockDuration,
     ) -> Result<Self, EngineResourceConfigError> {
-        let threads = Self::number(EngineEnumOption::Threads, u64::try_from(threads)?)?;
-        Self::number(EngineEnumOption::Hash, u64::from(hash_mib))?;
+        let threads = u32::try_from(threads)?;
+        if threads == 0 {
+            return Err(EngineResourceConfigError::EmptyThreads);
+        }
+        Self::number(
+            EngineEnumOption::Hash,
+            u64::from(hash_mib),
+            EngineEnumOption::Hash.typed_descriptor(),
+        )?;
         let millis = move_overhead.as_millis();
-        Self::number(EngineEnumOption::MoveOverhead, millis)?;
+        Self::number(
+            EngineEnumOption::MoveOverhead,
+            millis,
+            EngineEnumOption::MoveOverhead.typed_descriptor(),
+        )?;
         if ClockDuration::from_millis(millis)? != move_overhead {
             return Err(EngineResourceConfigError::FractionalMoveOverhead);
         }
@@ -63,6 +79,19 @@ impl EngineResourceConfig {
         self.move_overhead
     }
 
+    pub(crate) fn validate(
+        self,
+        capabilities: &EngineCapabilities,
+    ) -> Result<(), EngineResourceConfigError> {
+        for (option, value) in self.settings() {
+            let descriptor = capabilities
+                .descriptor(option)
+                .ok_or(EngineResourceConfigError::MissingOption(option))?;
+            Self::number(option, value, descriptor)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn settings(self) -> [(EngineEnumOption, u64); 3] {
         [
             (EngineEnumOption::Threads, u64::from(self.threads)),
@@ -74,8 +103,12 @@ impl EngineResourceConfig {
         ]
     }
 
-    fn number(option: EngineEnumOption, value: u64) -> Result<u32, EngineResourceConfigError> {
-        let EngineOptionEnumDescriptor::Spin(range) = option.typed_descriptor() else {
+    fn number(
+        option: EngineEnumOption,
+        value: u64,
+        descriptor: EngineOptionEnumDescriptor,
+    ) -> Result<u32, EngineResourceConfigError> {
+        let EngineOptionEnumDescriptor::Spin(range) = descriptor else {
             return Err(EngineResourceConfigError::NonNumericOption(option));
         };
         if !range.contains(value) {

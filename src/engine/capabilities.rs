@@ -1,23 +1,25 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use thiserror::Error;
 
-use crate::engine::enums::EngineEnumOption;
+use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use crate::engine::package::manifest::EnginePackageManifest;
 
 #[derive(Debug, Error)]
 pub enum EngineCapabilitiesError {
     #[error("The engine identity does not match the packaged Reckless version")]
     IdentityMismatch,
-    #[error("The engine advertised an unknown, duplicate, or incompatible option")]
+    #[error("The engine advertised a malformed, duplicate, or incompatible option")]
     OptionMismatch,
+    #[error("Engine option {name} with descriptor {descriptor} has no capability coverage")]
+    UnknownOption { name: String, descriptor: String },
     #[error("The engine did not advertise every required capability")]
     MissingOptions,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct EngineCapabilities {
-    options: BTreeSet<EngineEnumOption>,
+    options: BTreeMap<EngineEnumOption, EngineOptionEnumDescriptor>,
 }
 
 impl EngineCapabilities {
@@ -29,11 +31,20 @@ impl EngineCapabilities {
         let option = EngineEnumOption::ALL
             .into_iter()
             .find(|option| option.name() == name)
+            .ok_or_else(|| EngineCapabilitiesError::UnknownOption {
+                name: name.to_owned(),
+                descriptor: descriptor.to_owned(),
+            })?;
+        let descriptor = option
+            .parse_descriptor(descriptor)
             .ok_or(EngineCapabilitiesError::OptionMismatch)?;
-        if descriptor != option.descriptor() || !self.options.insert(option) {
-            return Err(EngineCapabilitiesError::OptionMismatch);
+        match self.options.entry(option) {
+            Entry::Vacant(entry) => {
+                entry.insert(descriptor);
+                Ok(())
+            }
+            Entry::Occupied(_) => Err(EngineCapabilitiesError::OptionMismatch),
         }
-        Ok(())
     }
 
     pub fn validate(&self) -> Result<(), EngineCapabilitiesError> {
@@ -44,7 +55,11 @@ impl EngineCapabilities {
     }
 
     pub fn options(&self) -> impl ExactSizeIterator<Item = EngineEnumOption> + '_ {
-        self.options.iter().copied()
+        self.options.keys().copied()
+    }
+
+    pub fn descriptor(&self, option: EngineEnumOption) -> Option<EngineOptionEnumDescriptor> {
+        self.options.get(&option).copied()
     }
 }
 

@@ -424,18 +424,45 @@ async fn canceled_search_admission_releases_its_active_membership()
 }
 
 #[tokio::test]
-async fn portable_engine_limit_leaves_surplus_capacity_for_other_shared_work()
+async fn high_core_budget_is_fully_assigned_shared_fairly_and_released()
 -> DesktopNativeGameResourcesTestResult {
     let fixture = DesktopNativeGameResourcesFixture::new(1024, 64)?;
-    let context = DesktopNativeGameResourcesFixture::context(1)?;
-    let _registration = fixture.resources.register(context).await?;
-    fixture.acknowledge(context).await?;
-    let allocation = fixture.resources.allocate(context).await?;
-    assert_eq!(allocation.workers(), 512);
-    assert_eq!(fixture.budget.available(), 512);
-    let shared_work = fixture.budget.lease(512).await?;
+    let first = DesktopNativeGameResourcesFixture::context(1)?;
+    let second = DesktopNativeGameResourcesFixture::context(2)?;
+    let _first_registration = fixture.resources.register(first).await?;
+    fixture.acknowledge(first).await?;
+    let allocation = fixture.resources.allocate(first).await?;
+    assert_eq!(allocation.workers(), 1024);
+    assert_eq!(allocation.config().threads(), 1024);
     assert_eq!(fixture.budget.available(), 0);
+    assert!(fixture.budget.try_lease(1).is_err());
+    drop(allocation);
+    assert_eq!(fixture.budget.available(), 1024);
+    let _second_registration = fixture.register_second(first, second).await?;
+    fixture.acknowledge(second).await?;
+    let allocations = fixture.simultaneous_searches(first, second).await?;
+    for allocation in &allocations {
+        assert_eq!(allocation.workers(), 512);
+        assert_eq!(allocation.config().threads(), 512);
+    }
+    assert_eq!(fixture.budget.available(), 0);
+    assert!(fixture.budget.try_lease(1).is_err());
+    drop(allocations);
+    assert_eq!(fixture.budget.available(), 1024);
+    let shared_work = fixture.budget.lease(1).await?;
+    let pending = fixture.resources.allocate(first);
+    tokio::pin!(pending);
+    poll_fn(|cx| {
+        assert!(pending.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
     drop(shared_work);
+    let allocation = pending.await?;
+    assert_eq!(allocation.workers(), 1024);
+    assert_eq!(allocation.config().threads(), 1024);
+    drop(allocation);
+    assert_eq!(fixture.budget.available(), 1024);
     Ok(())
 }
 

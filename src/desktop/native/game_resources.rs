@@ -36,7 +36,6 @@ pub enum DesktopNativeGameResourcesPolicyError {
 pub struct DesktopNativeGameResourcesPolicy {
     workers: usize,
     hash_mib: u32,
-    maximum_threads: usize,
     startup_hash_mib: u32,
 }
 
@@ -73,17 +72,15 @@ impl DesktopNativeGameResourcesPolicy {
                 DesktopNativeGameResourcesPolicyError::OptionDescriptor(option),
             ),
         };
-        let maximum_threads = usize::try_from(descriptor(EngineEnumOption::Threads)?.maximum())?;
         let startup_hash_mib = descriptor(EngineEnumOption::Hash)?.default_value();
         EngineResourceConfig::new(
-            1,
+            workers,
             hash_mib,
             GameEngineSearchConfig::initial_default().move_overhead(),
         )?;
         Ok(Self {
             workers,
             hash_mib,
-            maximum_threads,
             startup_hash_mib,
         })
     }
@@ -108,7 +105,7 @@ impl DesktopNativeGameResourcesPolicy {
         hash_mib: u32,
     ) -> Result<EngineResourceConfig, EngineResourceConfigError> {
         EngineResourceConfig::new(
-            workers.min(self.maximum_threads),
+            workers,
             hash_mib,
             GameEngineSearchConfig::initial_default().move_overhead(),
         )
@@ -350,7 +347,7 @@ impl DesktopNativeGameResourcesState {
             .iter()
             .position(|(_, waiting_index)| *waiting_index == index)
             .is_some_and(|rank| rank < remaining_extras);
-        (quotient + usize::from(has_extra)).min(policy.maximum_threads)
+        quotient + usize::from(has_extra)
     }
 }
 

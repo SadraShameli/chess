@@ -34,6 +34,7 @@ pub(super) struct EngineLifecycleProvider {
     commands: mpsc::Receiver<String>,
     sent: mpsc::Sender<String>,
     stall_stop_write: bool,
+    threads_maximum: Option<u32>,
 }
 
 impl EngineLifecycleProvider {
@@ -46,7 +47,12 @@ impl EngineLifecycleProvider {
             commands,
             sent,
             stall_stop_write: false,
+            threads_maximum: None,
         }
+    }
+
+    pub(super) fn advertise_threads_maximum(&mut self, maximum: u32) {
+        self.threads_maximum = Some(maximum);
     }
 
     pub(super) async fn emit(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -160,6 +166,7 @@ impl EngineProcessProvider for EngineLifecycleProvider {
                 .ok_or_else(|| std::io::Error::other("fixture already spawned"))?,
             sent: self.sent.clone(),
             stall_stop_write: self.stall_stop_write,
+            threads_maximum: self.threads_maximum,
             shutdown_complete: false,
         })
     }
@@ -170,6 +177,7 @@ pub(super) struct EngineLifecycleProcess {
     output: mpsc::Receiver<EngineProcessLine>,
     sent: mpsc::Sender<String>,
     stall_stop_write: bool,
+    threads_maximum: Option<u32>,
     shutdown_complete: bool,
 }
 
@@ -198,12 +206,15 @@ impl EngineProcess for EngineLifecycleProcess {
                 self.emit(format!("id author {}", EngineIdentity::AUTHOR))
                     .await?;
                 for option in EngineEnumOption::ALL {
-                    self.emit(format!(
-                        "option name {} type {}",
-                        option.name(),
+                    let descriptor = if let (EngineEnumOption::Threads, Some(maximum)) =
+                        (option, self.threads_maximum)
+                    {
+                        format!("spin default 1 min 1 max {maximum}")
+                    } else {
                         option.descriptor()
-                    ))
-                    .await?;
+                    };
+                    self.emit(format!("option name {} type {}", option.name(), descriptor))
+                        .await?;
                 }
                 self.emit("uciok".to_owned()).await?;
             }

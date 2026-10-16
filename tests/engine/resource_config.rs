@@ -6,7 +6,7 @@ use chess::board::enums::BoardEnumVariant;
 use chess::board::position::BoardPosition;
 use chess::clock::duration::ClockDuration;
 use chess::engine::enums::EngineEnumOption;
-use chess::engine::resource_config::EngineResourceConfig;
+use chess::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
 use chess::engine::search::enums::EngineSearchEnumState;
 use chess::engine::search::identity::{
     EngineSearchContext, EngineSearchGameId, EngineSearchRevision,
@@ -16,11 +16,44 @@ use chess::engine::search::position::EngineSearchPosition;
 use chess::engine::session::EngineSessionError;
 use uuid::Uuid;
 
+use crate::engine_lifecycle::EngineLifecycleProcess;
 use crate::engine_lifecycle::EngineLifecycleProvider;
 use crate::engine_package_selection::EnginePackageFixture;
 
+struct EngineResourceConfigFixture;
+
+impl EngineResourceConfigFixture {
+    async fn apply(
+        provider: &mut EngineLifecycleProvider,
+        session: &mut chess::engine::session::EngineSession<EngineLifecycleProcess>,
+        config: EngineResourceConfig,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let settings = [
+            ("Threads", u64::from(config.threads()), ""),
+            ("Hash", u64::from(config.hash_mib()), " MB"),
+            ("MoveOverhead", config.move_overhead().as_millis(), " ms"),
+        ];
+        for (name, value, suffix) in settings {
+            provider
+                .emit(&format!("info string set {name} to {value}{suffix}"))
+                .await?;
+        }
+        session.configure_resources(config).await?;
+        for (name, value, _) in settings {
+            provider
+                .expect(&format!("setoption name {name} value {value}"))
+                .await?;
+        }
+        provider.expect("isready").await?;
+        provider.assert_no_command();
+        assert_eq!(session.resources(), Some(config));
+        assert_eq!(session.state(), EngineSearchEnumState::Idle);
+        Ok(())
+    }
+}
+
 #[test]
-fn resource_options_share_canonical_spin_bounds_and_keep_every_allocated_thread()
+fn resource_options_validate_representation_and_keep_fixed_hash_and_overhead_bounds()
 -> Result<(), Box<dyn std::error::Error>> {
     let config = EngineResourceConfig::new(512, 262_144, ClockDuration::from_millis(2_000)?)?;
     assert_eq!(config.threads(), 512);
@@ -38,8 +71,15 @@ fn resource_options_share_canonical_spin_bounds_and_keep_every_allocated_thread(
         EngineEnumOption::MoveOverhead.descriptor(),
         "spin default 100 min 0 max 2000"
     );
-    for threads in [0, 513, usize::MAX] {
-        assert!(EngineResourceConfig::new(threads, 1, ClockDuration::ZERO).is_err());
+    assert!(matches!(
+        EngineResourceConfig::new(0, 1, ClockDuration::ZERO),
+        Err(EngineResourceConfigError::EmptyThreads)
+    ));
+    for threads in [usize::try_from(u64::from(u32::MAX) + 1)?, usize::MAX] {
+        assert!(matches!(
+            EngineResourceConfig::new(threads, 1, ClockDuration::ZERO),
+            Err(EngineResourceConfigError::Conversion(_))
+        ));
     }
     for hash_mib in [0, 262_145, u32::MAX] {
         assert!(EngineResourceConfig::new(1, hash_mib, ClockDuration::ZERO).is_err());
@@ -51,6 +91,74 @@ fn resource_options_share_canonical_spin_bounds_and_keep_every_allocated_thread(
         assert!(EngineResourceConfig::new(1, 1, overhead).is_err());
     }
     assert!(EngineResourceConfig::new(1, 1, ClockDuration::ZERO).is_ok());
+    for threads in [513, 1024, usize::try_from(u32::MAX)?] {
+        assert_eq!(
+            EngineResourceConfig::new(threads, 1, ClockDuration::ZERO)?.threads(),
+            u32::try_from(threads)?
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn resource_application_uses_each_sessions_advertised_threads_bound()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = EnginePackageFixture::new()?;
+    for (maximum, requested) in [(512, 512), (1024, 513), (1024, 1024)] {
+        let mut provider = EngineLifecycleProvider::new();
+        provider.advertise_threads_maximum(maximum);
+        let mut session = provider.start(&fixture).await?;
+        EngineResourceConfigFixture::apply(
+            &mut provider,
+            &mut session,
+            EngineResourceConfig::new(requested, 256, ClockDuration::ZERO)?,
+        )
+        .await?;
+        session.shutdown().await?;
+        provider.expect("shutdown").await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn unsupported_threads_preserve_idle_resources_and_reusability_without_io()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = EnginePackageFixture::new()?;
+    for maximum in [512, 1024] {
+        let mut provider = EngineLifecycleProvider::new();
+        provider.advertise_threads_maximum(maximum);
+        let mut session = provider.start(&fixture).await?;
+        let original = EngineResourceConfig::new(1, 64, ClockDuration::ZERO)?;
+        EngineResourceConfigFixture::apply(&mut provider, &mut session, original).await?;
+        let unsupported =
+            EngineResourceConfig::new(usize::try_from(maximum)? + 1, 256, ClockDuration::ZERO)?;
+        assert!(matches!(session.configure_resources(unsupported).await,
+            Err(EngineSessionError::ResourceConfig(EngineResourceConfigError::Range {
+                option: EngineEnumOption::Threads,
+                value,
+                minimum: 1,
+                maximum: advertised,
+            })) if value == u64::from(maximum) + 1 && advertised == maximum
+        ));
+        provider.assert_no_command();
+        assert_eq!(session.state(), EngineSearchEnumState::Idle);
+        assert_eq!(session.resources(), Some(original));
+        EngineResourceConfigFixture::apply(
+            &mut provider,
+            &mut session,
+            EngineResourceConfig::new(usize::try_from(maximum)?, 256, ClockDuration::ZERO)?,
+        )
+        .await?;
+        session.new_game(BoardEnumVariant::Standard).await?;
+        provider.expect("ucinewgame").await?;
+        provider
+            .expect("setoption name UCI_Chess960 value false")
+            .await?;
+        provider.expect("isready").await?;
+        session.shutdown().await?;
+        provider.expect("shutdown").await?;
+        provider.assert_no_command();
+    }
     Ok(())
 }
 

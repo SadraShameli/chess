@@ -15,7 +15,7 @@ use crate::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
     EngineProcessProvider,
 };
-use crate::engine::resource_config::EngineResourceConfig;
+use crate::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
 use crate::engine::search::enums::{EngineSearchEnumOutput, EngineSearchEnumState};
 use crate::engine::search::event::EngineSearchEvent;
 use crate::engine::search::identity::{
@@ -33,6 +33,8 @@ pub enum EngineSessionError {
     Process(#[from] EngineProcessError),
     #[error(transparent)]
     Capabilities(#[from] EngineCapabilitiesError),
+    #[error(transparent)]
+    ResourceConfig(#[from] EngineResourceConfigError),
     #[error("Engine {0} handshake exceeded five seconds")]
     Timeout(&'static str),
     #[error("The engine sent an unexpected startup response")]
@@ -286,6 +288,7 @@ impl<P: EngineProcess> EngineSession<P> {
         config: EngineResourceConfig,
     ) -> Result<(), EngineSessionError> {
         self.require_idle()?;
+        config.validate(self.identity.capabilities())?;
         self.lifecycle = EngineSessionEnumLifecycle::Preparing;
         self.resources = None;
         let result = timeout(Self::HANDSHAKE, async {
