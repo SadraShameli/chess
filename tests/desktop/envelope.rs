@@ -10,12 +10,12 @@ fn idempotency_has_bounded_retention_and_refuses_payload_reuse()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = DesktopRequestCache::new();
     let id = DesktopRequestId::from_str("123e4567-e89b-42d3-a456-426614174000")?;
-    let now = ClockInstant::from_millis(0);
+    let now = ClockInstant::from_millis(0)?;
     cache.remember(id, [1; 32], 17_u64, now)?;
     assert_eq!(cache.lookup(id, &[1; 32], now)?, Some(&17));
     assert!(cache.lookup(id, &[2; 32], now).is_err());
     assert_eq!(
-        cache.lookup(id, &[1; 32], ClockInstant::from_millis(300_000))?,
+        cache.lookup(id, &[1; 32], ClockInstant::from_millis(300_000)?)?,
         None
     );
     for _ in 0..DesktopRequestCache::<u64>::CAPACITY + 1 {
@@ -23,7 +23,7 @@ fn idempotency_has_bounded_retention_and_refuses_payload_reuse()
             DesktopRequestId::new(),
             [3; 32],
             20,
-            ClockInstant::from_millis(300_000),
+            ClockInstant::from_millis(300_000)?,
         )?;
     }
     assert_eq!(cache.len(), DesktopRequestCache::<u64>::CAPACITY);
@@ -33,7 +33,7 @@ fn idempotency_has_bounded_retention_and_refuses_payload_reuse()
 #[test]
 fn stream_saturation_preserves_control_events_through_resync()
 -> Result<(), Box<dyn std::error::Error>> {
-    let now = ClockInstant::from_millis(0);
+    let now = ClockInstant::from_millis(0)?;
     let mut stream = DesktopStream::new(DesktopRequestId::new(), now);
     for value in 0..DesktopStream::<u64>::MAX_UNACKNOWLEDGED {
         assert!(
@@ -59,19 +59,19 @@ fn stream_saturation_preserves_control_events_through_resync()
 #[test]
 fn acknowledgement_deadlines_and_sequence_boundaries_are_checked()
 -> Result<(), Box<dyn std::error::Error>> {
-    let now = ClockInstant::from_millis(0);
+    let now = ClockInstant::from_millis(0)?;
     let mut stream = DesktopStream::new(DesktopRequestId::new(), now);
     let event = stream
         .publish(1_u64, DesktopEnumStreamClass::Control, now)?
         .ok_or("missing control event")?;
     assert!(stream.acknowledge(event.sequence().next()?, now).is_err());
-    stream.acknowledge(event.sequence(), ClockInstant::from_millis(9_999))?;
+    stream.acknowledge(event.sequence(), ClockInstant::from_millis(9_999)?)?;
     assert!(
         stream
             .publish(
                 2,
                 DesktopEnumStreamClass::Control,
-                ClockInstant::from_millis(10_000)
+                ClockInstant::from_millis(10_000)?
             )?
             .is_some()
     );
@@ -80,7 +80,7 @@ fn acknowledgement_deadlines_and_sequence_boundaries_are_checked()
             .publish(
                 3,
                 DesktopEnumStreamClass::Control,
-                ClockInstant::from_millis(20_000)
+                ClockInstant::from_millis(20_000)?
             )
             .is_err()
     );
