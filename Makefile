@@ -24,4 +24,4 @@ profile-build:
 	cargo build --locked --profile profiling --all-targets --all-features
 
 run:
-	cargo run --locked --release -- $(ARGS)
+	cargo run --locked --release$(if $(strip $(ARGS)), -- $(ARGS))
