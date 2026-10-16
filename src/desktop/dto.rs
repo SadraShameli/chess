@@ -33,6 +33,20 @@ pub struct DesktopBoardPiece {
     kind: BoardEnumPieceKind,
 }
 
+impl DesktopBoardPiece {
+    pub fn square(&self) -> BoardSquare {
+        self.square
+    }
+
+    pub fn color(&self) -> BoardEnumColor {
+        self.color
+    }
+
+    pub fn kind(&self) -> BoardEnumPieceKind {
+        self.kind
+    }
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DesktopBoardMove {
@@ -40,6 +54,24 @@ pub struct DesktopBoardMove {
     destination: BoardSquare,
     promotion: Option<BoardEnumPieceKind>,
     castling_rook: Option<BoardSquare>,
+}
+
+impl DesktopBoardMove {
+    pub fn origin(&self) -> Option<BoardSquare> {
+        self.origin
+    }
+
+    pub fn destination(&self) -> BoardSquare {
+        self.destination
+    }
+
+    pub fn promotion(&self) -> Option<BoardEnumPieceKind> {
+        self.promotion
+    }
+
+    pub fn castling_rook(&self) -> Option<BoardSquare> {
+        self.castling_rook
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -57,6 +89,30 @@ pub struct DesktopBoardSnapshot {
 }
 
 impl DesktopBoardSnapshot {
+    pub fn fen(&self) -> &str {
+        &self.fen
+    }
+
+    pub fn variant(&self) -> BoardEnumVariant {
+        self.variant
+    }
+
+    pub fn turn(&self) -> BoardEnumColor {
+        self.turn
+    }
+
+    pub fn is_check(&self) -> bool {
+        self.is_check
+    }
+
+    pub fn pieces(&self) -> &[DesktopBoardPiece] {
+        &self.pieces
+    }
+
+    pub fn legal_moves(&self) -> &[DesktopBoardMove] {
+        &self.legal_moves
+    }
+
     pub fn from_position(position: &BoardPosition) -> Self {
         Self {
             fen: position.fen(),
@@ -97,6 +153,18 @@ pub struct DesktopEngineIdentity {
 }
 
 impl DesktopEngineIdentity {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn author(&self) -> &str {
+        &self.author
+    }
+
+    pub fn supported_options(&self) -> &[String] {
+        &self.supported_options
+    }
+
     pub fn new(name: String, author: String, supported_options: Vec<String>) -> Self {
         Self {
             name,
@@ -132,6 +200,26 @@ pub struct DesktopBootstrapSnapshot {
 }
 
 impl DesktopBootstrapSnapshot {
+    pub fn app_version(&self) -> &str {
+        &self.app_version
+    }
+
+    pub fn revision(&self) -> DesktopRevision {
+        self.revision
+    }
+
+    pub fn board(&self) -> &DesktopBoardSnapshot {
+        &self.board
+    }
+
+    pub fn engine(&self) -> &DesktopEnumEngineSnapshot {
+        &self.engine
+    }
+
+    pub fn cpu_threads(&self) -> u32 {
+        self.cpu_threads
+    }
+
     fn cpu_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({"type": "integer", "minimum": 1, "maximum": u32::MAX})
     }

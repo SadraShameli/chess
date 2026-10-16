@@ -56,6 +56,18 @@ pub struct DesktopFailure {
 }
 
 impl DesktopFailure {
+    pub fn code(&self) -> DesktopEnumFailureCode {
+        self.code
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+
     pub fn new(code: DesktopEnumFailureCode, message: String, retryable: bool) -> Self {
         Self {
             code,

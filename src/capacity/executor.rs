@@ -27,11 +27,12 @@ pub enum CapacityExecutorError {
 #[derive(Clone)]
 pub struct CapacityExecutorCancellation {
     cancelled: Arc<AtomicBool>,
+    budget: CapacityBudget,
 }
 
 impl CapacityExecutorCancellation {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::SeqCst)
+        self.cancelled.load(Ordering::SeqCst) || !self.budget.is_workload_admitted()
     }
     fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
@@ -100,6 +101,7 @@ impl CapacityExecutor {
         }
         let cancellation = CapacityExecutorCancellation {
             cancelled: Arc::new(AtomicBool::new(false)),
+            budget: self.budget.clone(),
         };
         let worker_cancellation = cancellation.clone();
         let (sender, result) = oneshot::channel();

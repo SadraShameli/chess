@@ -87,3 +87,17 @@ remain individual refusals. Seventeen integrated activation tests passed,
 including missing/wrong/late acknowledgments, excess bytes, capacity, continued
 service after a refused peer and shutdown draining. Targeted strict Clippy for
 the library and affected desktop/domain/presentation/scene suites passed.
+
+## T034: Application admission and capacity fixtures
+
+Sixteen application tests cover bounded ordinary admission, reserved coalesced
+controls, retained action identities, absolute stop deadlines, cancellation
+before commit, ambiguous-commit reconciliation and native wake failures. Eighteen
+capacity tests cover the native minimum, preparation/steady/interrupted states,
+draining and stale generations, shared maximum capacity, and refusal of raw
+budget/executor bypass. All passed in the integrated debug run, alongside the
+existing domain and desktop cases. Targeted strict Clippy passed.
+
+These plain Rust owners expose actual typed ports for native presentation.
+Production actor effects, Bevy pool wiring and measured CPU chunk limits remain
+open under T038/T039; these tests do not establish those later integrations.

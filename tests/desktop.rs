@@ -14,5 +14,7 @@ mod desktop_startup;
 #[path = "desktop/file_handle.rs"]
 mod desktop_file_handle;
 
+#[path = "desktop/application.rs"]
+mod desktop_application;
 #[path = "desktop/envelope.rs"]
 mod desktop_envelope;
