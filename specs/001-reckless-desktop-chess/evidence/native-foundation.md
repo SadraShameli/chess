@@ -150,3 +150,30 @@ Original bytes/provenance remain unchanged at 1,376,224 bytes and SHA-256
 ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e.
 The CSG topology and exact deduplication differ; native loader and visual
 comparison remain required before adoption and final T047 acceptance.
+
+## Native activation transports and host services
+
+Integrated real Unix sockets retain private directory/socket identities, check
+reciprocal effective-user credentials, enforce the original absolute deadline
+and explicitly clean up only the owned socket and empty directory. Unknown
+contents and replaced paths survive cleanup. On this macOS host, the OS-reported
+local socket address truncates the final pathname byte; exact filesystem
+identity and real full-path connection tests provide the binding evidence.
+The transport does not use that reported pathname as authority.
+
+The Windows named-pipe adapter is registered for Windows only. Its explicit
+per-user/SYSTEM permissions, reciprocal token checks, nonblocking connection and
+drop behavior have source coverage but have not been compiled or run on Windows.
+Linux socket/security behavior likewise still requires Linux execution.
+
+The production resource resolver checks the original GLB size/digest and package
+containment while treating an absent engine as a separate service failure.
+Native wakes coalesce, and recovery choices require an acknowledged matching
+generation and preserve a dismissed prompt. Presentation exposes typed quit
+readiness only after its retained confirmed-quit receipt actually completes.
+
+The integrated debug run passed 12 library tests and 94 desktop tests in
+0.01 and 0.42 seconds respectively, after a 2.39-second incremental compilation.
+Five focused presentation application tests passed after the quit-readiness
+addition. Targeted strict library/desktop/presentation Clippy passed.
+These adapters do not yet replace the retained executable bootstrap.

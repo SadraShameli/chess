@@ -301,6 +301,7 @@ fn file_selection_is_one_revision_checked_intent_and_failures_remain_visible()
 fn quit_waits_for_explicit_confirmation_and_submits_one_owned_control() -> PresentationAppTestResult
 {
     let mut fixture = PresentationAppFixture::new();
+    assert!(!fixture.presentation.is_quit_ready());
     fixture.presentation.request_quit();
     assert!(fixture.presentation.is_quit_confirmation_open());
     assert!(fixture.application.try_next()?.is_none());
@@ -335,8 +336,11 @@ fn quit_waits_for_explicit_confirmation_and_submits_one_owned_control() -> Prese
         DesktopEnumCommand::Quit
     ));
     assert!(fixture.application.try_next()?.is_none());
+    fixture.presentation.poll();
+    assert!(!fixture.presentation.is_quit_ready());
     fixture.application.complete_control(&work)?;
     fixture.presentation.poll();
+    assert!(fixture.presentation.is_quit_ready());
     assert_eq!(
         fixture.presentation.status(),
         "Application is ready to close"

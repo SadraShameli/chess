@@ -76,6 +76,18 @@ impl DesktopProfileSecurity {
         Ok(file)
     }
 
+    pub(crate) fn open_private_directory(&self, path: &Path) -> Result<File, DesktopProfileError> {
+        let fd = rustix::fs::open(
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| Self::open_error(path, error))?;
+        let file = File::from(fd);
+        self.validate_control_directory(&file, path)?;
+        Ok(file)
+    }
+
     pub(in crate::desktop::profile) fn open_control_directory(
         &self,
         data: &File,

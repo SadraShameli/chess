@@ -104,6 +104,7 @@ pub struct PresentationApp {
     failure: Option<String>,
     quit_confirmation: bool,
     quit_focus_pending: bool,
+    quit_ready: bool,
     theme_initialized: bool,
 }
 
@@ -126,6 +127,7 @@ impl PresentationApp {
             failure: None,
             quit_confirmation: false,
             quit_focus_pending: false,
+            quit_ready: false,
             theme_initialized: false,
         }
     }
@@ -149,6 +151,10 @@ impl PresentationApp {
 
     pub const fn is_quit_confirmation_open(&self) -> bool {
         self.quit_confirmation
+    }
+
+    pub const fn is_quit_ready(&self) -> bool {
+        self.quit_ready
     }
 
     pub fn has_pending_work(&self) -> bool {
@@ -203,13 +209,13 @@ impl PresentationApp {
         let mut completed = Vec::new();
         self.pending.retain(|pending| {
             if let Some(response) = pending.receipt.response() {
-                completed.push(response.clone());
+                completed.push((pending.action, response.clone()));
                 false
             } else {
                 true
             }
         });
-        for response in completed {
+        for (action, response) in completed {
             match response {
                 DesktopMessagesEnumResult::Value { value, .. } => match value {
                     DesktopEnumValue::Bootstrap(snapshot)
@@ -221,7 +227,7 @@ impl PresentationApp {
                         self.status = "Local file selection is ready".to_owned();
                     }
                     DesktopEnumValue::FileSelect(None) => {
-                        self.status = "File selection canceled".to_owned();
+                        self.status = "No file selected".to_owned();
                     }
                     DesktopEnumValue::StreamAcknowledge => {}
                 },
@@ -238,7 +244,13 @@ impl PresentationApp {
                     self.status = "Owned work paused".to_owned();
                 }
                 DesktopMessagesEnumResult::QuitReady => {
-                    self.status = "Application is ready to close".to_owned();
+                    if action == PresentationAppEnumAction::ConfirmQuit {
+                        self.quit_ready = true;
+                        self.status = "Application is ready to close".to_owned();
+                    } else {
+                        self.failure =
+                            Some("The application returned an unexpected quit receipt".to_owned());
+                    }
                 }
                 DesktopMessagesEnumResult::ReconciliationRequired => {
                     self.failure =

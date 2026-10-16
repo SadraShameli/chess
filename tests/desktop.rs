@@ -1,9 +1,19 @@
 #[path = "desktop/activation.rs"]
 mod desktop_activation;
+#[cfg(unix)]
+#[path = "desktop/activation_unix.rs"]
+mod desktop_activation_unix;
+#[cfg(windows)]
+#[path = "desktop/activation_windows.rs"]
+mod desktop_activation_windows;
 #[path = "desktop/identity.rs"]
 mod desktop_identity;
 #[path = "desktop/installation.rs"]
 mod desktop_installation;
+#[path = "desktop/native_host.rs"]
+mod desktop_native_host;
+#[path = "desktop/resources.rs"]
+mod desktop_native_resources;
 #[path = "desktop/owner_record.rs"]
 mod desktop_owner_record;
 #[path = "desktop/profile_lease.rs"]

@@ -6,6 +6,7 @@ pub mod error;
 pub mod file_handle;
 pub mod identity;
 pub mod messages;
+pub mod native;
 pub mod profile;
 pub mod request_cache;
 pub mod schema;
