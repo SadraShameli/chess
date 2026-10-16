@@ -1,19 +1,20 @@
 use std::num::NonZeroUsize;
 
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::Xoshiro256PlusPlus};
 
 pub trait PuzzleRandomProvider {
     fn index(&mut self, alternatives: NonZeroUsize) -> usize;
 }
 
+#[derive(Clone)]
 pub struct PuzzleRandomProviderSeeded {
-    random: StdRng,
+    random: Xoshiro256PlusPlus,
 }
 
 impl PuzzleRandomProviderSeeded {
     pub fn new(seed: u64) -> Self {
         Self {
-            random: StdRng::seed_from_u64(seed),
+            random: Xoshiro256PlusPlus::seed_from_u64(seed),
         }
     }
 }

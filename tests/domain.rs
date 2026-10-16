@@ -39,6 +39,8 @@ mod game_tree;
 mod puzzle_definition;
 #[path = "puzzle/fixture.rs"]
 mod puzzle_fixture;
+#[path = "puzzle/selection.rs"]
+mod puzzle_selection;
 #[path = "puzzle/solution.rs"]
 mod puzzle_solution;
 #[path = "puzzle/summary.rs"]

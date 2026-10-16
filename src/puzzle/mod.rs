@@ -4,6 +4,7 @@ pub mod enums;
 pub mod identity;
 pub mod metadata;
 pub mod random_provider;
+pub mod selection;
 pub mod session;
 pub mod solution;
 pub mod summary;
