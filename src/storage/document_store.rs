@@ -24,6 +24,8 @@ pub enum StorageDocumentError {
     Json(#[from] serde_json::Error),
     #[error("Stored revision is invalid: {0}")]
     StoredRevision(#[from] ParseIntError),
+    #[error("Stored document identity is invalid: {0}")]
+    StoredIdentity(#[from] uuid::Error),
     #[error("Document revision changed: expected {expected}, found {actual}")]
     Conflict { expected: u64, actual: u64 },
     #[error("Document revision is exhausted")]
@@ -92,6 +94,10 @@ enum StorageDocumentEnumCommand {
         id: Uuid,
         result: oneshot::Sender<Result<Option<StorageDocument>, StorageDocumentError>>,
     },
+    Inventory {
+        after: Option<Uuid>,
+        result: oneshot::Sender<Result<Vec<StorageDocumentReceipt>, StorageDocumentError>>,
+    },
 }
 
 pub struct StorageDocumentStore {
@@ -111,6 +117,7 @@ pub struct StorageDocumentClient {
 impl StorageDocumentStore {
     pub const QUEUE_CAPACITY: usize = 256;
     pub const MEMORY_BUDGET: usize = 64 * 1024 * 1024;
+    pub const INVENTORY_PAGE_SIZE: usize = Self::QUEUE_CAPACITY;
 
     pub async fn open(path: PathBuf, budget: CapacityBudget) -> Result<Self, StorageDocumentError> {
         Self::open_with_migrations(path, StorageMigration::core(), budget).await
@@ -247,6 +254,16 @@ impl StorageDocumentClient {
         receiver.await?
     }
 
+    pub async fn inventory(
+        &self,
+        after: Option<Uuid>,
+    ) -> Result<Vec<StorageDocumentReceipt>, StorageDocumentError> {
+        let _admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Inventory { after, result })?;
+        receiver.await?
+    }
+
     fn admit(&self) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
         Arc::clone(&self.admission)
             .try_acquire_owned()
@@ -341,6 +358,13 @@ impl StorageDocumentActor {
                         drop(abandoned_result);
                     }
                 }
+                StorageDocumentEnumCommand::Inventory { after, result } => {
+                    let outcome = self.inventory(after);
+                    drop(lease);
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
             }
         }
         Ok(())
@@ -402,5 +426,30 @@ impl StorageDocumentActor {
                 })
             })
             .transpose()
+    }
+
+    fn inventory(
+        &self,
+        after: Option<Uuid>,
+    ) -> Result<Vec<StorageDocumentReceipt>, StorageDocumentError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT id, revision FROM documents WHERE id > ?1 ORDER BY id LIMIT ?2",
+        )?;
+        let cursor = after.map(|id| id.to_string()).unwrap_or_default();
+        let rows = statement.query_map(
+            params![
+                cursor,
+                i64::try_from(StorageDocumentStore::INVENTORY_PAGE_SIZE)?
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        rows.map(|row| {
+            let (id, revision) = row?;
+            Ok(StorageDocumentReceipt {
+                id: id.parse()?,
+                revision: revision.parse()?,
+            })
+        })
+        .collect()
     }
 }

@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::time::{Duration, Instant as StandardInstant};
 
+use rand::{
+    SeedableRng,
+    rngs::{StdRng, SysRng},
+};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::{Mutex as AsyncMutex, oneshot, watch};
@@ -14,7 +18,8 @@ use crate::board::position::BoardPosition;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use crate::capacity::phase::{
-    CapacityPhase, CapacityPhaseEnumInterruption, CapacityPhaseError, CapacityPhaseGeneration,
+    CapacityPhase, CapacityPhaseEnumInterruption, CapacityPhaseEnumState, CapacityPhaseError,
+    CapacityPhaseGeneration,
 };
 use crate::clock::time_provider::ClockTimeProviderMonotonic;
 use crate::desktop::application::{
@@ -28,10 +33,23 @@ use crate::desktop::coordinator::{
 use crate::desktop::dto::{
     DesktopBootstrapSnapshot, DesktopEngineIdentity, DesktopEnumEngineSnapshot,
 };
+use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryReceipt};
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand};
 use crate::desktop::native::dialogs_proxy::DesktopNativeDialogsProxy;
 use crate::desktop::native::event_loop::DesktopNativeEventLoopWake;
+use crate::desktop::native::game_factories::DesktopNativeGameFactories;
+use crate::desktop::native::game_resources::{
+    DesktopNativeGameResources, DesktopNativeGameResourcesMemory,
+    DesktopNativeGameResourcesMemoryProvider, DesktopNativeGameResourcesOptions,
+    DesktopNativeGameResourcesPolicy, DesktopNativeGameResourcesPolicyError,
+};
+use crate::desktop::native::game_runtime::{
+    DesktopNativeGameRuntimeError, DesktopNativeGameRuntimePort,
+};
+use crate::desktop::native::game_service::{
+    DesktopNativeGameService, DesktopNativeGameServiceError, DesktopNativeGameServiceOptions,
+};
 use crate::desktop::native::host::{
     DesktopNativeHost, DesktopNativeHostError, DesktopNativeHostEvent, DesktopNativeHostServices,
 };
@@ -61,11 +79,16 @@ use crate::desktop::profile::{
     DesktopProfileOsLock, DesktopProfileSecurity,
 };
 use crate::engine::package::host::{EnginePackageHost, EnginePackageHostError};
-use crate::engine::package::selector::{EnginePackageSelector, EnginePackageSelectorError};
+use crate::engine::package::selector::{
+    EnginePackageSelected, EnginePackageSelector, EnginePackageSelectorError,
+};
 use crate::engine::process_provider::{EngineNativeProcess, EngineNativeProcessProvider};
-use crate::engine::search::enums::EngineSearchEnumState;
 use crate::engine::session::{EngineSession, EngineSessionError, EngineSessionStartup};
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
+
+#[cfg(test)]
+#[path = "../../../tests/desktop/native/bootstrap_games.rs"]
+mod tests;
 
 #[cfg(unix)]
 use crate::desktop::native::activation::unix::{
@@ -97,8 +120,6 @@ pub enum DesktopNativeBootstrapError {
     HostEvents,
     #[error("The native capacity phase is poisoned")]
     CapacityPoisoned,
-    #[error("The idle engine has not acknowledged preparation: {0:?}")]
-    EngineNotIdle(EngineSearchEnumState),
     #[error("Native initialization or cleanup exceeded its owned deadline")]
     CleanupDeadline,
     #[error("Application operation failed ({operation}); cleanup also failed ({cleanup})")]
@@ -132,6 +153,16 @@ pub enum DesktopNativeBootstrapError {
     Engine(#[from] EngineSessionError),
     #[error(transparent)]
     Storage(#[from] StorageDocumentError),
+    #[error(transparent)]
+    GameResources(#[from] DesktopNativeGameResourcesPolicyError),
+    #[error(transparent)]
+    GameService(#[from] DesktopNativeGameServiceError),
+    #[error("The native game lifecycle operation failed: {0}")]
+    GameRuntime(#[source] Arc<DesktopNativeGameRuntimeError>),
+    #[error("The native game registry operation failed: {0}")]
+    GameRegistry(#[source] Arc<crate::desktop::game_registry::DesktopGameRegistryError>),
+    #[error("The operating system could not seed randomized chess starts: {0}")]
+    Random(#[from] rand::rngs::SysError),
     #[error(transparent)]
     Application(#[from] DesktopApplicationError),
     #[error(transparent)]
@@ -206,14 +237,19 @@ struct DesktopNativeBootstrapServices {
     startup: Option<EngineSessionStartup<EngineNativeProcess>>,
     executor_startup: Option<CapacityExecutor>,
     executor: Option<Arc<CapacityExecutor>>,
+    games: Option<DesktopNativeGameService>,
     terminal: Option<DesktopNativeBootstrapError>,
 }
 
 impl DesktopNativeBootstrapServices {
     fn is_shutdown_complete(&self) -> bool {
-        self.startup
+        self.games
             .as_ref()
-            .is_none_or(EngineSessionStartup::is_shutdown_complete)
+            .is_none_or(DesktopNativeGameService::is_shutdown_complete)
+            && self
+                .startup
+                .as_ref()
+                .is_none_or(EngineSessionStartup::is_shutdown_complete)
             && self
                 .engine
                 .as_ref()
@@ -255,6 +291,17 @@ impl DesktopNativeBootstrapLifecycle {
         let mut services = timeout_at(deadline, self.services.lock())
             .await
             .map_err(|_elapsed| DesktopNativeBootstrapError::CleanupDeadline)?;
+        if let Some(games) = &mut services.games {
+            let result = games.shutdown_retained(deadline).await;
+            let complete = games.is_shutdown_complete();
+            match result {
+                Ok(()) if complete => {}
+                Ok(()) => return Err(DesktopNativeBootstrapError::CleanupDeadline),
+                Err(error) if complete => services.retain_terminal(error.into()),
+                Err(error) => return Err(error.into()),
+            }
+            services.games = None;
+        }
         let DesktopNativeBootstrapServices {
             engine,
             storage,
@@ -340,16 +387,6 @@ impl DesktopNativeBootstrapLifecycle {
         }
         pending
     }
-
-    async fn verify_idle(&self) -> Result<(), DesktopNativeBootstrapError> {
-        let services = self.services.lock().await;
-        if let Some(engine) = &services.engine
-            && engine.state() != EngineSearchEnumState::Idle
-        {
-            return Err(DesktopNativeBootstrapError::EngineNotIdle(engine.state()));
-        }
-        Ok(())
-    }
 }
 
 impl DesktopCoordinatorLifecycleProvider for DesktopNativeBootstrapLifecycle {
@@ -411,12 +448,28 @@ struct DesktopNativeBootstrapHostObservation<'a, 'lease> {
     events: watch::Receiver<DesktopNativeHostEvent>,
     host_done: watch::Receiver<bool>,
     capacity: Arc<Mutex<CapacityPhase>>,
-    lifecycle: &'a DesktopNativeBootstrapLifecycle,
+    games: DesktopNativeGameRuntimePort,
     publication: &'a mut DesktopProfileOwnerRecordPublisher<'lease>,
     wake: &'a DesktopNativeEventLoopWake,
 }
 
 impl DesktopNativeBootstrapSupervisor {
+    const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
+
+    fn control_deadline() -> Instant {
+        Instant::now() + Self::CONTROL_TIMEOUT
+    }
+
+    async fn game_control(
+        control: Result<DesktopGameRegistryReceipt, DesktopGameRegistryError>,
+    ) -> Result<(), DesktopNativeBootstrapError> {
+        control
+            .map_err(|error| DesktopNativeBootstrapError::GameRegistry(Arc::new(error)))?
+            .wait()
+            .await
+            .map_err(DesktopNativeBootstrapError::GameRegistry)
+    }
+
     async fn run(self) -> Result<(), DesktopNativeBootstrapError> {
         #[cfg(unix)]
         let mut listener =
@@ -513,18 +566,69 @@ impl DesktopNativeBootstrapSupervisor {
         )
         .await?;
         self.lifecycle.services.lock().await.storage = Some(storage);
-        let engine_snapshot = Self::engine(
+        let (engine_snapshot, package) = Self::engine(
             resources.engine().to_path_buf(),
             &executor,
             &self.budget,
             &self.lifecycle,
         )
-        .await;
+        .await?;
         let cpu_threads = NonZeroU32::new(u32::try_from(self.budget.workers())?)
             .ok_or(CapacityBudgetError::InvalidAllocation)?;
         let snapshot =
             DesktopBootstrapSnapshot::new(&BoardPosition::standard(), cpu_threads, engine_snapshot);
         let clock = Arc::new(ClockTimeProviderMonotonic::new());
+        let memory = Arc::new(DesktopNativeGameResourcesMemory::new(Arc::clone(&executor)));
+        let available_memory = memory.available_bytes().await?;
+        let workload_workers = self
+            .budget
+            .workers()
+            .checked_sub(CapacityPhase::STEADY_RESERVED_WORKERS)
+            .ok_or(CapacityBudgetError::InvalidAllocation)?;
+        let policy =
+            DesktopNativeGameResourcesPolicy::automatic(workload_workers, available_memory)?;
+        let engine_resources = Arc::new(DesktopNativeGameResources::new(
+            DesktopNativeGameResourcesOptions {
+                budget: self.budget.clone(),
+                policy,
+                memory,
+            },
+        )?);
+        let random = executor
+            .submit(|_cancellation| StdRng::try_from_rng(&mut SysRng))?
+            .join()
+            .await??;
+        let storage_client = self
+            .lifecycle
+            .services
+            .lock()
+            .await
+            .storage
+            .as_ref()
+            .ok_or(DesktopNativeBootstrapError::HostServices)?
+            .client();
+        let games = DesktopNativeGameService::new(DesktopNativeGameServiceOptions {
+            factory_provider: DesktopNativeGameFactories::new(
+                package,
+                Arc::clone(&clock),
+                engine_resources,
+            ),
+            storage: storage_client,
+            executor: Arc::clone(&executor),
+            clock: Arc::clone(&clock),
+            proof: Arc::new(DesktopNativeGameService::proof()),
+            random,
+        });
+        let game_port = {
+            let mut retained = self.lifecycle.services.lock().await;
+            retained.games = Some(games);
+            let games = retained
+                .games
+                .as_mut()
+                .ok_or(DesktopNativeBootstrapError::HostServices)?;
+            games.restore().await?;
+            games.start()?
+        };
         let application = DesktopApplication::new(Arc::clone(&clock), Arc::clone(&self.wake));
         let port = application.port();
         let (dialog_ready, dialogs) = watch::channel(None);
@@ -533,13 +637,15 @@ impl DesktopNativeBootstrapSupervisor {
             executor,
             self.lifecycle.clone(),
         );
-        let mut coordinator = DesktopCoordinator::new(application, clock, snapshot, services);
-        self.lifecycle.verify_idle().await?;
+        let mut coordinator = DesktopCoordinator::new(application, clock, snapshot, services)
+            .with_games(Arc::new(game_port.clone()));
         let mut phase = CapacityPhase::new(self.budget.clone())?;
         let generation = phase.request_preparation()?;
-        phase.acknowledge_searches_stopped(generation)?;
-        phase.try_enter_preparation(generation)?;
         let capacity = Arc::new(Mutex::new(phase));
+        Self::game_control(game_port.quiesce_all(generation, Self::control_deadline())).await?;
+        if !Self::prepare(&capacity, generation).await? {
+            return Err(DesktopNativeBootstrapError::HostServices);
+        }
         let (events, receiver) = DesktopNativeHost::event_channel();
         let host = DesktopNativeHostServices {
             port,
@@ -559,7 +665,7 @@ impl DesktopNativeBootstrapSupervisor {
             events: receiver,
             host_done: self.host_done,
             capacity,
-            lifecycle: &self.lifecycle,
+            games: game_port,
             publication,
             wake: &self.wake,
         });
@@ -575,7 +681,10 @@ impl DesktopNativeBootstrapSupervisor {
         executor: &CapacityExecutor,
         budget: &CapacityBudget,
         lifecycle: &DesktopNativeBootstrapLifecycle,
-    ) -> DesktopEnumEngineSnapshot {
+    ) -> Result<
+        (DesktopEnumEngineSnapshot, Option<EnginePackageSelected>),
+        DesktopNativeBootstrapError,
+    > {
         let outcome = async {
             let package = executor
                 .submit(move |_cancellation| {
@@ -590,7 +699,7 @@ impl DesktopNativeBootstrapSupervisor {
             let mut services = lifecycle.services.lock().await;
             services.startup = Some(EngineSessionStartup::new(
                 &EngineNativeProcessProvider,
-                package,
+                package.clone(),
             )?);
             let engine = services
                 .startup
@@ -612,18 +721,25 @@ impl DesktopNativeBootstrapSupervisor {
             };
             services.engine = Some(engine);
             services.startup = None;
-            Ok::<_, DesktopNativeBootstrapError>(snapshot)
+            let engine = services
+                .engine
+                .as_mut()
+                .ok_or(DesktopNativeBootstrapError::HostServices)?;
+            engine.shutdown_retained(Self::control_deadline()).await?;
+            if !engine.is_shutdown_complete() {
+                return Err(DesktopNativeBootstrapError::CleanupDeadline);
+            }
+            services.engine = None;
+            Ok::<_, DesktopNativeBootstrapError>((snapshot, Some(package)))
         }
         .await;
         match outcome {
-            Ok(snapshot) => snapshot,
+            Ok(snapshot) => Ok(snapshot),
             Err(error) => {
                 eprintln!("Reckless engine startup failed: {error}");
                 let mut services = lifecycle.services.lock().await;
                 if let Some(startup) = &mut services.startup {
-                    let cleanup = startup
-                        .shutdown_retained(Instant::now() + Duration::from_secs(3))
-                        .await;
+                    let cleanup = startup.shutdown_retained(Self::control_deadline()).await;
                     if startup.is_shutdown_complete() {
                         services.startup = None;
                     }
@@ -631,90 +747,281 @@ impl DesktopNativeBootstrapSupervisor {
                         services.retain_terminal(DesktopNativeBootstrapError::Engine(cleanup));
                     }
                 }
-                DesktopEnumEngineSnapshot::Unavailable {
-                    message: format!(
-                        "The packaged Reckless engine is unavailable: {error}. Repair the engine package and restart Chess."
-                    ),
+                if let Some(engine) = &mut services.engine {
+                    let cleanup = engine.shutdown_retained(Self::control_deadline()).await;
+                    if engine.is_shutdown_complete() {
+                        services.engine = None;
+                    }
+                    if let Err(cleanup) = cleanup {
+                        services.retain_terminal(DesktopNativeBootstrapError::Engine(cleanup));
+                    }
                 }
+                if services.engine.is_some() || services.startup.is_some() {
+                    return Err(DesktopNativeBootstrapError::CleanupDeadline);
+                }
+                Ok((
+                    DesktopEnumEngineSnapshot::Unavailable {
+                        message: format!(
+                            "The packaged Reckless engine is unavailable: {error}. Repair the engine package and restart Chess."
+                        ),
+                    },
+                    None,
+                ))
             }
         }
     }
 
     async fn observe_host(
-        observation: DesktopNativeBootstrapHostObservation<'_, '_>,
+        mut observation: DesktopNativeBootstrapHostObservation<'_, '_>,
     ) -> Result<(), DesktopNativeBootstrapError> {
-        let DesktopNativeBootstrapHostObservation {
-            mut events,
-            mut host_done,
-            capacity,
-            lifecycle,
-            publication,
-            wake,
-        } = observation;
+        let mut graphics_preparation = None;
         loop {
-            if *host_done.borrow() {
+            if *observation.host_done.borrow() {
+                Self::phase(&observation.capacity, |phase| {
+                    phase.request_teardown()?;
+                    if let Some(generation) = phase.generation()
+                        && phase.state() == CapacityPhaseEnumState::Draining
+                    {
+                        phase.acknowledge_preparation_stopped(generation)?;
+                    }
+                    phase.begin_teardown()
+                })
+                .await?;
                 return Ok(());
             }
             tokio::select! {
                 biased;
-                changed = host_done.changed() => {
+                changed = observation.host_done.changed() => {
                     changed.map_err(|_closed| DesktopNativeBootstrapError::HostEvents)?;
                 }
-                changed = events.changed() => {
+                changed = observation.events.changed() => {
                     if changed.is_err() {
-                        if !*host_done.borrow() {
-                            host_done.changed().await.map_err(|_closed| DesktopNativeBootstrapError::HostEvents)?;
+                        if !*observation.host_done.borrow() {
+                            observation.host_done.changed().await.map_err(|_closed| DesktopNativeBootstrapError::HostEvents)?;
                         }
-                        return Ok(());
+                        continue;
                     }
-                    let event = *events.borrow_and_update();
-                    match event {
-                        DesktopNativeHostEvent::Idle => {}
-                        DesktopNativeHostEvent::PreparationRequested { generation } => {
-                            lifecycle.verify_idle().await?;
-                            Self::prepare(&capacity, generation).await?;
-                            publication.transition(DesktopProfileEnumPhase::Recovery)?;
-                        }
-                        DesktopNativeHostEvent::FrameworkReady { generation } => {
-                            Self::phase(&capacity, |phase| phase.complete_preparation(generation)).await?;
-                            publication.transition(DesktopProfileEnumPhase::Ready)?;
-                        }
-                        DesktopNativeHostEvent::Interrupted { generation } => {
-                            Self::phase(&capacity, |phase| {
-                                phase.interrupt_preparation(generation, CapacityPhaseEnumInterruption::Failed)?;
-                                phase.acknowledge_preparation_stopped(generation)
-                            }).await?;
-                            publication.transition(DesktopProfileEnumPhase::Recovery)?;
-                        }
-                    }
-                    wake.wake().map_err(DesktopApplicationError::Wake)?;
+                    let event = *observation.events.borrow_and_update();
+                    Self::observe_event(&mut observation, event, &mut graphics_preparation).await?;
+                    observation.wake.wake().map_err(DesktopApplicationError::Wake)?;
                 }
             }
         }
+    }
+
+    async fn observe_event(
+        observation: &mut DesktopNativeBootstrapHostObservation<'_, '_>,
+        event: DesktopNativeHostEvent,
+        graphics_preparation: &mut Option<CapacityPhaseGeneration>,
+    ) -> Result<(), DesktopNativeBootstrapError> {
+        let capacity = &observation.capacity;
+        let games = &observation.games;
+        let generation = match event {
+            DesktopNativeHostEvent::Idle => return Ok(()),
+            DesktopNativeHostEvent::PreparationRequested { generation }
+            | DesktopNativeHostEvent::GraphicsPreparationStopped { generation, .. }
+            | DesktopNativeHostEvent::FrameworkReady { generation }
+            | DesktopNativeHostEvent::Interrupted { generation } => generation,
+        };
+        if Self::preparation_event(capacity, generation, |_phase| Ok(()))
+            .await?
+            .is_none()
+        {
+            return Ok(());
+        }
+        match event {
+            DesktopNativeHostEvent::Idle => {}
+            DesktopNativeHostEvent::PreparationRequested { generation } => {
+                if !Self::quiesce_preparation(capacity, games, generation).await? {
+                    return Ok(());
+                }
+                if Self::prepare(capacity, generation).await? {
+                    observation
+                        .publication
+                        .transition(DesktopProfileEnumPhase::Recovery)?;
+                }
+            }
+            DesktopNativeHostEvent::GraphicsPreparationStopped {
+                generation,
+                received_at,
+            } => {
+                if !Self::quiesce_preparation(capacity, games, generation).await? {
+                    return Ok(());
+                }
+                if Self::preparation_event(capacity, generation, |phase| {
+                    phase
+                        .complete_interruption(generation, CapacityPhaseEnumInterruption::Failed)?;
+                    phase.open_interrupted_admission()
+                })
+                .await?
+                .is_none()
+                {
+                    return Ok(());
+                }
+                let Some(control) = Self::preparation_event(capacity, generation, |_phase| {
+                    Ok(games
+                        .registry_port()
+                        .pause_graphics_all(received_at, Self::control_deadline()))
+                })
+                .await?
+                else {
+                    return Ok(());
+                };
+                Self::game_control(control).await?;
+                let Some(fresh) = Self::preparation_event(
+                    capacity,
+                    generation,
+                    CapacityPhase::request_preparation,
+                )
+                .await?
+                else {
+                    return Ok(());
+                };
+                if !Self::quiesce_preparation(capacity, games, fresh).await? {
+                    return Ok(());
+                }
+                if Self::prepare(capacity, fresh).await? {
+                    *graphics_preparation = Some(fresh);
+                    observation
+                        .publication
+                        .transition(DesktopProfileEnumPhase::Recovery)?;
+                }
+            }
+            DesktopNativeHostEvent::FrameworkReady { generation } => {
+                if Self::preparation_event(capacity, generation, |phase| {
+                    phase.complete_preparation(generation)
+                })
+                .await?
+                .is_none()
+                {
+                    return Ok(());
+                }
+                if *graphics_preparation == Some(generation) {
+                    let Some(control) = Self::preparation_event(capacity, generation, |_phase| {
+                        Ok(games
+                            .registry_port()
+                            .recover_graphics_all(Self::control_deadline()))
+                    })
+                    .await?
+                    else {
+                        return Ok(());
+                    };
+                    Self::game_control(control).await?;
+                    *graphics_preparation = None;
+                }
+                let Some(control) = Self::preparation_event(capacity, generation, |_phase| {
+                    Ok(games.resume_all(generation, Self::control_deadline()))
+                })
+                .await?
+                else {
+                    return Ok(());
+                };
+                Self::game_control(control).await?;
+                observation
+                    .publication
+                    .transition(DesktopProfileEnumPhase::Ready)?;
+            }
+            DesktopNativeHostEvent::Interrupted { generation } => {
+                if Self::preparation_event(capacity, generation, |phase| {
+                    phase.complete_interruption(generation, CapacityPhaseEnumInterruption::Failed)
+                })
+                .await?
+                .is_some()
+                {
+                    observation
+                        .publication
+                        .transition(DesktopProfileEnumPhase::Recovery)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn quiesce_preparation(
+        capacity: &Mutex<CapacityPhase>,
+        games: &DesktopNativeGameRuntimePort,
+        generation: CapacityPhaseGeneration,
+    ) -> Result<bool, DesktopNativeBootstrapError> {
+        let Some(control) = Self::preparation_event(capacity, generation, |_phase| {
+            Ok(games.quiesce_all(generation, Self::control_deadline()))
+        })
+        .await?
+        else {
+            return Ok(false);
+        };
+        Self::game_control(control).await?;
+        Ok(true)
+    }
+
+    async fn preparation_event<T>(
+        capacity: &Mutex<CapacityPhase>,
+        generation: CapacityPhaseGeneration,
+        mut operation: impl FnMut(&mut CapacityPhase) -> Result<T, CapacityPhaseError>,
+    ) -> Result<Option<T>, DesktopNativeBootstrapError> {
+        Self::phase(capacity, |phase| {
+            if phase.accepts_preparation_event(generation)? {
+                operation(phase).map(Some)
+            } else {
+                Ok(None)
+            }
+        })
+        .await
     }
 
     async fn prepare(
         capacity: &Mutex<CapacityPhase>,
         generation: CapacityPhaseGeneration,
-    ) -> Result<(), DesktopNativeBootstrapError> {
-        Self::phase(capacity, |phase| {
-            phase.acknowledge_searches_stopped(generation)
+    ) -> Result<bool, DesktopNativeBootstrapError> {
+        timeout_at(
+            Self::control_deadline(),
+            Self::prepare_retained(capacity, generation),
+        )
+        .await
+        .map_err(|_elapsed| DesktopNativeBootstrapError::CleanupDeadline)?
+    }
+
+    async fn prepare_retained(
+        capacity: &Mutex<CapacityPhase>,
+        generation: CapacityPhaseGeneration,
+    ) -> Result<bool, DesktopNativeBootstrapError> {
+        if Self::preparation_event(capacity, generation, |phase| {
+            if phase.state() == CapacityPhaseEnumState::Preparing
+                && phase.generation() == Some(generation)
+            {
+                Ok(())
+            } else {
+                phase.acknowledge_searches_stopped(generation)
+            }
         })
-        .await?;
+        .await?
+        .is_none()
+        {
+            return Ok(false);
+        }
         loop {
-            match Self::phase(capacity, |phase| phase.try_enter_preparation(generation)).await {
+            match Self::preparation_event(capacity, generation, |phase| {
+                if phase.state() == CapacityPhaseEnumState::Preparing
+                    && phase.generation() == Some(generation)
+                {
+                    Ok(())
+                } else {
+                    phase.try_enter_preparation(generation)
+                }
+            })
+            .await
+            {
                 Err(DesktopNativeBootstrapError::Phase(CapacityPhaseError::QuiescencePending)) => {
                     tokio::task::yield_now().await
                 }
-                result => return result,
+                result => return result.map(|outcome| outcome.is_some()),
             }
         }
     }
 
-    async fn phase(
+    async fn phase<T>(
         capacity: &Mutex<CapacityPhase>,
-        mut operation: impl FnMut(&mut CapacityPhase) -> Result<(), CapacityPhaseError>,
-    ) -> Result<(), DesktopNativeBootstrapError> {
+        mut operation: impl FnMut(&mut CapacityPhase) -> Result<T, CapacityPhaseError>,
+    ) -> Result<T, DesktopNativeBootstrapError> {
         loop {
             {
                 match capacity.try_lock() {
@@ -771,7 +1078,9 @@ impl DesktopNativeBootstrap {
             DesktopRequestId::new(),
         )?;
         match admission {
-            DesktopNativeStartupEnumAdmission::Owned(owner) => Self::owned(owner, security, host),
+            DesktopNativeStartupEnumAdmission::Owned(owner) => {
+                Self::owned(owner, security, CapacityBudget::discover()?, host)
+            }
             DesktopNativeStartupEnumAdmission::ActivationOnly(record) => {
                 Self::activate(&startup, &profile, &security, Some(record), started)
             }
@@ -792,11 +1101,11 @@ impl DesktopNativeBootstrap {
     fn owned(
         owner: DesktopNativeStartupOwner,
         security: DesktopProfileSecurity,
+        budget: CapacityBudget,
         host: impl FnOnce(DesktopNativeHostServices) -> Result<(), DesktopNativeHostError>,
     ) -> Result<(), DesktopNativeBootstrapError> {
         let (lease, binding) = owner.into_parts();
         let lease: Arc<DesktopProfileLease> = Arc::from(lease);
-        let budget = CapacityBudget::discover()?;
         let runtime = Builder::new_multi_thread()
             .worker_threads(1)
             .max_blocking_threads(budget.workers())

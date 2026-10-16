@@ -497,3 +497,189 @@ fn one_shared_budget_cannot_have_competing_phase_controllers()
     assert_eq!(fixture.budget.available(), replacement.workload_workers());
     Ok(())
 }
+
+#[test]
+fn teardown_refuses_unobserved_preparation_and_opens_only_after_its_stop_acknowledgment()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = CapacityNativePartitionFixture::new(8)?;
+    assert!(matches!(
+        fixture.phase.begin_teardown(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Quiescing
+        ))
+    ));
+    assert!(fixture.budget.try_lease(1).is_err());
+    let generation = fixture.prepare()?;
+    assert!(matches!(
+        fixture.phase.begin_teardown(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Preparing
+        ))
+    ));
+    assert_eq!(fixture.budget.available(), 0);
+    fixture
+        .phase
+        .interrupt_preparation(generation, CapacityPhaseEnumInterruption::Cancelled)?;
+    assert!(matches!(
+        fixture.phase.begin_teardown(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Draining
+        ))
+    ));
+    assert_eq!(fixture.budget.available(), 0);
+    assert_eq!(
+        fixture.phase.withheld_workload_workers(),
+        fixture.phase.workload_workers()
+    );
+    fixture.phase.acknowledge_preparation_stopped(generation)?;
+    assert!(fixture.budget.try_lease(1).is_err());
+    fixture.phase.begin_teardown()?;
+    assert_eq!(fixture.phase.state(), CapacityPhaseEnumState::Teardown);
+    assert_eq!(fixture.phase.withheld_workload_workers(), 0);
+    let teardown = fixture.budget.try_lease(fixture.phase.workload_workers())?;
+    assert_eq!(fixture.budget.available(), 0);
+    drop(teardown);
+    assert_eq!(fixture.budget.available(), fixture.phase.workload_workers());
+    Ok(())
+}
+
+#[tokio::test]
+async fn acknowledged_interruption_opens_reducers_before_a_fresh_preparation_generation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = CapacityNativePartitionFixture::new(4)?;
+    let executor = CapacityExecutor::new(fixture.budget.clone())?;
+    let generation = fixture.prepare()?;
+    fixture
+        .phase
+        .interrupt_preparation(generation, CapacityPhaseEnumInterruption::Failed)?;
+    assert!(matches!(
+        fixture.phase.open_interrupted_admission(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Draining
+        ))
+    ));
+    assert_eq!(fixture.budget.available(), 0);
+    fixture.phase.acknowledge_preparation_stopped(generation)?;
+    assert!(executor.submit(|_cancellation| 7).is_err());
+    fixture.phase.open_interrupted_admission()?;
+    assert_eq!(fixture.phase.state(), CapacityPhaseEnumState::Steady);
+    assert_eq!(executor.submit(|_cancellation| 7)?.join().await?, 7);
+    let fresh = fixture.phase.request_preparation()?;
+    assert_ne!(fresh, generation);
+    assert!(executor.submit(|_cancellation| 9).is_err());
+    fixture.phase.acknowledge_searches_stopped(fresh)?;
+    fixture.phase.try_enter_preparation(fresh)?;
+    fixture.phase.complete_preparation(fresh)?;
+    executor.shutdown().await?;
+    Ok(())
+}
+
+#[test]
+fn interrupted_admission_rejects_unacknowledged_phases_and_terminal_teardown()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = CapacityNativePartitionFixture::new(4)?;
+    assert!(matches!(
+        fixture.phase.open_interrupted_admission(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Quiescing
+        ))
+    ));
+    let generation = fixture.prepare()?;
+    assert!(matches!(
+        fixture.phase.open_interrupted_admission(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Preparing
+        ))
+    ));
+    fixture.phase.complete_preparation(generation)?;
+    assert!(matches!(
+        fixture.phase.open_interrupted_admission(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Steady
+        ))
+    ));
+    fixture.phase.begin_teardown()?;
+    assert!(matches!(
+        fixture.phase.open_interrupted_admission(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Teardown
+        ))
+    ));
+    assert_eq!(fixture.phase.state(), CapacityPhaseEnumState::Teardown);
+    assert!(fixture.phase.request_preparation().is_err());
+    let teardown = fixture.budget.try_lease(fixture.phase.workload_workers())?;
+    assert_eq!(teardown.workers(), fixture.phase.workload_workers());
+    Ok(())
+}
+
+#[test]
+fn steady_teardown_is_terminal_idempotent_and_preserves_existing_workload_leases()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = CapacityNativePartitionFixture::new(4)?;
+    fixture.enter_steady()?;
+    let existing = fixture.phase.try_lease_workload(1)?;
+    fixture.phase.begin_teardown()?;
+    fixture.phase.begin_teardown()?;
+    assert_eq!(fixture.phase.state(), CapacityPhaseEnumState::Teardown);
+    assert_eq!(fixture.phase.generation(), None);
+    assert_eq!(existing.workers(), 1);
+    assert_eq!(fixture.budget.available(), 1);
+    assert!(matches!(
+        fixture.phase.request_preparation(),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Teardown
+        ))
+    ));
+    assert!(matches!(
+        fixture.phase.try_lease_workload(1),
+        Err(CapacityPhaseError::InvalidPhase(
+            CapacityPhaseEnumState::Teardown
+        ))
+    ));
+    let final_save = fixture.budget.try_lease(1)?;
+    assert_eq!(fixture.budget.available(), 0);
+    drop((existing, final_save));
+    assert_eq!(fixture.budget.available(), fixture.phase.workload_workers());
+    Ok(())
+}
+
+#[tokio::test]
+async fn final_executor_work_waits_through_drain_until_terminal_teardown_reopens_admission()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = CapacityNativePartitionFixture::new(4)?;
+    let executor = CapacityExecutor::new(fixture.budget.clone())?;
+    let generation = fixture.prepare()?;
+    let job = {
+        let mut waiting = std::pin::pin!(executor.submit_waiting(|_cancellation| 17));
+        fixture
+            .phase
+            .interrupt_preparation(generation, CapacityPhaseEnumInterruption::Failed)?;
+        poll_fn(|context| {
+            assert!(waiting.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        fixture.phase.acknowledge_preparation_stopped(generation)?;
+        poll_fn(|context| {
+            assert!(waiting.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        fixture.phase.begin_teardown()?;
+        waiting.await?
+    };
+    assert_eq!(job.join().await?, 17);
+    assert!(matches!(
+        fixture.phase.complete_preparation(generation),
+        Err(CapacityPhaseError::StaleGeneration { expected: None, actual }) if actual == generation
+    ));
+    assert!(matches!(
+        fixture.phase.acknowledge_preparation_stopped(generation),
+        Err(CapacityPhaseError::StaleGeneration { expected: None, actual }) if actual == generation
+    ));
+    assert_eq!(fixture.phase.state(), CapacityPhaseEnumState::Teardown);
+    let final_capacity = fixture.budget.try_lease(fixture.phase.workload_workers())?;
+    drop(final_capacity);
+    executor.shutdown().await?;
+    Ok(())
+}

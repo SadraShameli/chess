@@ -36,7 +36,7 @@ pub enum GameResultError {
     ConsensualResultRequired,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameResultLocalConsent {
     game: GameId,
     revision: GameRevision,

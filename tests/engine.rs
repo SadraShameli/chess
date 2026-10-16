@@ -1,3 +1,5 @@
+#[path = "desktop/native/game_engine.rs"]
+mod desktop_native_game_engine;
 #[path = "engine/lifecycle.rs"]
 mod engine_lifecycle;
 #[path = "engine/live_game.rs"]
@@ -6,6 +8,8 @@ mod engine_live_game;
 mod engine_package_manifest;
 #[path = "engine/package_selection.rs"]
 mod engine_package_selection;
+#[path = "engine/resource_config.rs"]
+mod engine_resource_config;
 #[path = "engine/retained_shutdown.rs"]
 mod engine_retained_shutdown;
 #[path = "engine/retained_startup.rs"]

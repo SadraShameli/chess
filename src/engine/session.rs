@@ -8,11 +8,13 @@ use crate::board::enums::BoardEnumVariant;
 use crate::board::r#move::BoardMoveError;
 
 use crate::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError, EngineIdentity};
+use crate::engine::enums::EngineEnumOption;
 use crate::engine::package::selector::EnginePackageSelected;
 use crate::engine::process_provider::{
     EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
     EngineProcessProvider,
 };
+use crate::engine::resource_config::EngineResourceConfig;
 use crate::engine::search::enums::{EngineSearchEnumOutput, EngineSearchEnumState};
 use crate::engine::search::event::EngineSearchEvent;
 use crate::engine::search::identity::{
@@ -56,7 +58,7 @@ pub enum EngineSessionError {
     OperationCleanup {
         #[source]
         operation: Box<Self>,
-        cleanup: EngineProcessError,
+        cleanup: Box<Self>,
     },
     #[error("The engine reported successful shutdown without observing all owned resources")]
     ShutdownUnobserved,
@@ -154,6 +156,7 @@ impl<P: EngineProcess> EngineSessionStartup<P> {
             package: resources.package,
             generation: EngineSearchGeneration::fresh(),
             variant: BoardEnumVariant::Standard,
+            resources: None,
             lifecycle: EngineSessionEnumLifecycle::Idle,
             shutdown: EngineSessionEnumShutdown::Running,
             shutdown_failure: None,
@@ -200,6 +203,7 @@ pub struct EngineSession<P: EngineProcess> {
     package: EnginePackageSelected,
     generation: EngineSearchGeneration,
     variant: BoardEnumVariant,
+    resources: Option<EngineResourceConfig>,
     lifecycle: EngineSessionEnumLifecycle,
     shutdown: EngineSessionEnumShutdown,
     shutdown_failure: Option<Arc<EngineSessionError>>,
@@ -237,6 +241,10 @@ impl<P: EngineProcess> EngineSession<P> {
         self.generation
     }
 
+    pub fn resources(&self) -> Option<EngineResourceConfig> {
+        self.resources
+    }
+
     pub fn state(&self) -> EngineSearchEnumState {
         match self.lifecycle {
             EngineSessionEnumLifecycle::Idle => EngineSearchEnumState::Idle,
@@ -268,6 +276,31 @@ impl<P: EngineProcess> EngineSession<P> {
         .map_err(|_elapsed| EngineSessionError::Timeout("new game"))
         .and_then(|result| result);
         self.finish_preparation(result).await
+    }
+
+    pub async fn configure_resources(
+        &mut self,
+        config: EngineResourceConfig,
+    ) -> Result<(), EngineSessionError> {
+        self.require_idle()?;
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        self.resources = None;
+        let result = timeout(Self::HANDSHAKE, async {
+            for (option, value) in config.settings() {
+                self.set_acknowledged_option(
+                    &option.set_value_command(value),
+                    &option.acknowledgment(value),
+                )
+                .await?;
+            }
+            Self::ready(self.process_mut()?).await
+        })
+        .await
+        .map_err(|_elapsed| EngineSessionError::Timeout("resource configuration"))
+        .and_then(|result| result);
+        self.finish_preparation(result).await?;
+        self.resources = Some(config);
+        Ok(())
     }
 
     pub async fn start_search(
@@ -526,12 +559,33 @@ impl<P: EngineProcess> EngineSession<P> {
             BoardEnumVariant::Standard => "false",
             BoardEnumVariant::Chess960 => "true",
         };
-        self.process_mut()?
-            .send(&format!("setoption name UCI_Chess960 value {value}"))
-            .await?;
+        let option = EngineEnumOption::Chess960;
+        self.set_acknowledged_option(
+            &option.set_value_command(value),
+            &option.acknowledgment(value),
+        )
+        .await?;
         Self::ready(self.process_mut()?).await?;
         self.variant = variant;
         Ok(())
+    }
+
+    async fn set_acknowledged_option(
+        &mut self,
+        command: &str,
+        acknowledgment: &str,
+    ) -> Result<(), EngineSessionError> {
+        self.process_mut()?.send(command).await?;
+        loop {
+            let line = self.process_mut()?.receive().await?;
+            if line.pipe() == EngineProcessEnumPipe::Stderr {
+                continue;
+            }
+            if line.text() != acknowledgment {
+                return Err(EngineSessionError::UnexpectedResponse);
+            }
+            return Ok(());
+        }
     }
 
     async fn finish_preparation(
@@ -555,16 +609,13 @@ impl<P: EngineProcess> EngineSession<P> {
         deadline: Instant,
     ) -> EngineSessionError {
         self.lifecycle = EngineSessionEnumLifecycle::Failed;
-        if let Some(process) = &mut self.process {
-            if let Err(cleanup) = process.terminate(deadline).await {
-                return EngineSessionError::OperationCleanup {
-                    operation: Box::new(operation),
-                    cleanup,
-                };
-            }
-            self.process = None;
+        match self.shutdown_retained(deadline).await {
+            Ok(()) => operation,
+            Err(cleanup) => EngineSessionError::OperationCleanup {
+                operation: Box::new(operation),
+                cleanup: Box::new(cleanup),
+            },
         }
-        operation
     }
 
     async fn receive_event(&mut self) -> Result<EngineSearchEvent, EngineSessionError> {

@@ -38,6 +38,7 @@ where
 pub struct PresentationBoardAction {
     identity: DesktopRequestId,
     square: BoardSquare,
+    origin: Option<BoardSquare>,
 }
 
 impl PresentationBoardAction {
@@ -47,6 +48,10 @@ impl PresentationBoardAction {
 
     pub const fn square(self) -> BoardSquare {
         self.square
+    }
+
+    pub const fn origin(self) -> Option<BoardSquare> {
+        self.origin
     }
 }
 
@@ -103,6 +108,7 @@ impl PresentationBoardViewFrame {
 struct PresentationBoardViewInputKey {
     source: PresentationBoardEnumInputSource,
     square: BoardSquare,
+    origin: Option<BoardSquare>,
 }
 
 pub struct PresentationBoardView {
@@ -138,6 +144,13 @@ impl PresentationBoardView {
         self.selected
     }
 
+    pub fn set_selected(&mut self, selected: Option<BoardSquare>) {
+        if self.selected != selected {
+            self.cancel_gesture();
+            self.selected = selected;
+        }
+    }
+
     pub fn cancel_gesture(&mut self) {
         if let Some(picking) = &mut self.picking {
             picking.cancel();
@@ -169,18 +182,24 @@ impl PresentationBoardView {
         frame: u64,
         square: BoardSquare,
         source: PresentationBoardEnumInputSource,
+        origin: Option<BoardSquare>,
     ) -> Option<PresentationBoardAction> {
         if self.action_frame != Some(frame) {
             self.action_frame = Some(frame);
             self.retained.clear();
         }
-        let key = PresentationBoardViewInputKey { source, square };
+        let key = PresentationBoardViewInputKey {
+            source,
+            square,
+            origin,
+        };
         if self.retained.contains_key(&key) {
             return None;
         }
         let action = PresentationBoardAction {
             identity: DesktopRequestId::new(),
             square,
+            origin,
         };
         self.retained.insert(key, action);
         self.selected = Some(square);
@@ -267,7 +286,7 @@ impl PresentationBoardView {
                 Some(point) if viewport.to_physical(point).is_some() => input.picker.pick(point)?,
                 Some(_) | None => None,
             };
-            if let Some((_, destination)) = self
+            if let Some((origin, destination)) = self
                 .picking
                 .as_mut()
                 .and_then(|picking| picking.release(scene.generation(), square))
@@ -275,6 +294,7 @@ impl PresentationBoardView {
                     frame,
                     destination,
                     PresentationBoardEnumInputSource::Pointer,
+                    (origin != destination).then_some(origin),
                 )
             {
                 ui.ctx().memory_mut(|memory| {
@@ -292,7 +312,7 @@ impl PresentationBoardView {
             self.selected,
             process_keyboard,
         ) {
-            if let Some(action) = self.activate(frame, action.square(), action.source()) {
+            if let Some(action) = self.activate(frame, action.square(), action.source(), None) {
                 output.actions.push(action);
             }
         }

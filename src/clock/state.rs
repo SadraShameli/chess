@@ -386,7 +386,7 @@ pub struct ClockState {
 }
 
 impl ClockState {
-    const LOW_TIME: ClockDuration = ClockDuration::from_nanos(10_000_000_000);
+    pub const LOW_TIME: ClockDuration = ClockDuration::from_nanos(10_000_000_000);
 
     pub fn new(control: ClockTimeControl, active: BoardEnumColor) -> Self {
         let remaining = match control.stages().first() {
@@ -640,6 +640,11 @@ impl ClockState {
         self.phase = ClockStateEnumPhase::Running(now);
         self.last_observed = Some(now);
         Ok(())
+    }
+
+    pub fn ordered_instant(&self, requested: ClockInstant) -> ClockInstant {
+        self.last_observed
+            .map_or(requested, |observed| requested.max(observed))
     }
 
     fn validate_time(&self, now: ClockInstant) -> Result<(), ClockStateError> {

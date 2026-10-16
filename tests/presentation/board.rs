@@ -187,6 +187,45 @@ fn semantic_board_exposes_all_named_visible_focusable_squares_with_stable_ids()
 }
 
 #[test]
+fn pointer_drag_preserves_its_origin_and_destination_across_repeated_passes()
+-> PresentationBoardTestResult {
+    let mut fixture = PresentationBoardFixture::new(BoardEnumColor::White)?;
+    fixture.frame(Vec::new(), false)?;
+    let origin: BoardSquare = "e2".parse()?;
+    let destination: BoardSquare = "e4".parse()?;
+    let start = fixture.point(origin)?;
+    let end = fixture.point(destination)?;
+    fixture.frame(
+        vec![
+            Event::PointerMoved(start),
+            Event::PointerButton {
+                pos: start,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        false,
+    )?;
+    fixture.frame(
+        vec![
+            Event::PointerMoved(end),
+            Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        true,
+    )?;
+    assert_eq!(fixture.actions.len(), 1);
+    assert_eq!(fixture.actions[0].origin(), Some(origin));
+    assert_eq!(fixture.actions[0].square(), destination);
+    Ok(())
+}
+
+#[test]
 fn native_click_is_delivered_once_across_multiple_egui_passes_without_mutating_chess()
 -> PresentationBoardTestResult {
     let mut fixture = PresentationBoardFixture::new(BoardEnumColor::White)?;
@@ -345,5 +384,53 @@ fn every_square_has_a_projected_semantic_target_across_camera_bounds() -> Presen
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn native_selection_sync_clears_stale_highlights_and_cancels_a_pending_drag()
+-> PresentationBoardTestResult {
+    let mut fixture = PresentationBoardFixture::new(BoardEnumColor::White)?;
+    fixture.frame(Vec::new(), false)?;
+    let origin: BoardSquare = "e2".parse()?;
+    let destination: BoardSquare = "e4".parse()?;
+    fixture.view.set_selected(Some(origin));
+    let start = fixture.point(origin)?;
+    let end = fixture.point(destination)?;
+    fixture.frame(PresentationBoardFixture::pointer(start, true), false)?;
+    fixture.view.set_selected(None);
+    let output = fixture.frame(PresentationBoardFixture::pointer(end, false), true)?;
+    assert!(fixture.actions.is_empty());
+    assert_eq!(fixture.view.selected(), None);
+    let update = output
+        .platform_output
+        .accesskit_update
+        .ok_or("missing cleared board semantics")?;
+    assert!(
+        update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == accesskit::Role::GridCell)
+            .all(|(_, node)| node
+                .label()
+                .is_none_or(|label| !label.contains(", selected")))
+    );
+    let selected: BoardSquare = "d2".parse()?;
+    fixture.view.set_selected(Some(selected));
+    let output = fixture.frame(Vec::new(), false)?;
+    assert!(fixture.actions.is_empty());
+    let update = output
+        .platform_output
+        .accesskit_update
+        .ok_or("missing synchronized selection semantics")?;
+    let (_, node) = update
+        .nodes
+        .iter()
+        .find(|(id, _)| *id == PresentationBoardSemanticGrid::square_id(selected).accesskit_id())
+        .ok_or("missing selected square")?;
+    assert!(
+        node.label()
+            .is_some_and(|label| label.contains(", selected"))
+    );
     Ok(())
 }

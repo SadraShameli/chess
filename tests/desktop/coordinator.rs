@@ -29,6 +29,9 @@ use tokio::time::Instant;
 
 type DesktopCoordinatorTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[path = "coordinator_games.rs"]
+mod games;
+
 struct DesktopCoordinatorClock;
 
 impl ClockTimeProvider for DesktopCoordinatorClock {

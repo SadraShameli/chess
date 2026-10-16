@@ -5,12 +5,17 @@ use crate::desktop::dto::DesktopEnumValue;
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::file_handle::DesktopFileHandleOwner;
+use crate::desktop::game_bridge::DesktopGameBridgeEnumOperation;
+use crate::desktop::game_commands::DesktopGameCommandsEnumAction;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DesktopMessagesEntityId(DesktopRequestId);
 
 impl DesktopMessagesEntityId {
+    pub const fn for_game(game: crate::game::enums::GameId) -> Self {
+        Self(DesktopRequestId::for_game(game))
+    }
     pub fn new() -> Self {
         Self(DesktopRequestId::new())
     }
@@ -28,6 +33,7 @@ impl Default for DesktopMessagesEntityId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DesktopEnumCommand {
+    Game(DesktopGameBridgeEnumOperation),
     Bootstrap,
     FileSelect {
         owner: DesktopMessagesEntityId,
@@ -57,6 +63,17 @@ impl DesktopEnumCommand {
 
     pub(crate) fn control_key(&self) -> Option<DesktopMessagesEnumControlKey> {
         match self {
+            Self::Game(DesktopGameBridgeEnumOperation::Session { game, action, .. }) => {
+                let owner = DesktopMessagesEntityId::for_game(*game);
+                if matches!(action, DesktopGameCommandsEnumAction::Pause { .. }) {
+                    Some(DesktopMessagesEnumControlKey::GamePause(owner))
+                } else if matches!(action, DesktopGameCommandsEnumAction::Stop) {
+                    Some(DesktopMessagesEnumControlKey::GameStop(owner))
+                } else {
+                    None
+                }
+            }
+            Self::Game(DesktopGameBridgeEnumOperation::Create { .. }) => None,
             Self::Stop { owner } => Some(DesktopMessagesEnumControlKey::Stop(*owner)),
             Self::Pause { owner } => Some(DesktopMessagesEnumControlKey::Pause(*owner)),
             Self::Quit => Some(DesktopMessagesEnumControlKey::Quit),
@@ -70,6 +87,7 @@ impl DesktopEnumCommand {
 
     pub fn mutation_entity(&self) -> Option<DesktopMessagesEntityId> {
         match self {
+            Self::Game(operation) => Some(operation.owner()),
             Self::FileSelect { owner, .. } => Some(*owner),
             Self::Bootstrap
             | Self::StreamSubscribe
@@ -84,6 +102,8 @@ impl DesktopEnumCommand {
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub(crate) enum DesktopMessagesEnumControlKey {
+    GamePause(DesktopMessagesEntityId),
+    GameStop(DesktopMessagesEntityId),
     Stop(DesktopMessagesEntityId),
     Pause(DesktopMessagesEntityId),
     Quit,
@@ -92,15 +112,18 @@ pub(crate) enum DesktopMessagesEnumControlKey {
 impl DesktopMessagesEnumControlKey {
     pub(crate) fn belongs_to(self, owner: DesktopMessagesEntityId) -> bool {
         match self {
-            Self::Stop(target) | Self::Pause(target) => target == owner,
+            Self::Stop(target)
+            | Self::Pause(target)
+            | Self::GameStop(target)
+            | Self::GamePause(target) => target == owner,
             Self::Quit => false,
         }
     }
 
     pub(crate) fn stopped_result(self) -> DesktopMessagesEnumResult {
         match self {
-            Self::Stop(_) => DesktopMessagesEnumResult::Stopped,
-            Self::Pause(_) => DesktopMessagesEnumResult::Paused,
+            Self::Stop(_) | Self::GameStop(_) => DesktopMessagesEnumResult::Stopped,
+            Self::Pause(_) | Self::GamePause(_) => DesktopMessagesEnumResult::Paused,
             Self::Quit => DesktopMessagesEnumResult::QuitReady,
         }
     }

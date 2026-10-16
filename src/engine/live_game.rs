@@ -12,6 +12,7 @@ use crate::clock::state::{
 };
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::engine::process_provider::{EngineProcess, EngineProcessLimits};
+use crate::engine::resource_config::EngineResourceConfig;
 use crate::engine::search::enums::{EngineSearchEnumOutput, EngineSearchEnumState};
 use crate::engine::search::identity::{
     EngineSearchContext, EngineSearchGameId, EngineSearchIdentityError, EngineSearchRevision,
@@ -333,6 +334,22 @@ impl<P: EngineProcess, C: ClockTimeProvider> EngineLiveGame<P, C> {
 
     pub fn is_shutdown_complete(&self) -> bool {
         self.session.is_shutdown_complete()
+    }
+
+    pub fn resources(&self) -> Option<EngineResourceConfig> {
+        self.session.resources()
+    }
+
+    pub async fn configure_resources(
+        &mut self,
+        config: EngineResourceConfig,
+    ) -> Result<(), EngineLiveGameError> {
+        self.require_idle()?;
+        if let Err(error) = self.session.configure_resources(config).await {
+            self.availability = EngineLiveGameEnumAvailability::Faulted;
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     pub async fn shutdown_retained(

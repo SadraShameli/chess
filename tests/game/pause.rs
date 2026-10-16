@@ -99,7 +99,7 @@ fn engine_fault_requires_explicit_successful_recovery_then_resume()
     let mut session =
         GameTransitionFixture::session(ClockTimeControl::untimed(), Some(BoardEnumColor::Black))?;
     GameTransitionFixture::play(&mut session, 2, "e2e4", 1_000)?;
-    session.set_premoves_enabled(true);
+    session.set_premoves_enabled(session.revision(), true)?;
     session.queue_premove(
         session.revision(),
         GamePremoveIntent::new("g1".parse()?, "f3".parse()?, None)?,

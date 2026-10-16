@@ -310,7 +310,9 @@ impl DesktopApplicationState {
             self.controls.remove(&key);
             match key {
                 DesktopMessagesEnumControlKey::Stop(owner)
-                | DesktopMessagesEnumControlKey::Pause(owner) => {
+                | DesktopMessagesEnumControlKey::Pause(owner)
+                | DesktopMessagesEnumControlKey::GameStop(owner)
+                | DesktopMessagesEnumControlKey::GamePause(owner) => {
                     if !self
                         .controls
                         .keys()
@@ -343,11 +345,20 @@ impl DesktopApplicationState {
     ) -> Result<Vec<(u64, DesktopApplicationReceipt)>, DesktopApplicationError> {
         match key {
             DesktopMessagesEnumControlKey::Stop(owner)
-            | DesktopMessagesEnumControlKey::Pause(owner) => self
-                .mutations
-                .get(&owner)
-                .map(|mutation| vec![(mutation.sequence, mutation.receipt.clone())])
-                .ok_or(DesktopApplicationError::UnknownEntity),
+            | DesktopMessagesEnumControlKey::Pause(owner)
+            | DesktopMessagesEnumControlKey::GameStop(owner)
+            | DesktopMessagesEnumControlKey::GamePause(owner) => match self.mutations.get(&owner) {
+                Some(mutation) => Ok(vec![(mutation.sequence, mutation.receipt.clone())]),
+                None if matches!(
+                    key,
+                    DesktopMessagesEnumControlKey::GameStop(_)
+                        | DesktopMessagesEnumControlKey::GamePause(_)
+                ) =>
+                {
+                    Ok(Vec::new())
+                }
+                None => Err(DesktopApplicationError::UnknownEntity),
+            },
             DesktopMessagesEnumControlKey::Quit => Ok(self
                 .entries
                 .iter()
@@ -545,6 +556,9 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> Clone
 }
 
 impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplicationPort<C, W> {
+    pub fn now(&self) -> Result<ClockInstant, DesktopApplicationError> {
+        Ok(self.shared.clock.now()?)
+    }
     pub fn request(
         &self,
         command: DesktopCommand,
@@ -843,15 +857,53 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         {
             return Err(DesktopApplicationError::CancellationUnacknowledged);
         }
-        let response = if entry.affected.iter().all(|receipt| {
-            matches!(
-                receipt.response(),
-                Some(DesktopMessagesEnumResult::Cancelled)
-            )
-        }) {
+        let response = if key == DesktopMessagesEnumControlKey::Quit
+            || entry.affected.iter().all(|receipt| {
+                matches!(
+                    receipt.response(),
+                    Some(DesktopMessagesEnumResult::Cancelled)
+                )
+            }) {
             key.stopped_result()
         } else {
             DesktopMessagesEnumResult::ReconciliationRequired
+        };
+        state.complete(work.request.sequence(), response, now)?;
+        drop(state);
+        self.shared.notify_presentation()
+    }
+
+    pub fn complete_game_control(
+        &self,
+        work: &DesktopApplicationWork,
+        response: Result<crate::desktop::game_snapshot::DesktopGameSnapshot, DesktopFailure>,
+    ) -> Result<(), DesktopApplicationError> {
+        let now = self.shared.clock.now()?;
+        let mut state = self.shared.state_at(now)?;
+        let entry = self.entry(&mut state, work)?;
+        if !matches!(
+            entry.request.command().operation().control_key(),
+            Some(
+                DesktopMessagesEnumControlKey::GamePause(_)
+                    | DesktopMessagesEnumControlKey::GameStop(_)
+            )
+        ) || !matches!(entry.phase, DesktopApplicationEnumWorkPhase::Running)
+        {
+            return Err(DesktopApplicationError::InvalidTransition);
+        }
+        if entry
+            .affected
+            .iter()
+            .any(|receipt| receipt.response().is_none())
+        {
+            return Err(DesktopApplicationError::CancellationUnacknowledged);
+        }
+        let response = match response {
+            Ok(snapshot) => DesktopMessagesEnumResult::Value {
+                revision: Some(DesktopRevision::for_game(snapshot.revision())),
+                value: DesktopEnumValue::Game(Box::new(snapshot)),
+            },
+            Err(failure) => DesktopMessagesEnumResult::Failure(failure),
         };
         state.complete(work.request.sequence(), response, now)?;
         drop(state);

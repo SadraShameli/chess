@@ -6,17 +6,17 @@ use std::time::{Duration, Instant};
 
 use bevy::app::{First, Last, OnAppExitSystems, Startup, Update};
 use bevy::asset::{
-    AssetId, AssetLoadError, AssetPlugin, AssetServer, Assets, Handle, LoadState,
+    AssetEvent, AssetId, AssetLoadError, AssetPlugin, AssetServer, Assets, Handle, LoadState,
     RecursiveDependencyLoadState,
 };
-use bevy::ecs::message::Messages;
+use bevy::ecs::message::{MessageCursor, Messages};
 use bevy::ecs::system::SystemState;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::pbr::{MeshMaterial3d, PreparedMaterial};
 use bevy::picking::mesh_picking::ray_cast::MeshRayCast;
 use bevy::prelude::{
     App, AppExit, ButtonInput, Camera2d, DefaultPlugins, Entity, IntoScheduleConfigs, KeyCode,
-    Mesh, Mesh3d, Or, Plugin, PluginGroup, Res, Resource, StandardMaterial, With, World,
+    Mesh, Mesh3d, Or, Plugin, PluginGroup, Res, ResMut, Resource, StandardMaterial, With, World,
 };
 use bevy::render::erased_render_asset::ErasedRenderAssets;
 use bevy::render::error_handler::{RenderError, RenderErrorHandler, RenderErrorPolicy};
@@ -56,13 +56,11 @@ use crate::capacity::budget::CapacityBudget;
 use crate::capacity::phase::{
     CapacityPhase, CapacityPhaseEnumState, CapacityPhaseError, CapacityPhaseGeneration,
 };
+use crate::clock::duration::ClockInstant;
 use crate::clock::time_provider::ClockTimeProviderMonotonic;
-use crate::desktop::application::{
-    DesktopApplicationError, DesktopApplicationPort, DesktopApplicationReceipt,
-};
-use crate::desktop::messages::{
-    DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult, DesktopRequest,
-};
+use crate::desktop::application::{DesktopApplicationError, DesktopApplicationPort};
+use crate::desktop::dto::DesktopBoardSnapshot;
+use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult};
 use crate::desktop::native::dialogs::{
     DesktopNativeDialogs, DesktopNativeDialogsError, DesktopNativeDialogsPort,
     DesktopNativeDialogsRfd,
@@ -92,9 +90,19 @@ use crate::scene::renderer::{SceneRenderer, SceneRendererError, SceneRendererGen
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopNativeHostEvent {
     Idle,
-    PreparationRequested { generation: CapacityPhaseGeneration },
-    FrameworkReady { generation: CapacityPhaseGeneration },
-    Interrupted { generation: CapacityPhaseGeneration },
+    PreparationRequested {
+        generation: CapacityPhaseGeneration,
+    },
+    GraphicsPreparationStopped {
+        generation: CapacityPhaseGeneration,
+        received_at: ClockInstant,
+    },
+    FrameworkReady {
+        generation: CapacityPhaseGeneration,
+    },
+    Interrupted {
+        generation: CapacityPhaseGeneration,
+    },
 }
 
 pub struct DesktopNativeHostServices {
@@ -138,6 +146,8 @@ pub enum DesktopNativeHostError {
     MissingRenderer,
     #[error("The piece asset failed to load: {0}")]
     AssetLoad(#[source] Arc<AssetLoadError>),
+    #[error("Asset Retry requires a fresh piece asset identity")]
+    AssetRetryIdentity,
     #[error("Native graphics pipeline compilation failed: {0}")]
     Pipeline(#[source] Arc<ShaderCacheError>),
     #[error("Native graphics did not become ready within {budget:?}")]
@@ -196,14 +206,19 @@ struct DesktopNativeHostState {
     services: DesktopNativeHostServices,
     presentation: PresentationApp,
     asset: Handle<Gltf>,
+    asset_reload: Option<DesktopNativeHostEnumAssetReload>,
     camera: SceneCamera,
+    rendered_board: Option<DesktopBoardSnapshot>,
     generation: CapacityPhaseGeneration,
     ready: bool,
     fonts_initialized: bool,
     recovery: Option<DesktopNativeRecovery>,
+    graphics_drain: Option<DesktopNativeHostGraphicsDrain>,
     failure: Option<DesktopNativeHostError>,
+    fault_received_at: Option<ClockInstant>,
     interruption_announced: bool,
-    quit: Option<(DesktopRequest, Option<DesktopApplicationReceipt>)>,
+    quit: DesktopNativeHostEnumQuit,
+    teardown: DesktopNativeHostEnumTeardown,
     replacement: Option<RenderResources>,
     expected_device: Option<RenderDevice>,
     validated_surface: Option<Entity>,
@@ -213,6 +228,203 @@ struct DesktopNativeHostState {
     dialog_admission_closed: bool,
     exit_authorized: bool,
     readiness: Option<DesktopNativeHostReadiness>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DesktopNativeHostEnumQuit {
+    Idle,
+    Requested,
+    Submitted,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DesktopNativeHostEnumTeardown {
+    Active,
+    Draining,
+    Observed,
+    Admitted,
+}
+
+impl DesktopNativeHostEnumTeardown {
+    fn begin(
+        &mut self,
+        capacity: &Mutex<CapacityPhase>,
+        port: &DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
+    ) -> Result<bool, DesktopNativeHostError> {
+        let Some(mut phase) = DesktopNativeHost::capacity_phase(capacity, port)? else {
+            return Ok(false);
+        };
+        phase.request_teardown()?;
+        *self = Self::Draining;
+        Ok(true)
+    }
+
+    fn observe_completed_frame(&mut self) {
+        if *self == Self::Draining {
+            *self = Self::Observed;
+        }
+    }
+
+    fn try_admit(
+        &mut self,
+        capacity: &Mutex<CapacityPhase>,
+        port: &DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
+    ) -> Result<bool, DesktopNativeHostError> {
+        match self {
+            Self::Active | Self::Draining => {
+                port.rearm_wake()?;
+                Ok(false)
+            }
+            Self::Observed => {
+                let Some(mut phase) = DesktopNativeHost::capacity_phase(capacity, port)? else {
+                    return Ok(false);
+                };
+                if phase.state() == CapacityPhaseEnumState::Draining
+                    && let Some(generation) = phase.generation()
+                {
+                    phase.acknowledge_preparation_stopped(generation)?;
+                }
+                phase.begin_teardown()?;
+                *self = Self::Admitted;
+                Ok(true)
+            }
+            Self::Admitted => Ok(true),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DesktopNativeHostEnumGraphicsDrainStage {
+    Draining,
+    Observed,
+    Announced,
+}
+
+struct DesktopNativeHostGraphicsDrain {
+    generation: CapacityPhaseGeneration,
+    received_at: ClockInstant,
+    stage: DesktopNativeHostEnumGraphicsDrainStage,
+}
+
+enum DesktopNativeHostEnumAssetReload {
+    Retiring(AssetId<Gltf>),
+    Loading(DesktopNativeHostAssetReload),
+}
+
+impl DesktopNativeHostEnumAssetReload {
+    fn retire(asset: &mut Handle<Gltf>, previous: Option<Self>) -> Self {
+        let id = match previous {
+            Some(Self::Retiring(id)) => id,
+            Some(Self::Loading(_)) | None => std::mem::take(asset).id(),
+        };
+        Self::Retiring(id)
+    }
+
+    fn start(
+        &mut self,
+        id: AssetId<Gltf>,
+        events: &Messages<AssetEvent<Gltf>>,
+        root: &LoadState,
+        recursive: &RecursiveDependencyLoadState,
+    ) -> Result<(), DesktopNativeHostError> {
+        match self {
+            Self::Retiring(previous) if *previous == id => {
+                Err(DesktopNativeHostError::AssetRetryIdentity)
+            }
+            Self::Retiring(_) => {
+                *self = Self::Loading(DesktopNativeHostAssetReload::new(events, root, recursive));
+                Ok(())
+            }
+            Self::Loading(_) => Err(DesktopNativeHostError::MissingState),
+        }
+    }
+}
+
+struct DesktopNativeHostAssetReload {
+    events: MessageCursor<AssetEvent<Gltf>>,
+    previous_failure: Option<Arc<AssetLoadError>>,
+    refreshed: bool,
+}
+
+impl DesktopNativeHostAssetReload {
+    fn new(
+        events: &Messages<AssetEvent<Gltf>>,
+        root: &LoadState,
+        recursive: &RecursiveDependencyLoadState,
+    ) -> Self {
+        Self {
+            events: events.get_cursor_current(),
+            previous_failure: DesktopNativeHost::asset_failure(root, recursive),
+            refreshed: false,
+        }
+    }
+
+    fn observe(
+        &mut self,
+        id: AssetId<Gltf>,
+        events: &Messages<AssetEvent<Gltf>>,
+        root: &LoadState,
+        recursive: &RecursiveDependencyLoadState,
+    ) -> Result<bool, DesktopNativeHostError> {
+        self.refreshed |= self.events.read(events).any(|event| {
+            event.is_added(id) || event.is_modified(id) || event.is_loaded_with_dependencies(id)
+        });
+        if let Some(error) = DesktopNativeHost::asset_failure(root, recursive) {
+            if !self.refreshed
+                && self
+                    .previous_failure
+                    .as_ref()
+                    .is_some_and(|previous| Arc::ptr_eq(previous, &error))
+            {
+                return Ok(false);
+            }
+            return Err(DesktopNativeHostError::AssetLoad(error));
+        }
+        Ok(self.refreshed && root.is_loaded() && recursive.is_loaded())
+    }
+}
+
+impl DesktopNativeHostGraphicsDrain {
+    fn new(generation: CapacityPhaseGeneration, received_at: ClockInstant) -> Self {
+        Self {
+            generation,
+            received_at,
+            stage: DesktopNativeHostEnumGraphicsDrainStage::Draining,
+        }
+    }
+
+    fn observe_completed_frame(&mut self) {
+        if self.stage == DesktopNativeHostEnumGraphicsDrainStage::Draining {
+            self.stage = DesktopNativeHostEnumGraphicsDrainStage::Observed;
+        }
+    }
+
+    fn take_stopped_event(&mut self) -> Option<DesktopNativeHostEvent> {
+        if self.stage != DesktopNativeHostEnumGraphicsDrainStage::Observed {
+            return None;
+        }
+        self.stage = DesktopNativeHostEnumGraphicsDrainStage::Announced;
+        Some(DesktopNativeHostEvent::GraphicsPreparationStopped {
+            generation: self.generation,
+            received_at: self.received_at,
+        })
+    }
+
+    fn fresh_preparation(
+        &self,
+        capacity: &Mutex<CapacityPhase>,
+        port: &DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
+    ) -> Result<Option<CapacityPhaseGeneration>, DesktopNativeHostError> {
+        if self.stage != DesktopNativeHostEnumGraphicsDrainStage::Announced {
+            return Ok(None);
+        }
+        let Some(phase) = DesktopNativeHost::capacity_phase(capacity, port)? else {
+            return Ok(None);
+        };
+        Ok(phase.generation().filter(|generation| {
+            phase.state() == CapacityPhaseEnumState::Preparing && *generation != self.generation
+        }))
+    }
 }
 
 #[derive(Resource, Clone)]
@@ -378,14 +590,19 @@ impl DesktopNativeHost {
             services,
             presentation: PresentationApp::new(),
             asset,
+            asset_reload: None,
             camera: SceneCamera::initial(BoardEnumColor::White),
+            rendered_board: None,
             generation,
             ready: false,
             fonts_initialized: false,
             recovery: None,
+            graphics_drain: None,
             failure: None,
+            fault_received_at: None,
             interruption_announced: false,
-            quit: None,
+            quit: DesktopNativeHostEnumQuit::Idle,
+            teardown: DesktopNativeHostEnumTeardown::Active,
             replacement: None,
             expected_device: None,
             validated_surface: None,
@@ -533,6 +750,14 @@ impl DesktopNativeHost {
     async fn quit_before_window(
         services: &DesktopNativeHostServices,
     ) -> Result<(), DesktopNativeHostError> {
+        let mut teardown = DesktopNativeHostEnumTeardown::Active;
+        while !teardown.begin(&services.capacity, &services.port)? {
+            services.wake.notified().await;
+        }
+        teardown.observe_completed_frame();
+        while !teardown.try_admit(&services.capacity, &services.port)? {
+            services.wake.notified().await;
+        }
         let request = services
             .port
             .request(DesktopCommand::new(DesktopEnumCommand::Quit, None))?;
@@ -630,7 +855,7 @@ impl DesktopNativeHost {
             |_world, mut state: bevy::prelude::Mut<'_, DesktopNativeHostState>| {
                 let state = &mut *state;
                 state.presentation.activate(
-                    PresentationActionEnumId::Refresh,
+                    PresentationActionEnumId::Subscribe,
                     0,
                     &state.services.port,
                 )
@@ -641,9 +866,13 @@ impl DesktopNativeHost {
         }
     }
 
-    fn acknowledge_wake(state: Res<'_, DesktopNativeHostState>) {
+    fn acknowledge_wake(mut state: ResMut<'_, DesktopNativeHostState>) {
         state.services.wake.acknowledge();
         state.services.port.acknowledge_wake();
+        state.teardown.observe_completed_frame();
+        if let Some(drain) = &mut state.graphics_drain {
+            drain.observe_completed_frame();
+        }
     }
 
     fn update(world: &mut World) {
@@ -689,6 +918,9 @@ impl DesktopNativeHost {
             }
         }
         Self::poll_dialogs(world, state)?;
+        if state.quit != DesktopNativeHostEnumQuit::Idle {
+            return Self::poll_quit(world, state);
+        }
         if let Some(readiness) = state.readiness {
             readiness.remaining_at(Instant::now())?;
             if let Some(probe) = world.get_resource::<DesktopNativeHostRenderProbe>()
@@ -700,26 +932,8 @@ impl DesktopNativeHost {
         if state.failure.is_some() && state.recovery.is_none() && state.readiness.is_none() {
             Self::begin_interruption(world, state)?;
         }
-        if let Some((request, receipt)) = &mut state.quit {
-            if receipt.is_none() {
-                match state.services.port.try_submit(request) {
-                    Ok(admitted) => *receipt = Some(admitted),
-                    Err(DesktopApplicationError::Busy) => state.services.port.rearm_wake()?,
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            if let Some(response) = receipt
-                .as_ref()
-                .and_then(DesktopApplicationReceipt::response)
-            {
-                if matches!(response, DesktopMessagesEnumResult::QuitReady) {
-                    Self::try_exit(world, state)?;
-                    return Ok(());
-                }
-                return Err(DesktopNativeHostError::QuitRefused(Box::new(
-                    response.clone(),
-                )));
-            }
+        if state.graphics_drain.is_some() {
+            return Self::poll_graphics_handoff(world, state);
         }
         if state.presentation.is_quit_ready() {
             Self::try_exit(world, state)?;
@@ -740,6 +954,73 @@ impl DesktopNativeHost {
             outcome?;
         }
         Ok(())
+    }
+
+    fn poll_quit(
+        world: &mut World,
+        state: &mut DesktopNativeHostState,
+    ) -> Result<(), DesktopNativeHostError> {
+        if state.quit == DesktopNativeHostEnumQuit::Requested {
+            if !Self::begin_teardown(world, state)? {
+                return Ok(());
+            }
+            match state.presentation.activate(
+                PresentationActionEnumId::ConfirmQuit,
+                0,
+                &state.services.port,
+            ) {
+                Ok(_identity) => state.quit = DesktopNativeHostEnumQuit::Submitted,
+                Err(PresentationAppError::Admission {
+                    source: DesktopApplicationError::Busy,
+                    ..
+                }) => state.services.port.rearm_wake()?,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if state.presentation.is_quit_ready() {
+            Self::try_exit(world, state)?;
+        }
+        Ok(())
+    }
+
+    fn begin_teardown(
+        world: &mut World,
+        state: &mut DesktopNativeHostState,
+    ) -> Result<bool, DesktopNativeHostError> {
+        if state.teardown == DesktopNativeHostEnumTeardown::Active {
+            if !state
+                .teardown
+                .begin(&state.services.capacity, &state.services.port)?
+            {
+                return Ok(false);
+            }
+            if let Some(renderer) = world.remove_resource::<SceneRenderer>() {
+                renderer.despawn(world)?;
+            }
+            world.remove_resource::<DesktopNativeHostRenderProbe>();
+            state.ready = false;
+            state.readiness = None;
+            state.replacement = None;
+            state.expected_device = None;
+            state.pending_view = None;
+            state.pending_camera = None;
+            state.recovery = None;
+            state.graphics_drain = None;
+            state.asset_reload = None;
+            world.insert_resource(WinitSettings::continuous());
+            state.services.port.rearm_wake()?;
+            return Ok(false);
+        }
+        let admitted = state
+            .teardown
+            .try_admit(&state.services.capacity, &state.services.port)?;
+        if admitted {
+            world.insert_resource(WinitSettings {
+                focused_mode: UpdateMode::reactive_low_power(Duration::MAX),
+                unfocused_mode: UpdateMode::reactive_low_power(Duration::MAX),
+            });
+        }
+        Ok(admitted)
     }
 
     const fn quit_modifiers() -> [KeyCode; 2] {
@@ -885,12 +1166,43 @@ impl DesktopNativeHost {
 
     fn spawn_scene(
         world: &mut World,
-        state: &DesktopNativeHostState,
+        state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
         let server = world.resource::<AssetServer>();
+        if let Some(DesktopNativeHostEnumAssetReload::Retiring(previous)) = &state.asset_reload {
+            if server.is_managed(*previous) {
+                return Ok(());
+            }
+            let asset = server.load(DesktopNativeResources::PIECES_ASSET);
+            let (root, _direct, recursive) = server
+                .get_load_states(asset.id())
+                .ok_or(DesktopNativeHostError::MissingState)?;
+            state
+                .asset_reload
+                .as_mut()
+                .ok_or(DesktopNativeHostError::MissingState)?
+                .start(
+                    asset.id(),
+                    world.resource::<Messages<AssetEvent<Gltf>>>(),
+                    &root,
+                    &recursive,
+                )?;
+            state.asset = asset;
+        }
         let Some((root, _direct, recursive)) = server.get_load_states(state.asset.id()) else {
             return Ok(());
         };
+        if let Some(DesktopNativeHostEnumAssetReload::Loading(reload)) = &mut state.asset_reload {
+            if !reload.observe(
+                state.asset.id(),
+                world.resource::<Messages<AssetEvent<Gltf>>>(),
+                &root,
+                &recursive,
+            )? {
+                return Ok(());
+            }
+            state.asset_reload = None;
+        }
         if let Some(error) = Self::asset_failure(&root, &recursive) {
             return Err(DesktopNativeHostError::AssetLoad(error));
         }
@@ -923,10 +1235,11 @@ impl DesktopNativeHost {
         let mut renderer = SceneRenderer::spawn(world, templates, viewport, state.camera)?;
         let snapshot = state
             .presentation
-            .snapshot()
+            .board_snapshot()
             .ok_or(DesktopNativeHostError::MissingState)?;
-        let position = BoardPosition::from_fen(snapshot.board().fen(), snapshot.board().variant())?;
+        let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
         renderer.apply_position(world, &position)?;
+        state.rendered_board = Some(snapshot.clone());
         world.insert_resource(renderer);
         Ok(())
     }
@@ -960,6 +1273,18 @@ impl DesktopNativeHost {
         if !state.ready {
             world.insert_resource(WinitSettings::continuous());
         }
+        if let Some(snapshot) = state.presentation.board_snapshot()
+            && !state.rendered_board.as_ref().is_some_and(|previous| {
+                previous.fen() == snapshot.fen() && previous.variant() == snapshot.variant()
+            })
+        {
+            let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
+            renderer.apply_position(world, &position)?;
+            state.rendered_board = Some(snapshot.clone());
+        }
+        if state.ready {
+            return Ok(());
+        }
         let camera_changed = state.pending_camera.is_some();
         if let Some(camera) = state.pending_camera.take() {
             state.camera = camera;
@@ -982,6 +1307,7 @@ impl DesktopNativeHost {
             state.ready = true;
             state.readiness = None;
             state.failure = None;
+            state.fault_received_at = None;
             Self::set_window_title(world, Self::TITLE);
             #[cfg(target_os = "macos")]
             Self::set_native_recovery_enabled(world, false);
@@ -1062,6 +1388,15 @@ impl DesktopNativeHost {
             state
                 .presentation
                 .show(&mut ui, &state.services.port, scene.as_ref(), &mut picker)?;
+        if state.presentation.take_confirmed_quit_request()
+            && state.quit == DesktopNativeHostEnumQuit::Idle
+        {
+            state.quit = DesktopNativeHostEnumQuit::Requested;
+            state.services.port.rearm_wake()?;
+        }
+        if state.quit != DesktopNativeHostEnumQuit::Idle {
+            return Ok(());
+        }
         if let Some(viewport) = frame.viewport()
             && renderer.is_some_and(|renderer| renderer.viewport() != viewport)
         {
@@ -1072,13 +1407,10 @@ impl DesktopNativeHost {
             context.request_repaint();
         }
         if state.ready && (state.pending_view.is_some() || state.pending_camera.is_some()) {
-            let generation = {
-                let Some(mut phase) =
-                    Self::capacity_phase(&state.services.capacity, &state.services.port)?
-                else {
-                    return Ok(());
-                };
-                phase.request_preparation()?
+            let Some(generation) =
+                Self::request_geometry_preparation(&state.services.capacity, &state.services.port)?
+            else {
+                return Ok(());
             };
             state.generation = generation;
             state.ready = false;
@@ -1090,6 +1422,20 @@ impl DesktopNativeHost {
             context.request_repaint();
         }
         Ok(())
+    }
+
+    fn request_geometry_preparation(
+        capacity: &Mutex<CapacityPhase>,
+        port: &DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
+    ) -> Result<Option<CapacityPhaseGeneration>, DesktopNativeHostError> {
+        let Some(mut phase) = Self::capacity_phase(capacity, port)? else {
+            return Ok(None);
+        };
+        if phase.state() != CapacityPhaseEnumState::Steady {
+            port.rearm_wake()?;
+            return Ok(None);
+        }
+        Ok(Some(phase.request_preparation()?))
     }
 
     fn is_preparing(state: &DesktopNativeHostState) -> Result<bool, DesktopNativeHostError> {
@@ -1260,9 +1606,9 @@ impl DesktopNativeHost {
             DesktopNativeHostError::Surface(_) | DesktopNativeHostError::IncompatibleSurface => {
                 DesktopNativeRecoveryEnumStage::Surface
             }
-            DesktopNativeHostError::AssetLoad(_) | DesktopNativeHostError::Assets(_) => {
-                DesktopNativeRecoveryEnumStage::Assets
-            }
+            DesktopNativeHostError::AssetLoad(_)
+            | DesktopNativeHostError::AssetRetryIdentity
+            | DesktopNativeHostError::Assets(_) => DesktopNativeRecoveryEnumStage::Assets,
             DesktopNativeHostError::ResourcePath(_)
             | DesktopNativeHostError::CapacityBusy
             | DesktopNativeHostError::CapacityPoisoned
@@ -1304,6 +1650,7 @@ impl DesktopNativeHost {
             state.recovery = None;
             state.replacement = None;
             state.failure = None;
+            state.fault_received_at = None;
         }
         if state.failure.is_none() {
             eprintln!("Native host failure: {error}");
@@ -1321,11 +1668,22 @@ impl DesktopNativeHost {
         world: &mut World,
         state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
-        if state.recovery.is_some() {
+        if state.quit != DesktopNativeHostEnumQuit::Idle {
             return Ok(());
         }
-        let Some(error) = state.failure.as_ref() else {
+        if state.recovery.is_some() || state.graphics_drain.is_some() {
             return Ok(());
+        }
+        if state.failure.is_none() {
+            return Ok(());
+        }
+        let received_at = match state.fault_received_at {
+            Some(received_at) => received_at,
+            None => {
+                let received_at = state.services.port.now()?;
+                state.fault_received_at = Some(received_at);
+                received_at
+            }
         };
         Self::set_window_title(world, Self::RECOVERY_TITLE);
         #[cfg(target_os = "macos")]
@@ -1341,21 +1699,45 @@ impl DesktopNativeHost {
         state.generation = generation;
         state.ready = false;
         state.interruption_announced = false;
-        state.recovery = Some(DesktopNativeRecovery::new(Self::failure(error), generation));
-        state
-            .services
-            .events
-            .send_replace(DesktopNativeHostEvent::PreparationRequested { generation });
         if let Some(mut renderer) = world.remove_resource::<SceneRenderer>() {
             let outcome = renderer.fail(world);
             world.insert_resource(renderer);
             outcome?;
         }
-        world.insert_resource(WinitSettings {
-            focused_mode: UpdateMode::reactive_low_power(Duration::MAX),
-            unfocused_mode: UpdateMode::reactive_low_power(Duration::MAX),
-        });
+        state.graphics_drain = Some(DesktopNativeHostGraphicsDrain::new(generation, received_at));
+        world.insert_resource(WinitSettings::continuous());
+        state.services.port.rearm_wake()?;
         Ok(())
+    }
+
+    fn poll_graphics_handoff(
+        world: &mut World,
+        state: &mut DesktopNativeHostState,
+    ) -> Result<(), DesktopNativeHostError> {
+        let drain = state
+            .graphics_drain
+            .as_mut()
+            .ok_or(DesktopNativeHostError::MissingState)?;
+        if let Some(event) = drain.take_stopped_event() {
+            state.services.events.send_replace(event);
+            world.insert_resource(WinitSettings {
+                focused_mode: UpdateMode::reactive_low_power(Duration::MAX),
+                unfocused_mode: UpdateMode::reactive_low_power(Duration::MAX),
+            });
+        }
+        let Some(generation) =
+            drain.fresh_preparation(&state.services.capacity, &state.services.port)?
+        else {
+            return Ok(());
+        };
+        let error = state
+            .failure
+            .as_ref()
+            .ok_or(DesktopNativeHostError::MissingState)?;
+        state.generation = generation;
+        state.recovery = Some(DesktopNativeRecovery::new(Self::failure(error), generation));
+        state.graphics_drain = None;
+        Self::recover(world, state)
     }
 
     fn recover(
@@ -1395,21 +1777,8 @@ impl DesktopNativeHost {
                 });
             }
             DesktopNativeRecoveryEnumAction::SafeQuit => {
-                if state.quit.is_none() {
-                    let request = state
-                        .services
-                        .port
-                        .request(DesktopCommand::new(DesktopEnumCommand::Quit, None))?;
-                    let receipt = match state.services.port.try_submit(&request) {
-                        Ok(receipt) => Some(receipt),
-                        Err(DesktopApplicationError::Busy) => {
-                            state.services.port.rearm_wake()?;
-                            None
-                        }
-                        Err(error) => return Err(error.into()),
-                    };
-                    state.quit = Some((request, receipt));
-                }
+                state.quit = DesktopNativeHostEnumQuit::Requested;
+                state.services.port.rearm_wake()?;
             }
             DesktopNativeRecoveryEnumAction::Retry => {
                 if state.replacement.is_none() {
@@ -1433,11 +1802,16 @@ impl DesktopNativeHost {
                         };
                     state.replacement = Some(replacement);
                     state.readiness = Some(readiness);
-                    if let Some(mut renderer) = world.remove_resource::<SceneRenderer>() {
-                        renderer.begin_retry()?;
-                        renderer.request_frame(world)?;
-                        world.insert_resource(renderer);
+                    if let Some(renderer) = world.remove_resource::<SceneRenderer>() {
+                        renderer.despawn(world)?;
                     }
+                    world.remove_resource::<DesktopNativeHostRenderProbe>();
+                    state.rendered_board = None;
+                    state.fonts_initialized = false;
+                    state.asset_reload = Some(DesktopNativeHostEnumAssetReload::retire(
+                        &mut state.asset,
+                        state.asset_reload.take(),
+                    ));
                     world.insert_resource(WinitSettings::continuous());
                     world
                         .get_resource::<RenderDevice>()
@@ -1492,25 +1866,32 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use bevy::asset::{AssetLoadError, Handle, LoadState, RecursiveDependencyLoadState};
+    use bevy::asset::{
+        AssetEvent, AssetLoadError, Handle, LoadState, RecursiveDependencyLoadState,
+    };
+    use bevy::ecs::message::Messages;
+    use bevy::gltf::Gltf;
     use bevy::prelude::{ButtonInput, KeyCode};
     use bevy::shader::{Shader, ShaderCacheError};
 
     use crate::capacity::budget::CapacityBudget;
-    use crate::capacity::phase::CapacityPhase;
+    use crate::capacity::phase::{CapacityPhase, CapacityPhaseEnumState, CapacityPhaseError};
+    use crate::clock::duration::ClockInstant;
     use crate::clock::time_provider::ClockTimeProviderMonotonic;
     use crate::desktop::application::{DesktopApplication, DesktopApplicationPort};
     use crate::desktop::native::dialogs::DesktopNativeDialogsError;
     use crate::desktop::native::event_loop::DesktopNativeEventLoopWake;
     use crate::desktop::native::host::{
-        DesktopNativeHost, DesktopNativeHostError, DesktopNativeHostReadiness,
-        DesktopNativeHostRenderProbe,
+        DesktopNativeHost, DesktopNativeHostAssetReload, DesktopNativeHostEnumTeardown,
+        DesktopNativeHostError, DesktopNativeHostEvent, DesktopNativeHostGraphicsDrain,
+        DesktopNativeHostReadiness, DesktopNativeHostRenderProbe,
     };
 
     struct DesktopNativeHostFixture {
         wake: Arc<DesktopNativeEventLoopWake>,
         port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
         capacity: Mutex<CapacityPhase>,
+        budget: CapacityBudget,
     }
 
     impl DesktopNativeHostFixture {
@@ -1522,10 +1903,12 @@ mod tests {
             );
             let workers = NonZeroUsize::new(CapacityPhase::MINIMUM_WORKERS)
                 .ok_or("native capacity minimum is zero")?;
+            let budget = CapacityBudget::new(workers)?;
             Ok(Self {
                 wake,
                 port: application.port(),
-                capacity: Mutex::new(CapacityPhase::new(CapacityBudget::new(workers)?)?),
+                capacity: Mutex::new(CapacityPhase::new(budget.clone())?),
+                budget,
             })
         }
 
@@ -1578,6 +1961,218 @@ mod tests {
             Some(true)
         );
         assert!(!fixture.wake.is_pending());
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_geometry_waits_for_framework_ready_acknowledgement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = DesktopNativeHostFixture::new()?;
+        let generation = {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            let generation = phase.generation().ok_or("missing initial preparation")?;
+            phase.acknowledge_searches_stopped(generation)?;
+            phase.try_enter_preparation(generation)?;
+            generation
+        };
+        assert_eq!(
+            DesktopNativeHost::request_geometry_preparation(&fixture.capacity, &fixture.port)?,
+            None
+        );
+        assert!(fixture.wake.is_pending());
+        {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            assert_eq!(phase.state(), CapacityPhaseEnumState::Preparing);
+            assert_eq!(phase.generation(), Some(generation));
+            phase.complete_preparation(generation)?;
+        }
+        fixture.acknowledge_wake();
+        let next =
+            DesktopNativeHost::request_geometry_preparation(&fixture.capacity, &fixture.port)?
+                .ok_or("geometry preparation was not admitted after acknowledgement")?;
+        assert_ne!(next, generation);
+        let phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+            .ok_or("native capacity unexpectedly unavailable")?;
+        assert_eq!(phase.state(), CapacityPhaseEnumState::Quiescing);
+        assert_eq!(phase.generation(), Some(next));
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_teardown_retains_preparation_until_a_completed_render_frame()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = DesktopNativeHostFixture::new()?;
+        let workers = {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            let generation = phase.generation().ok_or("missing initial preparation")?;
+            phase.acknowledge_searches_stopped(generation)?;
+            phase.try_enter_preparation(generation)?;
+            phase.workload_workers()
+        };
+        let mut teardown = DesktopNativeHostEnumTeardown::Active;
+        assert!(teardown.begin(&fixture.capacity, &fixture.port)?);
+        assert!(!teardown.try_admit(&fixture.capacity, &fixture.port)?);
+        {
+            let phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            assert_eq!(phase.state(), CapacityPhaseEnumState::Draining);
+            assert_eq!(phase.withheld_workload_workers(), workers);
+            assert!(fixture.budget.try_lease(workers).is_err());
+        }
+        teardown.observe_completed_frame();
+        assert!(teardown.try_admit(&fixture.capacity, &fixture.port)?);
+        assert!(teardown.try_admit(&fixture.capacity, &fixture.port)?);
+        {
+            let phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            assert_eq!(phase.state(), CapacityPhaseEnumState::Teardown);
+            assert_eq!(phase.withheld_workload_workers(), 0);
+            assert!(phase.try_lease_workload(workers).is_err());
+        }
+        assert_eq!(fixture.budget.try_lease(workers)?.workers(), workers);
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_startup_quit_reopens_executor_admission_after_observed_stop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = DesktopNativeHostFixture::new()?;
+        let mut teardown = DesktopNativeHostEnumTeardown::Active;
+        assert!(teardown.begin(&fixture.capacity, &fixture.port)?);
+        assert!(!teardown.try_admit(&fixture.capacity, &fixture.port)?);
+        {
+            let phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            assert_eq!(phase.state(), CapacityPhaseEnumState::Interrupted);
+            assert!(fixture.budget.try_lease(1).is_err());
+        }
+        teardown.observe_completed_frame();
+        assert!(teardown.try_admit(&fixture.capacity, &fixture.port)?);
+        assert_eq!(fixture.budget.try_lease(1)?.workers(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_terminal_drain_retires_only_its_own_preparation_generation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = DesktopNativeHostFixture::new()?;
+        let (previous, current) = {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            let previous = phase.generation().ok_or("missing initial preparation")?;
+            phase.acknowledge_searches_stopped(previous)?;
+            phase.try_enter_preparation(previous)?;
+            phase.complete_preparation(previous)?;
+            let current = phase.request_preparation()?;
+            phase.acknowledge_searches_stopped(current)?;
+            phase.try_enter_preparation(current)?;
+            (previous, current)
+        };
+        let mut teardown = DesktopNativeHostEnumTeardown::Active;
+        assert!(teardown.begin(&fixture.capacity, &fixture.port)?);
+        {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            assert!(!phase.accepts_preparation_event(current)?);
+            assert!(matches!(
+                phase.accepts_preparation_event(previous),
+                Err(CapacityPhaseError::StaleGeneration { expected: Some(expected), actual })
+                    if expected == current && actual == previous
+            ));
+            assert!(phase.request_preparation().is_err());
+            assert_eq!(phase.state(), CapacityPhaseEnumState::Draining);
+            assert_eq!(fixture.budget.available(), 0);
+        }
+        teardown.observe_completed_frame();
+        assert!(teardown.try_admit(&fixture.capacity, &fixture.port)?);
+        let phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+            .ok_or("native capacity unexpectedly unavailable")?;
+        assert!(!phase.accepts_preparation_event(current)?);
+        assert!(matches!(
+            phase.accepts_preparation_event(previous),
+            Err(CapacityPhaseError::StaleGeneration { .. })
+        ));
+        assert_eq!(phase.state(), CapacityPhaseEnumState::Teardown);
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_terminal_quiescence_cannot_request_recovery_before_observed_teardown()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = DesktopNativeHostFixture::new()?;
+        let mut teardown = DesktopNativeHostEnumTeardown::Active;
+        assert!(teardown.begin(&fixture.capacity, &fixture.port)?);
+        let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+            .ok_or("native capacity unexpectedly unavailable")?;
+        assert_eq!(phase.state(), CapacityPhaseEnumState::Interrupted);
+        assert!(phase.request_preparation().is_err());
+        assert!(fixture.budget.try_lease(1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_graphics_recovery_requires_observed_drain_and_a_fresh_preparation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = DesktopNativeHostFixture::new()?;
+        let generation = {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            let generation = phase.generation().ok_or("missing initial preparation")?;
+            phase.acknowledge_searches_stopped(generation)?;
+            phase.try_enter_preparation(generation)?;
+            generation
+        };
+        let received_at = ClockInstant::from_nanos(47_000);
+        let mut drain = DesktopNativeHostGraphicsDrain::new(generation, received_at);
+        assert_eq!(drain.take_stopped_event(), None);
+        assert_eq!(
+            drain.fresh_preparation(&fixture.capacity, &fixture.port)?,
+            None
+        );
+        drain.observe_completed_frame();
+        assert_eq!(
+            drain.take_stopped_event(),
+            Some(DesktopNativeHostEvent::GraphicsPreparationStopped {
+                generation,
+                received_at,
+            })
+        );
+        assert_eq!(drain.take_stopped_event(), None);
+        assert_eq!(
+            drain.fresh_preparation(&fixture.capacity, &fixture.port)?,
+            None
+        );
+        {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            phase.interrupt_preparation(
+                generation,
+                crate::capacity::phase::CapacityPhaseEnumInterruption::Failed,
+            )?;
+            phase.acknowledge_preparation_stopped(generation)?;
+            phase.open_interrupted_admission()?;
+        }
+        assert_eq!(
+            drain.fresh_preparation(&fixture.capacity, &fixture.port)?,
+            None
+        );
+        let next = {
+            let mut phase = DesktopNativeHost::capacity_phase(&fixture.capacity, &fixture.port)?
+                .ok_or("native capacity unexpectedly unavailable")?;
+            assert_eq!(phase.state(), CapacityPhaseEnumState::Steady);
+            let next = phase.request_preparation()?;
+            phase.acknowledge_searches_stopped(next)?;
+            phase.try_enter_preparation(next)?;
+            next
+        };
+        assert_ne!(next, generation);
+        assert_eq!(
+            drain.fresh_preparation(&fixture.capacity, &fixture.port)?,
+            Some(next)
+        );
         Ok(())
     }
 
@@ -1647,6 +2242,170 @@ mod tests {
             )
             .is_none()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_asset_retry_requires_a_new_identity_and_ignores_old_completion_messages()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut asset = Handle::<Gltf>::Uuid(uuid::Uuid::from_u128(11), std::marker::PhantomData);
+        let previous = asset.id();
+        let fresh = Handle::<Gltf>::Uuid(uuid::Uuid::from_u128(12), std::marker::PhantomData).id();
+        let mut retry = crate::desktop::native::host::DesktopNativeHostEnumAssetReload::retire(
+            &mut asset, None,
+        );
+        let mut events = Messages::default();
+        assert!(matches!(
+            retry.start(
+                previous,
+                &events,
+                &LoadState::Loaded,
+                &RecursiveDependencyLoadState::Loaded
+            ),
+            Err(DesktopNativeHostError::AssetRetryIdentity)
+        ));
+        retry = crate::desktop::native::host::DesktopNativeHostEnumAssetReload::retire(
+            &mut asset,
+            Some(retry),
+        );
+        assert!(matches!(
+            retry.start(
+                previous,
+                &events,
+                &LoadState::Loaded,
+                &RecursiveDependencyLoadState::Loaded
+            ),
+            Err(DesktopNativeHostError::AssetRetryIdentity)
+        ));
+        retry.start(
+            fresh,
+            &events,
+            &LoadState::Loading,
+            &RecursiveDependencyLoadState::Loading,
+        )?;
+        let crate::desktop::native::host::DesktopNativeHostEnumAssetReload::Loading(ref mut reload) =
+            retry
+        else {
+            return Err("asset retry did not own its fresh load".into());
+        };
+        events.write(AssetEvent::LoadedWithDependencies { id: previous });
+        assert!(!reload.observe(
+            fresh,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded
+        )?);
+        events.write(AssetEvent::LoadedWithDependencies { id: fresh });
+        assert!(reload.observe(
+            fresh,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_asset_retry_waits_for_a_fresh_root_and_all_repaired_dependencies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = Handle::<Gltf>::default().id();
+        let other = Handle::<Gltf>::Uuid(uuid::Uuid::from_u128(1), std::marker::PhantomData).id();
+        let failure = Arc::new(AssetLoadError::EmptyPath("".into()));
+        let failed = RecursiveDependencyLoadState::Failed(Arc::clone(&failure));
+        let mut events = Messages::default();
+        events.write(AssetEvent::LoadedWithDependencies { id });
+        let mut reload = DesktopNativeHostAssetReload::new(&events, &LoadState::Loaded, &failed);
+        assert!(!reload.observe(id, &events, &LoadState::Loaded, &failed)?);
+        assert!(!reload.observe(
+            id,
+            &events,
+            &LoadState::Loading,
+            &RecursiveDependencyLoadState::Loading
+        )?);
+        events.write(AssetEvent::Modified { id: other });
+        assert!(!reload.observe(
+            id,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded
+        )?);
+        events.write(AssetEvent::Modified { id });
+        assert!(!reload.observe(
+            id,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loading
+        )?);
+        assert!(reload.observe(
+            id,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_asset_retry_preserves_new_root_and_dependency_failures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = Handle::<Gltf>::default().id();
+        let previous = Arc::new(AssetLoadError::EmptyPath("".into()));
+        let current = Arc::new(AssetLoadError::EmptyPath("".into()));
+        for recursive in [false, true] {
+            let events = Messages::default();
+            let mut reload = DesktopNativeHostAssetReload::new(
+                &events,
+                &LoadState::Failed(Arc::clone(&previous)),
+                &RecursiveDependencyLoadState::Failed(Arc::clone(&previous)),
+            );
+            assert!(!reload.observe(
+                id,
+                &events,
+                &LoadState::Failed(Arc::clone(&previous)),
+                &RecursiveDependencyLoadState::Failed(Arc::clone(&previous))
+            )?);
+            let (root, dependencies) = if recursive {
+                (
+                    LoadState::Loaded,
+                    RecursiveDependencyLoadState::Failed(Arc::clone(&current)),
+                )
+            } else {
+                (
+                    LoadState::Failed(Arc::clone(&current)),
+                    RecursiveDependencyLoadState::Loading,
+                )
+            };
+            assert!(matches!(
+                reload.observe(id, &events, &root, &dependencies),
+                Err(DesktopNativeHostError::AssetLoad(error)) if Arc::ptr_eq(&error, &current)
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_host_asset_retry_revalidates_previously_loaded_but_invalid_templates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = Handle::<Gltf>::default().id();
+        let mut events = Messages::default();
+        let mut reload = DesktopNativeHostAssetReload::new(
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded,
+        );
+        assert!(!reload.observe(
+            id,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded
+        )?);
+        events.write(AssetEvent::Added { id });
+        assert!(reload.observe(
+            id,
+            &events,
+            &LoadState::Loaded,
+            &RecursiveDependencyLoadState::Loaded
+        )?);
         Ok(())
     }
 

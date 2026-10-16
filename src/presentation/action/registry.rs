@@ -4,6 +4,7 @@ use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessag
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PresentationActionEnumId {
+    Subscribe,
     Refresh,
     SelectFile,
     ConfirmQuit,
@@ -12,6 +13,7 @@ pub enum PresentationActionEnumId {
 impl PresentationActionEnumId {
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Subscribe => "Subscribe to state",
             Self::Refresh => "Refresh state",
             Self::SelectFile => "Select local file",
             Self::ConfirmQuit => "Confirm quit",
@@ -20,6 +22,7 @@ impl PresentationActionEnumId {
 
     pub fn command(self, file_owner: DesktopMessagesEntityId) -> DesktopCommand {
         let (operation, revision) = match self {
+            Self::Subscribe => (DesktopEnumCommand::StreamSubscribe, None),
             Self::Refresh => (DesktopEnumCommand::Bootstrap, None),
             Self::SelectFile => (
                 DesktopEnumCommand::FileSelect {
@@ -37,7 +40,8 @@ impl PresentationActionEnumId {
 pub struct PresentationActionRegistry;
 
 impl PresentationActionRegistry {
-    const ACTIONS: [PresentationActionEnumId; 3] = [
+    const ACTIONS: [PresentationActionEnumId; 4] = [
+        PresentationActionEnumId::Subscribe,
         PresentationActionEnumId::Refresh,
         PresentationActionEnumId::SelectFile,
         PresentationActionEnumId::ConfirmQuit,
