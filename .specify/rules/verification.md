@@ -33,7 +33,7 @@
 - `make verify` is the canonical final command. It runs formatters before
   checkers, then Clippy, tests, and an optimized build. Individual workflows are
   `make format`, `make lint`, `make tests`, `make build`, and `make profile-build`.
-  `make run` starts the optimized application; `ARGS` passes application arguments.
+  `make run` starts a debug development build; `ARGS` passes application arguments.
   Read their actual command definitions in `Makefile`; do not duplicate them in
   documentation or hooks.
 - Complete related edits first, then run final gates sequentially once. Repeat

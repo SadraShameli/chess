@@ -44,7 +44,7 @@ make native-tests
 ```
 
 `make verify` owns the ordered final checks. Native commands use Cargo/Rust
-instead of frontend toolchains. `make run` launches the optimized app; no empty
+instead of frontend toolchains. `make run` launches a debug development build; no empty
 argument separator is appended without ARGS. The actual app argument surface
 must be documented when implemented, including the above help smoke check.
 The native test command must start the production Bevy renderer on the OS main
