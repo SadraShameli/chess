@@ -3,13 +3,34 @@
 Last reconciled: 2026-10-16. Integration branch:
 `001-reckless-desktop-chess`. Pre-recovery pushed checkpoint: `c808c0e`.
 
+## Current inventory after cleanup
+
+The owner requested removal of the accumulated branches and worktrees. The only
+remaining checkout is `/Users/sadrashameli/Personal/chess`. Keep local and remote
+`001-reckless-desktop-chess` and the default `release` branch.
+
+Ten redundant worktrees and twelve temporary local branches were removed after
+their snapshots were verified. The three remote `t3/` delivery branches are
+removed as part of publishing this cleanup. Their shared `a5ff7ae` history is
+merged into the feature branch; its source tree matches `cc9ca3e` exactly.
+
+The local recovery archive is
+`.git/worktree-archives/20261016T144224Z/`. It contains a verified Git bundle,
+all ten source snapshots, staged and unstaged patches, original statuses, file
+checksums and restoration instructions. Source snapshots include untracked and
+ignored files except reproducible `target`, `node_modules` and `.venv` caches.
+All source files and symlinks were checked again immediately before removal.
+
+The following ownership tables preserve the completed assignments. Their old
+checkout paths and temporary branch names are archived history.
+
 The coordinator owns registrations, integration, verification, task markers,
 commits and pushes. Agent branches deliver explicit-path staged binary patches.
 Agent delivery, patch integration, passing checks and task completion are tracked
 as separate states. Only the coordinator runs Cargo, using focused debug checks
 during development.
 
-## Active ownership
+## Archived completed ownership
 
 Active implementation worktrees are managed by T3 Code. Preserved legacy
 worktree names below are relative to `/Users/sadrashameli/Personal/chess-worktrees/`.
@@ -27,9 +48,9 @@ reviews named `plan_review`, `selection_review` and `story_coverage` completed
 reconciliation without changing source or running Cargo. Their three follow-up
 implementation tasks have completed and their patches are integrated. Each used
 the same fixed snapshot of the assembled uncommitted implementation. The
-coordinator owns integration and Cargo. There are eleven Git worktrees: this
-checkout, three delivered implementation worktrees and seven preserved legacy
-worktrees. None of the three delegated implementation tasks is still running.
+coordinator owns integration and Cargo. Before cleanup there were eleven Git
+worktrees: this checkout, three delivered implementation worktrees and seven
+legacy worktrees. Only this checkout remains. None of the three delegated implementation tasks is still running.
 Historical deliveries do not prove that an agent is still running.
 
 ### Durable delegated task identities
@@ -78,7 +99,7 @@ The publication check additionally passes all 72 engine and 28 storage tests.
 Together with the completed recovery checks, this is 569 debug tests. Optimized,
 GPU-recovery and other-platform acceptance remain outside these checks.
 
-## Inactive worktrees
+## Archived legacy worktrees
 
 | Worktree | Branch | Recorded base | State |
 | --- | --- | --- | --- |
@@ -97,7 +118,15 @@ older alternatives, removed web-shell files and generated artifacts. Package and
 activation work is preserved in `75d219f`, `9345071` and `f7c3901`; historical
 board/bootstrap work is preserved in `945c863` and its obsolete web shell was
 deliberately removed in `cf03da8`. No uniquely unintegrated useful implementation
-was found. No inactive worktree has been reset or deleted.
+was found. Following the owner's cleanup request, all legacy worktrees were
+archived, verified and removed. Their branch heads were already ancestors of the
+feature branch, with no unique committed changes.
+
+The three subsequent acceptance reviews used the shared main checkout and
+created no worktrees or branches. Their completed reports are retained in
+`acceptance-reviews.json` in the recovery archive. Remaining implementation work
+includes adjudication Retry dispatch, premove notices and per-move save coverage;
+the feature task list remains authoritative.
 
 ## Pending integration queue
 
