@@ -1,0 +1,25 @@
+@reference "@/theme/tokens.css";
+
+.chess-board {
+  @apply flex h-full min-h-0 w-full flex-col;
+
+  &__viewport {
+    @apply relative min-h-0 w-full flex-1;
+  }
+
+  &__canvas {
+    @apply block h-full w-full;
+  }
+
+  &__notice {
+    @apply absolute inset-0 m-0 grid content-center gap-3 rounded-lg bg-card p-6 text-center text-card-foreground;
+  }
+
+  &__status {
+    @apply mt-3 mb-0 text-sm text-foreground;
+  }
+
+  &__instructions {
+    @apply mt-1 mb-0 text-xs text-muted-foreground;
+  }
+}
