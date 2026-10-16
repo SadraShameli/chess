@@ -112,3 +112,64 @@ dependencies. Transitive rfd presence proves no native integration. The planned
 T029 records preservation and reuse boundaries only. Native compatibility,
 production-host integration, data migration execution, frame/CPU measurements
 and Windows/macOS/X11/Wayland acceptance remain subsequent work.
+
+## T030: Native dependency compatibility
+
+The installed standalone compiler is Rust 1.99.0 and Cargo 1.99.0, matching the
+repository pin. Rustup is unavailable; no compiler was installed or replaced.
+The resolved lockfile has 848 packages including this application, comprising
+847 external packages. Registry checksums remain pinned in `Cargo.lock`.
+
+| Selected family | Resolved version | Declared license |
+| --- | --- | --- |
+| Bevy | 0.20.0 | MIT OR Apache-2.0 |
+| bevy_egui | 0.43.1 | MIT |
+| egui | 0.36.2 | MIT OR Apache-2.0 |
+| wgpu | 30.0.1 | MIT OR Apache-2.0 |
+| AccessKit | 0.24.1 | MIT OR Apache-2.0 |
+| winit | 0.30.13 | Apache-2.0 |
+| directories | 6.0.0 | MIT OR Apache-2.0 |
+| interprocess | 2.4.5 | 0BSD OR Apache-2.0 |
+| rfd | 0.17.2 | MIT |
+| winsafe, Windows target only | 0.0.29 | MIT |
+| widestring, Windows target only | 1.0.2 | MIT OR Apache-2.0 |
+
+Bevy 0.20.0 requires Rust 1.97.1 and bevy_egui 0.43.1 requires Rust 1.95.0.
+The plugin requires Bevy 0.20 and egui 0.36. The resolved Bevy/plugin graph has
+one matching egui, wgpu, AccessKit and winit family. Existing Tauri dependencies
+remain during migration, including their separate older rfd 0.16.0.
+
+Bevy defaults are disabled. The explicit feature selection includes native
+windows/input, scene/PBR/glTF, mesh picking, native accessibility, X11/Wayland,
+async execution and multithreading. The egui adapter enables rendering,
+AccessKit and clipboard support without browser URL handling, a second host,
+or forced graphics backends. Tokio explicitly enables its owned multithreaded
+runtime and networking for application actors and local activation.
+
+Tagged source inspection verified offscreen image textures, named glTF nodes,
+`EguiContexts::ctx_mut`, `EguiPrimaryContextPass`, native reactive scheduling,
+task-pool options, `RenderErrorHandler`, `RenderErrorPolicy` and manual
+`RenderCreation`. The latter APIs still require implementation and exercised
+failure handling; their existence is not renderer-recovery evidence.
+
+The selected rfd release has no Tokio/async-std feature. Its Linux portal backend
+uses blocking native work and an internal thread for the async API. Awaiting that
+API requires no additional Tokio runtime. Dropping its future does not prove
+dialog cancellation or worker completion. T038 must establish bounded admission,
+observed completion and the actual cancellation policy at the adapter boundary.
+
+Executed on the current macOS ARM64 host:
+
+- `cargo generate-lockfile` resolved the selected stable graph.
+- `cargo check --locked --all-targets --all-features` passed in 30.65 seconds
+  with no compiler warnings. This compiles the retained shell and selected
+  native dependencies; it does not run a native egui application.
+- `make verify` passed with the selected graph: formatting, strict frontend
+  checks, all-target/all-feature Clippy, 53 Rust tests, 40 Chromium tests and
+  optimized frontend/all-target Rust builds. The Rust release build completed
+  in 1 minute 23 seconds. No warnings, failed tests or ignored tests occurred.
+
+Windows-only adapters, Linux native dependencies, OS accessibility, actual GPU
+initialization, installer behavior and production runtime integration remain
+unverified. Native harness compilation/execution is tracked separately by T031
+and the foundation gates.
