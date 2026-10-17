@@ -169,3 +169,16 @@ Planned, not started. Five reusable implementer agents `lane-a`..`lane-e`
 checkout coordinates and integrates by patch. Wave assignments are in
 [tasks](../tasks.md#phase-17-parallel-execution). Remove each worktree when its
 lane has no further assignment.
+
+### Ready queue (keep every lane busy; reassign on each report)
+
+| Lane | Now | Next | Then |
+| --- | --- | --- | --- |
+| a | T309 part 1 (non-library tests), BIGINT millis | T080 Syzygy (`src/engine/tablebase/`) | T072 protocol tests |
+| b | T316 library adoption deletion | T309 part 2 (library tests, drop rusqlite) | T308 enum columns |
+| c | T122 animation, reduced motion | T121 markings/toolbar | T123 render quality |
+| d | T151/T152 position editor | T153 draft lists | T154 analysis wiring |
+| e | T168 explorer | T162..T164 reports (new `0002_reports` migration) | T165..T167 opening index |
+
+T311 strum touches all of `src/`; schedule it alone once a natural sync
+point leaves every other lane on test-only work.
