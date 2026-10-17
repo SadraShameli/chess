@@ -1,55 +1,76 @@
-use rusqlite::Connection;
+use diesel::migration::{Migration, MigrationSource};
+use diesel::sql_types::Bool;
+use diesel::sqlite::Sqlite;
+use diesel::{QueryableByName, RunQueryDsl, SqliteConnection};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
 use crate::storage::document_store::StorageDocumentError;
 
-pub struct StorageMigration {
-    version: u32,
-    sql: String,
+#[derive(QueryableByName)]
+struct StorageMigrationTablePresence {
+    #[diesel(sql_type = Bool)]
+    present: bool,
 }
 
-impl StorageMigration {
-    pub fn new(version: u32, sql: String) -> Self {
-        Self { version, sql }
+pub struct StorageMigrationRunner;
+
+impl StorageMigrationRunner {
+    const EMBEDDED: EmbeddedMigrations = embed_migrations!("src/storage/migrations");
+
+    pub fn run_embedded(connection: &mut SqliteConnection) -> Result<(), StorageDocumentError> {
+        Self::run(connection, &Self::EMBEDDED)
     }
 
-    pub fn core() -> Vec<Self> {
-        vec![
-            Self::new(1, include_str!("migrations/0001_core.sql").into()),
-            Self::new(2, include_str!("migrations/0002_puzzles.sql").into()),
-            Self::new(3, include_str!("migrations/0003_library.sql").into()),
-            Self::new(4, include_str!("migrations/0004_editor.sql").into()),
-        ]
-    }
-
-    pub(super) fn apply(
-        connection: &mut Connection,
-        migrations: &[Self],
+    pub fn run<S: MigrationSource<Sqlite>>(
+        connection: &mut SqliteConnection,
+        source: &S,
     ) -> Result<(), StorageDocumentError> {
-        if migrations.is_empty() {
-            return Err(StorageDocumentError::InvalidMigrations);
-        }
-        for (index, migration) in migrations.iter().enumerate() {
-            if usize::try_from(migration.version)? != index + 1 {
-                return Err(StorageDocumentError::InvalidMigrations);
+        connection.immediate_transaction(|transaction| {
+            let migrations = source
+                .migrations()
+                .map_err(StorageDocumentError::Migration)?;
+            if !Self::has_migration_table(transaction)? && Self::has_user_tables(transaction)? {
+                return Err(StorageDocumentError::UnsupportedLegacyDatabase);
             }
-        }
-        let current: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        let latest = u32::try_from(migrations.len())?;
-        if current > latest {
-            return Err(StorageDocumentError::FutureSchema {
-                found: current,
-                supported: latest,
-            });
-        }
-        let transaction = connection.transaction()?;
-        for migration in migrations
-            .iter()
-            .filter(|migration| migration.version > current)
-        {
-            transaction.execute_batch(&migration.sql)?;
-            transaction.pragma_update(None, "user_version", migration.version)?;
-        }
-        transaction.commit()?;
-        Ok(())
+            let applied = transaction
+                .applied_migrations()
+                .map_err(StorageDocumentError::Migration)?;
+            for version in &applied {
+                if !migrations
+                    .iter()
+                    .any(|migration| migration.name().version() == *version)
+                {
+                    return Err(StorageDocumentError::FutureMigration {
+                        version: version.to_string(),
+                    });
+                }
+            }
+            let pending: Vec<Box<dyn Migration<Sqlite>>> = migrations
+                .into_iter()
+                .filter(|migration| !applied.contains(&migration.name().version()))
+                .collect();
+            transaction
+                .run_migrations(&pending)
+                .map_err(StorageDocumentError::Migration)?;
+            Ok(())
+        })
+    }
+
+    fn has_user_tables(connection: &mut SqliteConnection) -> Result<bool, StorageDocumentError> {
+        let presence = diesel::sql_query(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%') AS present",
+        )
+        .get_result::<StorageMigrationTablePresence>(connection)?;
+        Ok(presence.present)
+    }
+
+    fn has_migration_table(
+        connection: &mut SqliteConnection,
+    ) -> Result<bool, StorageDocumentError> {
+        let presence = diesel::sql_query(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '__diesel_schema_migrations') AS present",
+        )
+        .get_result::<StorageMigrationTablePresence>(connection)?;
+        Ok(presence.present)
     }
 }

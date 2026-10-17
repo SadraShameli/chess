@@ -1,7 +1,9 @@
 use std::num::{NonZeroU64, TryFromIntError};
 use std::sync::Arc;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use diesel::SqliteConnection;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Nullable, Text};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, oneshot};
@@ -16,6 +18,17 @@ use crate::puzzle::storage_repository::{PuzzleStorageRepository, PuzzleStorageWr
 use crate::storage::document_store::{
     StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
 };
+use crate::storage::schema::{
+    puzzle_attempts, puzzle_checkpoints, puzzle_collections, puzzle_events, puzzle_runs,
+};
+
+mod rows;
+
+use rows::{
+    StoragePuzzleGuardedAttemptRow, StoragePuzzleGuardedRunRow, StoragePuzzleInventoryRow,
+    StoragePuzzleNewAttempt, StoragePuzzleNewCheckpoint, StoragePuzzleNewCollection,
+    StoragePuzzleNewEvent, StoragePuzzleNewRun, StoragePuzzlePrefixRow, StoragePuzzleRunAdvance,
+};
 
 #[derive(Debug, Error)]
 pub enum StoragePuzzleError {
@@ -24,7 +37,7 @@ pub enum StoragePuzzleError {
     #[error(transparent)]
     Codec(#[from] PuzzlePersistenceError),
     #[error(transparent)]
-    Sqlite(#[from] rusqlite::Error),
+    Diesel(#[from] diesel::result::Error),
     #[error("The puzzle storage revision changed: expected {expected}, found {actual}")]
     Conflict { expected: u64, actual: u64 },
     #[error("The pinned puzzle collection or event prefix changed")]
@@ -122,17 +135,16 @@ impl StoragePuzzleRunMetadata {
         Ok(parsed)
     }
 
-    fn read(row: &rusqlite::Row<'_>) -> Result<Self, StoragePuzzleError> {
-        let id = PuzzleSessionId::new(Self::canonical_decimal(row.get(0)?)?);
-        let storage_revision =
-            PuzzlePersistenceStorageRevision::new(Self::canonical_decimal(row.get(1)?)?.get());
+    fn read(row: StoragePuzzleInventoryRow) -> Result<Self, StoragePuzzleError> {
+        let id = PuzzleSessionId::new(Self::canonical_decimal(row.run_id)?);
+        let storage_revision = PuzzlePersistenceStorageRevision::new(
+            Self::canonical_decimal(row.storage_revision)?.get(),
+        );
         let persisted_event_count =
-            usize::try_from(row.get::<_, i64>(2)?).map_err(|_error| StoragePuzzleError::Corrupt)?;
-        let has_collection: bool = row.get(3)?;
-        let has_checkpoint: bool = row.get(4)?;
+            usize::try_from(row.event_count).map_err(|_error| StoragePuzzleError::Corrupt)?;
         if persisted_event_count > PuzzlePersistenceCodec::MAX_EVENTS
-            || !has_collection
-            || !has_checkpoint
+            || !row.has_collection
+            || !row.has_checkpoint
         {
             return Err(StoragePuzzleError::Corrupt);
         }
@@ -224,35 +236,28 @@ impl PuzzleStorageRepository for StoragePuzzleRepository {
 
 struct StoragePuzzleStoredPrefix {
     revision: String,
-    count: i64,
+    count: i32,
     digest: Vec<u8>,
-    schema: u32,
-    journal_version: u32,
+    schema: i32,
+    journal_version: i32,
     journal_digest: Vec<u8>,
 }
 
 impl StoragePuzzleStoredPrefix {
-    fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
-        Ok(Self {
-            revision: row.get(0)?,
-            count: row.get(1)?,
-            digest: row.get(2)?,
-            schema: row.get(3)?,
-            journal_version: row.get(4)?,
-            journal_digest: row.get(5)?,
-        })
-    }
-
     fn validate(&self) -> Result<PuzzlePersistenceJournalProof, StoragePuzzleError> {
         let count = usize::try_from(self.count)?;
-        if self.schema != PuzzlePersistenceCodec::SCHEMA || self.digest.len() != 32 {
+        if u32::try_from(self.schema).ok() != Some(PuzzlePersistenceCodec::SCHEMA)
+            || self.digest.len() != 32
+        {
             return Err(StoragePuzzleError::Corrupt);
         }
         if count > PuzzlePersistenceCodec::MAX_EVENTS {
             return Err(PuzzlePersistenceError::Budget.into());
         }
-        let proof =
-            PuzzlePersistenceJournalProof::restore(self.journal_version, &self.journal_digest)?;
+        let proof = PuzzlePersistenceJournalProof::restore(
+            u32::try_from(self.journal_version)?,
+            &self.journal_digest,
+        )?;
         let initial = PuzzlePersistenceJournalProof::initial(
             self.digest
                 .as_slice()
@@ -266,33 +271,64 @@ impl StoragePuzzleStoredPrefix {
     }
 }
 
+impl From<StoragePuzzlePrefixRow> for StoragePuzzleStoredPrefix {
+    fn from(row: StoragePuzzlePrefixRow) -> Self {
+        Self {
+            revision: row.revision,
+            count: row.count,
+            digest: row.digest,
+            schema: row.schema,
+            journal_version: row.journal_version,
+            journal_digest: row.journal_digest,
+        }
+    }
+}
+
 struct StoragePuzzleStoredRun {
     prefix: StoragePuzzleStoredPrefix,
     collection: Option<String>,
     checkpoint: Option<String>,
 }
 
+impl From<StoragePuzzleGuardedRunRow> for StoragePuzzleStoredRun {
+    fn from(row: StoragePuzzleGuardedRunRow) -> Self {
+        Self {
+            prefix: StoragePuzzleStoredPrefix {
+                revision: row.revision,
+                count: row.count,
+                digest: row.digest,
+                schema: row.schema,
+                journal_version: row.journal_version,
+                journal_digest: row.journal_digest,
+            },
+            collection: row.collection,
+            checkpoint: row.checkpoint,
+        }
+    }
+}
+
 pub(super) struct StoragePuzzleTransaction;
 
 impl StoragePuzzleTransaction {
+    const EVENT_INSERT_CHUNK: usize = 1_000;
+
     pub(super) fn inventory(
-        connection: &Connection,
+        connection: &mut SqliteConnection,
         after: Option<PuzzleSessionId>,
         memory_reservation: OwnedSemaphorePermit,
     ) -> Result<StoragePuzzleRunPage, StoragePuzzleError> {
-        let mut statement = connection.prepare_cached(
-            "SELECT CASE WHEN length(CAST(r.run_id AS BLOB)) <= ?3 THEN r.run_id END, CASE WHEN length(CAST(r.storage_revision AS BLOB)) <= ?3 THEN r.storage_revision END, r.event_count, EXISTS(SELECT 1 FROM puzzle_collections c WHERE c.collection_id = r.collection_id), EXISTS(SELECT 1 FROM puzzle_checkpoints p WHERE p.run_id = r.run_id) FROM puzzle_runs r WHERE ?1 IS NULL OR (length(r.run_id), r.run_id COLLATE BINARY) > (length(?1), ?1 COLLATE BINARY) ORDER BY length(r.run_id), r.run_id COLLATE BINARY LIMIT ?2",
-        )?;
         let cursor = after.map(|id| id.value().get().to_string());
-        let mut rows = statement.query(params![
-            cursor,
-            i64::try_from(StoragePuzzleRepository::INVENTORY_PAGE_SIZE)?,
-            i64::try_from(StoragePuzzleRunMetadata::MAX_DECIMAL_BYTES)?,
-        ])?;
-        let mut entries = Vec::with_capacity(StoragePuzzleRepository::INVENTORY_PAGE_SIZE);
-        while let Some(row) = rows.next()? {
-            entries.push(StoragePuzzleRunMetadata::read(row)?);
-        }
+        let rows = diesel::sql_query(
+            "SELECT CASE WHEN length(CAST(r.run_id AS BLOB)) <= ?3 THEN r.run_id END AS run_id, CASE WHEN length(CAST(r.storage_revision AS BLOB)) <= ?3 THEN r.storage_revision END AS storage_revision, r.event_count AS event_count, EXISTS(SELECT 1 FROM puzzle_collections c WHERE c.collection_id = r.collection_id) AS has_collection, EXISTS(SELECT 1 FROM puzzle_checkpoints p WHERE p.run_id = r.run_id) AS has_checkpoint FROM puzzle_runs r WHERE ?1 IS NULL OR (length(r.run_id), r.run_id COLLATE BINARY) > (length(?1), ?1 COLLATE BINARY) ORDER BY length(r.run_id), r.run_id COLLATE BINARY LIMIT ?2",
+        )
+        .bind::<Nullable<Text>, _>(cursor)
+        .bind::<BigInt, _>(i64::try_from(StoragePuzzleRepository::INVENTORY_PAGE_SIZE)?)
+        .bind::<BigInt, _>(i64::try_from(StoragePuzzleRunMetadata::MAX_DECIMAL_BYTES)?)
+        .load::<StoragePuzzleInventoryRow>(connection)?;
+        let entries = rows
+            .into_iter()
+            .map(StoragePuzzleRunMetadata::read)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(StoragePuzzleRunPage {
             entries,
             _memory_reservation: memory_reservation,
@@ -300,77 +336,134 @@ impl StoragePuzzleTransaction {
     }
 
     pub(super) fn save(
-        connection: &mut Connection,
+        connection: &mut SqliteConnection,
         request: PuzzlePersistenceSaveRequest,
     ) -> Result<PuzzlePersistenceReceipt, StoragePuzzleError> {
         let snapshot = request.snapshot();
         let id = snapshot.context().session_id().value().get().to_string();
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let stored: Option<StoragePuzzleStoredPrefix> = transaction.query_row(
-            "SELECT r.storage_revision, r.event_count, c.digest, c.schema_version, r.journal_version, r.journal_digest FROM puzzle_runs r JOIN puzzle_collections c ON c.collection_id = r.collection_id WHERE r.run_id = ?1", [&id], StoragePuzzleStoredPrefix::read
-        ).optional()?;
-        let actual = stored
-            .as_ref()
-            .map(|prefix| prefix.revision.parse::<u64>())
-            .transpose()?
-            .unwrap_or(0);
-        let expected = request.expected_storage_revision().value();
-        if actual != expected {
-            return Err(StoragePuzzleError::Conflict { expected, actual });
-        }
-        let revision = actual
-            .checked_add(1)
-            .ok_or(StoragePuzzleError::RevisionOverflow)?;
-        match stored {
-            Some(prefix) => {
-                let proof = prefix.validate()?;
-                if actual == PuzzlePersistenceStorageRevision::INITIAL.value() {
-                    return Err(StoragePuzzleError::Corrupt);
+        let revision = connection.immediate_transaction(|connection| {
+            let stored: Option<StoragePuzzleStoredPrefix> = puzzle_runs::table
+                .inner_join(puzzle_collections::table)
+                .filter(puzzle_runs::run_id.eq(&id))
+                .select((
+                    puzzle_runs::storage_revision,
+                    puzzle_runs::event_count,
+                    puzzle_collections::digest,
+                    puzzle_collections::schema_version,
+                    puzzle_runs::journal_version,
+                    puzzle_runs::journal_digest,
+                ))
+                .first::<StoragePuzzlePrefixRow>(connection)
+                .optional()?
+                .map(StoragePuzzleStoredPrefix::from);
+            let actual = stored
+                .as_ref()
+                .map(|prefix| prefix.revision.parse::<u64>())
+                .transpose()?
+                .unwrap_or(0);
+            let expected = request.expected_storage_revision().value();
+            if actual != expected {
+                return Err(StoragePuzzleError::Conflict { expected, actual });
+            }
+            let revision = actual
+                .checked_add(1)
+                .ok_or(StoragePuzzleError::RevisionOverflow)?;
+            match stored {
+                Some(prefix) => {
+                    let proof = prefix.validate()?;
+                    if actual == PuzzlePersistenceStorageRevision::INITIAL.value() {
+                        return Err(StoragePuzzleError::Corrupt);
+                    }
+                    if prefix.digest.as_slice() != snapshot.collection_digest().as_slice()
+                        || usize::try_from(prefix.count)? != snapshot.base_event_count()
+                        || proof != snapshot.base_journal_proof()
+                    {
+                        return Err(StoragePuzzleError::CollectionConflict);
+                    }
                 }
-                if prefix.digest.as_slice() != snapshot.collection_digest().as_slice()
-                    || usize::try_from(prefix.count)? != snapshot.base_event_count()
-                    || proof != snapshot.base_journal_proof()
-                {
-                    return Err(StoragePuzzleError::CollectionConflict);
+                None => {
+                    if snapshot.base_event_count() != 0
+                        || snapshot.base_journal_proof()
+                            != PuzzlePersistenceJournalProof::initial(snapshot.collection_digest())
+                    {
+                        return Err(StoragePuzzleError::CollectionConflict);
+                    }
+                    diesel::insert_into(puzzle_collections::table)
+                        .values(&StoragePuzzleNewCollection {
+                            collection_id: &id,
+                            schema_version: i32::try_from(PuzzlePersistenceCodec::SCHEMA)?,
+                            digest: snapshot.collection_digest().as_slice(),
+                            body: snapshot.collection(),
+                        })
+                        .execute(connection)?;
+                    diesel::insert_into(puzzle_runs::table)
+                        .values(&StoragePuzzleNewRun {
+                            run_id: &id,
+                            collection_id: &id,
+                            storage_revision: "0",
+                            event_count: 0,
+                            journal_version: i32::try_from(PuzzlePersistenceJournalProof::VERSION)?,
+                            journal_digest: snapshot.base_journal_proof().bytes().as_slice(),
+                        })
+                        .execute(connection)?;
                 }
             }
-            None => {
-                if snapshot.base_event_count() != 0
-                    || snapshot.base_journal_proof()
-                        != PuzzlePersistenceJournalProof::initial(snapshot.collection_digest())
-                {
-                    return Err(StoragePuzzleError::CollectionConflict);
-                }
-                transaction.execute("INSERT INTO puzzle_collections (collection_id, schema_version, digest, body) VALUES (?1, ?2, ?3, ?4)", params![id, PuzzlePersistenceCodec::SCHEMA, snapshot.collection_digest(), snapshot.collection()])?;
-                transaction.execute("INSERT INTO puzzle_runs (run_id, collection_id, storage_revision, event_count, journal_version, journal_digest) VALUES (?1, ?1, '0', 0, ?2, ?3)", params![id, PuzzlePersistenceJournalProof::VERSION, snapshot.base_journal_proof().bytes()])?;
-            }
-        }
-        {
-            let mut insert = transaction.prepare_cached(
-                "INSERT INTO puzzle_events (run_id, ordinal, body) VALUES (?1, ?2, ?3)",
-            )?;
+            let mut rows = Vec::with_capacity(Self::EVENT_INSERT_CHUNK);
             for (offset, event) in snapshot.events().enumerate() {
                 let ordinal = snapshot
                     .base_event_count()
                     .checked_add(offset)
                     .ok_or(StoragePuzzleError::Corrupt)?;
-                insert.execute(params![id, i64::try_from(ordinal)?, event])?;
+                rows.push(StoragePuzzleNewEvent {
+                    run_id: &id,
+                    ordinal: i32::try_from(ordinal)?,
+                    body: event,
+                });
+                if rows.len() == Self::EVENT_INSERT_CHUNK {
+                    diesel::insert_into(puzzle_events::table)
+                        .values(&rows)
+                        .execute(connection)?;
+                    rows.clear();
+                }
             }
-        }
-        for (attempt, body) in snapshot.attempt_rows()? {
-            transaction.execute("INSERT INTO puzzle_attempts (run_id, attempt_id, body) VALUES (?1, ?2, ?3) ON CONFLICT(run_id, attempt_id) DO UPDATE SET body = excluded.body", params![id, attempt.to_string(), body])?;
-        }
-        transaction.execute("INSERT INTO puzzle_checkpoints (run_id, body) VALUES (?1, ?2) ON CONFLICT(run_id) DO UPDATE SET body = excluded.body", params![id, snapshot.checkpoint()])?;
-        transaction.execute(
-            "UPDATE puzzle_runs SET storage_revision = ?2, event_count = ?3, journal_digest = ?4 WHERE run_id = ?1",
-            params![
-                id,
-                revision.to_string(),
-                i64::try_from(snapshot.event_count())?,
-                snapshot.journal_proof().bytes()
-            ],
-        )?;
-        transaction.commit()?;
+            if !rows.is_empty() {
+                diesel::insert_into(puzzle_events::table)
+                    .values(&rows)
+                    .execute(connection)?;
+            }
+            for (attempt, body) in snapshot.attempt_rows()? {
+                let attempt = attempt.to_string();
+                diesel::insert_into(puzzle_attempts::table)
+                    .values(&StoragePuzzleNewAttempt {
+                        run_id: &id,
+                        attempt_id: &attempt,
+                        body: &body,
+                    })
+                    .on_conflict((puzzle_attempts::run_id, puzzle_attempts::attempt_id))
+                    .do_update()
+                    .set(puzzle_attempts::body.eq(diesel::upsert::excluded(puzzle_attempts::body)))
+                    .execute(connection)?;
+            }
+            diesel::insert_into(puzzle_checkpoints::table)
+                .values(&StoragePuzzleNewCheckpoint {
+                    run_id: &id,
+                    body: snapshot.checkpoint(),
+                })
+                .on_conflict(puzzle_checkpoints::run_id)
+                .do_update()
+                .set(
+                    puzzle_checkpoints::body.eq(diesel::upsert::excluded(puzzle_checkpoints::body)),
+                )
+                .execute(connection)?;
+            diesel::update(puzzle_runs::table.filter(puzzle_runs::run_id.eq(&id)))
+                .set(&StoragePuzzleRunAdvance {
+                    storage_revision: &revision.to_string(),
+                    event_count: i32::try_from(snapshot.event_count())?,
+                    journal_digest: snapshot.journal_proof().bytes().as_slice(),
+                })
+                .execute(connection)?;
+            Ok::<u64, StoragePuzzleError>(revision)
+        })?;
         Ok(PuzzlePersistenceReceipt::committed(
             request,
             PuzzlePersistenceStorageRevision::new(revision),
@@ -378,106 +471,111 @@ impl StoragePuzzleTransaction {
     }
 
     pub(super) fn load(
-        connection: &mut Connection,
+        connection: &mut SqliteConnection,
         id: PuzzleSessionId,
         memory: &Arc<tokio::sync::Semaphore>,
     ) -> Result<Option<StoragePuzzleRecovered>, StoragePuzzleError> {
-        let transaction = connection.transaction()?;
-        let id_value = id.value().get().to_string();
-        let metadata: Option<StoragePuzzleStoredRun> = transaction.query_row(
-            "SELECT r.storage_revision, r.event_count, c.digest, c.schema_version, r.journal_version, r.journal_digest, CASE WHEN length(CAST(c.body AS BLOB)) <= ?2 THEN c.body END, CASE WHEN length(CAST(p.body AS BLOB)) <= ?2 THEN p.body END FROM puzzle_runs r JOIN puzzle_collections c ON c.collection_id = r.collection_id JOIN puzzle_checkpoints p ON p.run_id = r.run_id WHERE r.run_id = ?1", params![id_value, i64::try_from(PuzzlePersistenceCodec::MAX_DOCUMENT_BYTES)?], |row| Ok(StoragePuzzleStoredRun { prefix: StoragePuzzleStoredPrefix::read(row)?, collection: row.get(6)?, checkpoint: row.get(7)? })
-        ).optional()?;
-        let Some(metadata) = metadata else {
-            let exists: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM puzzle_runs WHERE run_id = ?1)",
-                [&id_value],
-                |row| row.get(0),
-            )?;
-            return if exists {
-                Err(StoragePuzzleError::Corrupt)
-            } else {
-                Ok(None)
+        connection.transaction::<_, StoragePuzzleError, _>(|connection| {
+            let id_value = id.value().get().to_string();
+            let limit = i64::try_from(PuzzlePersistenceCodec::MAX_DOCUMENT_BYTES)?;
+            let metadata = diesel::sql_query(
+                "SELECT r.storage_revision AS revision, r.event_count AS count, c.digest AS digest, c.schema_version AS schema, r.journal_version AS journal_version, r.journal_digest AS journal_digest, CASE WHEN length(CAST(c.body AS BLOB)) <= ?2 THEN c.body END AS collection, CASE WHEN length(CAST(p.body AS BLOB)) <= ?2 THEN p.body END AS checkpoint FROM puzzle_runs r JOIN puzzle_collections c ON c.collection_id = r.collection_id JOIN puzzle_checkpoints p ON p.run_id = r.run_id WHERE r.run_id = ?1",
+            )
+            .bind::<Text, _>(&id_value)
+            .bind::<BigInt, _>(limit)
+            .get_result::<StoragePuzzleGuardedRunRow>(connection)
+            .optional()?
+            .map(StoragePuzzleStoredRun::from);
+            let Some(metadata) = metadata else {
+                let exists = diesel::select(diesel::dsl::exists(
+                    puzzle_runs::table.filter(puzzle_runs::run_id.eq(&id_value)),
+                ))
+                .get_result::<bool>(connection)?;
+                return if exists {
+                    Err(StoragePuzzleError::Corrupt)
+                } else {
+                    Ok(None)
+                };
             };
-        };
-        let collection = metadata.collection.ok_or(PuzzlePersistenceError::Budget)?;
-        let checkpoint = metadata.checkpoint.ok_or(PuzzlePersistenceError::Budget)?;
-        let journal_proof = metadata.prefix.validate()?;
-        let count = usize::try_from(metadata.prefix.count)?;
-        let revision = metadata.prefix.revision;
-        let digest: [u8; 32] = Sha256::digest(collection.as_bytes()).into();
-        if metadata.prefix.digest.as_slice() != digest.as_slice() {
-            return Err(StoragePuzzleError::Corrupt);
-        }
-        let event_bytes: i64 = transaction.query_row("SELECT coalesce(sum(length(CAST(body AS BLOB))), 0) FROM puzzle_events WHERE run_id = ?1", [&id_value], |row| row.get(0))?;
-        let event_bytes = usize::try_from(event_bytes)?;
-        let bytes = collection
-            .len()
-            .checked_add(checkpoint.len())
-            .and_then(|bytes| bytes.checked_add(event_bytes))
-            .ok_or(PuzzlePersistenceError::Budget)?;
-        if bytes > PuzzlePersistenceCodec::MAX_DOCUMENT_BYTES {
-            return Err(PuzzlePersistenceError::Budget.into());
-        }
-        let memory_reservation = StorageDocumentClient::reserve_memory(memory, bytes)?;
-        let mut replayed_proof = PuzzlePersistenceJournalProof::initial(&digest);
-        let events = {
-            let mut statement = transaction.prepare_cached(
-                "SELECT ordinal, body FROM puzzle_events WHERE run_id = ?1 ORDER BY ordinal",
-            )?;
-            let mut rows = statement.query([&id_value])?;
+            let collection = metadata.collection.ok_or(PuzzlePersistenceError::Budget)?;
+            let checkpoint = metadata.checkpoint.ok_or(PuzzlePersistenceError::Budget)?;
+            let journal_proof = metadata.prefix.validate()?;
+            let count = usize::try_from(metadata.prefix.count)?;
+            let revision = metadata.prefix.revision;
+            let digest: [u8; 32] = Sha256::digest(collection.as_bytes()).into();
+            if metadata.prefix.digest.as_slice() != digest.as_slice() {
+                return Err(StoragePuzzleError::Corrupt);
+            }
+            let event_bytes = puzzle_events::table
+                .filter(puzzle_events::run_id.eq(&id_value))
+                .select(diesel::dsl::sql::<BigInt>(
+                    "coalesce(sum(length(CAST(body AS BLOB))), 0)",
+                ))
+                .get_result::<i64>(connection)?;
+            let event_bytes = usize::try_from(event_bytes)?;
+            let bytes = collection
+                .len()
+                .checked_add(checkpoint.len())
+                .and_then(|bytes| bytes.checked_add(event_bytes))
+                .ok_or(PuzzlePersistenceError::Budget)?;
+            if bytes > PuzzlePersistenceCodec::MAX_DOCUMENT_BYTES {
+                return Err(PuzzlePersistenceError::Budget.into());
+            }
+            let memory_reservation = StorageDocumentClient::reserve_memory(memory, bytes)?;
+            let mut replayed_proof = PuzzlePersistenceJournalProof::initial(&digest);
+            let stored_events = puzzle_events::table
+                .filter(puzzle_events::run_id.eq(&id_value))
+                .order(puzzle_events::ordinal.asc())
+                .select((puzzle_events::ordinal, puzzle_events::body))
+                .load::<(i32, String)>(connection)?;
             let mut events = Vec::with_capacity(count);
-            while let Some(row) = rows.next()? {
-                let ordinal = usize::try_from(row.get::<_, i64>(0)?)?;
+            for (ordinal, body) in stored_events {
+                let ordinal = usize::try_from(ordinal)?;
                 if ordinal != events.len() || ordinal >= count {
                     return Err(StoragePuzzleError::Corrupt);
                 }
-                let body: String = row.get(1)?;
                 replayed_proof = replayed_proof.extend(&body)?;
                 events.push(body);
             }
-            events
-        };
-        if events.len() != count || replayed_proof != journal_proof {
-            return Err(StoragePuzzleError::Corrupt);
-        }
-        let owner = PuzzlePersistenceCodec::decode_parts(&collection, events, &checkpoint)?;
-        if owner.run().context().session_id() != id
-            || owner.journal_proof_at(count)? != journal_proof
-        {
-            return Err(StoragePuzzleError::Corrupt);
-        }
-        let expected_attempts = owner.attempt_rows()?;
-        let stored_attempts = {
-            let mut statement = transaction.prepare_cached("SELECT attempt_id, CASE WHEN length(CAST(body AS BLOB)) <= ?2 THEN body END FROM puzzle_attempts WHERE run_id = ?1 ORDER BY attempt_id")?;
-            let mut rows = statement.query(params![
-                id_value,
-                i64::try_from(PuzzlePersistenceCodec::MAX_DOCUMENT_BYTES)?
-            ])?;
+            if events.len() != count || replayed_proof != journal_proof {
+                return Err(StoragePuzzleError::Corrupt);
+            }
+            let owner = PuzzlePersistenceCodec::decode_parts(&collection, events, &checkpoint)?;
+            if owner.run().context().session_id() != id
+                || owner.journal_proof_at(count)? != journal_proof
+            {
+                return Err(StoragePuzzleError::Corrupt);
+            }
+            let expected_attempts = owner.attempt_rows()?;
+            let rows = diesel::sql_query(
+                "SELECT attempt_id, CASE WHEN length(CAST(body AS BLOB)) <= ?2 THEN body END AS body FROM puzzle_attempts WHERE run_id = ?1 ORDER BY attempt_id LIMIT ?3",
+            )
+            .bind::<Text, _>(&id_value)
+            .bind::<BigInt, _>(limit)
+            .bind::<BigInt, _>(i64::try_from(expected_attempts.len())?.saturating_add(1))
+            .load::<StoragePuzzleGuardedAttemptRow>(connection)?;
             let mut attempts = std::collections::BTreeMap::new();
-            while let Some(row) = rows.next()? {
+            for row in rows {
                 if attempts.len() >= expected_attempts.len() {
                     return Err(StoragePuzzleError::Corrupt);
                 }
-                let attempt: String = row.get(0)?;
-                let body: Option<String> = row.get(1)?;
-                let body = body.ok_or(PuzzlePersistenceError::Budget)?;
-                attempts.insert(attempt.parse::<u64>()?, body);
+                let body = row.body.ok_or(PuzzlePersistenceError::Budget)?;
+                attempts.insert(row.attempt_id.parse::<u64>()?, body);
             }
-            attempts.into_iter().collect::<Vec<_>>()
-        };
-        if expected_attempts != stored_attempts {
-            return Err(StoragePuzzleError::Corrupt);
-        }
-        let storage_revision = PuzzlePersistenceStorageRevision::new(revision.parse()?);
-        if storage_revision == PuzzlePersistenceStorageRevision::INITIAL {
-            return Err(StoragePuzzleError::Corrupt);
-        }
-        transaction.commit()?;
-        Ok(Some(StoragePuzzleRecovered {
-            owner,
-            storage_revision,
-            persisted_event_count: count,
-            _memory_reservation: memory_reservation,
-        }))
+            let stored_attempts = attempts.into_iter().collect::<Vec<_>>();
+            if expected_attempts != stored_attempts {
+                return Err(StoragePuzzleError::Corrupt);
+            }
+            let storage_revision = PuzzlePersistenceStorageRevision::new(revision.parse()?);
+            if storage_revision == PuzzlePersistenceStorageRevision::INITIAL {
+                return Err(StoragePuzzleError::Corrupt);
+            }
+            Ok(Some(StoragePuzzleRecovered {
+                owner,
+                storage_revision,
+                persisted_event_count: count,
+                _memory_reservation: memory_reservation,
+            }))
+        })
     }
 }

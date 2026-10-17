@@ -1,8 +1,10 @@
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::storage::library_transaction::StorageLibraryTransaction;
-use crate::storage::library_transaction::content::StorageLibraryTransactionContent;
-use crate::storage::migration::StorageMigration;
+use crate::capacity::budget::CapacityBudget;
+use crate::capacity::executor::CapacityExecutor;
+use crate::storage::connection::StorageConnection;
+use crate::storage::library_import::space::trees::planning_work_tests::StorageLibraryImportPlanningWorkFixture;
+use crate::storage::migration::StorageMigrationRunner;
 
 type StorageLibraryImportJournalResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -84,12 +86,13 @@ struct StorageLibraryImportJournalFixture {
 impl StorageLibraryImportJournalFixture {
     fn new() -> StorageLibraryImportJournalResult<Self> {
         let directory = tempfile::tempdir()?;
-        let mut connection = Connection::open(directory.path().join("journal-proof.sqlite"))?;
+        let path = directory.path().join("journal-proof.sqlite");
+        let connection = Connection::open(&path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "defer_foreign_keys", "OFF")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
-        StorageMigration::apply(&mut connection, &StorageMigration::core())?;
+        StorageMigrationRunner::run_embedded(StorageConnection::open(&path)?.diesel())?;
         assert!(connection.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))?);
         assert!(
             !connection
@@ -128,39 +131,69 @@ impl StorageLibraryImportJournalFixture {
     }
 }
 
-#[test]
-fn canonical_document_insert_and_entry_upsert_compile_as_single_row_writes()
+struct StorageLibraryImportJournalStatements {
+    document: String,
+    entry: String,
+    catalog: String,
+}
+
+impl StorageLibraryImportJournalStatements {
+    async fn capture() -> StorageLibraryImportJournalResult<Self> {
+        let executor = CapacityExecutor::new(CapacityBudget::discover()?)?;
+        let job = executor
+            .submit_waiting(|token| {
+                let fixture = StorageLibraryImportPlanningWorkFixture::with_records(
+                    StorageLibraryImportPlanningWorkFixture::SMALL_NOTE_BYTES,
+                    1,
+                    token,
+                )?;
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(fixture.statements()?)
+            })
+            .await?;
+        let result = job.join().await;
+        executor.shutdown().await?;
+        let statements = result?.map_err(|error| error.to_string())?;
+        let find = |prefix: &str| -> StorageLibraryImportJournalResult<String> {
+            statements
+                .iter()
+                .find(|sql| sql.starts_with(prefix))
+                .cloned()
+                .ok_or_else(|| format!("missing production statement: {prefix}").into())
+        };
+        Ok(Self {
+            document: find("INSERT INTO `documents`")?,
+            entry: find("INSERT INTO `library_entries`")?,
+            catalog: find("UPDATE `library_state`")?,
+        })
+    }
+}
+
+#[tokio::test]
+async fn canonical_document_insert_and_entry_upsert_compile_as_single_row_writes()
 -> StorageLibraryImportJournalResult {
+    let statements = StorageLibraryImportJournalStatements::capture().await?;
     let mut fixture = StorageLibraryImportJournalFixture::new()?;
     let transaction = fixture
         .connection
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let document = StorageLibraryImportJournalProgram::compile(
-        &transaction,
-        StorageLibraryTransactionContent::INSERT_DOCUMENT_SQL,
-    )?;
+    let document = StorageLibraryImportJournalProgram::compile(&transaction, &statements.document)?;
     document.assert_single_row_shape();
-    let entry = StorageLibraryImportJournalProgram::compile(
-        &transaction,
-        StorageLibraryTransactionContent::PROJECT_SQL,
-    )?;
+    let entry = StorageLibraryImportJournalProgram::compile(&transaction, &statements.entry)?;
     entry.assert_single_row_shape();
     assert!(entry.direct_foreign_key_halts() >= 2, "{:?}", entry.0);
     transaction.rollback()?;
     fixture.close()
 }
 
-#[test]
-fn canonical_catalog_update_compiles_as_a_rowid_one_pass_write() -> StorageLibraryImportJournalResult
-{
+#[tokio::test]
+async fn canonical_catalog_update_compiles_as_a_rowid_one_pass_write()
+-> StorageLibraryImportJournalResult {
+    let statements = StorageLibraryImportJournalStatements::capture().await?;
     let mut fixture = StorageLibraryImportJournalFixture::new()?;
     let transaction = fixture
         .connection
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let catalog = StorageLibraryImportJournalProgram::compile(
-        &transaction,
-        StorageLibraryTransaction::BUMP_CATALOG_SQL,
-    )?;
+    let catalog = StorageLibraryImportJournalProgram::compile(&transaction, &statements.catalog)?;
     catalog.assert_single_row_shape();
     assert!(catalog.has("SeekRowid"), "{:?}", catalog.0);
     assert!(!catalog.has("OpenEphemeral"), "{:?}", catalog.0);
@@ -168,14 +201,13 @@ fn canonical_catalog_update_compiles_as_a_rowid_one_pass_write() -> StorageLibra
     fixture.close()
 }
 
-#[test]
-fn a_real_temporary_entry_fault_trigger_changes_the_canonical_upsert_program()
+#[tokio::test]
+async fn a_real_temporary_entry_fault_trigger_changes_the_canonical_upsert_program()
 -> StorageLibraryImportJournalResult {
+    let statements = StorageLibraryImportJournalStatements::capture().await?;
     let mut fixture = StorageLibraryImportJournalFixture::new()?;
-    let before = StorageLibraryImportJournalProgram::compile(
-        &fixture.connection,
-        StorageLibraryTransactionContent::PROJECT_SQL,
-    )?;
+    let before =
+        StorageLibraryImportJournalProgram::compile(&fixture.connection, &statements.entry)?;
     before.assert_single_row_shape();
     fixture.connection.execute_batch(
         "CREATE TEMP TRIGGER import_entry_fault BEFORE INSERT ON library_entries BEGIN SELECT RAISE(ABORT, 'entry statement fault'); END",
@@ -183,10 +215,7 @@ fn a_real_temporary_entry_fault_trigger_changes_the_canonical_upsert_program()
     let transaction = fixture
         .connection
         .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let fault = StorageLibraryImportJournalProgram::compile(
-        &transaction,
-        StorageLibraryTransactionContent::PROJECT_SQL,
-    )?;
+    let fault = StorageLibraryImportJournalProgram::compile(&transaction, &statements.entry)?;
     assert!(fault.has("Program"), "{:?}", fault.0);
     assert!(fault.has("FkCounter"), "{:?}", fault.0);
     assert_eq!(fault.direct_foreign_key_halts(), 0, "{:?}", fault.0);

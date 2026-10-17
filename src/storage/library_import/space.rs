@@ -1,7 +1,9 @@
 mod layout;
 mod trees;
 
-use rusqlite::Transaction;
+use diesel::SqliteConnection;
+use diesel::prelude::*;
+use diesel::sql_types::BigInt;
 
 use crate::storage::import_session::{
     StorageImportSessionCancellation, StorageImportSessionCommitFootprint,
@@ -9,6 +11,12 @@ use crate::storage::import_session::{
 use crate::storage::library_import::space::layout::StorageLibraryImportSpaceLayout;
 use crate::storage::library_import::space::trees::StorageLibraryImportSpaceTrees;
 use crate::storage::library_repository::StorageLibraryError;
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportSpaceFreelist {
+    #[diesel(sql_type = BigInt)]
+    value: i64,
+}
 
 pub(crate) struct StorageLibraryImportSpace {
     bytes: u64,
@@ -54,14 +62,14 @@ impl StorageLibraryImportSpace {
     }
 
     pub(crate) fn plan(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         footprint: StorageImportSessionCommitFootprint,
         cancellation: &StorageImportSessionCancellation,
     ) -> Result<Self, StorageLibraryError> {
         cancellation.check()?;
-        let layout = StorageLibraryImportSpaceLayout::read(transaction, cancellation)?;
+        let layout = StorageLibraryImportSpaceLayout::read(connection, cancellation)?;
         let budget = StorageLibraryImportSpaceTrees::plan_budget(
-            transaction,
+            connection,
             footprint,
             layout.page,
             cancellation,
@@ -70,11 +78,11 @@ impl StorageLibraryImportSpace {
             Self::add(layout.pages, budget.new_page_budget)?.min(Self::SQLITE_MAX_PAGES);
         let additional_pages = page_ceiling.saturating_sub(layout.pages);
         cancellation.check()?;
-        let free = u64::try_from(transaction.pragma_query_value(
-            None,
-            "freelist_count",
-            |row| row.get::<_, i64>(0),
-        )?)?;
+        let free = u64::try_from(
+            diesel::sql_query("SELECT freelist_count AS value FROM pragma_freelist_count")
+                .get_result::<StorageLibraryImportSpaceFreelist>(connection)?
+                .value,
+        )?;
         let allocator_dirty = free.min(Self::mul(
             budget.allocator_operations,
             Self::FREELIST_OPERATION_PAGES,
@@ -117,3 +125,7 @@ impl StorageLibraryImportSpace {
         self.page_ceiling
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/storage/library_import_journal.rs"]
+mod journal_tests;

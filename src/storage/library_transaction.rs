@@ -7,7 +7,10 @@ mod rows;
 
 use std::sync::Arc;
 
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use diesel::SqliteConnection;
+#[cfg(test)]
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
 use tokio::sync::Semaphore;
 
 use crate::game::enums::GameId;
@@ -45,6 +48,7 @@ use crate::storage::library_transaction::import::StorageLibraryTransactionImport
 use crate::storage::library_transaction::metadata::StorageLibraryTransactionMetadata;
 use crate::storage::library_transaction::organization::StorageLibraryTransactionOrganization;
 use crate::storage::library_transaction::rows::StorageLibraryTransactionRows;
+use crate::storage::schema::library_state;
 use crate::storage::trash::{
     StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
     StorageTrashReceipt, StorageTrashRestoreRequest,
@@ -155,11 +159,8 @@ pub(crate) enum StorageLibraryEnumTransactionResponse {
 pub(crate) struct StorageLibraryTransaction;
 
 impl StorageLibraryTransaction {
-    const BUMP_CATALOG_SQL: &'static str =
-        "UPDATE library_state SET revision = ?1 WHERE singleton = 1";
-
     pub(crate) fn execute(
-        connection: &mut Connection,
+        connection: &mut SqliteConnection,
         mut request: StorageLibraryEnumTransactionRequest,
         memory: &Arc<Semaphore>,
         certified: &mut bool,
@@ -167,58 +168,46 @@ impl StorageLibraryTransaction {
     ) -> Result<StorageLibraryEnumTransactionResponse, StorageLibraryError> {
         #[cfg(test)]
         if let StorageLibraryEnumTransactionRequest::ImportTestSql(sql) = &request {
-            connection.execute_batch(sql)?;
+            connection.batch_execute(sql)?;
             return Ok(StorageLibraryEnumTransactionResponse::ImportTestSql);
         }
-        let behavior = match &request {
-            StorageLibraryEnumTransactionRequest::Metadata(_)
-            | StorageLibraryEnumTransactionRequest::CertifyAdoption(_)
-            | StorageLibraryEnumTransactionRequest::RevokeAdoption
-            | StorageLibraryEnumTransactionRequest::ImportSnapshot(_)
-            | StorageLibraryEnumTransactionRequest::ImportCandidates(_)
-            | StorageLibraryEnumTransactionRequest::ImportCandidate(_)
-            | StorageLibraryEnumTransactionRequest::ImportEstimate { .. } => {
-                TransactionBehavior::Deferred
-            }
-            StorageLibraryEnumTransactionRequest::CommitImport(_) => TransactionBehavior::Immediate,
-            #[cfg(test)]
-            StorageLibraryEnumTransactionRequest::ImportTestSql(_) => {
-                TransactionBehavior::Immediate
-            }
-            StorageLibraryEnumTransactionRequest::Load(_)
-            | StorageLibraryEnumTransactionRequest::Query(_)
-            | StorageLibraryEnumTransactionRequest::PreviewDestruction(_)
-            | StorageLibraryEnumTransactionRequest::AdoptionPage(_)
-            | StorageLibraryEnumTransactionRequest::PlayedInventory(_) => {
-                TransactionBehavior::Deferred
-            }
-            StorageLibraryEnumTransactionRequest::Save(_)
-            | StorageLibraryEnumTransactionRequest::Organize(_)
-            | StorageLibraryEnumTransactionRequest::ApplyDestruction(_)
-            | StorageLibraryEnumTransactionRequest::Restore(_)
-            | StorageLibraryEnumTransactionRequest::Adopt(_) => TransactionBehavior::Immediate,
-        };
-        let transaction = connection.transaction_with_behavior(behavior)?;
+        if let StorageLibraryEnumTransactionRequest::Query(query) = &request {
+            return Ok(StorageLibraryEnumTransactionResponse::Page(
+                StorageLibraryTransactionRows::query(connection, query, memory)?,
+            ));
+        }
+        let is_write = matches!(
+            request,
+            StorageLibraryEnumTransactionRequest::CommitImport(_)
+                | StorageLibraryEnumTransactionRequest::Save(_)
+                | StorageLibraryEnumTransactionRequest::Organize(_)
+                | StorageLibraryEnumTransactionRequest::ApplyDestruction(_)
+                | StorageLibraryEnumTransactionRequest::Restore(_)
+                | StorageLibraryEnumTransactionRequest::Adopt(_)
+        );
         let mut import_scope = None;
-        let result = (|| {
+        let mut run = |transaction: &mut SqliteConnection| -> Result<
+            StorageLibraryEnumTransactionResponse,
+            StorageLibraryError,
+        > {
             Ok(match &mut request {
                 StorageLibraryEnumTransactionRequest::Metadata(request) => {
                     StorageLibraryEnumTransactionResponse::Metadata(
-                        StorageLibraryTransactionMetadata::execute(&transaction, request, memory)?,
+                        StorageLibraryTransactionMetadata::execute(transaction, request, memory)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::CertifyAdoption(expected) => {
                     StorageLibraryEnumTransactionResponse::AdoptionCertification(
                         StorageLibraryAdoptionCertification::new(
-                            Self::catalog(&transaction)?,
-                            Self::catalog(&transaction)? == *expected,
+                            Self::diesel_catalog(transaction)?,
+                            Self::diesel_catalog(transaction)? == *expected,
                         ),
                     )
                 }
                 StorageLibraryEnumTransactionRequest::RevokeAdoption => {
                     StorageLibraryEnumTransactionResponse::AdoptionCertification(
                         StorageLibraryAdoptionCertification::new(
-                            Self::catalog(&transaction)?,
+                            Self::diesel_catalog(transaction)?,
                             false,
                         ),
                     )
@@ -226,7 +215,7 @@ impl StorageLibraryTransaction {
                 StorageLibraryEnumTransactionRequest::ImportSnapshot(destination) => {
                     StorageLibraryEnumTransactionResponse::ImportSnapshot(
                         StorageLibraryTransactionImport::snapshot(
-                            &transaction,
+                            transaction,
                             *destination,
                             *certified,
                         )?,
@@ -235,7 +224,7 @@ impl StorageLibraryTransaction {
                 StorageLibraryEnumTransactionRequest::ImportCandidates(request) => {
                     StorageLibraryEnumTransactionResponse::ImportCandidates(
                         StorageLibraryTransactionImport::candidates(
-                            &transaction,
+                            transaction,
                             request,
                             *certified,
                             memory,
@@ -245,7 +234,7 @@ impl StorageLibraryTransaction {
                 StorageLibraryEnumTransactionRequest::ImportCandidate(candidate) => {
                     StorageLibraryEnumTransactionResponse::ImportCandidate(
                         StorageLibraryTransactionImport::candidate(
-                            &transaction,
+                            transaction,
                             *candidate,
                             memory,
                         )?,
@@ -257,7 +246,7 @@ impl StorageLibraryTransaction {
                     cancellation,
                 } => StorageLibraryEnumTransactionResponse::ImportEstimate(
                     StorageLibraryTransactionImport::estimate(
-                        &transaction,
+                        transaction,
                         *snapshot,
                         *footprint,
                         *certified,
@@ -267,7 +256,7 @@ impl StorageLibraryTransaction {
                 StorageLibraryEnumTransactionRequest::CommitImport(request) => {
                     StorageLibraryEnumTransactionResponse::ImportCommitted(
                         StorageLibraryTransactionImport::commit(
-                            &transaction,
+                            transaction,
                             request,
                             *certified,
                             origin,
@@ -277,48 +266,46 @@ impl StorageLibraryTransaction {
                 }
                 #[cfg(test)]
                 StorageLibraryEnumTransactionRequest::ImportTestSql(sql) => {
-                    transaction.execute_batch(sql)?;
+                    transaction.batch_execute(sql)?;
                     StorageLibraryEnumTransactionResponse::ImportTestSql
                 }
                 StorageLibraryEnumTransactionRequest::Load(id) => {
                     StorageLibraryEnumTransactionResponse::Loaded(
-                        StorageLibraryTransactionRows::load(&transaction, *id, memory)?,
+                        StorageLibraryTransactionRows::load(transaction, *id, memory)?,
                     )
                 }
-                StorageLibraryEnumTransactionRequest::Query(query) => {
-                    StorageLibraryEnumTransactionResponse::Page(
-                        StorageLibraryTransactionRows::query(&transaction, query, memory)?,
-                    )
+                StorageLibraryEnumTransactionRequest::Query(_) => {
+                    return Err(StorageLibraryError::Protocol);
                 }
                 StorageLibraryEnumTransactionRequest::Save(prepared) => {
                     StorageLibraryEnumTransactionResponse::Saved(
-                        StorageLibraryTransactionContent::save(&transaction, prepared)?,
+                        StorageLibraryTransactionContent::save(transaction, prepared)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::Organize(request) => {
                     StorageLibraryEnumTransactionResponse::Organized(
-                        StorageLibraryTransactionOrganization::execute(&transaction, request)?,
+                        StorageLibraryTransactionOrganization::execute(transaction, request)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::PreviewDestruction(request) => {
                     StorageLibraryEnumTransactionResponse::DestructionPreview(
-                        StorageLibraryTransactionDestruction::preview(&transaction, *request)?,
+                        StorageLibraryTransactionDestruction::preview(transaction, *request)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::ApplyDestruction(request) => {
                     StorageLibraryEnumTransactionResponse::DestructionApplied(
-                        StorageLibraryTransactionDestruction::apply(&transaction, request)?,
+                        StorageLibraryTransactionDestruction::apply(transaction, request)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::Restore(request) => {
                     StorageLibraryEnumTransactionResponse::Restored(
-                        StorageLibraryTransactionDestruction::restore(&transaction, request)?,
+                        StorageLibraryTransactionDestruction::restore(transaction, request)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::AdoptionPage(cursor) => {
                     StorageLibraryEnumTransactionResponse::AdoptionPage(
                         StorageLibraryTransactionRows::adoption_page(
-                            &transaction,
+                            transaction,
                             *cursor,
                             memory,
                         )?,
@@ -326,38 +313,49 @@ impl StorageLibraryTransaction {
                 }
                 StorageLibraryEnumTransactionRequest::Adopt(prepared) => {
                     StorageLibraryEnumTransactionResponse::Adopted(
-                        StorageLibraryTransactionContent::adopt(&transaction, prepared)?,
+                        StorageLibraryTransactionContent::adopt(transaction, prepared)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::PlayedInventory(cursor) => {
                     StorageLibraryEnumTransactionResponse::AdoptionPage(
                         StorageLibraryTransactionRows::played_inventory(
-                            &transaction,
+                            transaction,
                             *cursor,
                             memory,
                         )?,
                     )
                 }
             })
-        })();
-        let response = match result {
-            Ok(response) => response,
-            Err(primary) => {
-                let primary = Self::rollback(transaction, primary);
-                return StorageLibraryImportPageLimit::finish(
-                    connection,
-                    import_scope,
-                    Err(primary),
-                );
+        };
+        let mut primary = None;
+        let guarded = |transaction: &mut SqliteConnection| match run(transaction) {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                primary = Some(error);
+                Err(StorageLibraryError::Protocol)
             }
         };
-        if let Err(error) = transaction.execute_batch("COMMIT") {
-            let primary = Self::rollback(transaction, error.into());
-            return StorageLibraryImportPageLimit::finish(connection, import_scope, Err(primary));
-        }
-        drop(transaction);
-        let response =
-            StorageLibraryImportPageLimit::finish(connection, import_scope, Ok(response))?;
+        let outcome = if is_write {
+            connection.immediate_transaction(guarded)
+        } else {
+            connection.transaction(guarded)
+        };
+        let result = match (outcome, primary) {
+            (Ok(response), _) => Ok(response),
+            (Err(StorageLibraryError::Diesel(rollback)), Some(primary)) => {
+                if rollback.to_string().contains("no transaction is active") {
+                    Err(primary)
+                } else {
+                    Err(StorageLibraryError::Rollback {
+                        primary: Box::new(primary),
+                        rollback,
+                    })
+                }
+            }
+            (Err(_sentinel), Some(primary)) => Err(primary),
+            (Err(error), None) => Err(error),
+        };
+        let response = StorageLibraryImportPageLimit::finish(connection, import_scope, result)?;
         match (&request, &response) {
             (
                 StorageLibraryEnumTransactionRequest::CertifyAdoption(_),
@@ -373,33 +371,22 @@ impl StorageLibraryTransaction {
         drop(request);
         Ok(response)
     }
-    fn rollback(transaction: Transaction<'_>, primary: StorageLibraryError) -> StorageLibraryError {
-        if transaction.is_autocommit() {
-            return primary;
-        }
-        match transaction.rollback() {
-            Ok(()) => primary,
-            Err(rollback) => StorageLibraryError::Rollback {
-                primary: Box::new(primary),
-                rollback,
-            },
-        }
-    }
-    pub(super) fn catalog(
-        transaction: &Transaction<'_>,
+    pub(super) fn diesel_catalog(
+        connection: &mut SqliteConnection,
     ) -> Result<StorageLibraryCatalogRevision, StorageLibraryError> {
-        let revision: String = transaction.query_row(
-            "SELECT revision FROM library_state WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )?;
+        let revision: String = library_state::table
+            .filter(library_state::singleton.eq(Some(1)))
+            .select(library_state::revision)
+            .first(connection)?;
         revision.parse()
     }
-    pub(super) fn bump_catalog(
-        transaction: &Transaction<'_>,
+    pub(super) fn diesel_bump_catalog(
+        connection: &mut SqliteConnection,
     ) -> Result<StorageLibraryCatalogRevision, StorageLibraryError> {
-        let revision = Self::catalog(transaction)?.next()?;
-        transaction.execute(Self::BUMP_CATALOG_SQL, [revision.value().to_string()])?;
+        let revision = Self::diesel_catalog(connection)?.next()?;
+        diesel::update(library_state::table.filter(library_state::singleton.eq(Some(1))))
+            .set(library_state::revision.eq(revision.value().to_string()))
+            .execute(connection)?;
         Ok(revision)
     }
 }

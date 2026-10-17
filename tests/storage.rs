@@ -7,6 +7,12 @@ mod storage_document_inventory;
 #[path = "storage/schema.rs"]
 mod storage_schema;
 
+#[path = "storage/connection.rs"]
+mod storage_connection;
+
+#[path = "storage/migration_continuity.rs"]
+mod storage_migration_continuity;
+
 #[path = "storage/atomic_file.rs"]
 mod storage_atomic_file;
 #[path = "storage/retained_shutdown.rs"]

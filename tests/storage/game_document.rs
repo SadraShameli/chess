@@ -259,41 +259,17 @@ impl StorageGameDocumentFixture {
             warnings: original.warnings().to_vec(),
         })?)
     }
-
-    fn fixed_legacy_interior(version: u32) -> StorageGameDocumentTestResult<String> {
-        Ok(Self::fixed_legacy(version)?
-            .replacen(
-                "\"live\":\"00000000-0000-0000-0000-000000000001\"",
-                "\"live\":\"00000000-0000-0000-0000-000000000002\"",
-                1,
-            )
-            .replacen("\"active\":\"white\"", "\"active\":\"black\"", 1)
-            .replacen("\"completed_moves\":0", "\"completed_moves\":1", 1))
-    }
-
-    fn fixed_legacy(version: u32) -> StorageGameDocumentTestResult<String> {
-        let options = match version {
-            1 => "",
-            2 => {
-                ",\"play_options\":{\"untimed_move_time_nanos\":5000000000,\"move_overhead_nanos\":10000000,\"is_auto_flip_enabled\":false}"
-            }
-            _ => return Err("unsupported fixture version".into()),
-        };
-        Ok(format!(
-            r#"{{"schema_version":{version},"game":{{"id":"c1b5029c-f686-4f18-b45a-1af832163c24","revision":"7","root":"00000000-0000-0000-0000-000000000001","start":{{"selection":{{"kind":"standard"}},"initial_fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}},"mode":"local_two_player","white":"human","black":"human","time_control":[],"root_annotations":{{"notes":"legacy root","nags":[],"markings":[]}},"root_clock":null,"moves":[{{"id":"00000000-0000-0000-0000-000000000002","parent":"00000000-0000-0000-0000-000000000001","uci":"e2e4","annotations":{{"notes":"retained after takeback","nags":[],"markings":[]}},"before_clock":null,"clock":null}},{{"id":"00000000-0000-0000-0000-000000000003","parent":"00000000-0000-0000-0000-000000000002","uci":"e7e5","annotations":{{"notes":"legacy leaf","nags":[],"markings":[]}},"before_clock":null,"clock":null}},{{"id":"00000000-0000-0000-0000-000000000004","parent":"00000000-0000-0000-0000-000000000001","uci":"d2d4","annotations":{{"notes":"alternative","nags":[],"markings":[]}},"before_clock":null,"clock":null}}],"live":"00000000-0000-0000-0000-000000000001","view":"00000000-0000-0000-0000-000000000004","clock":{{"sides":[{{"remaining_nanos":0,"completed_moves":0,"stage_index":0,"stage_moves":0}},{{"remaining_nanos":0,"completed_moves":0,"stage_index":0,"stage_moves":0}}],"active":"white","elapsed_nanos":0,"status":"paused"}},"warnings_used":[false,false],"state":{{"analysis":null}},"metadata":{{"event":null,"site":null,"date":null,"round":null,"white":null,"black":null,"white_elo":null,"black_elo":null,"opening":null,"variation":null,"eco":null,"annotator":null,"extensions":[]}},"takeback_consent":"required","premoves_enabled":false{options}}}}}"#
-        ))
-    }
 }
 
 #[test]
-fn schema_three_is_discriminated_and_preserves_explicit_played_study_live_and_view()
+fn schema_one_is_discriminated_and_preserves_explicit_played_study_live_and_view()
 -> StorageGameDocumentTestResult {
     let session = StorageGameDocumentFixture::annotated()?;
     let mut snapshot = session.restoration(ClockInstant::from_millis(2_000)?)?;
     snapshot.study_mainline_tip = StorageGameDocumentFixture::node(3)?;
     let session = GameSession::restore(snapshot)?;
     let json = StorageGameDocument::capture(&session, ClockInstant::from_millis(2_000)?)?.json()?;
-    assert!(json.starts_with("{\"schema_version\":3,\"kind\":\"played\",\"game\":"));
+    assert!(json.starts_with("{\"schema_version\":1,\"kind\":\"played\",\"game\":"));
     let recovered = StorageGameDocument::restore(&json)?;
     assert_eq!(
         recovered.study_mainline_tip(),
@@ -310,77 +286,6 @@ fn schema_three_is_discriminated_and_preserves_explicit_played_study_live_and_vi
 }
 
 #[test]
-fn actual_legacy_shapes_derive_the_first_ordered_leaf_without_extending_played_history()
--> StorageGameDocumentTestResult {
-    for version in [1, 2] {
-        let json = StorageGameDocumentFixture::fixed_legacy(version)?;
-        let original = json.clone();
-        let recovered = StorageGameDocument::restore(&json)?;
-        assert_eq!(json, original);
-        assert_eq!(recovered.revision().value(), 7);
-        assert_eq!(recovered.live(), recovered.tree().root());
-        assert!(recovered.live_moves()?.is_empty());
-        assert_eq!(
-            recovered.study_mainline_tip(),
-            StorageGameDocumentFixture::node(3)?
-        );
-        assert_eq!(recovered.view(), StorageGameDocumentFixture::node(4)?);
-        assert_eq!(
-            recovered
-                .tree()
-                .node(StorageGameDocumentFixture::node(2)?)?
-                .annotations()
-                .notes(),
-            "retained after takeback"
-        );
-        assert!(recovered.outcome().is_none());
-        assert!(!recovered.clock().is_running());
-        let latest =
-            StorageGameDocument::capture(&recovered, ClockInstant::from_nanos(0))?.json()?;
-        assert!(latest.starts_with("{\"schema_version\":3,\"kind\":\"played\","));
-        assert_eq!(
-            StorageGameDocument::restore(&latest)?.study_mainline_tip(),
-            recovered.study_mainline_tip()
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn legacy_takeback_at_an_interior_live_node_keeps_the_retained_study_line_out_of_played_identity()
--> StorageGameDocumentTestResult {
-    for version in [1, 2] {
-        let json = StorageGameDocumentFixture::fixed_legacy_interior(version)?;
-        let record = StorageGameDocument::recover_record(&json)?;
-        assert_eq!(
-            record.identity()?.structural_key().mainline_uci(),
-            &["e2e4"]
-        );
-        assert_eq!(record.identity_line_len()?, 1);
-        let StorageLibraryEnumContent::Played(session) = record.into_content() else {
-            return Err("legacy became notation".into());
-        };
-        assert_eq!(session.live(), StorageGameDocumentFixture::node(2)?);
-        assert_eq!(
-            session.study_mainline_tip(),
-            StorageGameDocumentFixture::node(3)?
-        );
-        assert_eq!(session.view(), StorageGameDocumentFixture::node(4)?);
-        assert_eq!(
-            session
-                .clock()
-                .snapshot(ClockInstant::from_nanos(0))?
-                .completed_moves(BoardEnumColor::White),
-            1
-        );
-        assert_eq!(session.clock().active(), BoardEnumColor::Black);
-        assert!(session.outcome().is_none());
-        assert_eq!(session.revision().value(), 7);
-    }
-    Ok(())
-}
-
-#[test]
 fn schema_kind_combinations_and_unknown_envelope_fields_are_refused()
 -> StorageGameDocumentTestResult {
     let notation = StorageGameDocumentFixture::notation_json()?;
@@ -389,17 +294,10 @@ fn schema_kind_combinations_and_unknown_envelope_fields_are_refused()
         notation.replacen("\"kind\":\"notation\"", "\"kind\":null", 1),
         notation.replacen("\"notation\"", "\"other\"", 1),
         notation.replacen("\"notation\"", "\"played\"", 1),
-        notation.replacen("\"schema_version\":3", "\"schema_version\":2", 1),
+        notation.replacen("\"schema_version\":1", "\"schema_version\":2", 1),
         notation.replacen("\"game\":", "\"unexpected\":true,\"game\":", 1),
     ] {
         assert!(StorageGameDocument::recover_record(&invalid).is_err());
-    }
-    for version in [1, 2] {
-        let legacy = StorageGameDocumentFixture::fixed_legacy(version)?;
-        for kind in ["null", "\"played\""] {
-            let invalid = legacy.replacen("\"game\":", &format!("\"kind\":{kind},\"game\":"), 1);
-            assert!(StorageGameDocument::recover_record(&invalid).is_err());
-        }
     }
     assert!(matches!(
         StorageGameDocument::recover_record(r#"{"schema_version":0,"game":{}}"#),
@@ -417,7 +315,7 @@ fn clockless_notation_roundtrip_preserves_tree_source_extras_and_external_identi
         &notation,
     )?
     .json()?;
-    assert!(json.starts_with("{\"schema_version\":3,\"kind\":\"notation\",\"game\":"));
+    assert!(json.starts_with("{\"schema_version\":1,\"kind\":\"notation\",\"game\":"));
     assert!(!json.contains("\"white\":\"human\""));
     assert!(!json.contains("\"state\":"));
     assert!(!json.contains("\"completed_moves\":"));
@@ -719,64 +617,14 @@ fn played_tip_presence_relationship_and_version_are_revalidated() -> StorageGame
         );
         assert!(StorageGameDocument::restore(&invalid).is_err());
     }
-    for version in [1, 2] {
-        let invalid = StorageGameDocumentFixture::fixed_legacy(version)?.replacen(
-            "\"live\":",
-            &format!(
-                "\"study_mainline_tip\":\"{}\",\"live\":",
-                session.study_mainline_tip().as_uuid()
-            ),
-            1,
-        );
-        assert!(matches!(
-            StorageGameDocument::restore(&invalid),
-            Err(StorageGameDocumentError::LegacyStudyTip)
-        ));
-    }
-    let future = r#"{"schema_version":4,"kind":"future-content","game":{"invalid":true}}"#;
+    let future = r#"{"schema_version":2,"kind":"future-content","game":{"invalid":true}}"#;
     assert!(matches!(
         StorageGameDocument::recover_record(future),
         Err(StorageGameDocumentError::FutureSchema {
-            found: 4,
-            supported: 3
+            found: 2,
+            supported: 1
         })
     ));
-    Ok(())
-}
-
-#[tokio::test]
-async fn legacy_read_preserves_the_original_database_body_identity_and_revision()
--> StorageGameDocumentTestResult {
-    let directory = tempfile::tempdir()?;
-    let budget = CapacityBudget::new(NonZeroUsize::new(2).ok_or("invalid fixture capacity")?)?;
-    let store =
-        StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget.clone())
-            .await?;
-    let executor = CapacityExecutor::new(budget)?;
-    let repository = StorageGameDocumentRepository::new(store.client(), &executor);
-    for version in [1, 2] {
-        let json = StorageGameDocumentFixture::fixed_legacy(version)?;
-        let game = StorageGameDocument::recover_record(&json)?.id();
-        let saved = store
-            .client()
-            .save(game.as_uuid(), u64::from(version - 1), json.clone())
-            .await?;
-        let recovered = repository
-            .load(game)
-            .await?
-            .ok_or("missing legacy record")?;
-        assert_eq!(recovered.storage_revision().value(), saved.revision());
-        assert_eq!(recovered.session().id(), game);
-        let after = store
-            .client()
-            .read(game.as_uuid())
-            .await?
-            .ok_or("missing stored body")?;
-        assert_eq!(after.body(), json);
-        assert_eq!(after.revision(), saved.revision());
-    }
-    store.close().await?;
-    executor.shutdown().await?;
     Ok(())
 }
 

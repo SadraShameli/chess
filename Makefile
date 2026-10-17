@@ -4,9 +4,9 @@
 ARGS ?=
 NATIVE_PROFILE ?= dev
 
-.PHONY: verify format lint tests build profile-build run native-test-build native-tests
+.PHONY: verify format lint schema-check tests build profile-build run native-test-build native-tests
 
-verify: format lint tests build
+verify: format lint schema-check tests build
 
 format:
 	cargo fmt --all
@@ -16,6 +16,16 @@ lint:
 	cargo clippy --locked --bin chess-tools -- -D warnings
 	cargo clippy --locked --all-targets --all-features -- -D warnings
 	cargo clippy --locked --test native --all-features -- -D warnings
+
+DIESEL ?= diesel
+RUSTFMT ?= rustfmt
+
+schema-check:
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	$(DIESEL) migration run --database-url "$$tmp/schema.sqlite3" --migration-dir src/storage/migrations && \
+	$(DIESEL) print-schema --database-url "$$tmp/schema.sqlite3" > "$$tmp/schema.rs" && \
+	$(RUSTFMT) --edition 2024 --config-path rustfmt.toml "$$tmp/schema.rs" && \
+	diff -u src/storage/schema.rs "$$tmp/schema.rs"
 
 tests:
 	cargo test --locked --all-features

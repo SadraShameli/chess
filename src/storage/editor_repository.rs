@@ -21,11 +21,11 @@ pub enum StorageEditorRepositoryError {
     #[error(transparent)]
     Document(#[from] StorageDocumentError),
     #[error("Editor database operation failed: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    Database(#[from] diesel::result::Error),
     #[error("Editor rollback failed after {primary}: {rollback}")]
     Rollback {
         primary: Box<Self>,
-        rollback: rusqlite::Error,
+        rollback: diesel::result::Error,
     },
     #[error("The editor write does not have a confirmed rollback")]
     RetryUnconfirmed,

@@ -2,7 +2,10 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use rusqlite::{Connection, TransactionBehavior};
+use diesel::Connection as _;
+use diesel::SqliteConnection;
+use diesel::connection::InstrumentationEvent;
+use rusqlite::Connection;
 use tokio::sync::Semaphore;
 
 use crate::board::start::BoardStart;
@@ -17,12 +20,14 @@ use crate::game::tree::GameTree;
 use crate::notation::game::{NotationGame, NotationGameParts};
 use crate::notation::game_identity::NotationGameIdentityEnumResult;
 use crate::package::digest::PackageDigest;
+use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::{StorageDocumentClient, StorageDocumentStore};
 use crate::storage::game_document::StorageGameDocument;
 use crate::storage::import_session::{
     StorageImportSessionCancellation, StorageImportSessionCommitFootprint,
     StorageImportSessionError, StorageImportSessionPreparedCommit,
 };
+use crate::storage::library_import::StorageLibraryImportPageLimit;
 use crate::storage::library_import::space::StorageLibraryImportSpace;
 use crate::storage::library_import::space::layout::StorageLibraryImportSpaceLayout;
 use crate::storage::library_import::space::trees::{
@@ -38,7 +43,7 @@ use crate::storage::library_transaction::{
     StorageLibraryEnumTransactionRequest, StorageLibraryEnumTransactionResponse,
     StorageLibraryTransaction,
 };
-use crate::storage::migration::StorageMigration;
+use crate::storage::migration::StorageMigrationRunner;
 
 #[path = "library_import_space_budget.rs"]
 mod budget_tests;
@@ -132,16 +137,55 @@ impl StorageLibraryImportPlanningWorkObservation {
     }
 }
 
-struct StorageLibraryImportPlanningWorkFixture {
-    connection: Connection,
-    directory: tempfile::TempDir,
+#[derive(Debug)]
+pub(crate) struct StorageLibraryImportPlanningWorkRollback;
+
+impl std::fmt::Display for StorageLibraryImportPlanningWorkRollback {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("The planning transaction was rolled back on purpose")
+    }
+}
+
+impl std::error::Error for StorageLibraryImportPlanningWorkRollback {}
+
+impl StorageLibraryImportPlanningWorkRollback {
+    pub(crate) fn run<T>(
+        connection: &mut SqliteConnection,
+        immediate: bool,
+        work: impl FnOnce(&mut SqliteConnection) -> StorageLibraryImportPlanningWorkResult<T>,
+    ) -> StorageLibraryImportPlanningWorkResult<T> {
+        let mut slot = None;
+        let body = |transaction: &mut SqliteConnection| -> StorageLibraryImportPlanningWorkResult {
+            slot = Some(work(transaction));
+            Err(Box::new(Self))
+        };
+        let outcome = if immediate {
+            connection.immediate_transaction(body)
+        } else {
+            connection.transaction(body)
+        };
+        match outcome {
+            Err(error) if error.is::<Self>() => {}
+            Err(error) if error.to_string().contains("no transaction is active") => {}
+            Err(error) => return Err(error),
+            Ok(()) => {}
+        }
+        slot.ok_or("the planning transaction body did not run")?
+    }
+}
+
+pub(crate) struct StorageLibraryImportPlanningWorkFixture {
+    pub(crate) diesel: StorageConnection,
+    pub(crate) connection: Connection,
+    statements: Arc<std::sync::Mutex<Vec<String>>>,
+    pub(crate) directory: tempfile::TempDir,
     expected_documents: Vec<StorageLibraryImportPlanningWorkDocument>,
 }
 
 impl StorageLibraryImportPlanningWorkFixture {
     const PAGE_BYTES: u64 = 4096;
     const OLD_RECORDS: u64 = 2;
-    const SMALL_NOTE_BYTES: usize = 16;
+    pub(crate) const SMALL_NOTE_BYTES: usize = 16;
     const EXTRA_OVERFLOW_PAGES_PER_DOCUMENT: u64 = 64;
     const TINY_BODY_BYTES: u64 = 1024;
     const TINY_PROJECTION_BYTES: u64 = 1024;
@@ -209,19 +253,32 @@ impl StorageLibraryImportPlanningWorkFixture {
         Self::with_records(note_bytes, Self::OLD_RECORDS, cancellation)
     }
 
-    fn with_records(
+    pub(crate) fn with_records(
         note_bytes: usize,
         records: u64,
         cancellation: &CapacityExecutorCancellation,
     ) -> StorageLibraryImportPlanningWorkResult<Self> {
         let directory = tempfile::tempdir()?;
-        let mut connection = Connection::open(directory.path().join("planning.sqlite"))?;
+        let path = directory.path().join("planning.sqlite");
+        let connection = Connection::open(&path)?;
         connection.pragma_update(None, "page_size", i64::try_from(Self::PAGE_BYTES)?)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "wal_autocheckpoint", 0)?;
-        StorageMigration::apply(&mut connection, &StorageMigration::core())?;
+        let mut diesel = StorageConnection::open(&path)?;
+        StorageMigrationRunner::run_embedded(diesel.diesel())?;
+        let statements = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&statements);
+        diesel
+            .diesel()
+            .set_instrumentation(move |event: InstrumentationEvent<'_>| {
+                if let InstrumentationEvent::StartQuery { query, .. } = event
+                    && let Ok(mut log) = sink.lock()
+                {
+                    log.push(query.to_string());
+                }
+            });
         let memory = Arc::new(Semaphore::new(StorageDocumentStore::MEMORY_BUDGET));
         let mut expected_documents = Vec::new();
         for value in 1..=records {
@@ -250,7 +307,7 @@ impl StorageLibraryImportPlanningWorkFixture {
             )?;
             if !matches!(
                 StorageLibraryTransaction::execute(
-                    &mut connection,
+                    diesel.diesel(),
                     StorageLibraryEnumTransactionRequest::Save(prepared),
                     &memory,
                     &mut false,
@@ -262,17 +319,39 @@ impl StorageLibraryImportPlanningWorkFixture {
             }
         }
         Ok(Self {
+            diesel,
+            statements,
             connection,
             directory,
             expected_documents,
         })
     }
 
-    fn checkpoint(&self) -> rusqlite::Result<(i64, i64, i64)> {
-        self.connection
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
+    pub(crate) fn statements(&self) -> StorageLibraryImportPlanningWorkResult<Vec<String>> {
+        Ok(self
+            .statements
+            .lock()
+            .map_err(|_poisoned| "the statement log is poisoned")?
+            .iter()
+            .map(|sql| sql.split(" -- binds").next().unwrap_or_default().to_owned())
+            .collect())
+    }
+
+    pub(crate) fn checkpoint(&mut self) -> StorageLibraryImportPlanningWorkResult<(i64, i64, i64)> {
+        use diesel::RunQueryDsl as _;
+
+        #[derive(diesel::QueryableByName)]
+        struct Checkpoint {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            busy: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            log: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            checkpointed: i64,
+        }
+        let row: Checkpoint = diesel::sql_query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .get_result(self.diesel.diesel())?;
+        Ok((row.busy, row.log, row.checkpointed))
     }
 
     fn snapshot(
@@ -342,25 +421,29 @@ impl StorageLibraryImportPlanningWorkFixture {
 
     fn measure(
         &mut self,
-        behavior: TransactionBehavior,
+        immediate: bool,
         footprint: StorageImportSessionCommitFootprint,
     ) -> StorageLibraryImportPlanningWorkResult<StorageLibraryImportPlanningWorkBound> {
-        let transaction = self.connection.transaction_with_behavior(behavior)?;
-        let cancellation = StorageImportSessionCancellation::new();
-        let layout = StorageLibraryImportSpaceLayout::read(&transaction, &cancellation)?;
-        let bound = StorageLibraryImportSpaceTrees::plan_budget(
-            &transaction,
-            footprint,
-            layout.page,
-            &cancellation,
-        )?;
-        transaction.rollback()?;
-        Ok(StorageLibraryImportPlanningWorkBound {
-            inventory_vm_steps: bound.inventory_vm_steps,
-            new_page_budget: bound.new_page_budget,
-            old_tree_pages: bound.old_tree_pages,
-            allocator_operations: bound.allocator_operations,
-        })
+        StorageLibraryImportPlanningWorkRollback::run(
+            self.diesel.diesel(),
+            immediate,
+            |transaction| {
+                let cancellation = StorageImportSessionCancellation::new();
+                let layout = StorageLibraryImportSpaceLayout::read(transaction, &cancellation)?;
+                let bound = StorageLibraryImportSpaceTrees::plan_budget(
+                    transaction,
+                    footprint,
+                    layout.page,
+                    &cancellation,
+                )?;
+                Ok(StorageLibraryImportPlanningWorkBound {
+                    inventory_vm_steps: bound.inventory_vm_steps,
+                    new_page_budget: bound.new_page_budget,
+                    old_tree_pages: bound.old_tree_pages,
+                    allocator_operations: bound.allocator_operations,
+                })
+            },
+        )
     }
 
     fn observe(
@@ -370,9 +453,9 @@ impl StorageLibraryImportPlanningWorkFixture {
         let first_checkpoint = self.checkpoint()?;
         let before = self.snapshot()?;
         let stable_before = self.snapshot()?;
-        let deferred = self.measure(TransactionBehavior::Deferred, footprint)?;
+        let deferred = self.measure(false, footprint)?;
         let after_deferred = self.snapshot()?;
-        let immediate = self.measure(TransactionBehavior::Immediate, footprint)?;
+        let immediate = self.measure(true, footprint)?;
         let after_immediate = self.snapshot()?;
         let last_checkpoint = self.checkpoint()?;
         let after_checkpoint = self.snapshot()?;
@@ -492,9 +575,11 @@ async fn tiny_import_inventory_work_is_independent_of_checkpointed_old_note_byte
 #[test]
 fn canonical_primary_key_probes_have_covering_query_plans() -> StorageLibraryImportPlanningWorkResult
 {
-    let mut connection = Connection::open_in_memory()?;
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("probes.sqlite");
+    StorageMigrationRunner::run_embedded(StorageConnection::open(&path)?.diesel())?;
+    let connection = Connection::open(&path)?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
-    StorageMigration::apply(&mut connection, &StorageMigration::core())?;
     let limit = StorageLibraryImportSpaceTrees::probe_limit(1)?;
     assert_eq!(limit, 81);
     for (table, index) in [
@@ -536,25 +621,30 @@ async fn bounded_probes_distinguish_exact_cardinality_from_a_lower_bound()
                     token,
                 )?;
                 let cancellation = StorageImportSessionCancellation::new();
-                let transaction = fixture.connection.transaction()?;
-                let mut steps = [0; 2];
-                for (index, table) in StorageLibraryImportSpaceEnumTable::ALL
-                    .into_iter()
-                    .enumerate()
-                {
-                    let probe = table.probe(&transaction, limit, &mut || cancellation.check())?;
-                    assert_eq!(
-                        probe.cardinality,
-                        if records < limit {
-                            StorageLibraryImportSpaceEnumCardinality::Exact(records)
-                        } else {
-                            StorageLibraryImportSpaceEnumCardinality::AtLeast(limit)
-                        },
-                    );
-                    assert!(probe.inventory_vm_steps > 0);
-                    steps[index] = probe.inventory_vm_steps;
-                }
-                transaction.rollback()?;
+                let steps = StorageLibraryImportPlanningWorkRollback::run(
+                    fixture.diesel.diesel(),
+                    false,
+                    |transaction| {
+                        let mut steps = [0; 2];
+                        for (index, table) in StorageLibraryImportSpaceEnumTable::ALL
+                            .into_iter()
+                            .enumerate()
+                        {
+                            let probe =
+                                table.probe(transaction, limit, &mut || cancellation.check())?;
+                            assert_eq!(
+                                probe.cardinality,
+                                if records < limit {
+                                    StorageLibraryImportSpaceEnumCardinality::Exact(records)
+                                } else {
+                                    StorageLibraryImportSpaceEnumCardinality::AtLeast(limit)
+                                },
+                            );
+                            steps[index] = probe.inventory_vm_steps;
+                        }
+                        Ok(steps)
+                    },
+                )?;
                 if records == limit {
                     capped_steps = Some(steps);
                 } else if records > limit {
@@ -612,22 +702,27 @@ async fn tiny_import_inventory_work_stops_at_the_import_derived_probe_limit()
 #[test]
 fn cancelled_planning_returns_before_attempting_an_unsupported_layout()
 -> StorageLibraryImportPlanningWorkResult {
-    let mut connection = Connection::open_in_memory()?;
-    let transaction = connection.transaction()?;
+    let mut connection = SqliteConnection::establish(":memory:")?;
     let cancellation = StorageImportSessionCancellation::new();
     cancellation.cancel();
-    assert!(matches!(
-        StorageLibraryImportSpace::plan(
-            &transaction,
-            StorageLibraryImportPlanningWorkFixture::footprint()?,
-            &cancellation,
-        ),
-        Err(StorageLibraryError::Import(
-            StorageImportSessionError::Cancelled
-        )),
-    ));
-    transaction.rollback()?;
-    assert!(connection.is_autocommit());
+    let outcome =
+        StorageLibraryImportPlanningWorkRollback::run(&mut connection, false, |transaction| {
+            assert!(matches!(
+                StorageLibraryImportSpace::plan(
+                    transaction,
+                    StorageLibraryImportPlanningWorkFixture::footprint()?,
+                    &cancellation,
+                ),
+                Err(StorageLibraryError::Import(
+                    StorageImportSessionError::Cancelled
+                )),
+            ));
+            Ok(())
+        });
+    outcome?;
+    assert!(StorageLibraryImportPageLimit::is_autocommit(
+        &mut connection
+    )?);
     Ok(())
 }
 
@@ -646,33 +741,38 @@ async fn inventory_cancellation_is_observed_between_streamed_rows()
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
             let before = fixture.snapshot()?;
             let cancellation = StorageImportSessionCancellation::new();
-            let transaction = fixture
-                .connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut checks = 0_u64;
-            let result = StorageLibraryImportSpaceTrees::plan_budget_checked(
-                &transaction,
-                StorageLibraryImportPlanningWorkFixture::footprint()?,
-                StorageLibraryImportPlanningWorkFixture::PAGE_BYTES,
-                &mut || {
-                    checks += 1;
-                    if checks == 8 {
-                        cancellation.cancel();
-                    }
-                    cancellation.check()
+            StorageLibraryImportPlanningWorkRollback::run(
+                fixture.diesel.diesel(),
+                true,
+                |transaction| {
+                    let result = StorageLibraryImportSpaceTrees::plan_budget_checked(
+                        transaction,
+                        StorageLibraryImportPlanningWorkFixture::footprint()?,
+                        StorageLibraryImportPlanningWorkFixture::PAGE_BYTES,
+                        &mut || {
+                            checks += 1;
+                            if checks == 8 {
+                                cancellation.cancel();
+                            }
+                            cancellation.check()
+                        },
+                    );
+                    assert!(matches!(
+                        result,
+                        Err(StorageLibraryError::Import(
+                            StorageImportSessionError::Cancelled
+                        ))
+                    ));
+                    Ok(())
                 },
-            );
-            assert!(matches!(
-                result,
-                Err(StorageLibraryError::Import(
-                    StorageImportSessionError::Cancelled
-                ))
-            ));
+            )?;
             assert_eq!(checks, 8);
             assert!(cancellation.is_cancelled());
-            transaction.rollback()?;
             assert_eq!(fixture.snapshot()?, before);
-            assert!(fixture.connection.is_autocommit());
+            assert!(StorageLibraryImportPageLimit::is_autocommit(
+                fixture.diesel.diesel()
+            )?);
             fixture
                 .connection
                 .close()
@@ -699,12 +799,12 @@ async fn partial_indexes_reuse_the_parent_probe_without_repeating_inventory()
             )?;
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
             let footprint = StorageLibraryImportPlanningWorkFixture::footprint()?;
-            let before = fixture.measure(TransactionBehavior::Deferred, footprint)?;
+            let before = fixture.measure(false, footprint)?;
             fixture.connection.execute_batch(
                 "CREATE INDEX import_empty_partial ON library_entries(game_id) WHERE favorite = 1",
             )?;
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
-            let after = fixture.measure(TransactionBehavior::Deferred, footprint)?;
+            let after = fixture.measure(false, footprint)?;
             assert!(after.inventory_vm_steps > 0);
             assert_eq!(after.inventory_vm_steps, before.inventory_vm_steps);
             assert!(after.new_page_budget >= before.new_page_budget);
@@ -739,13 +839,13 @@ async fn tiny_import_bounds_are_stable_when_a_checkpointed_unrelated_document_gr
         )?;
         assert_eq!(fixture.checkpoint()?, (0, 0, 0));
         let footprint = StorageLibraryImportPlanningWorkFixture::footprint()?;
-        let before = fixture.measure(TransactionBehavior::Deferred, footprint)?;
+        let before = fixture.measure(false, footprint)?;
         fixture.connection.execute(
             "UPDATE documents SET body = json_object('unrelated', hex(zeroblob(16384))) WHERE id = ?1",
             [&unrelated],
         )?;
         assert_eq!(fixture.checkpoint()?, (0, 0, 0));
-        let after = fixture.measure(TransactionBehavior::Deferred, footprint)?;
+        let after = fixture.measure(false, footprint)?;
         assert_eq!(before.new_page_budget, after.new_page_budget);
         assert_eq!(before.old_tree_pages, after.old_tree_pages);
         assert_eq!(before.allocator_operations, after.allocator_operations);

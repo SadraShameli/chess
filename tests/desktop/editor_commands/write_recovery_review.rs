@@ -76,9 +76,9 @@ async fn explicit_save_after_definite_rollback_recovers_original_submission_and_
     assert!(matches!(
         &rollback.failure,
         Err(DesktopEditorCommandsError::WriteFailed(error))
-            if matches!(error.as_ref(), StorageEditorRepositoryError::Sqlite(
-                rusqlite::Error::SqliteFailure(cause, _)
-            ) if cause.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER)
+            if matches!(error.as_ref(), StorageEditorRepositoryError::Database(
+                diesel::result::Error::DatabaseError(_, information)
+            ) if information.message().contains("controlled editor rollback"))
     ));
     assert_eq!(
         rollback.stored,

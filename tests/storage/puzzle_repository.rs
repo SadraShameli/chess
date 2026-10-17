@@ -27,7 +27,6 @@ use chess::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
 use chess::puzzle::storage_repository::PuzzleStorageDriver;
 use chess::puzzle::timer::PuzzleTimerEnumReadiness;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
-use chess::storage::migration::StorageMigration;
 use chess::storage::puzzle_repository::{StoragePuzzleError, StoragePuzzleRepository};
 use uuid::Uuid;
 
@@ -184,8 +183,12 @@ async fn transactional_receipt_survives_reopen_and_puzzle_rows_do_not_enter_game
     );
     reopened.close().await?;
     let connection = rusqlite::Connection::open(path)?;
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    assert_eq!(version, u32::try_from(StorageMigration::core().len())?);
+    let mut statement =
+        connection.prepare("SELECT version FROM __diesel_schema_migrations ORDER BY version")?;
+    let versions = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(versions, ["0001"]);
     Ok(())
 }
 
@@ -354,7 +357,7 @@ async fn retry_keeps_failed_snapshot_and_original_revision_then_requires_explici
     assert!(driver.settle(ClockInstant::from_nanos(0)).is_err());
     assert!(matches!(
         driver.failure(),
-        Some(StoragePuzzleError::Sqlite(_))
+        Some(StoragePuzzleError::Diesel(_))
     ));
     assert!(driver.pending_request().is_some());
     driver.wait().await?;

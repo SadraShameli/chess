@@ -486,7 +486,7 @@ async fn failed_projection_write_rolls_back_the_new_document_and_catalog()
             GameStorageEnumEditCause::Created,
         )?)
         .await;
-    assert!(matches!(result, Err(StorageLibraryError::Sqlite(_))));
+    assert!(matches!(result, Err(StorageLibraryError::Diesel(_))));
     assert_eq!(fixture.counts().await?, (0, 0));
     assert_eq!(
         fixture

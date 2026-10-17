@@ -1,4 +1,6 @@
-use rusqlite::{Connection, TransactionBehavior};
+use diesel::RunQueryDsl;
+use diesel::SqliteConnection;
+use diesel::sql_types::{BigInt, Text};
 
 use crate::capacity::budget::CapacityBudget;
 use crate::capacity::executor::CapacityExecutor;
@@ -9,6 +11,7 @@ use crate::storage::library_import::StorageLibraryImportPageLimit;
 use crate::storage::library_import::space::StorageLibraryImportSpace;
 use crate::storage::library_import::space::trees::planning_work_tests::{
     StorageLibraryImportPlanningWorkFixture, StorageLibraryImportPlanningWorkResult,
+    StorageLibraryImportPlanningWorkRollback,
 };
 use crate::storage::library_repository::StorageLibraryError;
 
@@ -17,17 +20,24 @@ enum StorageLibraryImportSpaceBudgetEnumPragma {
     Pages,
 }
 
+#[derive(diesel::QueryableByName)]
+struct StorageLibraryImportSpaceBudgetPragmaValue {
+    #[diesel(sql_type = BigInt)]
+    value: i64,
+}
+
 impl StorageLibraryImportSpaceBudgetEnumPragma {
-    fn read(self, connection: &Connection) -> StorageLibraryImportPlanningWorkResult<u64> {
-        let name = match self {
-            Self::Ceiling => "max_page_count",
-            Self::Pages => "page_count",
+    fn read(
+        self,
+        connection: &mut SqliteConnection,
+    ) -> StorageLibraryImportPlanningWorkResult<u64> {
+        let query = match self {
+            Self::Ceiling => "SELECT max_page_count AS value FROM pragma_max_page_count",
+            Self::Pages => "SELECT page_count AS value FROM pragma_page_count",
         };
-        Ok(u64::try_from(connection.pragma_query_value(
-            None,
-            name,
-            |row| row.get::<_, i64>(0),
-        )?)?)
+        let row: StorageLibraryImportSpaceBudgetPragmaValue =
+            diesel::sql_query(query).get_result(connection)?;
+        Ok(u64::try_from(row.value)?)
     }
 }
 
@@ -93,41 +103,51 @@ async fn page_budget_refuses_excess_allocation_and_restores_the_ceiling_after_ro
             )?;
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
             let before = fixture.snapshot()?;
-            let previous = StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(&fixture.connection)?;
-            let transaction = fixture
-                .connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let space = StorageLibraryImportSpace::plan(
-                &transaction,
-                StorageLibraryImportPlanningWorkFixture::footprint()?,
-                &StorageImportSessionCancellation::new(),
-            )?;
-            let ceiling = space.page_ceiling();
+            let previous =
+                StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(fixture.diesel.diesel())?;
             let mut scope = None;
-            StorageLibraryImportPageLimit::install(&transaction, ceiling, &mut scope)?;
-            let installed = StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(&transaction)?;
-            transaction.execute(
-                "INSERT INTO documents(id, revision, body) VALUES (?1, '1', '{}')",
-                [uuid::Uuid::from_u128(99_003).to_string()],
-            )?;
-            transaction.execute("UPDATE library_state SET revision = '999' WHERE singleton = 1", [])?;
-            let primary = transaction
-                .execute(
-                    "INSERT INTO documents(id, revision, body) VALUES (?1, '1', json_object('padding', hex(zeroblob(?2))))",
-                    rusqlite::params![
-                        uuid::Uuid::from_u128(99_002).to_string(),
-                        i64::try_from(
+            let mut primary = None;
+            let (ceiling, installed) = StorageLibraryImportPlanningWorkRollback::run(
+                fixture.diesel.diesel(),
+                true,
+                |transaction| {
+                    let space = StorageLibraryImportSpace::plan(
+                        transaction,
+                        StorageLibraryImportPlanningWorkFixture::footprint()?,
+                        &StorageImportSessionCancellation::new(),
+                    )?;
+                    let ceiling = space.page_ceiling();
+                    StorageLibraryImportPageLimit::install(transaction, ceiling, &mut scope)?;
+                    let installed = StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(transaction)?;
+                    diesel::sql_query("INSERT INTO documents(id, revision, body) VALUES (?, '1', '{}')")
+                        .bind::<Text, _>(uuid::Uuid::from_u128(99_003).to_string())
+                        .execute(transaction)?;
+                    diesel::sql_query("UPDATE library_state SET revision = '999' WHERE singleton = 1")
+                        .execute(transaction)?;
+                    primary = Some(
+                        diesel::sql_query(
+                            "INSERT INTO documents(id, revision, body) VALUES (?, '1', json_object('padding', hex(zeroblob(?))))",
+                        )
+                        .bind::<Text, _>(uuid::Uuid::from_u128(99_002).to_string())
+                        .bind::<BigInt, _>(i64::try_from(
                             ceiling
                                 .checked_mul(StorageLibraryImportPlanningWorkFixture::PAGE_BYTES)
                                 .ok_or("budget fixture size overflow")?,
-                        )?,
-                    ],
-                )
-                .map_err(StorageLibraryError::from);
-            transaction.finish()?;
-            let pages = StorageLibraryImportSpaceBudgetEnumPragma::Pages.read(&fixture.connection)?;
-            let outcome = StorageLibraryImportPageLimit::finish(&fixture.connection, scope, primary);
-            let restored = StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(&fixture.connection)?;
+                        )?)
+                        .execute(transaction)
+                        .map(drop)
+                        .map_err(StorageLibraryError::from),
+                    );
+                    Ok((ceiling, installed))
+                },
+            )?;
+            let primary = primary.ok_or("the oversized insert did not run")?;
+            let pages =
+                StorageLibraryImportSpaceBudgetEnumPragma::Pages.read(fixture.diesel.diesel())?;
+            let outcome =
+                StorageLibraryImportPageLimit::finish(fixture.diesel.diesel(), scope, primary);
+            let restored =
+                StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(fixture.diesel.diesel())?;
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
             let after = fixture.snapshot()?;
             fixture
@@ -141,7 +161,7 @@ async fn page_budget_refuses_excess_allocation_and_restores_the_ceiling_after_ro
             assert!(pages <= ceiling);
             assert_eq!(restored, previous);
             assert!(
-                matches!(outcome, Err(StorageLibraryError::Sqlite(rusqlite::Error::SqliteFailure(error, _))) if error.code == rusqlite::ErrorCode::DiskFull),
+                matches!(&outcome, Err(StorageLibraryError::Diesel(error)) if error.to_string().contains("full")),
             );
             assert_eq!(after.documents, before.documents);
             assert_eq!(after.metadata, before.metadata);
@@ -171,19 +191,30 @@ async fn journal_proof_requires_enabled_immediate_foreign_keys()
                     0,
                     token,
                 )?;
-                fixture
-                    .connection
-                    .pragma_update(None, "foreign_keys", foreign_keys)?;
-                let transaction = fixture
-                    .connection
-                    .transaction_with_behavior(TransactionBehavior::Immediate)?;
-                transaction.pragma_update(None, "defer_foreign_keys", deferred)?;
-                let result = StorageLibraryImportSpace::plan(
-                    &transaction,
-                    StorageLibraryImportPlanningWorkFixture::footprint()?,
-                    &StorageImportSessionCancellation::new(),
-                );
-                transaction.rollback()?;
+                diesel::sql_query(if foreign_keys {
+                    "PRAGMA foreign_keys = ON"
+                } else {
+                    "PRAGMA foreign_keys = OFF"
+                })
+                .execute(fixture.diesel.diesel())?;
+                let result = StorageLibraryImportPlanningWorkRollback::run(
+                    fixture.diesel.diesel(),
+                    true,
+                    |transaction| {
+                        diesel::sql_query(if deferred {
+                            "PRAGMA defer_foreign_keys = ON"
+                        } else {
+                            "PRAGMA defer_foreign_keys = OFF"
+                        })
+                        .execute(transaction)?;
+                        Ok(StorageLibraryImportSpace::plan(
+                            transaction,
+                            StorageLibraryImportPlanningWorkFixture::footprint()?,
+                            &StorageImportSessionCancellation::new(),
+                        )
+                        .map(drop))
+                    },
+                )?;
                 fixture
                     .connection
                     .close()

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
+use diesel::SqliteConnection;
+use diesel::prelude::*;
 use tokio::sync::Semaphore;
 
 use crate::game::enums::GameId;
@@ -18,8 +19,8 @@ use crate::storage::library_prepared::{
     StorageLibraryEnumStartKind, StorageLibraryProjection, StorageLibraryProjectionOptions,
 };
 use crate::storage::library_query::{
-    StorageLibraryQuery, StorageLibraryQueryEntry, StorageLibraryQueryEntryOptions,
-    StorageLibraryQueryPage,
+    StorageLibraryMillis, StorageLibraryQuery, StorageLibraryQueryEntry,
+    StorageLibraryQueryEntryOptions, StorageLibraryQueryPage, StorageLibraryQueryRow,
 };
 use crate::storage::library_repository::{
     StorageLibraryAdoptionCandidate, StorageLibraryAdoptionCursor, StorageLibraryAdoptionPage,
@@ -27,6 +28,7 @@ use crate::storage::library_repository::{
     StorageLibraryStoredRecordOptions,
 };
 use crate::storage::library_transaction::StorageLibraryTransaction;
+use crate::storage::schema::{documents, games, library_entries, library_entry_tags};
 use crate::storage::trash::StorageTrashEnumLocation;
 
 pub(super) struct StorageLibraryTransactionEntryState {
@@ -55,23 +57,25 @@ impl StorageLibraryTransactionEntryState {
     }
 }
 
+diesel::define_sql_function! {
+    #[sql_name = "octet_length"]
+    fn library_body_length(body: diesel::sql_types::Text) -> diesel::sql_types::BigInt;
+}
+
 pub(super) struct StorageLibraryTransactionRows;
 
 impl StorageLibraryTransactionRows {
-    const PROJECTION_COLUMNS: &str = "e.game_id, e.content_revision, e.organization_revision, e.content_kind, e.rules_variant, e.start_kind, e.mode, e.result, e.white_display, e.white_key, e.black_display, e.black_key, e.date_year, e.date_month, e.date_day, e.opening_display, e.opening_key, e.opening_code, e.plies, e.modified_ms, e.favorite, e.folder_id, e.location, e.trashed_ms";
     const TAG_MEMORY: usize = GameLibraryOrganizationTagSet::MAX_TAGS
         * std::mem::size_of::<crate::game::library_organization::GameLibraryOrganizationTagId>();
 
     pub(super) fn document_revision(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         id: GameId,
     ) -> Result<Option<GameStorageRevision>, StorageLibraryError> {
-        let value: Option<String> = transaction
-            .query_row(
-                "SELECT revision FROM documents WHERE id = ?1",
-                [id.as_uuid().to_string()],
-                |row| row.get(0),
-            )
+        let value: Option<String> = documents::table
+            .filter(documents::id.eq(id.as_uuid().to_string()))
+            .select(documents::revision)
+            .first(connection)
             .optional()?;
         value
             .as_deref()
@@ -79,59 +83,85 @@ impl StorageLibraryTransactionRows {
             .transpose()
     }
     pub(super) fn tags(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         id: GameId,
     ) -> Result<GameLibraryOrganizationTagSet, StorageLibraryError> {
-        let mut statement = transaction.prepare(
-            "SELECT tag_id FROM library_entry_tags WHERE game_id = ?1 ORDER BY tag_id LIMIT ?2",
-        )?;
-        let mut rows = statement.query(params![
-            id.as_uuid().to_string(),
-            i64::try_from(GameLibraryOrganizationTagSet::MAX_TAGS + 1)?
-        ])?;
-        let mut tags = Vec::new();
-        while let Some(row) = rows.next()? {
-            let value: String = row.get(0)?;
+        let values: Vec<String> = library_entry_tags::table
+            .filter(library_entry_tags::game_id.eq(id.as_uuid().to_string()))
+            .select(library_entry_tags::tag_id)
+            .order(library_entry_tags::tag_id.asc())
+            .limit(i64::try_from(GameLibraryOrganizationTagSet::MAX_TAGS + 1)?)
+            .load(connection)?;
+        let mut tags = Vec::with_capacity(values.len());
+        for value in values {
             tags.push(value.parse()?);
         }
         Ok(GameLibraryOrganizationTagSet::new(tags)?)
     }
     pub(super) fn state(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         id: GameId,
     ) -> Result<Option<StorageLibraryTransactionEntryState>, StorageLibraryError> {
-        let mut statement = transaction.prepare("SELECT e.content_revision, e.organization_revision, e.favorite, e.folder_id, e.location, e.modified_ms, e.content_kind, d.revision, e.trashed_ms FROM library_entries e JOIN documents d ON d.id = e.game_id WHERE e.game_id = ?1")?;
-        let mut rows = statement.query([id.as_uuid().to_string()])?;
-        let Some(row) = rows.next()? else {
+        type Row = (
+            String,
+            String,
+            i32,
+            Option<String>,
+            String,
+            Option<StorageLibraryMillis>,
+            String,
+            String,
+            Option<StorageLibraryMillis>,
+        );
+        let row: Option<Row> = library_entries::table
+            .inner_join(documents::table)
+            .filter(library_entries::game_id.eq(id.as_uuid().to_string()))
+            .select((
+                library_entries::content_revision,
+                library_entries::organization_revision,
+                library_entries::favorite,
+                library_entries::folder_id,
+                library_entries::location,
+                library_entries::modified_ms,
+                library_entries::content_kind,
+                documents::revision,
+                library_entries::trashed_ms,
+            ))
+            .first(connection)
+            .optional()?;
+        let Some((
+            revision,
+            organization,
+            favorite,
+            folder,
+            location,
+            modified,
+            kind,
+            document,
+            trashed,
+        )) = row
+        else {
             return Ok(None);
         };
-        let revision: String = row.get(0)?;
-        let document: String = row.get(7)?;
         let content = StorageLibraryError::content_revision(&revision)?;
         if content != StorageLibraryError::content_revision(&document)? {
             return Err(StorageLibraryError::ProjectionStale);
         }
-        let organization: String = row.get(1)?;
-        let favorite: i64 = row.get(2)?;
-        let folder: Option<String> = row.get(3)?;
-        let location: String = row.get(4)?;
         let location = StorageTrashEnumLocation::parse(&location)?;
-        Self::validate_location(location, row.get(8)?)?;
-        let modified = row
-            .get::<_, Option<i64>>(5)?
-            .map(GameLibraryOrganizationTimestamp::new)
+        Self::validate_location(location, trashed.map(StorageLibraryMillis::value))?;
+        let modified = modified
+            .map(|millis| GameLibraryOrganizationTimestamp::new(millis.value()))
             .transpose()?;
-        let kind: String = row.get(6)?;
         Ok(Some(StorageLibraryTransactionEntryState {
             content,
             organization: GameLibraryOrganizationState::new(
                 organization.parse()?,
-                Self::favorite(favorite)?,
+                Self::favorite(i64::from(favorite))?,
                 folder
                     .as_deref()
                     .map(str::parse::<GameLibraryOrganizationFolderId>)
                     .transpose()?,
-                Self::tags(transaction, id)?,
+                Self::tags(connection, id)?,
             ),
             location,
             modified,
@@ -162,7 +192,7 @@ impl StorageLibraryTransactionRows {
         }
     }
     pub(super) fn load(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         id: GameId,
         memory: &Arc<Semaphore>,
     ) -> Result<Option<StorageLibraryStoredRecord>, StorageLibraryError> {
@@ -170,14 +200,13 @@ impl StorageLibraryTransactionRows {
             memory,
             Self::TAG_MEMORY + std::mem::size_of::<StorageLibraryStoredRecord>(),
         )?;
-        let Some(state) = Self::state(transaction, id)? else {
+        let Some(state) = Self::state(connection, id)? else {
             return Ok(None);
         };
-        let length: i64 = transaction.query_row(
-            "SELECT length(CAST(body AS BLOB)) FROM documents WHERE id = ?1",
-            [id.as_uuid().to_string()],
-            |row| row.get(0),
-        )?;
+        let length: i64 = documents::table
+            .filter(documents::id.eq(id.as_uuid().to_string()))
+            .select(library_body_length(documents::body))
+            .first(connection)?;
         let length = usize::try_from(length)?;
         reservation.reserve(
             memory,
@@ -185,11 +214,10 @@ impl StorageLibraryTransactionRows {
                 .checked_mul(4)
                 .ok_or(StorageLibraryError::TextTooLarge)?,
         )?;
-        let body: String = transaction.query_row(
-            "SELECT body FROM documents WHERE id = ?1",
-            [id.as_uuid().to_string()],
-            |row| row.get(0),
-        )?;
+        let body: String = documents::table
+            .filter(documents::id.eq(id.as_uuid().to_string()))
+            .select(documents::body)
+            .first(connection)?;
         Ok(Some(StorageLibraryStoredRecord::new(
             StorageLibraryStoredRecordOptions {
                 id,
@@ -202,22 +230,22 @@ impl StorageLibraryTransactionRows {
             },
         )))
     }
-    fn row_bytes(row: &Row<'_>) -> Result<usize, StorageLibraryError> {
+    fn row_bytes(row: &StorageLibraryQueryRow) -> Result<usize, StorageLibraryError> {
         let mut bytes = std::mem::size_of::<StorageLibraryQueryEntry>() + Self::TAG_MEMORY;
-        for index in [8, 9, 10, 11, 15, 16, 17] {
-            let value = row.get_ref(index)?;
-            let length = match value {
-                rusqlite::types::ValueRef::Text(text) => text.len(),
-                rusqlite::types::ValueRef::Null => 0,
-                rusqlite::types::ValueRef::Integer(_)
-                | rusqlite::types::ValueRef::Real(_)
-                | rusqlite::types::ValueRef::Blob(_) => {
-                    return Err(StorageLibraryError::StoredDiscriminant);
-                }
-            };
+        for value in [
+            &row.white_display,
+            &row.white_key,
+            &row.black_display,
+            &row.black_key,
+            &row.opening_display,
+            &row.opening_key,
+            &row.opening_code,
+        ] {
             bytes = bytes
                 .checked_add(
-                    length
+                    value
+                        .as_ref()
+                        .map_or(0, String::len)
                         .checked_mul(4)
                         .ok_or(StorageLibraryError::TextTooLarge)?,
                 )
@@ -226,59 +254,50 @@ impl StorageLibraryTransactionRows {
         Ok(bytes)
     }
     fn entry(
-        transaction: &Transaction<'_>,
-        row: &Row<'_>,
+        connection: &mut SqliteConnection,
+        row: StorageLibraryQueryRow,
         date_filtered: bool,
     ) -> Result<StorageLibraryQueryEntry, StorageLibraryError> {
-        let id: GameId = row.get::<_, String>(0)?.parse()?;
-        let revision = StorageLibraryError::content_revision(&row.get::<_, String>(1)?)?;
-        let organization: GameLibraryOrganizationRevision = row.get::<_, String>(2)?.parse()?;
-        let white = row
-            .get::<_, Option<String>>(8)?
-            .map(GameMetadataText::new)
-            .transpose()?;
-        let black = row
-            .get::<_, Option<String>>(10)?
-            .map(GameMetadataText::new)
-            .transpose()?;
-        let date = GameMetadataDate::new(row.get(12)?, row.get(13)?, row.get(14)?)?;
+        let id: GameId = row.game_id.parse()?;
+        let revision = StorageLibraryError::content_revision(&row.content_revision)?;
+        let organization: GameLibraryOrganizationRevision = row.organization_revision.parse()?;
+        let white = row.white_display.map(GameMetadataText::new).transpose()?;
+        let black = row.black_display.map(GameMetadataText::new).transpose()?;
+        let date = GameMetadataDate::new(
+            row.date_year.map(u16::try_from).transpose()?,
+            row.date_month.map(u8::try_from).transpose()?,
+            row.date_day.map(u8::try_from).transpose()?,
+        )?;
         let projection = StorageLibraryProjection::new(StorageLibraryProjectionOptions {
-            kind: StorageLibraryProjection::parse_kind(&row.get::<_, String>(3)?)?,
-            variant: StorageLibraryProjection::parse_variant(&row.get::<_, String>(4)?)?,
-            start: StorageLibraryEnumStartKind::parse(&row.get::<_, String>(5)?)?,
+            kind: StorageLibraryProjection::parse_kind(&row.content_kind)?,
+            variant: StorageLibraryProjection::parse_variant(&row.rules_variant)?,
+            start: StorageLibraryEnumStartKind::parse(&row.start_kind)?,
             mode: row
-                .get::<_, Option<String>>(6)?
+                .mode
                 .as_deref()
                 .map(StorageLibraryProjection::parse_mode)
                 .transpose()?,
-            result: StorageLibraryProjection::parse_result(&row.get::<_, String>(7)?)?,
+            result: StorageLibraryProjection::parse_result(&row.result)?,
             white,
             black,
             date: Some(date),
-            opening: row
-                .get::<_, Option<String>>(15)?
-                .map(GameMetadataText::new)
-                .transpose()?,
+            opening: row.opening_display.map(GameMetadataText::new).transpose()?,
             code: row
-                .get::<_, Option<String>>(17)?
+                .opening_code
                 .map(GameMetadataOpeningCode::new)
                 .transpose()?,
-            plies: row.get(18)?,
+            plies: u32::try_from(row.plies)?,
         })?;
-        if row.get::<_, Option<String>>(9)?.as_deref() != projection.white_key()
-            || row.get::<_, Option<String>>(11)?.as_deref() != projection.black_key()
-            || row.get::<_, Option<String>>(16)?.as_deref() != projection.opening_key()
+        if row.white_key.as_deref() != projection.white_key()
+            || row.black_key.as_deref() != projection.black_key()
+            || row.opening_key.as_deref() != projection.opening_key()
         {
             return Err(StorageLibraryError::StoredDiscriminant);
         }
-        let favorite = Self::favorite(row.get(20)?)?;
-        let folder = row
-            .get::<_, Option<String>>(21)?
-            .as_deref()
-            .map(str::parse)
-            .transpose()?;
-        let location = StorageTrashEnumLocation::parse(&row.get::<_, String>(22)?)?;
-        Self::validate_location(location, row.get(23)?)?;
+        let favorite = Self::favorite(i64::from(row.favorite))?;
+        let folder = row.folder_id.as_deref().map(str::parse).transpose()?;
+        let location = StorageTrashEnumLocation::parse(&row.location)?;
+        Self::validate_location(location, row.trashed_ms.map(StorageLibraryMillis::value))?;
         Ok(StorageLibraryQueryEntry::new(
             StorageLibraryQueryEntryOptions {
                 id,
@@ -288,11 +307,11 @@ impl StorageLibraryTransactionRows {
                     organization,
                     favorite,
                     folder,
-                    Self::tags(transaction, id)?,
+                    Self::tags(connection, id)?,
                 ),
                 modified: row
-                    .get::<_, Option<i64>>(19)?
-                    .map(GameLibraryOrganizationTimestamp::new)
+                    .modified_ms
+                    .map(|millis| GameLibraryOrganizationTimestamp::new(millis.value()))
                     .transpose()?,
                 location,
                 date_filtered,
@@ -300,53 +319,56 @@ impl StorageLibraryTransactionRows {
         ))
     }
     pub(super) fn query(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         query: &StorageLibraryQuery,
         memory: &Arc<Semaphore>,
     ) -> Result<StorageLibraryQueryPage, StorageLibraryError> {
-        let catalog = StorageLibraryTransaction::catalog(transaction)?;
-        let compiled = query.compile(catalog)?;
-        let mut reservation = StorageLibraryMemory::new(
-            memory,
-            query.transport_bytes()?
-                + StorageLibraryQuery::PAGE_SIZE * std::mem::size_of::<StorageLibraryQueryEntry>(),
-        )?;
-        let sql = format!(
-            "SELECT {} FROM library_entries e JOIN documents d ON d.id = e.game_id WHERE e.content_revision = d.revision AND {} ORDER BY {} LIMIT {}",
-            Self::PROJECTION_COLUMNS,
-            compiled.predicate(),
-            compiled.ordering(),
-            i64::try_from(StorageLibraryQuery::PAGE_SIZE + 1)?
-        );
-        let mut statement = transaction.prepare(&sql)?;
-        let mut rows = statement.query(params_from_iter(compiled.values()))?;
-        let mut entries = Vec::with_capacity(StorageLibraryQuery::PAGE_SIZE);
-        let mut has_more = false;
-        while let Some(row) = rows.next()? {
-            if entries.len() == StorageLibraryQuery::PAGE_SIZE {
-                has_more = true;
-                break;
+        connection.transaction(|connection| {
+            let catalog = StorageLibraryTransaction::diesel_catalog(connection)?;
+            let mut reservation = StorageLibraryMemory::new(
+                memory,
+                query.transport_bytes()?
+                    + StorageLibraryQuery::PAGE_SIZE
+                        * std::mem::size_of::<StorageLibraryQueryEntry>(),
+            )?;
+            let rows = query.load(connection, catalog)?;
+            let mut entries = Vec::with_capacity(StorageLibraryQuery::PAGE_SIZE);
+            let mut has_more = false;
+            for row in rows {
+                if entries.len() == StorageLibraryQuery::PAGE_SIZE {
+                    has_more = true;
+                    break;
+                }
+                reservation.reserve(memory, Self::row_bytes(&row)?)?;
+                entries.push(Self::entry(connection, row, query.is_date_filtered())?);
             }
-            reservation.reserve(memory, Self::row_bytes(row)?)?;
-            entries.push(Self::entry(transaction, row, query.is_date_filtered())?);
-        }
-        let next = if has_more {
-            entries.last().map(|entry| query.cursor(catalog, entry))
-        } else {
-            None
-        };
-        let unindexed: i64 = transaction.query_row("SELECT COUNT(*) FROM documents d LEFT JOIN library_entries e ON e.game_id = d.id WHERE e.game_id IS NULL OR e.content_revision <> d.revision", [], |row| row.get(0))?;
-        let unindexed = u64::try_from(unindexed)?;
-        Ok(StorageLibraryQueryPage::new(
-            entries,
-            next,
-            catalog,
-            unindexed,
-            reservation,
-        ))
+            let next = if has_more {
+                entries.last().map(|entry| query.cursor(catalog, entry))
+            } else {
+                None
+            };
+            let unindexed: i64 = documents::table
+                .left_join(library_entries::table)
+                .filter(
+                    library_entries::game_id
+                        .is_null()
+                        .or(library_entries::content_revision
+                            .nullable()
+                            .ne(documents::revision.nullable())),
+                )
+                .count()
+                .get_result(connection)?;
+            Ok(StorageLibraryQueryPage::new(
+                entries,
+                next,
+                catalog,
+                u64::try_from(unindexed)?,
+                reservation,
+            ))
+        })
     }
     pub(super) fn adoption_page(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         cursor: StorageLibraryAdoptionCursor,
         memory: &Arc<Semaphore>,
     ) -> Result<StorageLibraryAdoptionPage, StorageLibraryError> {
@@ -354,22 +376,35 @@ impl StorageLibraryTransactionRows {
             memory,
             StorageLibraryQuery::PAGE_SIZE * std::mem::size_of::<StorageLibraryAdoptionCandidate>(),
         )?;
-        let mut statement = transaction.prepare("SELECT d.id, d.revision, (EXISTS(SELECT 1 FROM games g WHERE g.game_id = d.id) OR EXISTS(SELECT 1 FROM library_entries e WHERE e.game_id = d.id)) FROM documents d WHERE (?1 IS NULL OR d.id > ?1) ORDER BY d.id LIMIT ?2")?;
-        let mut rows = statement.query(params![
-            cursor.boundary().map(|id| id.to_string()),
-            i64::try_from(StorageLibraryQuery::PAGE_SIZE + 1)?
-        ])?;
+        let mut query = documents::table
+            .left_join(games::table)
+            .left_join(library_entries::table)
+            .select((
+                documents::id,
+                documents::revision,
+                games::game_id
+                    .nullable()
+                    .is_not_null()
+                    .or(library_entries::game_id.nullable().is_not_null()),
+            ))
+            .order(documents::id.asc())
+            .limit(i64::try_from(StorageLibraryQuery::PAGE_SIZE + 1)?)
+            .into_boxed();
+        if let Some(boundary) = cursor.boundary() {
+            query = query.filter(documents::id.gt(boundary.to_string()));
+        }
+        let rows: Vec<(String, String, bool)> = query.load(connection)?;
         let mut candidates = Vec::with_capacity(StorageLibraryQuery::PAGE_SIZE);
         let mut has_more = false;
-        while let Some(row) = rows.next()? {
+        for (id, revision, indexed) in rows {
             if candidates.len() == StorageLibraryQuery::PAGE_SIZE {
                 has_more = true;
                 break;
             }
             candidates.push(StorageLibraryAdoptionCandidate::new(
-                row.get::<_, String>(0)?.parse()?,
-                StorageLibraryError::content_revision(&row.get::<_, String>(1)?)?,
-                row.get(2)?,
+                id.parse()?,
+                StorageLibraryError::content_revision(&revision)?,
+                indexed,
             ));
         }
         let next = if has_more {
@@ -382,13 +417,13 @@ impl StorageLibraryTransactionRows {
         Ok(StorageLibraryAdoptionPage::new(
             candidates,
             next,
-            StorageLibraryTransaction::catalog(transaction)?,
+            StorageLibraryTransaction::diesel_catalog(connection)?,
             reservation,
         ))
     }
 
     pub(super) fn played_inventory(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         cursor: StorageLibraryInventoryCursor,
         memory: &Arc<Semaphore>,
     ) -> Result<StorageLibraryAdoptionPage, StorageLibraryError> {
@@ -398,26 +433,34 @@ impl StorageLibraryTransactionRows {
                 * (std::mem::size_of::<StorageLibraryAdoptionCandidate>()
                     + std::mem::size_of::<StorageLibraryInventoryEntry>()),
         )?;
-        let mut statement = transaction.prepare(
-            "SELECT e.game_id, e.content_revision FROM library_entries e JOIN documents d ON d.id = e.game_id WHERE e.content_revision = d.revision AND e.content_kind = ?1 AND e.location = ?2 AND e.trashed_ms IS NULL AND (?3 IS NULL OR e.game_id > ?3) ORDER BY e.game_id LIMIT ?4",
-        )?;
-        let mut rows = statement.query(params![
-            StorageLibraryProjection::kind_sql(StorageGameDocumentEnumContentKind::Played),
-            StorageTrashEnumLocation::Library.sql(),
-            cursor.boundary().map(|id| id.as_uuid().to_string()),
-            i64::try_from(StorageLibraryInventoryPage::PAGE_SIZE + 1)?,
-        ])?;
+        let mut query = library_entries::table
+            .inner_join(documents::table)
+            .filter(library_entries::content_revision.eq(documents::revision))
+            .filter(
+                library_entries::content_kind.eq(StorageLibraryProjection::kind_sql(
+                    StorageGameDocumentEnumContentKind::Played,
+                )),
+            )
+            .filter(library_entries::location.eq(StorageTrashEnumLocation::Library.sql()))
+            .filter(library_entries::trashed_ms.is_null())
+            .select((library_entries::game_id, library_entries::content_revision))
+            .order(library_entries::game_id.asc())
+            .limit(i64::try_from(StorageLibraryInventoryPage::PAGE_SIZE + 1)?)
+            .into_boxed();
+        if let Some(boundary) = cursor.boundary() {
+            query = query.filter(library_entries::game_id.gt(boundary.as_uuid().to_string()));
+        }
+        let rows: Vec<(String, String)> = query.load(connection)?;
         let mut candidates = Vec::with_capacity(StorageLibraryInventoryPage::PAGE_SIZE);
         let mut has_more = false;
-        while let Some(row) = rows.next()? {
+        for (id, revision) in rows {
             if candidates.len() == StorageLibraryInventoryPage::PAGE_SIZE {
                 has_more = true;
                 break;
             }
-            let id = row.get::<_, String>(0)?.parse()?;
             candidates.push(StorageLibraryAdoptionCandidate::new(
-                id,
-                StorageLibraryError::content_revision(&row.get::<_, String>(1)?)?,
+                id.parse()?,
+                StorageLibraryError::content_revision(&revision)?,
                 true,
             ));
         }
@@ -431,7 +474,7 @@ impl StorageLibraryTransactionRows {
         Ok(StorageLibraryAdoptionPage::new(
             candidates,
             next,
-            StorageLibraryTransaction::catalog(transaction)?,
+            StorageLibraryTransaction::diesel_catalog(connection)?,
             reservation,
         ))
     }

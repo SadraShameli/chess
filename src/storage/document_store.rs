@@ -1,9 +1,10 @@
 use std::num::{ParseIntError, TryFromIntError};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use diesel::dsl::exists;
+use diesel::prelude::*;
+use diesel::upsert::excluded;
 use serde::de::IgnoredAny;
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError, mpsc, oneshot};
@@ -14,21 +15,25 @@ use uuid::Uuid;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
+use crate::storage::connection::StorageConnection;
+use crate::storage::document_store::rows::{StorageDocumentRowContent, StorageDocumentRowReceipt};
 use crate::storage::editor_repository::{
     StorageEditorRepositoryEnumRequest, StorageEditorRepositoryEnumResponse,
     StorageEditorRepositoryError, StorageEditorRepositoryPending,
     StorageEditorRepositoryTransaction,
 };
+use crate::storage::library_import::StorageLibraryImportPageLimit;
 use crate::storage::library_repository::{StorageLibraryError, StorageLibraryPending};
 use crate::storage::library_transaction::{
     StorageLibraryEnumTransactionRequest, StorageLibraryEnumTransactionResponse,
     StorageLibraryTransaction,
 };
-use crate::storage::migration::StorageMigration;
+use crate::storage::migration::StorageMigrationRunner;
 use crate::storage::puzzle_repository::{
     StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
     StoragePuzzleWrite,
 };
+use crate::storage::schema::{documents, library_entries};
 
 #[derive(Debug, Error)]
 pub enum StorageDocumentError {
@@ -36,6 +41,12 @@ pub enum StorageDocumentError {
     Capacity(#[from] CapacityBudgetError),
     #[error("Local database operation failed: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("Local database connection failed: {0}")]
+    Connection(#[from] diesel::ConnectionError),
+    #[error("Local database query failed: {0}")]
+    Diesel(#[from] diesel::result::Error),
+    #[error("Local database migration failed: {0}")]
+    Migration(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("Invalid JSON document: {0}")]
     Json(#[from] serde_json::Error),
     #[error("Stored revision is invalid: {0}")]
@@ -54,10 +65,10 @@ pub enum StorageDocumentError {
     IndexedLibraryRecord { id: Uuid },
     #[error("Library catalog operation failed: {0}")]
     Library(#[source] Box<StorageLibraryError>),
-    #[error("Database schema {found} is newer than supported schema {supported}")]
-    FutureSchema { found: u32, supported: u32 },
-    #[error("Migration versions must form a nonempty consecutive sequence starting at one")]
-    InvalidMigrations,
+    #[error("The database predates Diesel migrations and is unsupported; delete it to start fresh")]
+    UnsupportedLegacyDatabase,
+    #[error("Applied migration {version} is not part of this build")]
+    FutureMigration { version: String },
     #[error("The database queue or document memory budget is full")]
     Saturated,
     #[error("The document exceeds the 64 MiB transport budget")]
@@ -176,14 +187,6 @@ impl StorageDocumentStore {
     pub const INVENTORY_PAGE_SIZE: usize = Self::QUEUE_CAPACITY;
 
     pub async fn open(path: PathBuf, budget: CapacityBudget) -> Result<Self, StorageDocumentError> {
-        Self::open_with_migrations(path, StorageMigration::core(), budget).await
-    }
-
-    pub async fn open_with_migrations(
-        path: PathBuf,
-        migrations: Vec<StorageMigration>,
-        budget: CapacityBudget,
-    ) -> Result<Self, StorageDocumentError> {
         let initialization_lease = budget.lease(1).await?;
         let (commands, receiver) = mpsc::channel(Self::QUEUE_CAPACITY);
         let (ready_sender, ready_receiver) = oneshot::channel();
@@ -191,8 +194,7 @@ impl StorageDocumentStore {
         let actor_memory = Arc::clone(&memory);
         let runtime = tokio::runtime::Handle::current();
         let worker = tokio::task::spawn_blocking(move || {
-            let initialized =
-                StorageDocumentActor::open(path, migrations, actor_memory, budget, runtime);
+            let initialized = StorageDocumentActor::open(path, actor_memory, budget, runtime);
             drop(initialization_lease);
             match initialized {
                 Ok(actor) => {
@@ -466,8 +468,7 @@ impl StorageDocumentClient {
 }
 
 struct StorageDocumentActor {
-    connection: Connection,
-    has_library: bool,
+    connection: StorageConnection,
     memory: Arc<Semaphore>,
     budget: CapacityBudget,
     runtime: tokio::runtime::Handle,
@@ -476,29 +477,16 @@ struct StorageDocumentActor {
 }
 
 impl StorageDocumentActor {
-    const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-
     fn open(
         path: PathBuf,
-        migrations: Vec<StorageMigration>,
         memory: Arc<Semaphore>,
         budget: CapacityBudget,
         runtime: tokio::runtime::Handle,
     ) -> Result<Self, StorageDocumentError> {
-        let mut connection = Connection::open(path)?;
-        connection.busy_timeout(Self::BUSY_TIMEOUT)?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "synchronous", "FULL")?;
-        StorageMigration::apply(&mut connection, &migrations)?;
-        let has_library = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name IN ('library_entries', 'library_state'))",
-            [],
-            |row| row.get(0),
-        )?;
+        let mut diesel = StorageConnection::open(&path)?;
+        StorageMigrationRunner::run_embedded(diesel.diesel())?;
         Ok(Self {
-            connection,
-            has_library,
+            connection: diesel,
             memory,
             budget,
             runtime,
@@ -520,12 +508,13 @@ impl StorageDocumentActor {
                     _admission,
                     result,
                 } => {
-                    let outcome = StorageEditorRepositoryTransaction::execute(
-                        &mut self.connection,
+                    let execution = StorageEditorRepositoryTransaction::execute(
+                        self.connection.diesel(),
                         *request,
                         memory_reservation,
                     );
-                    let unresolved = !self.connection.is_autocommit();
+                    let unresolved = execution.is_unresolved();
+                    let outcome = execution.into_outcome();
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
@@ -541,13 +530,16 @@ impl StorageDocumentActor {
                     result,
                 } => {
                     let outcome = StorageLibraryTransaction::execute(
-                        &mut self.connection,
+                        self.connection.diesel(),
                         *request,
                         &self.memory,
                         &mut self.library_certified,
                         self.library_preparation_origin,
                     );
-                    let unresolved = !self.connection.is_autocommit();
+                    let unresolved = !matches!(
+                        StorageLibraryImportPageLimit::is_autocommit(self.connection.diesel()),
+                        Ok(true)
+                    );
                     let unresolved_import_limit = outcome
                         .as_ref()
                         .err()
@@ -570,7 +562,7 @@ impl StorageDocumentActor {
                     result,
                 } => {
                     let outcome = StoragePuzzleTransaction::inventory(
-                        &self.connection,
+                        self.connection.diesel(),
                         after,
                         memory_reservation,
                     );
@@ -585,7 +577,8 @@ impl StorageDocumentActor {
                     _admission,
                     result,
                 } => {
-                    let outcome = StoragePuzzleTransaction::save(&mut self.connection, *request);
+                    let outcome =
+                        StoragePuzzleTransaction::save(self.connection.diesel(), *request);
                     drop((_memory_reservation, _admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
@@ -597,7 +590,7 @@ impl StorageDocumentActor {
                     result,
                 } => {
                     let outcome =
-                        StoragePuzzleTransaction::load(&mut self.connection, id, &self.memory);
+                        StoragePuzzleTransaction::load(self.connection.diesel(), id, &self.memory);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
@@ -642,66 +635,71 @@ impl StorageDocumentActor {
         body: &str,
     ) -> Result<StorageDocumentReceipt, StorageDocumentError> {
         serde_json::from_str::<IgnoredAny>(body)?;
-        let transaction = self
+        let key = id.to_string();
+        let revision = self
             .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let stored: Option<String> = transaction
-            .query_row(
-                "SELECT revision FROM documents WHERE id = ?1",
-                [id.to_string()],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let actual = stored
-            .as_deref()
-            .map(str::parse::<u64>)
-            .transpose()?
-            .unwrap_or(0);
-        if actual != expected_revision {
-            return Err(StorageDocumentError::Conflict {
-                expected: expected_revision,
-                actual,
-            });
-        }
-        if self.has_library {
-            let indexed: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_entries WHERE game_id = ?1)",
-                [id.to_string()],
-                |row| row.get(0),
-            )?;
-            if indexed {
-                return Err(StorageDocumentError::IndexedLibraryRecord { id });
-            }
-        }
-        let revision = actual
-            .checked_add(1)
-            .ok_or(StorageDocumentError::RevisionOverflow)?;
-        transaction.execute("INSERT INTO documents (id, revision, body) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, body = excluded.body", params![id.to_string(), revision.to_string(), body])?;
-        if self.has_library {
-            StorageLibraryTransaction::bump_catalog(&transaction)
-                .map_err(|error| StorageDocumentError::Library(Box::new(error)))?;
-        }
-        transaction.commit()?;
+            .diesel()
+            .immediate_transaction(|transaction| {
+                let stored: Option<String> = documents::table
+                    .filter(documents::id.eq(&key))
+                    .select(documents::revision)
+                    .first(transaction)
+                    .optional()?;
+                let actual = stored
+                    .as_deref()
+                    .map(str::parse::<u64>)
+                    .transpose()?
+                    .unwrap_or(0);
+                if actual != expected_revision {
+                    return Err(StorageDocumentError::Conflict {
+                        expected: expected_revision,
+                        actual,
+                    });
+                }
+                let indexed: bool = diesel::select(exists(
+                    library_entries::table.filter(library_entries::game_id.eq(&key)),
+                ))
+                .get_result(transaction)?;
+                if indexed {
+                    return Err(StorageDocumentError::IndexedLibraryRecord { id });
+                }
+                let revision = actual
+                    .checked_add(1)
+                    .ok_or(StorageDocumentError::RevisionOverflow)?;
+                diesel::insert_into(documents::table)
+                    .values((
+                        documents::id.eq(&key),
+                        documents::revision.eq(revision.to_string()),
+                        documents::body.eq(body),
+                    ))
+                    .on_conflict(documents::id)
+                    .do_update()
+                    .set((
+                        documents::revision.eq(excluded(documents::revision)),
+                        documents::body.eq(excluded(documents::body)),
+                    ))
+                    .execute(transaction)?;
+                StorageLibraryTransaction::diesel_bump_catalog(transaction)
+                    .map_err(|error| StorageDocumentError::Library(Box::new(error)))?;
+                Ok(revision)
+            })?;
         self.library_certified = false;
         Ok(StorageDocumentReceipt { id, revision })
     }
 
-    fn read(&self, id: Uuid) -> Result<Option<StorageDocument>, StorageDocumentError> {
-        let stored: Option<(String, String)> = self
-            .connection
-            .query_row(
-                "SELECT revision, body FROM documents WHERE id = ?1",
-                [id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+    fn read(&mut self, id: Uuid) -> Result<Option<StorageDocument>, StorageDocumentError> {
+        let stored = documents::table
+            .filter(documents::id.eq(id.to_string()))
+            .select(StorageDocumentRowContent::as_select())
+            .first(self.connection.diesel())
             .optional()?;
         stored
-            .map(|(revision, body)| {
+            .map(|row| {
                 let memory_reservation =
-                    StorageDocumentClient::reserve_memory(&self.memory, body.len())?;
+                    StorageDocumentClient::reserve_memory(&self.memory, row.body.len())?;
                 Ok(StorageDocument {
-                    revision: revision.parse()?,
-                    body,
+                    revision: row.revision.parse()?,
+                    body: row.body,
                     _memory_reservation: memory_reservation,
                 })
             })
@@ -709,27 +707,25 @@ impl StorageDocumentActor {
     }
 
     fn inventory(
-        &self,
+        &mut self,
         after: Option<Uuid>,
     ) -> Result<Vec<StorageDocumentReceipt>, StorageDocumentError> {
-        let mut statement = self.connection.prepare_cached(
-            "SELECT id, revision FROM documents WHERE id > ?1 ORDER BY id LIMIT ?2",
-        )?;
         let cursor = after.map(|id| id.to_string()).unwrap_or_default();
-        let rows = statement.query_map(
-            params![
-                cursor,
-                i64::try_from(StorageDocumentStore::INVENTORY_PAGE_SIZE)?
-            ],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )?;
-        rows.map(|row| {
-            let (id, revision) = row?;
-            Ok(StorageDocumentReceipt {
-                id: id.parse()?,
-                revision: revision.parse()?,
+        let rows = documents::table
+            .filter(documents::id.gt(cursor))
+            .order(documents::id.asc())
+            .limit(i64::try_from(StorageDocumentStore::INVENTORY_PAGE_SIZE)?)
+            .select(StorageDocumentRowReceipt::as_select())
+            .load(self.connection.diesel())?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(StorageDocumentReceipt {
+                    id: row.id.parse()?,
+                    revision: row.revision.parse()?,
+                })
             })
-        })
-        .collect()
+            .collect()
     }
 }
+
+mod rows;

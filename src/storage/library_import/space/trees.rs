@@ -1,4 +1,27 @@
-use rusqlite::Transaction;
+use diesel::SqliteConnection;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Nullable, Text};
+
+use crate::storage::schema::{documents, library_entries};
+
+mod main_schema {
+    diesel::table! {
+        main.sqlite_schema (name) {
+            #[sql_name = "type"]
+            kind -> Text,
+            name -> Text,
+            tbl_name -> Text,
+        }
+    }
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportSpaceIndexColumn {
+    #[diesel(sql_type = BigInt)]
+    cid: i64,
+    #[diesel(sql_type = Nullable<Text>)]
+    name: Option<String>,
+}
 
 use crate::storage::import_session::{
     StorageImportSessionCancellation, StorageImportSessionCommitFootprint,
@@ -37,11 +60,44 @@ impl StorageLibraryImportSpaceEnumTable {
     #[cfg(test)]
     const ALL: [Self; 2] = [Self::Documents, Self::Entries];
 
-    const fn probe_sql(self) -> &'static str {
-        match self {
-            Self::Documents => "SELECT id FROM documents ORDER BY id LIMIT ?1",
-            Self::Entries => "SELECT game_id FROM library_entries ORDER BY game_id LIMIT ?1",
-        }
+    #[cfg(test)]
+    pub(super) fn probe_sql(self) -> String {
+        let sql = match self {
+            Self::Documents => diesel::debug_query::<diesel::sqlite::Sqlite, _>(
+                &documents::table
+                    .select(documents::id)
+                    .order(documents::id.asc())
+                    .limit(1),
+            )
+            .to_string(),
+            Self::Entries => diesel::debug_query::<diesel::sqlite::Sqlite, _>(
+                &library_entries::table
+                    .select(library_entries::game_id)
+                    .order(library_entries::game_id.asc())
+                    .limit(1),
+            )
+            .to_string(),
+        };
+        sql.split(" -- binds").next().unwrap_or_default().to_owned()
+    }
+
+    fn keys(
+        self,
+        connection: &mut SqliteConnection,
+        limit: i64,
+    ) -> Result<Vec<String>, StorageLibraryError> {
+        Ok(match self {
+            Self::Documents => documents::table
+                .select(documents::id)
+                .order(documents::id.asc())
+                .limit(limit)
+                .load(connection)?,
+            Self::Entries => library_entries::table
+                .select(library_entries::game_id)
+                .order(library_entries::game_id.asc())
+                .limit(limit)
+                .load(connection)?,
+        })
     }
 
     fn from_name(name: &str) -> Result<Self, StorageLibraryError> {
@@ -54,7 +110,7 @@ impl StorageLibraryImportSpaceEnumTable {
 
     fn probe(
         self,
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         limit: u64,
         check: &mut impl FnMut() -> Result<(), StorageImportSessionError>,
     ) -> Result<StorageLibraryImportSpaceProbe, StorageLibraryError> {
@@ -62,29 +118,18 @@ impl StorageLibraryImportSpaceEnumTable {
         if limit == 0 {
             return Err(StorageLibraryError::ImportLayout);
         }
-        let mut statement = transaction.prepare(self.probe_sql())?;
+        let keys = self.keys(connection, i64::try_from(limit)?)?;
         check()?;
-        let mut rows = statement.query([i64::try_from(limit)?])?;
-        let mut records = 0_u64;
-        let cardinality = loop {
-            check()?;
-            let Some(row) = rows.next()? else {
-                break StorageLibraryImportSpaceEnumCardinality::Exact(records);
-            };
-            let _id = row.get_ref(0)?.as_str()?;
-            records = StorageLibraryImportSpace::add(records, 1)?;
-            check()?;
-            if records == limit {
-                break StorageLibraryImportSpaceEnumCardinality::AtLeast(limit);
-            }
+        let records = u64::try_from(keys.len())?;
+        let cardinality = if records == limit {
+            StorageLibraryImportSpaceEnumCardinality::AtLeast(limit)
+        } else {
+            StorageLibraryImportSpaceEnumCardinality::Exact(records)
         };
-        drop(rows);
         Ok(StorageLibraryImportSpaceProbe {
             cardinality,
             #[cfg(test)]
-            inventory_vm_steps: u64::try_from(
-                statement.get_status(rusqlite::StatementStatus::VmStep),
-            )?,
+            inventory_vm_steps: records,
         })
     }
 }
@@ -227,26 +272,24 @@ impl StorageLibraryImportSpaceTrees {
     }
 
     fn index_payload(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         name: &str,
         footprint: StorageImportSessionCommitFootprint,
         check: &mut impl FnMut() -> Result<(), StorageImportSessionError>,
     ) -> Result<StorageLibraryImportSpacePayload, StorageLibraryError> {
         check()?;
-        let mut statement = transaction.prepare("SELECT cid, name FROM pragma_index_xinfo(?1)")?;
+        let rows: Vec<StorageLibraryImportSpaceIndexColumn> =
+            diesel::sql_query("SELECT cid, name FROM pragma_index_xinfo(?)")
+                .bind::<Text, _>(name)
+                .load(connection)?;
         check()?;
-        let mut rows = statement.query([name])?;
         let mut columns = 0_u64;
         let mut fixed = 0_u64;
         let mut variable = false;
-        loop {
+        for row in rows {
             check()?;
-            let Some(row) = rows.next()? else {
-                break;
-            };
-            let cid: i64 = row.get(0)?;
-            let name = row.get_ref(1)?.as_str_or_null()?;
-            let bytes = match name {
+            let cid = row.cid;
+            let bytes = match row.name.as_deref() {
                 None if cid == -1 => 8,
                 Some("id" | "game_id" | "folder_id") => Self::UUID_BYTES,
                 Some("location") => Self::LOCATION_BYTES,
@@ -296,16 +339,16 @@ impl StorageLibraryImportSpaceTrees {
     }
 
     pub(super) fn plan_budget(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         footprint: StorageImportSessionCommitFootprint,
         page: u64,
         cancellation: &StorageImportSessionCancellation,
     ) -> Result<Self, StorageLibraryError> {
-        Self::plan_budget_checked(transaction, footprint, page, &mut || cancellation.check())
+        Self::plan_budget_checked(connection, footprint, page, &mut || cancellation.check())
     }
 
     fn plan_budget_checked(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         footprint: StorageImportSessionCommitFootprint,
         page: u64,
         check: &mut impl FnMut() -> Result<(), StorageImportSessionError>,
@@ -313,9 +356,9 @@ impl StorageLibraryImportSpaceTrees {
         check()?;
         let limit = Self::probe_limit(footprint.count())?;
         let documents =
-            StorageLibraryImportSpaceEnumTable::Documents.probe(transaction, limit, check)?;
+            StorageLibraryImportSpaceEnumTable::Documents.probe(connection, limit, check)?;
         let entries =
-            StorageLibraryImportSpaceEnumTable::Entries.probe(transaction, limit, check)?;
+            StorageLibraryImportSpaceEnumTable::Entries.probe(connection, limit, check)?;
         let mut budget = Self {
             new_page_budget: 0,
             old_tree_pages: 0,
@@ -345,23 +388,25 @@ impl StorageLibraryImportSpaceTrees {
             )?;
         }
         check()?;
-        let mut statement = transaction.prepare("SELECT name, tbl_name FROM sqlite_schema WHERE type = 'index' AND tbl_name IN ('documents', 'library_entries')")?;
+        let indexes: Vec<(String, String)> = main_schema::sqlite_schema::table
+            .filter(main_schema::sqlite_schema::kind.eq("index"))
+            .filter(main_schema::sqlite_schema::tbl_name.eq_any(["documents", "library_entries"]))
+            .select((
+                main_schema::sqlite_schema::name,
+                main_schema::sqlite_schema::tbl_name,
+            ))
+            .load(connection)?;
         check()?;
-        let mut rows = statement.query([])?;
-        loop {
+        for (name, table) in indexes {
             check()?;
-            let Some(row) = rows.next()? else {
-                break;
-            };
-            let name = row.get_ref(0)?.as_str()?;
-            let table = StorageLibraryImportSpaceEnumTable::from_name(row.get_ref(1)?.as_str()?)?;
+            let table = StorageLibraryImportSpaceEnumTable::from_name(&table)?;
             let cardinality = match table {
                 StorageLibraryImportSpaceEnumTable::Documents => documents.cardinality,
                 StorageLibraryImportSpaceEnumTable::Entries => entries.cardinality,
             };
             budget.include(
                 cardinality,
-                Self::index_payload(transaction, name, footprint, check)?,
+                Self::index_payload(connection, &name, footprint, check)?,
                 page,
                 footprint.count(),
             )?;
@@ -373,4 +418,4 @@ impl StorageLibraryImportSpaceTrees {
 
 #[cfg(test)]
 #[path = "../../../../tests/storage/library_import_planning_work.rs"]
-mod planning_work_tests;
+pub(super) mod planning_work_tests;

@@ -15,7 +15,7 @@ use chess::game::configuration::{
     GameConfigurationOptions,
 };
 use chess::game::engine_provider::{GameEngineRequestError, GameEngineSearchConfig};
-use chess::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat, GameMoveId};
+use chess::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat};
 use chess::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionError, GameSessionOptions,
 };
@@ -41,7 +41,6 @@ struct GameConfigPersistenceEnvelope {
 #[derive(Deserialize)]
 struct GameConfigPersistenceRecord {
     play_options: GameConfigPersistenceOptions,
-    study_mainline_tip: GameMoveId,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -96,26 +95,6 @@ impl GameConfigPersistenceFixture {
             return Err("the fixture has no complete serialized play options".into());
         }
         Ok(json.replacen(&field, "", 1))
-    }
-
-    fn legacy_json(json: &str) -> GameConfigPersistenceTestResult<String> {
-        let envelope: GameConfigPersistenceEnvelope = serde_json::from_str(json)?;
-        let study_tip = format!(
-            ",\"study_mainline_tip\":{}",
-            serde_json::to_string(&envelope.game.study_mainline_tip)?
-        );
-        let kind = ",\"kind\":\"played\"";
-        if !json.contains(&study_tip) || !json.contains(kind) {
-            return Err("the fixture has no current content-kind or study-tip field".into());
-        }
-        Ok(Self::without_play_options(json)?
-            .replacen(kind, "", 1)
-            .replacen(&study_tip, "", 1)
-            .replacen(
-                &format!("\"schema_version\":{}", envelope.schema_version),
-                "\"schema_version\":1",
-                1,
-            ))
     }
 }
 
@@ -218,28 +197,6 @@ fn session_restoration_keeps_selected_play_options() -> GameConfigPersistenceTes
     assert_eq!(restored.revision(), session.revision());
     assert_eq!(restored.engine_search_config(), selected);
     assert!(restored.is_auto_flip_enabled());
-    Ok(())
-}
-
-#[test]
-fn legacy_game_schema_migrates_absent_play_options_to_approved_defaults()
--> GameConfigPersistenceTestResult {
-    let json = GameConfigPersistenceFixture::default_json()?;
-    let legacy = GameConfigPersistenceFixture::legacy_json(&json)?;
-    let recovered = StorageGameDocument::restore(&legacy)?;
-    let defaults = GameConfigurationOptions::initial_default();
-    assert_eq!(recovered.engine_search_config(), defaults.engine_search());
-    assert_eq!(
-        recovered.is_auto_flip_enabled(),
-        defaults.is_auto_flip_enabled()
-    );
-    let current = StorageGameDocument::capture(&recovered, ClockInstant::from_nanos(0))?.json()?;
-    let saved: GameConfigPersistenceEnvelope = serde_json::from_str(&current)?;
-    assert_eq!(saved.schema_version, StorageGameDocument::SCHEMA_VERSION);
-    assert_eq!(
-        saved.game.play_options.untimed_move_time_nanos,
-        defaults.engine_search().untimed_move_time().as_nanos()
-    );
     Ok(())
 }
 

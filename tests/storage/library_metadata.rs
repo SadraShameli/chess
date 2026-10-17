@@ -18,7 +18,6 @@ use chess::storage::library_metadata::{
     StorageLibraryMetadataRepository,
 };
 use chess::storage::library_repository::{StorageLibraryError, StorageLibraryRepository};
-use chess::storage::migration::StorageMigration;
 
 type StorageLibraryMetadataTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -629,24 +628,23 @@ async fn sqlite_metadata_errors_are_not_successful_empty_pages() -> StorageLibra
 {
     let directory = tempfile::tempdir()?;
     let budget = CapacityBudget::new(NonZeroUsize::new(1).ok_or("invalid test capacity")?)?;
-    let store = StorageDocumentStore::open_with_migrations(
-        directory.path().join("missing-tables.sqlite"),
-        vec![StorageMigration::new(
-            1,
-            "CREATE TABLE documents(id TEXT PRIMARY KEY, revision TEXT, body TEXT) STRICT;"
-                .to_owned(),
-        )],
-        budget,
-    )
-    .await?;
+    let path = directory.path().join("missing-tables.sqlite");
+    StorageDocumentStore::open(path.clone(), CapacityBudget::new(NonZeroUsize::MIN)?)
+        .await?
+        .close()
+        .await?;
+    rusqlite::Connection::open(&path)?.execute_batch(
+        "PRAGMA foreign_keys = OFF; DROP TABLE library_entry_tags; DROP TABLE library_folders; DROP TABLE library_tags;",
+    )?;
+    let store = StorageDocumentStore::open(path, budget).await?;
     let metadata = StorageLibraryMetadataRepository::new(store.client());
     assert!(matches!(
         metadata.folders(None, None).await,
-        Err(StorageLibraryError::Sqlite(_))
+        Err(StorageLibraryError::Diesel(_))
     ));
     assert!(matches!(
         metadata.tags(None).await,
-        Err(StorageLibraryError::Sqlite(_))
+        Err(StorageLibraryError::Diesel(_))
     ));
     store.close().await?;
     Ok(())

@@ -1,13 +1,15 @@
-use rusqlite::{Transaction, params};
+use diesel::SqliteConnection;
+use diesel::prelude::*;
 
 use crate::game::library_organization::GameLibraryOrganizationFolderId;
-use crate::storage::library_query::StorageLibraryQuery;
+use crate::storage::library_query::{StorageLibraryMillis, StorageLibraryQuery};
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::organization::{
     StorageLibraryTransactionOrganization, StorageLibraryTransactionOrganizationEnumScope,
 };
 use crate::storage::library_transaction::rows::StorageLibraryTransactionRows;
+use crate::storage::schema::{documents, library_entries, library_folders};
 use crate::storage::trash::{
     StorageTrashConfirmedRequest, StorageTrashEnumAppliedAction, StorageTrashEnumLocation,
     StorageTrashPlan, StorageTrashPlanOptions, StorageTrashPreviewRequest, StorageTrashReceipt,
@@ -18,16 +20,19 @@ pub(super) struct StorageLibraryTransactionDestruction;
 
 impl StorageLibraryTransactionDestruction {
     pub(super) fn preview(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         action: StorageTrashPreviewRequest,
     ) -> Result<StorageTrashPlan, StorageLibraryError> {
-        let catalog = StorageLibraryTransaction::catalog(transaction)?;
+        let catalog = StorageLibraryTransaction::diesel_catalog(connection)?;
         let (content, organization, folders, games) = match action {
             StorageTrashPreviewRequest::RemoveFolder(id) => {
-                let folder = StorageLibraryTransactionOrganization::folder(transaction, id)?;
-                let (folders, games): (i64, i64) = transaction.query_row(
-                    "WITH RECURSIVE folders(id) AS (SELECT folder_id FROM library_folders WHERE folder_id = ?1 UNION SELECT f.folder_id FROM library_folders f JOIN folders p ON f.parent_id = p.id) SELECT (SELECT COUNT(*) FROM folders), (SELECT COUNT(*) FROM library_entries WHERE folder_id IN (SELECT id FROM folders))",
-                    [id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                let folder = StorageLibraryTransactionOrganization::folder(connection, id)?;
+                let subtree = StorageLibraryQuery::folder_subtree(connection, id.to_string())?;
+                let folders = i64::try_from(subtree.len())?;
+                let games: i64 = library_entries::table
+                    .filter(library_entries::folder_id.eq_any(subtree))
+                    .count()
+                    .get_result(connection)?;
                 (
                     None,
                     folder.revision(),
@@ -37,7 +42,7 @@ impl StorageLibraryTransactionDestruction {
             }
             StorageTrashPreviewRequest::MoveToTrash(id)
             | StorageTrashPreviewRequest::PermanentlyDelete(id) => {
-                let game = StorageLibraryTransactionRows::state(transaction, id)?
+                let game = StorageLibraryTransactionRows::state(connection, id)?
                     .ok_or(StorageLibraryError::MissingGame(id))?;
                 match (action, game.location()) {
                     (
@@ -73,26 +78,31 @@ impl StorageLibraryTransactionDestruction {
         }))
     }
     pub(super) fn apply(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         request: &StorageTrashConfirmedRequest,
     ) -> Result<StorageTrashReceipt, StorageLibraryError> {
         let plan = request.plan();
-        let current = Self::preview(transaction, plan.action())?;
+        let current = Self::preview(connection, plan.action())?;
         if &current != plan {
             return Err(StorageLibraryError::StalePlan);
         }
         let action = match plan.action() {
             StorageTrashPreviewRequest::RemoveFolder(id) => {
                 let affected = StorageLibraryTransactionOrganization::touch(
-                    transaction,
+                    connection,
                     StorageLibraryTransactionOrganizationEnumScope::FolderSubtree(id),
                     request.timestamp(),
                 )?;
                 if affected != plan.affected_game_count() {
                     return Err(StorageLibraryError::StalePlan);
                 }
-                transaction.execute("WITH RECURSIVE folders(id) AS (SELECT folder_id FROM library_folders WHERE folder_id = ?1 UNION SELECT f.folder_id FROM library_folders f JOIN folders p ON f.parent_id = p.id) UPDATE library_entries SET folder_id = NULL WHERE folder_id IN (SELECT id FROM folders)", [id.to_string()])?;
-                Self::remove_folders(transaction, id, plan.affected_folder_count())?;
+                let subtree = StorageLibraryQuery::folder_subtree(connection, id.to_string())?;
+                diesel::update(
+                    library_entries::table.filter(library_entries::folder_id.eq_any(subtree)),
+                )
+                .set(library_entries::folder_id.eq(None::<String>))
+                .execute(connection)?;
+                Self::remove_folders(connection, id, plan.affected_folder_count())?;
                 StorageTrashEnumAppliedAction::RemovedFolder(id)
             }
             StorageTrashPreviewRequest::MoveToTrash(id) => {
@@ -103,18 +113,21 @@ impl StorageLibraryTransactionDestruction {
                     return Err(StorageLibraryError::LifecycleRequired);
                 }
                 StorageLibraryTransactionOrganization::touch(
-                    transaction,
+                    connection,
                     StorageLibraryTransactionOrganizationEnumScope::Game(id),
                     request.timestamp(),
                 )?;
-                transaction.execute(
-                    "UPDATE library_entries SET location = ?1, trashed_ms = ?2 WHERE game_id = ?3",
-                    params![
-                        StorageTrashEnumLocation::Trash.sql(),
+                diesel::update(
+                    library_entries::table
+                        .filter(library_entries::game_id.eq(id.as_uuid().to_string())),
+                )
+                .set((
+                    library_entries::location.eq(StorageTrashEnumLocation::Trash.sql()),
+                    library_entries::trashed_ms.eq(StorageLibraryMillis::optional(Some(
                         request.timestamp().value(),
-                        id.as_uuid().to_string()
-                    ],
-                )?;
+                    ))),
+                ))
+                .execute(connection)?;
                 StorageTrashEnumAppliedAction::Trashed(id)
             }
             StorageTrashPreviewRequest::PermanentlyDelete(id) => {
@@ -124,73 +137,84 @@ impl StorageLibraryTransactionDestruction {
                 if closed.id() != id || Some(closed.content_revision()) != plan.content_revision() {
                     return Err(StorageLibraryError::LifecycleRequired);
                 }
-                transaction.execute(
-                    "DELETE FROM documents WHERE id = ?1",
-                    [id.as_uuid().to_string()],
-                )?;
+                diesel::delete(documents::table.filter(documents::id.eq(id.as_uuid().to_string())))
+                    .execute(connection)?;
                 StorageTrashEnumAppliedAction::Deleted(id)
             }
         };
         Ok(StorageTrashReceipt::new(
             action,
-            StorageLibraryTransaction::bump_catalog(transaction)?,
+            StorageLibraryTransaction::diesel_bump_catalog(connection)?,
             plan.affected_game_count(),
         ))
     }
     pub(super) fn restore(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         request: &StorageTrashRestoreRequest,
     ) -> Result<StorageTrashReceipt, StorageLibraryError> {
         let target = request.target();
-        let game = StorageLibraryTransactionRows::state(transaction, target.id())?
+        let game = StorageLibraryTransactionRows::state(connection, target.id())?
             .ok_or(StorageLibraryError::MissingGame(target.id()))?;
         game.organization().revision().check(target.expected())?;
         if game.location() != StorageTrashEnumLocation::Trash {
             return Err(StorageLibraryError::InLibrary(target.id()));
         }
         StorageLibraryTransactionOrganization::touch(
-            transaction,
+            connection,
             StorageLibraryTransactionOrganizationEnumScope::Game(target.id()),
             request.timestamp(),
         )?;
-        transaction.execute(
-            "UPDATE library_entries SET location = ?1, trashed_ms = NULL WHERE game_id = ?2",
-            params![
-                StorageTrashEnumLocation::Library.sql(),
-                target.id().as_uuid().to_string()
-            ],
-        )?;
+        diesel::update(
+            library_entries::table
+                .filter(library_entries::game_id.eq(target.id().as_uuid().to_string())),
+        )
+        .set((
+            library_entries::location.eq(StorageTrashEnumLocation::Library.sql()),
+            library_entries::trashed_ms.eq(StorageLibraryMillis::optional(None)),
+        ))
+        .execute(connection)?;
         Ok(StorageTrashReceipt::new(
             StorageTrashEnumAppliedAction::Restored(target.id()),
-            StorageLibraryTransaction::bump_catalog(transaction)?,
+            StorageLibraryTransaction::diesel_bump_catalog(connection)?,
             1,
         ))
     }
     fn remove_folders(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         root: GameLibraryOrganizationFolderId,
         expected: u64,
     ) -> Result<(), StorageLibraryError> {
+        let subtree = StorageLibraryQuery::folder_subtree(connection, root.to_string())?;
         let mut removed = 0_u64;
         loop {
-            let leaves: Vec<String> = {
-                let mut statement = transaction.prepare("WITH RECURSIVE folders(id) AS (SELECT folder_id FROM library_folders WHERE folder_id = ?1 UNION SELECT f.folder_id FROM library_folders f JOIN folders p ON f.parent_id = p.id) SELECT f.folder_id FROM library_folders f JOIN folders target ON target.id = f.folder_id WHERE NOT EXISTS(SELECT 1 FROM library_folders child WHERE child.parent_id = f.folder_id) ORDER BY f.folder_id LIMIT ?2")?;
-                statement
-                    .query_map(
-                        params![
-                            root.to_string(),
-                            i64::try_from(StorageLibraryQuery::PAGE_SIZE)?
-                        ],
-                        |row| row.get(0),
-                    )?
-                    .collect::<Result<_, _>>()?
-            };
+            let parents: Vec<String> = library_folders::table
+                .filter(library_folders::folder_id.eq_any(&subtree))
+                .filter(library_folders::parent_id.is_not_null())
+                .select(library_folders::parent_id.assume_not_null())
+                .load(connection)?;
+            let leaves: Vec<String> = library_folders::table
+                .filter(library_folders::folder_id.eq_any(&subtree))
+                .filter(library_folders::folder_id.ne_all(&parents))
+                .select(library_folders::folder_id)
+                .order(library_folders::folder_id.asc())
+                .limit(i64::try_from(StorageLibraryQuery::PAGE_SIZE)?)
+                .load(connection)?;
             if leaves.is_empty() {
                 break;
             }
             for leaf in leaves {
                 let leaf: GameLibraryOrganizationFolderId = leaf.parse()?;
-                let count = transaction.execute("DELETE FROM library_folders WHERE folder_id = ?1 AND NOT EXISTS(SELECT 1 FROM library_folders child WHERE child.parent_id = ?1)", [leaf.to_string()])?;
+                let has_child: bool = diesel::select(diesel::dsl::exists(
+                    library_folders::table.filter(library_folders::parent_id.eq(leaf.to_string())),
+                ))
+                .get_result(connection)?;
+                if has_child {
+                    return Err(StorageLibraryError::StalePlan);
+                }
+                let count = diesel::delete(
+                    library_folders::table.filter(library_folders::folder_id.eq(leaf.to_string())),
+                )
+                .execute(connection)?;
                 if count != 1 {
                     return Err(StorageLibraryError::StalePlan);
                 }

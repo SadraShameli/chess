@@ -2,11 +2,73 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
 
-use rusqlite::Transaction;
+use diesel::SqliteConnection;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Text};
+
+mod main_schema {
+    diesel::table! {
+        main.sqlite_schema (name) {
+            #[sql_name = "type"]
+            kind -> Text,
+            name -> Text,
+            tbl_name -> Text,
+        }
+    }
+}
+
+mod temp_schema {
+    diesel::table! {
+        temp.sqlite_schema (name) {
+            #[sql_name = "type"]
+            kind -> Text,
+            name -> Text,
+        }
+    }
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportSpacePragmaInteger {
+    #[diesel(sql_type = BigInt)]
+    value: i64,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportSpacePragmaText {
+    #[diesel(sql_type = Text)]
+    value: String,
+}
 
 use crate::storage::import_session::{StorageImportSessionCancellation, StorageImportSessionError};
 use crate::storage::library_import::space::StorageLibraryImportSpace;
 use crate::storage::library_repository::StorageLibraryError;
+
+#[derive(Clone, Copy)]
+enum StorageLibraryImportSpaceEnumPragma {
+    PageSize,
+    PageCount,
+    AutoVacuum,
+    JournalMode,
+    Encoding,
+    ForeignKeys,
+    DeferForeignKeys,
+}
+
+impl StorageLibraryImportSpaceEnumPragma {
+    const fn query(self) -> &'static str {
+        match self {
+            Self::PageSize => "SELECT page_size AS value FROM pragma_page_size",
+            Self::PageCount => "SELECT page_count AS value FROM pragma_page_count",
+            Self::AutoVacuum => "SELECT auto_vacuum AS value FROM pragma_auto_vacuum",
+            Self::JournalMode => "SELECT journal_mode AS value FROM pragma_journal_mode",
+            Self::Encoding => "SELECT encoding AS value FROM pragma_encoding",
+            Self::ForeignKeys => "SELECT foreign_keys AS value FROM pragma_foreign_keys",
+            Self::DeferForeignKeys => {
+                "SELECT defer_foreign_keys AS value FROM pragma_defer_foreign_keys"
+            }
+        }
+    }
+}
 
 pub(super) struct StorageLibraryImportSpaceLayout {
     pub(super) page: u64,
@@ -27,39 +89,64 @@ impl StorageLibraryImportSpaceLayout {
         }
     }
 
+    fn integer(
+        connection: &mut SqliteConnection,
+        pragma: StorageLibraryImportSpaceEnumPragma,
+    ) -> Result<i64, StorageLibraryError> {
+        let row: StorageLibraryImportSpacePragmaInteger =
+            diesel::sql_query(pragma.query()).get_result(connection)?;
+        Ok(row.value)
+    }
+
+    fn text(
+        connection: &mut SqliteConnection,
+        pragma: StorageLibraryImportSpaceEnumPragma,
+    ) -> Result<String, StorageLibraryError> {
+        let row: StorageLibraryImportSpacePragmaText =
+            diesel::sql_query(pragma.query()).get_result(connection)?;
+        Ok(row.value)
+    }
+
     pub(super) fn read(
-        transaction: &Transaction<'_>,
+        connection: &mut SqliteConnection,
         cancellation: &StorageImportSessionCancellation,
     ) -> Result<Self, StorageLibraryError> {
         cancellation.check()?;
-        let page = u64::try_from(
-            transaction.pragma_query_value(None, "page_size", |row| row.get::<_, i64>(0))?,
-        )?;
+        let page = u64::try_from(Self::integer(
+            connection,
+            StorageLibraryImportSpaceEnumPragma::PageSize,
+        )?)?;
         cancellation.check()?;
-        let pages = u64::try_from(
-            transaction.pragma_query_value(None, "page_count", |row| row.get::<_, i64>(0))?,
-        )?;
+        let pages = u64::try_from(Self::integer(
+            connection,
+            StorageLibraryImportSpaceEnumPragma::PageCount,
+        )?)?;
         cancellation.check()?;
-        let auto_vacuum: u32 =
-            transaction.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
+        let auto_vacuum =
+            Self::integer(connection, StorageLibraryImportSpaceEnumPragma::AutoVacuum)?;
         cancellation.check()?;
-        let journal: String =
-            transaction.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+        let journal = Self::text(connection, StorageLibraryImportSpaceEnumPragma::JournalMode)?;
         cancellation.check()?;
-        let encoding: String =
-            transaction.pragma_query_value(None, "encoding", |row| row.get(0))?;
+        let encoding = Self::text(connection, StorageLibraryImportSpaceEnumPragma::Encoding)?;
         cancellation.check()?;
-        let foreign_keys: bool =
-            transaction.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+        let foreign_keys =
+            Self::integer(connection, StorageLibraryImportSpaceEnumPragma::ForeignKeys)? != 0;
         cancellation.check()?;
-        let deferred_foreign_keys: bool =
-            transaction.pragma_query_value(None, "defer_foreign_keys", |row| row.get(0))?;
+        let deferred_foreign_keys = Self::integer(
+            connection,
+            StorageLibraryImportSpaceEnumPragma::DeferForeignKeys,
+        )? != 0;
         cancellation.check()?;
-        let triggers: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('documents', 'library_entries', 'library_state'))",
-            [],
-            |row| row.get(0),
-        )?;
+        let triggers: bool = diesel::select(diesel::dsl::exists(
+            main_schema::sqlite_schema::table
+                .filter(main_schema::sqlite_schema::kind.eq("trigger"))
+                .filter(main_schema::sqlite_schema::tbl_name.eq_any([
+                    "documents",
+                    "library_entries",
+                    "library_state",
+                ])),
+        ))
+        .get_result(connection)?;
         if !(512..=65_536).contains(&page)
             || !page.is_power_of_two()
             || auto_vacuum != 0
@@ -72,10 +159,14 @@ impl StorageLibraryImportSpaceLayout {
             return Err(StorageLibraryError::ImportLayout);
         }
         cancellation.check()?;
-        let path = transaction
-            .path()
-            .filter(|path| !path.is_empty())
-            .ok_or(StorageLibraryError::ImportLayout)?;
+        let path: String =
+            diesel::sql_query("SELECT file AS value FROM pragma_database_list WHERE name = 'main'")
+                .get_result::<StorageLibraryImportSpacePragmaText>(connection)?
+                .value;
+        if path.is_empty() {
+            return Err(StorageLibraryError::ImportLayout);
+        }
+        let path = path.as_str();
         let mut file = std::fs::File::open(path).map_err(StorageImportSessionError::from)?;
         let main = file
             .metadata()
@@ -117,11 +208,11 @@ impl StorageLibraryImportSpaceLayout {
             )?,
         )?;
         cancellation.check()?;
-        let has_temporary_triggers: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE type = 'trigger')",
-            [],
-            |row| row.get(0),
-        )?;
+        let has_temporary_triggers: bool = diesel::select(diesel::dsl::exists(
+            temp_schema::sqlite_schema::table
+                .filter(temp_schema::sqlite_schema::kind.eq("trigger")),
+        ))
+        .get_result(connection)?;
         cancellation.check()?;
         Ok(Self {
             page,

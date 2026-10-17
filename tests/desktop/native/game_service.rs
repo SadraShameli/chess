@@ -78,7 +78,7 @@ impl DesktopNativeGameServiceFixtureEnumDocument {
             }
             Self::Unrelated => Ok(r#"{"workspace":{"selected_panel":"library"}}"#.to_owned()),
             Self::CorruptPlayed => {
-                Ok(r#"{"schema_version":3,"kind":"played","game":null}"#.to_owned())
+                Ok(r#"{"schema_version":1,"kind":"played","game":null}"#.to_owned())
             }
             Self::FuturePlayed => {
                 Ok(r#"{"schema_version":99,"kind":"played","game":null}"#.to_owned())

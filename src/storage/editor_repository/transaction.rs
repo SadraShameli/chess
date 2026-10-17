@@ -1,4 +1,8 @@
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use diesel::connection::SimpleConnection;
+use diesel::dsl::sql;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Bool, Nullable, Text};
+use diesel::{Queryable, SqliteConnection};
 use tokio::sync::OwnedSemaphorePermit;
 
 use crate::board::editor::{BoardEditorDraft, BoardEditorDraftId};
@@ -9,6 +13,50 @@ use crate::storage::editor_repository::{
     StorageEditorRepositoryReceipt, StorageEditorRepositoryRecovered,
     StorageEditorRepositoryRevision,
 };
+use crate::storage::schema::editor_drafts;
+
+macro_rules! storage_editor_repository_columns {
+    ($limits:expr) => {
+        (
+            sql::<Nullable<Text>>("CASE WHEN length(CAST(draft_id AS BLOB)) <= ")
+                .bind::<BigInt, _>($limits.id)
+                .sql(" THEN draft_id END"),
+            sql::<Nullable<Text>>("CASE WHEN length(CAST(storage_revision AS BLOB)) <= ")
+                .bind::<BigInt, _>($limits.revision)
+                .sql(" THEN storage_revision END"),
+            editor_drafts::schema_version,
+            sql::<Nullable<Text>>("CASE WHEN length(CAST(body AS BLOB)) <= ")
+                .bind::<BigInt, _>($limits.body)
+                .sql(" THEN body END"),
+            sql::<Bool>("body IS NULL"),
+        )
+    };
+}
+
+struct StorageEditorRepositoryLimits {
+    id: i64,
+    revision: i64,
+    body: i64,
+}
+
+impl StorageEditorRepositoryLimits {
+    fn new() -> Result<Self, StorageEditorRepositoryError> {
+        Ok(Self {
+            id: i64::try_from(StorageEditorRepositoryStored::ID_BYTES)?,
+            revision: i64::try_from(StorageEditorRepositoryStored::REVISION_BYTES)?,
+            body: i64::try_from(StorageEditorRepository::MAX_DRAFT_BYTES)?,
+        })
+    }
+}
+
+#[derive(Queryable)]
+struct StorageEditorRepositoryRow {
+    id: Option<String>,
+    storage_revision: Option<String>,
+    schema_version: i32,
+    body: Option<String>,
+    is_deleted: bool,
+}
 
 struct StorageEditorRepositoryStored {
     id: BoardEditorDraftId,
@@ -20,36 +68,23 @@ impl StorageEditorRepositoryStored {
     const ID_BYTES: usize = 36;
     const REVISION_BYTES: usize = 20;
 
-    fn text<'row>(
-        row: &'row rusqlite::Row<'_>,
-        index: usize,
-        maximum: usize,
-    ) -> Result<&'row str, StorageEditorRepositoryError> {
-        match row.get_ref(index)? {
-            rusqlite::types::ValueRef::Text(bytes)
-                if !bytes.is_empty() && bytes.len() <= maximum =>
-            {
-                std::str::from_utf8(bytes).map_err(|_error| StorageEditorRepositoryError::Corrupt)
-            }
-            rusqlite::types::ValueRef::Null
-            | rusqlite::types::ValueRef::Integer(_)
-            | rusqlite::types::ValueRef::Real(_)
-            | rusqlite::types::ValueRef::Text(_)
-            | rusqlite::types::ValueRef::Blob(_) => Err(StorageEditorRepositoryError::Corrupt),
-        }
+    fn text(value: Option<&str>) -> Result<&str, StorageEditorRepositoryError> {
+        value
+            .filter(|text| !text.is_empty())
+            .ok_or(StorageEditorRepositoryError::Corrupt)
     }
 
-    fn read(row: &rusqlite::Row<'_>) -> Result<Self, StorageEditorRepositoryError> {
-        let id: BoardEditorDraftId = Self::text(row, 0, Self::ID_BYTES)?
+    fn read(row: StorageEditorRepositoryRow) -> Result<Self, StorageEditorRepositoryError> {
+        let id: BoardEditorDraftId = Self::text(row.id.as_deref())?
             .parse()
             .map_err(|_error| StorageEditorRepositoryError::Corrupt)?;
         let storage_revision = StorageEditorRepositoryRevision::try_from(
-            Self::text(row, 1, Self::REVISION_BYTES)?.to_owned(),
+            Self::text(row.storage_revision.as_deref())?.to_owned(),
         )?;
         if storage_revision == StorageEditorRepositoryRevision::ABSENT {
             return Err(StorageEditorRepositoryError::Corrupt);
         }
-        let version = u32::try_from(row.get::<_, i64>(2)?)?;
+        let version = u32::try_from(row.schema_version)?;
         if version > StorageEditorRepository::FORMAT_VERSION {
             return Err(StorageEditorRepositoryError::FutureVersion {
                 found: version,
@@ -59,11 +94,10 @@ impl StorageEditorRepositoryStored {
         if version != StorageEditorRepository::FORMAT_VERSION {
             return Err(StorageEditorRepositoryError::Corrupt);
         }
-        let draft = if row.get::<_, bool>(4)? {
+        let draft = if row.is_deleted {
             None
         } else {
-            let body = Self::text(row, 3, StorageEditorRepository::MAX_DRAFT_BYTES)?;
-            let draft: BoardEditorDraft = serde_json::from_str(body)?;
+            let draft: BoardEditorDraft = serde_json::from_str(Self::text(row.body.as_deref())?)?;
             if draft.id() != id {
                 return Err(StorageEditorRepositoryError::Corrupt);
             }
@@ -77,14 +111,17 @@ impl StorageEditorRepositoryStored {
     }
 
     fn load(
-        connection: &Connection,
+        connection: &mut SqliteConnection,
         id: BoardEditorDraftId,
     ) -> Result<Option<Self>, StorageEditorRepositoryError> {
-        connection.query_row(
-            "SELECT CASE WHEN length(CAST(draft_id AS BLOB)) <= ?3 THEN draft_id END, CASE WHEN length(CAST(storage_revision AS BLOB)) <= ?4 THEN storage_revision END, schema_version, CASE WHEN length(CAST(body AS BLOB)) <= ?2 THEN body END, body IS NULL FROM editor_drafts WHERE draft_id = ?1",
-            params![id.to_string(), i64::try_from(StorageEditorRepository::MAX_DRAFT_BYTES)?, i64::try_from(Self::ID_BYTES)?, i64::try_from(Self::REVISION_BYTES)?],
-            |row| Ok(Self::read(row)),
-        ).optional()?.transpose()
+        let limits = StorageEditorRepositoryLimits::new()?;
+        editor_drafts::table
+            .filter(editor_drafts::draft_id.eq(id.to_string()))
+            .select(storage_editor_repository_columns!(limits))
+            .first::<StorageEditorRepositoryRow>(connection)
+            .optional()?
+            .map(Self::read)
+            .transpose()
     }
 
     fn check_expected(
@@ -106,27 +143,48 @@ impl StorageEditorRepositoryStored {
     }
 }
 
+pub(in crate::storage) struct StorageEditorRepositoryExecution {
+    outcome: Result<StorageEditorRepositoryEnumResponse, StorageEditorRepositoryError>,
+    unresolved: bool,
+}
+
+impl StorageEditorRepositoryExecution {
+    pub(in crate::storage) const fn is_unresolved(&self) -> bool {
+        self.unresolved
+    }
+
+    pub(in crate::storage) fn into_outcome(
+        self,
+    ) -> Result<StorageEditorRepositoryEnumResponse, StorageEditorRepositoryError> {
+        self.outcome
+    }
+}
+
 pub(in crate::storage) struct StorageEditorRepositoryTransaction;
 
 impl StorageEditorRepositoryTransaction {
     pub(in crate::storage) fn execute(
-        connection: &mut Connection,
+        connection: &mut SqliteConnection,
         request: StorageEditorRepositoryEnumRequest,
         memory_reservation: OwnedSemaphorePermit,
-    ) -> Result<StorageEditorRepositoryEnumResponse, StorageEditorRepositoryError> {
-        match request {
+    ) -> StorageEditorRepositoryExecution {
+        let outcome = match request {
             StorageEditorRepositoryEnumRequest::Save {
                 draft,
                 expected_storage_revision,
-            } => Self::write(connection, |transaction| {
-                Self::save(transaction, &draft, expected_storage_revision)
-            }),
+            } => {
+                return Self::write(connection, |transaction| {
+                    Self::save(transaction, &draft, expected_storage_revision)
+                });
+            }
             StorageEditorRepositoryEnumRequest::Delete {
                 id,
                 expected_storage_revision,
-            } => Self::write(connection, |transaction| {
-                Self::delete(transaction, id, expected_storage_revision)
-            }),
+            } => {
+                return Self::write(connection, |transaction| {
+                    Self::delete(transaction, id, expected_storage_revision)
+                });
+            }
             StorageEditorRepositoryEnumRequest::Read { id } => {
                 Self::read(connection, id, memory_reservation)
                     .map(StorageEditorRepositoryEnumResponse::Read)
@@ -135,39 +193,76 @@ impl StorageEditorRepositoryTransaction {
                 Self::list(connection, after, memory_reservation)
                     .map(StorageEditorRepositoryEnumResponse::List)
             }
+        };
+        StorageEditorRepositoryExecution {
+            outcome,
+            unresolved: false,
         }
     }
 
     fn write(
-        connection: &mut Connection,
+        connection: &mut SqliteConnection,
         operation: impl FnOnce(
-            &Transaction<'_>,
+            &mut SqliteConnection,
         )
             -> Result<StorageEditorRepositoryReceipt, StorageEditorRepositoryError>,
-    ) -> Result<StorageEditorRepositoryEnumResponse, StorageEditorRepositoryError> {
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        match operation(&transaction) {
-            Ok(receipt) => {
-                transaction.commit()?;
-                Ok(StorageEditorRepositoryEnumResponse::Write(receipt))
-            }
-            Err(primary) => {
-                if transaction.is_autocommit() {
-                    return Ok(StorageEditorRepositoryEnumResponse::RolledBack(primary));
-                }
-                match transaction.rollback() {
-                    Ok(()) => Ok(StorageEditorRepositoryEnumResponse::RolledBack(primary)),
-                    Err(rollback) => Err(StorageEditorRepositoryError::Rollback {
-                        primary: Box::new(primary),
-                        rollback,
-                    }),
-                }
-            }
+    ) -> StorageEditorRepositoryExecution {
+        if let Err(error) = connection.batch_execute("BEGIN IMMEDIATE") {
+            return StorageEditorRepositoryExecution {
+                outcome: Err(StorageEditorRepositoryError::Database(error)),
+                unresolved: false,
+            };
+        }
+        match operation(connection) {
+            Ok(receipt) => match connection.batch_execute("COMMIT") {
+                Ok(()) => StorageEditorRepositoryExecution {
+                    outcome: Ok(StorageEditorRepositoryEnumResponse::Write(receipt)),
+                    unresolved: false,
+                },
+                Err(commit) => Self::abandoned(
+                    connection,
+                    StorageEditorRepositoryError::Database(commit),
+                    Err,
+                ),
+            },
+            Err(primary) => Self::abandoned(connection, primary, |error| {
+                Ok(StorageEditorRepositoryEnumResponse::RolledBack(error))
+            }),
         }
     }
 
+    fn abandoned(
+        connection: &mut SqliteConnection,
+        primary: StorageEditorRepositoryError,
+        confirmed: impl FnOnce(
+            StorageEditorRepositoryError,
+        ) -> Result<
+            StorageEditorRepositoryEnumResponse,
+            StorageEditorRepositoryError,
+        >,
+    ) -> StorageEditorRepositoryExecution {
+        match Self::rollback(connection) {
+            Ok(()) => StorageEditorRepositoryExecution {
+                outcome: confirmed(primary),
+                unresolved: false,
+            },
+            Err(rollback) => StorageEditorRepositoryExecution {
+                outcome: Err(StorageEditorRepositoryError::Rollback {
+                    primary: Box::new(primary),
+                    rollback,
+                }),
+                unresolved: true,
+            },
+        }
+    }
+
+    fn rollback(connection: &mut SqliteConnection) -> Result<(), diesel::result::Error> {
+        drop(connection.batch_execute("BEGIN DEFERRED"));
+        connection.batch_execute("ROLLBACK")
+    }
+
     fn save(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         draft: &BoardEditorDraft,
         expected: StorageEditorRepositoryRevision,
     ) -> Result<StorageEditorRepositoryReceipt, StorageEditorRepositoryError> {
@@ -183,15 +278,22 @@ impl StorageEditorRepositoryTransaction {
             status: draft.status(),
         };
         let changed = if stored.is_some() {
-            transaction.execute(
-                "UPDATE editor_drafts SET storage_revision = ?2, body = ?3 WHERE draft_id = ?1",
-                params![draft.id().to_string(), storage_revision.to_string(), body],
-            )?
+            diesel::update(editor_drafts::table.find(draft.id().to_string()))
+                .set((
+                    editor_drafts::storage_revision.eq(storage_revision.to_string()),
+                    editor_drafts::body.eq(Some(body)),
+                ))
+                .execute(transaction)?
         } else {
-            transaction.execute(
-                "INSERT INTO editor_drafts (draft_id, storage_revision, schema_version, body) VALUES (?1, ?2, ?3, ?4)",
-                params![draft.id().to_string(), storage_revision.to_string(), StorageEditorRepository::FORMAT_VERSION, body],
-            )?
+            diesel::insert_into(editor_drafts::table)
+                .values((
+                    editor_drafts::draft_id.eq(draft.id().to_string()),
+                    editor_drafts::storage_revision.eq(storage_revision.to_string()),
+                    editor_drafts::schema_version
+                        .eq(i32::try_from(StorageEditorRepository::FORMAT_VERSION)?),
+                    editor_drafts::body.eq(Some(body)),
+                ))
+                .execute(transaction)?
         };
         if changed != 1 {
             return Err(StorageEditorRepositoryError::Corrupt);
@@ -204,7 +306,7 @@ impl StorageEditorRepositoryTransaction {
     }
 
     fn delete(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         id: BoardEditorDraftId,
         expected: StorageEditorRepositoryRevision,
     ) -> Result<StorageEditorRepositoryReceipt, StorageEditorRepositoryError> {
@@ -214,10 +316,12 @@ impl StorageEditorRepositoryTransaction {
             return Err(StorageEditorRepositoryError::NotFound { id });
         }
         let storage_revision = expected.next()?;
-        let changed = transaction.execute(
-            "UPDATE editor_drafts SET storage_revision = ?2, body = NULL WHERE draft_id = ?1",
-            params![id.to_string(), storage_revision.to_string()],
-        )?;
+        let changed = diesel::update(editor_drafts::table.find(id.to_string()))
+            .set((
+                editor_drafts::storage_revision.eq(storage_revision.to_string()),
+                editor_drafts::body.eq(None::<String>),
+            ))
+            .execute(transaction)?;
         if changed != 1 {
             return Err(StorageEditorRepositoryError::Corrupt);
         }
@@ -229,7 +333,7 @@ impl StorageEditorRepositoryTransaction {
     }
 
     fn read(
-        connection: &Connection,
+        connection: &mut SqliteConnection,
         id: BoardEditorDraftId,
         memory_reservation: OwnedSemaphorePermit,
     ) -> Result<Option<StorageEditorRepositoryRecovered>, StorageEditorRepositoryError> {
@@ -245,23 +349,23 @@ impl StorageEditorRepositoryTransaction {
     }
 
     fn list(
-        connection: &Connection,
+        connection: &mut SqliteConnection,
         after: Option<StorageEditorRepositoryCursor>,
         memory_reservation: OwnedSemaphorePermit,
     ) -> Result<StorageEditorRepositoryPage, StorageEditorRepositoryError> {
-        let mut statement = connection.prepare_cached("SELECT CASE WHEN length(CAST(draft_id AS BLOB)) <= ?3 THEN draft_id END, CASE WHEN length(CAST(storage_revision AS BLOB)) <= ?4 THEN storage_revision END, schema_version, CASE WHEN length(CAST(body AS BLOB)) <= ?2 THEN body END, body IS NULL FROM editor_drafts WHERE body IS NOT NULL AND draft_id > ?1 ORDER BY draft_id LIMIT ?5")?;
+        let limits = StorageEditorRepositoryLimits::new()?;
         let cursor = after
             .map(|cursor| cursor.id().to_string())
             .unwrap_or_default();
-        let mut rows = statement.query(params![
-            cursor,
-            i64::try_from(StorageEditorRepository::MAX_DRAFT_BYTES)?,
-            i64::try_from(StorageEditorRepositoryStored::ID_BYTES)?,
-            i64::try_from(StorageEditorRepositoryStored::REVISION_BYTES)?,
-            i64::try_from(StorageEditorRepository::PAGE_SIZE)?
-        ])?;
+        let rows = editor_drafts::table
+            .filter(editor_drafts::body.is_not_null())
+            .filter(editor_drafts::draft_id.gt(cursor))
+            .order_by(editor_drafts::draft_id)
+            .limit(i64::try_from(StorageEditorRepository::PAGE_SIZE)?)
+            .select(storage_editor_repository_columns!(limits))
+            .load::<StorageEditorRepositoryRow>(connection)?;
         let mut entries = Vec::with_capacity(StorageEditorRepository::PAGE_SIZE);
-        while let Some(row) = rows.next()? {
+        for row in rows {
             let stored = StorageEditorRepositoryStored::read(row)?;
             let draft = stored.draft.ok_or(StorageEditorRepositoryError::Corrupt)?;
             entries.push(StorageEditorRepositoryEntry {

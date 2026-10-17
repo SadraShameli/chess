@@ -14,7 +14,6 @@ use chess::storage::editor_repository::{
     StorageEditorRepository, StorageEditorRepositoryEnumMutation, StorageEditorRepositoryError,
     StorageEditorRepositoryRevision,
 };
-use chess::storage::migration::StorageMigration;
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
@@ -561,10 +560,13 @@ async fn failed_save_and_delete_transactions_leave_original_row_and_revision()
         .await;
     let recovered = repository.read(draft.id()).await?.ok_or("lost draft")?;
     store.close().await?;
-    assert!(matches!(save, Err(StorageEditorRepositoryError::Sqlite(_))));
+    assert!(matches!(
+        save,
+        Err(StorageEditorRepositoryError::Database(_))
+    ));
     assert!(matches!(
         delete,
-        Err(StorageEditorRepositoryError::Sqlite(_))
+        Err(StorageEditorRepositoryError::Database(_))
     ));
     assert_eq!(recovered.draft(), &draft);
     assert_eq!(recovered.storage_revision().value(), 1);
@@ -572,26 +574,11 @@ async fn failed_save_and_delete_transactions_leave_original_row_and_revision()
 }
 
 #[tokio::test]
-async fn migration_four_preserves_version_three_documents_and_rejects_future_database()
+async fn future_migration_rejects_reopen_and_preserves_saved_draft()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("editor.sqlite3");
-    let migrations = StorageMigration::core().into_iter().take(3).collect();
-    let store = StorageDocumentStore::open_with_migrations(
-        path.clone(),
-        migrations,
-        CapacityBudget::discover()?,
-    )
-    .await?;
-    let id = Uuid::from_u128(99);
-    store.client().save(id, 0, "{}".into()).await?;
-    store.close().await?;
     let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
-    let preserved = store
-        .client()
-        .read(id)
-        .await?
-        .ok_or("lost legacy document")?;
     let draft = StorageEditorRepositoryFixture::draft(1, false)?;
     StorageEditorRepository::new(store.client())
         .save(&draft, StorageEditorRepositoryRevision::ABSENT)?
@@ -599,24 +586,20 @@ async fn migration_four_preserves_version_three_documents_and_rejects_future_dat
         .await?;
     store.close().await?;
     let connection = Connection::open(&path)?;
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     let body: String =
         connection.query_row("SELECT body FROM editor_drafts", [], |row| row.get(0))?;
-    connection.pragma_update(None, "user_version", 5)?;
+    connection.execute(
+        "INSERT INTO __diesel_schema_migrations (version) VALUES ('0099')",
+        [],
+    )?;
     drop(connection);
     let future = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await;
     let connection = Connection::open(path)?;
     let after: String =
         connection.query_row("SELECT body FROM editor_drafts", [], |row| row.get(0))?;
-    assert_eq!(preserved.revision(), 1);
-    assert_eq!(preserved.body(), "{}");
-    assert_eq!(version, 4);
     assert!(matches!(
         future,
-        Err(StorageDocumentError::FutureSchema {
-            found: 5,
-            supported: 4
-        })
+        Err(StorageDocumentError::FutureMigration { .. })
     ));
     assert_eq!(after, body);
     Ok(())

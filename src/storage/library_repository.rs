@@ -41,6 +41,8 @@ pub enum StorageLibraryError {
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
+    Diesel(#[from] diesel::result::Error),
+    #[error(transparent)]
     Codec(#[from] StorageGameDocumentError),
     #[error(transparent)]
     Record(#[from] StorageLibraryRecordError),
@@ -98,7 +100,7 @@ pub enum StorageLibraryError {
     #[error("Library operation failed ({primary}); rollback also failed ({rollback})")]
     Rollback {
         primary: Box<Self>,
-        rollback: rusqlite::Error,
+        rollback: diesel::result::Error,
     },
     #[error("The library response does not match its request")]
     Protocol,

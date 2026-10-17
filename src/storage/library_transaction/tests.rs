@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use rusqlite::{Connection, params};
+use rusqlite::params;
 use tokio::sync::Semaphore;
 
 use crate::board::start::BoardStart;
@@ -20,6 +20,7 @@ use crate::game::storage_repository::GameStorageRevision;
 use crate::game::tree::GameTree;
 use crate::notation::game::{NotationGame, NotationGameParts};
 use crate::notation::game_identity::NotationGameIdentityEnumResult;
+use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::{StorageDocumentClient, StorageDocumentStore};
 use crate::storage::game_document::StorageGameDocument;
 use crate::storage::library_prepared::{
@@ -35,6 +36,7 @@ use crate::storage::library_transaction::{
     StorageLibraryEnumTransactionRequest, StorageLibraryEnumTransactionResponse,
     StorageLibraryTransaction,
 };
+use crate::storage::migration::StorageMigrationRunner;
 use crate::storage::trash::{
     StorageTrashClosedGameEvidence, StorageTrashConfirmedRequest, StorageTrashPreviewRequest,
     StorageTrashRestoreRequest,
@@ -43,19 +45,24 @@ use crate::storage::trash::{
 type StorageLibraryTransactionTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct StorageLibraryTransactionFixture {
-    connection: Connection,
+    _directory: tempfile::TempDir,
+    connection: StorageConnection,
+    legacy: rusqlite::Connection,
     executor: CapacityExecutor,
     memory: Arc<Semaphore>,
 }
 
 impl StorageLibraryTransactionFixture {
     fn new() -> StorageLibraryTransactionTestResult<Self> {
-        let connection = Connection::open_in_memory()?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.execute_batch(include_str!("../migrations/0001_core.sql"))?;
-        connection.execute_batch(include_str!("../migrations/0003_library.sql"))?;
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("library.sqlite");
+        let mut diesel = StorageConnection::open(&path)?;
+        StorageMigrationRunner::run_embedded(diesel.diesel())?;
+        let legacy = StorageConnection::open_legacy(&path)?;
         Ok(Self {
-            connection,
+            _directory: directory,
+            connection: diesel,
+            legacy,
             executor: CapacityExecutor::new(CapacityBudget::new(NonZeroUsize::MIN)?)?,
             memory: Arc::new(Semaphore::new(StorageDocumentStore::MEMORY_BUDGET)),
         })
@@ -97,7 +104,7 @@ impl StorageLibraryTransactionFixture {
         request: StorageLibraryEnumTransactionRequest,
     ) -> Result<StorageLibraryEnumTransactionResponse, StorageLibraryError> {
         StorageLibraryTransaction::execute(
-            &mut self.connection,
+            self.connection.diesel(),
             request,
             &self.memory,
             &mut false,
@@ -211,7 +218,7 @@ async fn deeply_nested_confirmed_folder_removal_unfiles_without_cascade_depth_fa
         ),
         2,
     )?;
-    let before: String = fixture.connection.query_row(
+    let before: String = fixture.legacy.query_row(
         "SELECT body FROM documents WHERE id = ?1",
         [game.as_uuid().to_string()],
         |row| row.get(0),
@@ -228,9 +235,9 @@ async fn deeply_nested_confirmed_folder_removal_unfiles_without_cascade_depth_fa
     ));
     let folders: i64 =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT COUNT(*) FROM library_folders", [], |row| row.get(0))?;
-    let (after, folder): (String, Option<String>) = fixture.connection.query_row(
+    let (after, folder): (String, Option<String>) = fixture.legacy.query_row(
         "SELECT d.body, e.folder_id FROM documents d JOIN library_entries e ON e.game_id = d.id WHERE d.id = ?1",
         [game.as_uuid().to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
@@ -260,7 +267,7 @@ async fn content_and_organization_cas_are_independent_and_checkpoints_preserve_t
         )
         .await?;
     let before: String = fixture
-        .connection
+        .legacy
         .query_row("SELECT body FROM documents", [], |row| row.get(0))?;
     fixture.execute(StorageLibraryEnumTransactionRequest::Organize(
         GameLibraryOrganizationRequest::new(
@@ -272,7 +279,7 @@ async fn content_and_organization_cas_are_independent_and_checkpoints_preserve_t
         )?,
     ))?;
     let after: String = fixture
-        .connection
+        .legacy
         .query_row("SELECT body FROM documents", [], |row| row.get(0))?;
     assert_eq!(before, after);
     fixture
@@ -503,7 +510,7 @@ async fn trash_requires_current_confirmation_and_restore_preserves_the_same_body
             GameLibraryOrganizationTimestamp::new(3)?,
         ),
     ))?;
-    let count: i64 = fixture.connection.query_row(
+    let count: i64 = fixture.legacy.query_row(
         "SELECT COUNT(*) FROM documents WHERE id = ?1",
         params![id.as_uuid().to_string()],
         |row| row.get(0),
@@ -635,10 +642,10 @@ async fn folder_removal_unfiles_library_and_trash_without_losing_tags_or_content
     ))?;
     let count: i64 =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT COUNT(*) FROM library_folders", [], |row| row.get(0))?;
     assert_eq!(count, 0);
-    let mut statement = fixture.connection.prepare("SELECT d.body, d.revision, e.folder_id, e.organization_revision FROM documents d JOIN library_entries e ON e.game_id = d.id ORDER BY d.id")?;
+    let mut statement = fixture.legacy.prepare("SELECT d.body, d.revision, e.folder_id, e.organization_revision FROM documents d JOIN library_entries e ON e.game_id = d.id ORDER BY d.id")?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -649,6 +656,7 @@ async fn folder_removal_unfiles_library_and_trash_without_losing_tags_or_content
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
     assert_eq!(rows.len(), 2);
     for (index, (body, revision, folder, organization)) in rows.into_iter().enumerate() {
         assert_eq!(
@@ -664,12 +672,11 @@ async fn folder_removal_unfiles_library_and_trash_without_losing_tags_or_content
     }
     let tags: i64 =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT COUNT(*) FROM library_entry_tags", [], |row| {
                 row.get(0)
             })?;
     assert_eq!(tags, 2);
-    drop(statement);
     fixture.executor.shutdown().await?;
     Ok(())
 }
@@ -703,7 +710,7 @@ async fn folder_cycles_missing_references_and_noops_preserve_the_catalog()
     )?;
     let before: String =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT revision FROM library_state", [], |row| row.get(0))?;
     let noop = fixture.organize(
         GameLibraryOrganizationEnumMutation::RenameFolder(
@@ -740,7 +747,7 @@ async fn folder_cycles_missing_references_and_noops_preserve_the_catalog()
     assert!(fixture.organize(missing, 100).is_err());
     let after: String =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT revision FROM library_state", [], |row| row.get(0))?;
     assert_eq!(before.parse::<u64>()? + 1, after.parse::<u64>()?);
     fixture.executor.shutdown().await?;
@@ -805,7 +812,7 @@ async fn stale_destruction_is_rejected_and_permanent_delete_cascades_only_after_
             )),
         )?,
     ))?;
-    let counts: (i64, i64, i64) = fixture.connection.query_row("SELECT (SELECT COUNT(*) FROM documents), (SELECT COUNT(*) FROM library_entries), (SELECT COUNT(*) FROM library_entry_tags)", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    let counts: (i64, i64, i64) = fixture.legacy.query_row("SELECT (SELECT COUNT(*) FROM documents), (SELECT COUNT(*) FROM library_entries), (SELECT COUNT(*) FROM library_entry_tags)", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     assert_eq!(counts, (0, 0, 0));
     fixture.executor.shutdown().await?;
     Ok(())
@@ -821,7 +828,7 @@ async fn adoption_is_bounded_idempotent_and_preserves_bodies_revisions_and_unkno
     let mut fixture = StorageLibraryTransactionFixture::new()?;
     let id = StorageLibraryTransactionFixture::id(1)?;
     let body = StorageLibraryTransactionFixture::body(id, None)?;
-    fixture.connection.execute(
+    fixture.legacy.execute(
         "INSERT INTO documents(id, revision, body) VALUES (?1, '7', ?2)",
         params![id.as_uuid().to_string(), body],
     )?;
@@ -869,7 +876,7 @@ async fn adoption_is_bounded_idempotent_and_preserves_bodies_revisions_and_unkno
     }
     let stored: (String, String) =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT body, revision FROM documents", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })?;
@@ -896,7 +903,7 @@ async fn adoption_is_bounded_idempotent_and_preserves_bodies_revisions_and_unkno
         .join()
         .await??;
     fixture
-        .connection
+        .legacy
         .execute("UPDATE documents SET revision = '8'", [])?;
     assert!(
         matches!(fixture.execute(StorageLibraryEnumTransactionRequest::Adopt(prepared))?,
@@ -919,7 +926,7 @@ async fn catalog_exhaustion_rolls_back_the_document_and_projection_together()
             None,
         )
         .await?;
-    fixture.connection.execute(
+    fixture.legacy.execute(
         "UPDATE library_state SET revision = ?1",
         [u64::MAX.to_string()],
     )?;
@@ -948,7 +955,7 @@ async fn catalog_exhaustion_rolls_back_the_document_and_projection_together()
         fixture.execute(StorageLibraryEnumTransactionRequest::Save(prepared)),
         Err(StorageLibraryError::CatalogExhausted)
     ));
-    let stored: (String, String, Option<i64>) = fixture.connection.query_row("SELECT d.revision, e.content_revision, e.modified_ms FROM documents d JOIN library_entries e ON d.id = e.game_id", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    let stored: (String, String, Option<i64>) = fixture.legacy.query_row("SELECT d.revision, e.content_revision, e.modified_ms FROM documents d JOIN library_entries e ON d.id = e.game_id", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     assert_eq!(stored, ("1".to_owned(), "1".to_owned(), Some(1)));
     fixture.executor.shutdown().await?;
     Ok(())
@@ -1033,7 +1040,7 @@ async fn output_memory_is_retained_by_pages_and_saturation_is_explicit()
     let small = Arc::new(Semaphore::new(1));
     assert!(matches!(
         StorageLibraryTransaction::execute(
-            &mut fixture.connection,
+            fixture.connection.diesel(),
             StorageLibraryEnumTransactionRequest::Load(id),
             &small,
             &mut false,
@@ -1048,31 +1055,51 @@ async fn output_memory_is_retained_by_pages_and_saturation_is_explicit()
 }
 
 #[test]
-fn migration_preserves_generic_document_identity_revision_and_body()
+fn diesel_catalog_bump_is_monotonic_inside_an_immediate_transaction()
 -> StorageLibraryTransactionTestResult {
-    let mut connection = Connection::open_in_memory()?;
-    connection.execute_batch(include_str!("../migrations/0001_core.sql"))?;
+    let mut fixture = StorageLibraryTransactionFixture::new()?;
+    let before = StorageLibraryTransaction::diesel_catalog(fixture.connection.diesel())?;
+    let bumped = fixture
+        .connection
+        .diesel()
+        .immediate_transaction(StorageLibraryTransaction::diesel_bump_catalog)?;
+    assert_eq!(bumped, before.next()?);
+    assert_eq!(
+        StorageLibraryTransaction::diesel_catalog(fixture.connection.diesel())?,
+        bumped
+    );
+    let legacy: String = fixture.legacy.query_row(
+        "SELECT revision FROM library_state WHERE singleton = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(
+        legacy.parse::<crate::storage::library_repository::StorageLibraryCatalogRevision>()?,
+        bumped
+    );
+    Ok(())
+}
+
+#[test]
+fn baseline_schema_adopts_generic_document_identity_revision_and_body()
+-> StorageLibraryTransactionTestResult {
+    let mut fixture = StorageLibraryTransactionFixture::new()?;
     let id = uuid::Uuid::nil().to_string();
     let body = r#"{"setting":"kept"}"#;
-    connection.execute(
+    fixture.legacy.execute(
         "INSERT INTO documents(id, revision, body) VALUES (?1, ?2, ?3)",
         params![id, u64::MAX.to_string(), body],
     )?;
-    connection.execute_batch(include_str!("../migrations/0003_library.sql"))?;
     let stored: (String, String, String) =
-        connection.query_row("SELECT id, revision, body FROM documents", [], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+        fixture
+            .legacy
+            .query_row("SELECT id, revision, body FROM documents", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
     assert_eq!(stored, (id, u64::MAX.to_string(), body.to_owned()));
-    let response = StorageLibraryTransaction::execute(
-        &mut connection,
-        StorageLibraryEnumTransactionRequest::AdoptionPage(
-            crate::storage::library_repository::StorageLibraryAdoptionCursor::start(),
-        ),
-        &Arc::new(Semaphore::new(4096)),
-        &mut false,
-        uuid::Uuid::nil(),
-    )?;
+    let response = fixture.execute(StorageLibraryEnumTransactionRequest::AdoptionPage(
+        crate::storage::library_repository::StorageLibraryAdoptionCursor::start(),
+    ))?;
     let StorageLibraryEnumTransactionResponse::AdoptionPage(page) = response else {
         return Err("expected adoption inventory".into());
     };
@@ -1126,7 +1153,7 @@ async fn normalized_player_filters_exclude_missing_mode_and_preserve_display_tex
         })?)
         .await?;
     assert!(page.entries().is_empty());
-    let stored: (String, Vec<u8>, String) = fixture.connection.query_row("SELECT d.body, e.content_sha256, e.identity_mainline_uci FROM documents d JOIN library_entries e ON d.id = e.game_id", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    let stored: (String, Vec<u8>, String) = fixture.legacy.query_row("SELECT d.body, e.content_sha256, e.identity_mainline_uci FROM documents d JOIN library_entries e ON d.id = e.game_id", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
     assert_eq!(
         stored.1.as_slice(),
         crate::package::digest::PackageDigest::hash_slice(stored.0.as_bytes())
@@ -1188,7 +1215,7 @@ async fn preparation_checks_the_exact_body_identity_and_new_checkpoints_cannot_i
         Err(StorageLibraryError::NewContentTimestamp)
     ));
     let count: i64 = fixture
-        .connection
+        .legacy
         .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
     assert_eq!(count, 0);
     fixture.executor.shutdown().await?;
@@ -1377,7 +1404,7 @@ async fn displayed_folder_and_tag_changes_touch_affected_games_without_touching_
     );
     assert_eq!(entry.content_revision().value(), 1);
     let body: String = fixture
-        .connection
+        .legacy
         .query_row("SELECT body FROM documents", [], |row| row.get(0))?;
     assert_eq!(body, StorageLibraryTransactionFixture::body(id, None)?);
     fixture.executor.shutdown().await?;
@@ -1547,10 +1574,10 @@ async fn folder_removal_failure_rolls_back_prior_unfiling_revisions_and_deleted_
         ),
         2,
     )?;
-    let before: (String, String, String, Option<i64>, String) = fixture.connection.query_row(
+    let before: (String, String, String, Option<i64>, String) = fixture.legacy.query_row(
         "SELECT d.body, d.revision, e.organization_revision, e.modified_ms, s.revision FROM documents d JOIN library_entries e ON d.id = e.game_id CROSS JOIN library_state s", [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
-    fixture.connection.execute_batch("CREATE TRIGGER refuse_root_folder_delete BEFORE DELETE ON library_folders WHEN OLD.parent_id IS NULL AND OLD.name = 'Root' BEGIN SELECT RAISE(ABORT, 'root deletion refused'); END;")?;
+    fixture.legacy.execute_batch("CREATE TRIGGER refuse_root_folder_delete BEFORE DELETE ON library_folders WHEN OLD.parent_id IS NULL AND OLD.name = 'Root' BEGIN SELECT RAISE(ABORT, 'root deletion refused'); END;")?;
     let plan = fixture.preview(StorageTrashPreviewRequest::RemoveFolder(root))?;
     let result = fixture.execute(StorageLibraryEnumTransactionRequest::ApplyDestruction(
         StorageTrashConfirmedRequest::new(
@@ -1559,19 +1586,19 @@ async fn folder_removal_failure_rolls_back_prior_unfiling_revisions_and_deleted_
             None,
         )?,
     ));
-    assert!(matches!(result, Err(StorageLibraryError::Sqlite(_))));
-    let after: (String, String, String, Option<i64>, String) = fixture.connection.query_row(
+    assert!(matches!(result, Err(StorageLibraryError::Diesel(_))));
+    let after: (String, String, String, Option<i64>, String) = fixture.legacy.query_row(
         "SELECT d.body, d.revision, e.organization_revision, e.modified_ms, s.revision FROM documents d JOIN library_entries e ON d.id = e.game_id CROSS JOIN library_state s", [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
     let folder: Option<String> =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT folder_id FROM library_entries", [], |row| {
                 row.get(0)
             })?;
     let folders: i64 =
         fixture
-            .connection
+            .legacy
             .query_row("SELECT COUNT(*) FROM library_folders", [], |row| row.get(0))?;
     assert_eq!(after, before);
     assert_eq!(folder, Some(child.to_string()));

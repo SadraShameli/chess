@@ -42,19 +42,8 @@ impl DesktopNativeLibraryStartupFixture {
         )?;
         let body =
             StorageGameDocument::capture(&session, ClockInstant::from_millis(2_000)?)?.json()?;
-        let legacy = body
-            .replacen(
-                "\"schema_version\":3,\"kind\":\"played\"",
-                "\"schema_version\":2",
-                1,
-            )
-            .replacen(
-                &format!("\"study_mainline_tip\":\"{}\",", session.live().as_uuid()),
-                "",
-                1,
-            );
-        StorageGameDocument::recover_record(&legacy)?;
-        Ok(legacy)
+        StorageGameDocument::recover_record(&body)?;
+        Ok(body)
     }
 
     fn owner(fixture: &DesktopGameRegistryFixtureRuntime) -> DesktopNativeLibraryStartup {
@@ -96,7 +85,7 @@ async fn adoption_classifies_more_than_one_page_and_retains_corrupt_and_future_i
         ),
         (
             108,
-            r#"{"schema_version":3,"kind":"played","game":null}"#.to_owned(),
+            r#"{"schema_version":1,"kind":"played","game":null}"#.to_owned(),
         ),
         (
             109,
@@ -360,7 +349,7 @@ async fn issue_reports_are_bounded_without_certifying_unreported_failures_ready(
             .save(
                 DesktopNativeLibraryStartupFixture::id(value)?.as_uuid(),
                 0,
-                r#"{"schema_version":3,"kind":"played","game":null}"#.to_owned(),
+                r#"{"schema_version":1,"kind":"played","game":null}"#.to_owned(),
             )
             .await?;
     }
@@ -529,7 +518,7 @@ async fn recovery_required_startup_never_certifies_a_recognized_broken_game()
         .save(
             uuid::Uuid::from_u128(90_001),
             0,
-            "{\"schema_version\":3,\"kind\":\"played\",\"game\":null}".to_owned(),
+            "{\"schema_version\":1,\"kind\":\"played\",\"game\":null}".to_owned(),
         )
         .await?;
     let mut owner = DesktopNativeLibraryStartupFixture::owner(&fixture);

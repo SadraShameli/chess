@@ -1,6 +1,5 @@
 use chess::capacity::budget::CapacityBudget;
 use chess::storage::document_store::StorageDocumentStore;
-use chess::storage::migration::StorageMigration;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -65,39 +64,6 @@ async fn concurrent_expected_revisions_accept_exactly_one_mutation()
 }
 
 #[tokio::test]
-async fn failed_migration_rolls_back_the_complete_batch() -> Result<(), Box<dyn std::error::Error>>
-{
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("library.sqlite3");
-    let migrations = vec![
-        StorageMigration::new(
-            1,
-            "CREATE TABLE should_rollback (id INTEGER PRIMARY KEY);".into(),
-        ),
-        StorageMigration::new(2, "THIS IS INVALID SQL;".into()),
-    ];
-    assert!(
-        StorageDocumentStore::open_with_migrations(
-            path.clone(),
-            migrations,
-            CapacityBudget::discover()?
-        )
-        .await
-        .is_err()
-    );
-    let connection = rusqlite::Connection::open(path)?;
-    let count: i64 = connection.query_row(
-        "SELECT count(*) FROM sqlite_master WHERE name = 'should_rollback'",
-        [],
-        |row| row.get(0),
-    )?;
-    assert_eq!(count, 0);
-    let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    assert_eq!(version, 0);
-    Ok(())
-}
-
-#[tokio::test]
 async fn invalid_documents_and_future_schemas_are_refused() -> Result<(), Box<dyn std::error::Error>>
 {
     let directory = tempfile::tempdir()?;
@@ -108,7 +74,10 @@ async fn invalid_documents_and_future_schemas_are_refused() -> Result<(), Box<dy
     assert!(store.client().read(id).await?.is_none());
     store.close().await?;
     let connection = rusqlite::Connection::open(&path)?;
-    connection.pragma_update(None, "user_version", 1_000_000)?;
+    connection.execute(
+        "INSERT INTO __diesel_schema_migrations (version) VALUES ('1000000')",
+        [],
+    )?;
     drop(connection);
     assert!(
         StorageDocumentStore::open(path, CapacityBudget::discover()?)

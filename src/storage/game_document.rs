@@ -23,7 +23,6 @@ use crate::clock::time_control::{ClockTimeControl, ClockTimeControlError};
 use crate::game::adjudication::{
     GameAdjudicationEnumInterruption, GameAdjudicationEnumMateQuestion,
 };
-use crate::game::configuration::GameConfigurationOptions;
 use crate::game::engine_provider::{GameEngineRequestError, GameEngineSearchConfig};
 use crate::game::enums::{
     GameEnumMarkingColor, GameEnumMode, GameEnumOutcomeReason, GameEnumResult, GameEnumSeat,
@@ -85,8 +84,6 @@ pub enum StorageGameDocumentError {
     },
     #[error("The saved played game has no explicit study mainline tip")]
     MissingStudyTip,
-    #[error("Legacy played documents cannot contain a study mainline tip")]
-    LegacyStudyTip,
     #[error("Clockless notation cannot contain runtime clock snapshots")]
     NotationRuntimeClock,
     #[error("The saved game has no required per-game play options")]
@@ -205,9 +202,7 @@ pub struct StorageGameDocument {
 }
 
 impl StorageGameDocument {
-    pub const SCHEMA_VERSION: u32 = 3;
-    const LEGACY_SCHEMA_VERSION: u32 = 1;
-    const PLAY_OPTIONS_SCHEMA_VERSION: u32 = 2;
+    pub const SCHEMA_VERSION: u32 = 1;
     pub const MAX_MOVES: usize = 100_000;
     const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -369,19 +364,12 @@ impl StorageGameDocument {
                 supported: Self::SCHEMA_VERSION,
             });
         }
-        if envelope.schema_version != Self::SCHEMA_VERSION
-            && envelope.schema_version != Self::LEGACY_SCHEMA_VERSION
-            && envelope.schema_version != Self::PLAY_OPTIONS_SCHEMA_VERSION
-        {
+        if envelope.schema_version != Self::SCHEMA_VERSION {
             return Err(StorageGameDocumentError::UnsupportedSchema(
                 envelope.schema_version,
             ));
         }
         let kind = match (envelope.schema_version, envelope.kind) {
-            (
-                Self::LEGACY_SCHEMA_VERSION | Self::PLAY_OPTIONS_SCHEMA_VERSION,
-                StorageGameDocumentEnumField::Absent,
-            ) => StorageGameDocumentEnumContentKind::Played,
             (Self::SCHEMA_VERSION, StorageGameDocumentEnumField::Present(kind)) => {
                 serde_json::from_str(kind.get())?
             }
@@ -403,9 +391,7 @@ impl StorageGameDocument {
                 let id = record.id;
                 StorageLibraryRecord::new(
                     id,
-                    StorageLibraryEnumContent::Played(Box::new(
-                        record.restore(envelope.schema_version, cancellation)?,
-                    )),
+                    StorageLibraryEnumContent::Played(Box::new(record.restore(cancellation)?)),
                 )?
             }
             StorageGameDocumentEnumContentKind::Notation => {
@@ -915,11 +901,6 @@ impl StorageGameDocumentPlayOptions {
         }
     }
 
-    fn initial_default() -> Self {
-        let options = GameConfigurationOptions::initial_default();
-        Self::capture(options.engine_search(), options.is_auto_flip_enabled())
-    }
-
     fn engine_search_config(&self) -> Result<GameEngineSearchConfig, GameEngineRequestError> {
         GameEngineSearchConfig::new(
             self.untimed_move_time_nanos.into(),
@@ -1024,14 +1005,10 @@ impl StorageGameDocumentPlayed {
 
     fn restore(
         self,
-        schema_version: u32,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<GameSession, StorageGameDocumentError> {
         let play_options = match self.play_options {
             Some(options) => options,
-            None if schema_version == StorageGameDocument::LEGACY_SCHEMA_VERSION => {
-                StorageGameDocumentPlayOptions::initial_default()
-            }
             None => return Err(StorageGameDocumentError::MissingPlayOptions),
         };
         let engine_search_config = play_options.engine_search_config()?;
@@ -1054,17 +1031,13 @@ impl StorageGameDocumentPlayed {
         );
         tree.set_annotations(self.root, self.root_annotations.restore()?)?;
         let tree = self.moves.restore(tree, Some(&control), cancellation)?;
-        let study_mainline_tip = match (schema_version, self.study_mainline_tip) {
-            (StorageGameDocument::SCHEMA_VERSION, StorageGameDocumentEnumField::Present(tip)) => {
+        let study_mainline_tip = match self.study_mainline_tip {
+            StorageGameDocumentEnumField::Present(tip) => {
                 tree.validate_study_tip(tip)?;
                 tip
             }
-            (StorageGameDocument::SCHEMA_VERSION, StorageGameDocumentEnumField::Absent) => {
+            StorageGameDocumentEnumField::Absent => {
                 return Err(StorageGameDocumentError::MissingStudyTip);
-            }
-            (_, StorageGameDocumentEnumField::Absent) => tree.ordered_leaf(self.live)?,
-            (_, StorageGameDocumentEnumField::Present(_)) => {
-                return Err(StorageGameDocumentError::LegacyStudyTip);
             }
         };
         let mut moves = Vec::with_capacity(tree.len().saturating_sub(1));
