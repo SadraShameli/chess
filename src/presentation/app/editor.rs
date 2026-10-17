@@ -2,6 +2,8 @@ mod board;
 mod requests;
 mod view;
 
+pub(super) use board::PresentationAppEditorBoardInput;
+
 use std::sync::Arc;
 
 use thiserror::Error;

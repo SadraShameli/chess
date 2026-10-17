@@ -37,7 +37,9 @@ use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
-use crate::presentation::app::editor::{PresentationAppEditor, PresentationAppEditorError};
+use crate::presentation::app::editor::{
+    PresentationAppEditor, PresentationAppEditorBoardInput, PresentationAppEditorError,
+};
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumNavigation,
 };
@@ -1753,9 +1755,10 @@ impl PresentationApp {
                                 .show_board(
                                     ui,
                                     port,
-                                    scene,
-                                    picker,
-                                    !self.quit_confirmation && !self.settings_open,
+                                    PresentationAppEditorBoardInput::new(scene, picker)
+                                        .with_enabled(
+                                            !self.quit_confirmation && !self.settings_open,
+                                        ),
                                 )
                                 .map_err(PresentationAppError::from)?,
                         );

@@ -24,6 +24,33 @@ pub(super) struct PresentationAppEditorBoardGesture {
     drag: Option<PresentationEditorControllerDrag>,
 }
 
+pub(in crate::presentation::app) struct PresentationAppEditorBoardInput<
+    'a,
+    P: PresentationBoardPickingProvider,
+> {
+    scene: Option<&'a PresentationBoardScene>,
+    picker: &'a mut P,
+    enabled: bool,
+}
+
+impl<'a, P: PresentationBoardPickingProvider> PresentationAppEditorBoardInput<'a, P> {
+    pub(in crate::presentation::app) fn new(
+        scene: Option<&'a PresentationBoardScene>,
+        picker: &'a mut P,
+    ) -> Self {
+        Self {
+            scene,
+            picker,
+            enabled: true,
+        }
+    }
+
+    pub(in crate::presentation::app) const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
 impl PresentationAppEditor {
     pub(super) fn raw_label(snapshot: &DesktopEditorCommandsSnapshot) -> String {
         let fields = snapshot.draft().fields();
@@ -57,10 +84,13 @@ impl PresentationAppEditor {
         &mut self,
         ui: &mut Ui,
         application: &DesktopApplicationPort<C, W>,
-        scene: Option<&PresentationBoardScene>,
-        picker: &mut P,
-        enabled: bool,
+        input: PresentationAppEditorBoardInput<'_, P>,
     ) -> Result<ScenePickingViewport, PresentationAppEditorError> {
+        let PresentationAppEditorBoardInput {
+            scene,
+            picker,
+            enabled,
+        } = input;
         let side = ui.available_width().min(ui.available_height()).max(1.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
         let viewport =
