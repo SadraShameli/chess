@@ -10,6 +10,8 @@ mod clock_time;
 
 #[path = "game/annotations.rs"]
 mod game_annotations;
+#[path = "game/concurrent_games.rs"]
+mod game_concurrent_games;
 #[path = "game/configuration.rs"]
 mod game_configuration;
 #[path = "game/mate_proof.rs"]
@@ -79,6 +81,8 @@ mod puzzle_timer;
 mod board_editor;
 #[path = "capacity/budget.rs"]
 mod capacity_budget;
+#[path = "capacity/concurrent_games.rs"]
+mod capacity_concurrent_games;
 #[path = "capacity/native_partition.rs"]
 mod capacity_native_partition;
 #[path = "capacity/retained_shutdown.rs"]

@@ -38,6 +38,8 @@ mod desktop_native_startup;
 mod desktop_owner_record;
 #[path = "desktop/profile_lease.rs"]
 mod desktop_profile_lease;
+#[path = "desktop/repeated_launch.rs"]
+mod desktop_repeated_launch;
 #[path = "desktop/recovery.rs"]
 mod desktop_recovery;
 #[path = "desktop/startup.rs"]
