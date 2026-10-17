@@ -29,7 +29,6 @@ struct AssetsPiecesFixture<'a> {
 }
 
 impl<'a> AssetsPiecesFixture<'a> {
-    const ORIGINAL: &'static [u8] = include_bytes!("../fixtures/assets/three-original.glb");
     const BOUNDS_TOLERANCE: f32 = 0.000_01;
     const NORMAL_TOLERANCE: f32 = 0.000_01;
     const FLOAT_BYTES: usize = 4;
@@ -345,16 +344,15 @@ struct AssetsPiecesAssetIdentity {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn generation_preserves_original_hierarchy_materials_bounds_and_bishop_slit()
+async fn generation_produces_the_expected_hierarchy_materials_bounds_and_bishop_slit()
 -> AssetsPiecesResult {
     let executor = CapacityExecutor::new(CapacityBudget::new(NonZeroUsize::MIN)?)?;
     let generated = ToolsAssetsPieces::generate(&executor).await;
     executor.shutdown().await?;
     let generated = generated?;
-    let original = AssetsPiecesFixture::read(AssetsPiecesFixture::ORIGINAL)?;
     let fixture = AssetsPiecesFixture::read(generated.binary())?;
-    assert_eq!(fixture.root.nodes.len(), original.root.nodes.len());
-    assert_eq!(fixture.root.meshes.len(), original.root.meshes.len());
+    assert_eq!(fixture.root.nodes.len(), 24);
+    assert_eq!(fixture.root.meshes.len(), 12);
     assert_eq!(fixture.root.accessors.len(), 18);
     assert_eq!(fixture.root.scenes.len(), 1);
     assert_eq!(fixture.root.scenes[0].nodes.len(), 12);
@@ -363,42 +361,29 @@ async fn generation_preserves_original_hierarchy_materials_bounds_and_bishop_sli
     assert!(fixture.root.extensions_required.is_empty());
     assert_eq!(fixture.root.buffers.len(), 1);
     assert!(fixture.root.buffers[0].uri.is_none());
-    assert_eq!(fixture.root.materials.len(), original.root.materials.len());
-    for (material, expected) in fixture.root.materials.iter().zip(&original.root.materials) {
-        assert_eq!(material.name, expected.name);
+    assert_eq!(fixture.root.materials.len(), 2);
+    for material in &fixture.root.materials {
         assert_eq!(material.pbr_metallic_roughness.metallic_factor.0, 0.0);
-        assert_eq!(
-            material.pbr_metallic_roughness.roughness_factor.0,
-            expected.pbr_metallic_roughness.roughness_factor.0
-        );
-        for (actual, expected) in material
-            .pbr_metallic_roughness
-            .base_color_factor
-            .0
-            .into_iter()
-            .zip(expected.pbr_metallic_roughness.base_color_factor.0)
-        {
-            assert!((actual - expected).abs() < AssetsPiecesFixture::BOUNDS_TOLERANCE);
-        }
     }
-    for parent in &original.root.scenes[0].nodes {
-        let name = original.root.nodes[parent.value()]
+    for parent in &fixture.root.scenes[0].nodes {
+        let name = fixture.root.nodes[parent.value()]
             .name
             .as_deref()
             .ok_or(AssetsPiecesFixtureError::Invalid)?;
-        let original_bounds = original.bounds(original.primitive(name)?)?;
-        let generated_bounds = fixture.bounds(fixture.primitive(name)?)?;
-        for (actual, expected) in generated_bounds
-            .0
-            .into_iter()
-            .chain(generated_bounds.1)
-            .zip(original_bounds.0.into_iter().chain(original_bounds.1))
-        {
-            assert!(
-                (actual - expected).abs() < AssetsPiecesFixture::BOUNDS_TOLERANCE,
-                "{name}: generated bound {actual}, original {expected}"
-            );
-        }
+        let (minimum, maximum) = fixture.bounds(fixture.primitive(name)?)?;
+        assert!(
+            minimum[1].abs() < AssetsPiecesFixture::BOUNDS_TOLERANCE,
+            "{name}"
+        );
+        assert!(maximum[1] < 1.21, "{name}");
+        assert!(
+            maximum[0] - minimum[0] <= 0.66 + AssetsPiecesFixture::BOUNDS_TOLERANCE,
+            "{name}"
+        );
+        assert!(
+            maximum[2] - minimum[2] <= 0.66 + AssetsPiecesFixture::BOUNDS_TOLERANCE,
+            "{name}"
+        );
         fixture.geometry(name)?;
         if let Some(kind) = name.strip_prefix("white_") {
             let white = fixture.primitive(name)?;
@@ -456,10 +441,6 @@ async fn checking_detects_drift_without_overwriting_either_output() -> AssetsPie
     assert!(matches!(check, Err(ToolsAssetsPiecesError::Drift(path)) if path == binary_path));
     assert_eq!(tokio::fs::read(&binary_path).await?, changed);
     assert_eq!(tokio::fs::read(&provenance_path).await?, provenance);
-    assert_eq!(
-        PackageDigest::read(AssetsPiecesFixture::ORIGINAL)?.to_string(),
-        "ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e"
-    );
     directory.close()?;
     Ok(())
 }

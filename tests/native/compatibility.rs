@@ -46,9 +46,6 @@ use chess::package::digest::{PackageDigest, PackageDigestError};
 use crate::scene_task_pools::SceneTaskPoolFixture;
 use chess::presentation::theme::font::PresentationThemeFont;
 
-#[path = "asset_comparison.rs"]
-mod asset_comparison;
-
 #[derive(Debug, Error)]
 pub(super) enum NativeCompatibilityError {
     #[error("Native compatibility fixture I/O failed: {0}")]
@@ -59,13 +56,13 @@ pub(super) enum NativeCompatibilityError {
     Digest(#[from] PackageDigestError),
     #[error("The native compatibility asset directory is not valid UTF-8")]
     AssetPath,
-    #[error("The original piece GLB does not match its declared checksum or size")]
+    #[error("The piece GLB does not match its declared checksum or size")]
     AssetIntegrity,
-    #[error("The original piece GLB must declare twelve named piece parents")]
+    #[error("The piece GLB must declare twelve named piece parents")]
     AssetRegistry,
-    #[error("The original piece GLB failed to load: {0}")]
+    #[error("The piece GLB failed to load: {0}")]
     AssetLoad(String),
-    #[error("The original piece GLB is missing the declared node {0}")]
+    #[error("The piece GLB is missing the declared node {0}")]
     MissingNode(String),
     #[error("The native compatibility host did not retain one thread per Bevy task pool")]
     TaskPools,
@@ -632,14 +629,6 @@ impl NativeCompatibilityHarness {
             return Err(NativeCompatibilityError::EventLoop(exit));
         }
         Self::report(receiver)?;
-        Ok(())
-    }
-
-    pub(super) fn compare_assets(
-        candidate: &Path,
-        output_directory: &Path,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        asset_comparison::NativeAssetComparisonHarness::run(candidate, output_directory)?;
         Ok(())
     }
 

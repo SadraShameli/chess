@@ -55,15 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 directory,
             ))?;
         }
-        [operation, candidate, output] if operation == "--compare-assets" => {
-            native_compatibility::NativeCompatibilityHarness::compare_assets(
-                std::path::Path::new(candidate),
-                std::path::Path::new(output),
-            )?;
-        }
         _ => {
             return Err(
-                "Usage: native [--host-lifecycle | --game-composition | --engine-composition | --engine-live-game ENGINE_DIRECTORY | --engine-options ENGINE_DIRECTORY | --engine-analysis-session ENGINE_DIRECTORY | --workbench ENGINE_DIRECTORY | --compare-assets CANDIDATE_GLB OUTPUT_DIRECTORY]"
+                "Usage: native [--host-lifecycle | --game-composition | --engine-composition | --engine-live-game ENGINE_DIRECTORY | --engine-options ENGINE_DIRECTORY | --engine-analysis-session ENGINE_DIRECTORY | --workbench ENGINE_DIRECTORY]"
                     .into(),
             );
         }
