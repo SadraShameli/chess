@@ -221,6 +221,7 @@ pub enum DesktopEnumValue {
     Puzzle(Box<crate::desktop::puzzle_service::DesktopPuzzleServiceEnumResult>),
     Engine(Box<crate::desktop::engine_bridge::DesktopEngineBridgeEnumResult>),
     Game(Box<crate::desktop::game_snapshot::DesktopGameSnapshot>),
+    Backup(Box<crate::desktop::backup_bridge::DesktopBackupBridgeEnumResult>),
     Bootstrap(DesktopBootstrapSnapshot),
     FileSelect(Option<DesktopFileHandleId>),
     StreamSubscribe {

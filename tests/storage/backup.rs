@@ -235,6 +235,18 @@ fn an_overdue_launch_attempts_once_per_session_and_never_loops() {
     assert!(!scheduler.take_attempt(&state, now + BackupScheduler::INTERVAL_MS));
 }
 
+#[test]
+fn a_successful_automatic_backup_reopens_the_next_days_attempt_but_a_failure_does_not() {
+    let state = BackupState::new(Some(0), None, None);
+    let mut scheduler = BackupScheduler::new();
+    let day = BackupScheduler::INTERVAL_MS;
+    assert!(scheduler.take_attempt(&state, day));
+    scheduler.finish_attempt(false);
+    assert!(!scheduler.take_attempt(&state, day * 2));
+    scheduler.finish_attempt(true);
+    assert!(scheduler.take_attempt(&state, day * 2));
+}
+
 #[tokio::test]
 async fn failure_keeps_a_persistent_warning_until_a_manual_or_automatic_success()
 -> StorageBackupTestResult {

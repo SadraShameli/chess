@@ -90,6 +90,12 @@ impl BackupScheduler {
         true
     }
 
+    pub fn finish_attempt(&mut self, succeeded: bool) {
+        if succeeded {
+            self.attempted_this_session = false;
+        }
+    }
+
     pub fn load_blocking(connection: &mut SqliteConnection) -> Result<BackupState, BackupError> {
         let (first, last, warning) = backup_state::table
             .select((

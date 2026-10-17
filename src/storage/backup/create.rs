@@ -154,6 +154,15 @@ impl BackupCreator {
         )
     }
 
+    pub fn has_user_data(connection: &mut SqliteConnection) -> Result<bool, BackupError> {
+        Ok(
+            diesel::sql_query("SELECT CAST(EXISTS(SELECT 1 FROM documents) AS TEXT) AS value")
+                .get_result::<BackupCreateRevision>(connection)?
+                .value
+                == "1",
+        )
+    }
+
     pub fn schema_versions(connection: &mut SqliteConnection) -> Result<Vec<String>, BackupError> {
         let rows = diesel::sql_query(
             "SELECT version AS value FROM __diesel_schema_migrations ORDER BY version",

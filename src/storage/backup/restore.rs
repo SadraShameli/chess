@@ -62,6 +62,9 @@ impl BackupRestorer {
         request.lease.verify()?;
         Self::require_inside(&data, request.database)?;
         Self::validate_confirmation(&request)?;
+        if BackupRestoreJournal::read_blocking(&data)?.is_some() {
+            return Err(BackupError::RestoreAlreadyPending);
+        }
         Self::require_quiet_database(request.database)?;
         let staged = BackupRestoreJournal::staged_path(&data, request.restore_id);
         let prepared = Self::stage(&request, &staged);
@@ -71,22 +74,57 @@ impl BackupRestorer {
         }
         let journal = BackupRestoreJournal::new(request.restore_id, request.safety.manifest().id());
         journal.write_blocking(&data)?;
-        let installing = journal.with_phase(BackupRestoreEnumPhase::Installing);
-        installing.write_blocking(&data)?;
-        let aside = BackupRestoreJournal::aside_path(request.database, request.restore_id);
-        if request.database.exists() {
-            fs::rename(request.database, &aside)?;
-        }
-        fs::rename(&staged, request.database)?;
-        BackupRestoreJournal::sync_directory(&data)?;
-        if aside.exists() {
-            fs::remove_file(&aside)?;
-        }
-        BackupRestoreJournal::remove_blocking(&data)?;
+        Self::install_blocking(&data, request.database, &journal)?;
         Ok(BackupRestoreOutcome {
             restore_id: request.restore_id,
             safety_backup: request.safety.manifest().id(),
         })
+    }
+
+    pub fn stage_for_restart_blocking(
+        request: BackupRestoreRequest<'_>,
+    ) -> Result<BackupRestoreOutcome, BackupError> {
+        let data = request.lease.data_directory().to_path_buf();
+        request.lease.verify()?;
+        Self::require_inside(&data, request.database)?;
+        Self::validate_confirmation(&request)?;
+        if BackupRestoreJournal::read_blocking(&data)?.is_some() {
+            return Err(BackupError::RestoreAlreadyPending);
+        }
+        let staged = BackupRestoreJournal::staged_path(&data, request.restore_id);
+        if let Err(error) = Self::stage(&request, &staged) {
+            Self::discard(&staged)?;
+            return Err(error);
+        }
+        BackupRestoreJournal::new(request.restore_id, request.safety.manifest().id())
+            .with_phase(BackupRestoreEnumPhase::Pending)
+            .write_blocking(&data)?;
+        Ok(BackupRestoreOutcome {
+            restore_id: request.restore_id,
+            safety_backup: request.safety.manifest().id(),
+        })
+    }
+
+    pub(crate) fn install_blocking(
+        data: &Path,
+        database: &Path,
+        journal: &BackupRestoreJournal,
+    ) -> Result<(), BackupError> {
+        Self::require_quiet_database(database)?;
+        let staged = BackupRestoreJournal::staged_path(data, journal.restore_id());
+        journal
+            .with_phase(BackupRestoreEnumPhase::Installing)
+            .write_blocking(data)?;
+        let aside = BackupRestoreJournal::aside_path(database, journal.restore_id());
+        if database.exists() {
+            fs::rename(database, &aside)?;
+        }
+        fs::rename(&staged, database)?;
+        BackupRestoreJournal::sync_directory(data)?;
+        if aside.exists() {
+            fs::remove_file(&aside)?;
+        }
+        BackupRestoreJournal::remove_blocking(data)
     }
 
     fn require_inside(data: &Path, database: &Path) -> Result<(), BackupError> {
@@ -115,16 +153,26 @@ impl BackupRestorer {
         Ok(())
     }
 
-    fn require_quiet_database(database: &Path) -> Result<(), BackupError> {
-        for suffix in ["-wal", "-shm"] {
+    fn companion_has_data(database: &Path) -> bool {
+        ["-wal", "-shm"].into_iter().any(|suffix| {
             let companion = PathBuf::from(format!("{}{suffix}", database.display()));
-            if let Ok(metadata) = fs::metadata(&companion)
-                && metadata.len() > 0
-            {
-                return Err(BackupError::Integrity(
-                    "the live database still has an uncheckpointed write-ahead log".to_owned(),
-                ));
-            }
+            fs::metadata(&companion).is_ok_and(|metadata| metadata.len() > 0)
+        })
+    }
+
+    fn require_quiet_database(database: &Path) -> Result<(), BackupError> {
+        if !Self::companion_has_data(database) {
+            return Ok(());
+        }
+        if database.exists() {
+            use diesel::Connection;
+            let mut connection = SqliteConnection::establish(&database.to_string_lossy())?;
+            connection.batch_execute("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
+        if Self::companion_has_data(database) {
+            return Err(BackupError::Integrity(
+                "the live database still has an uncheckpointed write-ahead log".to_owned(),
+            ));
         }
         Ok(())
     }

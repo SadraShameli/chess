@@ -382,3 +382,61 @@ fn contradictory_files_stop_recovery_without_changing_anything() -> StorageBacku
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_staged_restore_changes_nothing_until_the_next_launch_installs_it()
+-> StorageBackupTestResult {
+    let fixture = StorageRestoreFixture::new()?;
+    let database = fixture.database();
+    StorageBackupFixture::write(&database, 1, r#"{"v":"original"}"#).await?;
+    let archive = fixture.archive(BackupEnumCategory::Manual, 10, 1_000)?;
+    StorageBackupFixture::write(&database, 1, r#"{"v":"newer"}"#).await?;
+    let preview = StorageBackupFixture::inspect(archive.path())?;
+    let safety = fixture.archive(BackupEnumCategory::PreRestore, 11, 2_000)?;
+    BackupRestorer::stage_for_restart_blocking(BackupRestoreRequest {
+        lease: &*fixture.lease,
+        database: &database,
+        preview: &preview,
+        confirmed_id: preview.id(),
+        confirmed_digest: preview.digest(),
+        safety: &safety,
+        restore_id: Uuid::from_u128(12),
+    })?;
+    assert_eq!(StorageRestoreFixture::body(&database)?, r#"{"v":"newer"}"#);
+    let journal = BackupRestoreJournal::read_blocking(&fixture.data())?.ok_or("missing journal")?;
+    assert_eq!(journal.phase(), BackupRestoreEnumPhase::Pending);
+    assert!(matches!(
+        fixture.restore(&preview, &safety, 13),
+        Err(BackupError::RestoreAlreadyPending)
+    ));
+    assert_eq!(StorageRestoreFixture::body(&database)?, r#"{"v":"newer"}"#);
+    assert_eq!(
+        BackupRecovery::recover_blocking(&fixture.data(), &database)?,
+        BackupRecoveryEnumOutcome::Completed
+    );
+    assert_eq!(
+        StorageRestoreFixture::body(&database)?,
+        r#"{"v":"original"}"#
+    );
+    assert!(BackupRestoreJournal::read_blocking(&fixture.data())?.is_none());
+    assert_eq!(
+        BackupRecovery::recover_blocking(&fixture.data(), &database)?,
+        BackupRecoveryEnumOutcome::NothingToRecover
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pending_restore_whose_staged_copy_vanished_rolls_back_to_the_untouched_database()
+-> StorageBackupTestResult {
+    let fixture = StorageRestoreRecoveryFixture::new(
+        BackupRestoreEnumPhase::Pending,
+        Some("old"),
+        None,
+        None,
+    )?;
+    assert_eq!(fixture.recover()?, BackupRecoveryEnumOutcome::RolledBack);
+    assert_eq!(fs::read_to_string(fixture.live())?, "old");
+    assert!(!fixture.journal_present()?);
+    Ok(())
+}

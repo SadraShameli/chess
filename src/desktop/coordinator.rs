@@ -23,6 +23,9 @@ use crate::desktop::coordinator::editor::{
     DesktopCoordinatorEditor, DesktopCoordinatorEditorPending,
 };
 use crate::desktop::coordinator::library::DesktopCoordinatorLibrary;
+use crate::desktop::backup_bridge::{
+    DesktopBackupBridgeEnumResult, DesktopBackupBridgeProvider, DesktopBackupBridgeRequest,
+};
 use crate::desktop::dto::{DesktopBootstrapSnapshot, DesktopEnumEvent, DesktopEnumValue};
 use crate::desktop::engine_bridge::{
     DesktopEngineBridgeEnumResult, DesktopEngineBridgeProvider, DesktopEngineBridgeRequest,
@@ -267,6 +270,8 @@ where
     pending_games: Vec<DesktopCoordinatorPending<DesktopGameSnapshot>>,
     engine: Option<Arc<dyn DesktopEngineBridgeProvider>>,
     pending_engine: Vec<DesktopCoordinatorPending<DesktopEngineBridgeEnumResult>>,
+    backup: Option<Arc<dyn DesktopBackupBridgeProvider>>,
+    pending_backup: Vec<DesktopCoordinatorPending<DesktopBackupBridgeEnumResult>>,
     puzzles: Option<DesktopCoordinatorPuzzles>,
     pending_puzzles: Vec<DesktopCoordinatorPending<DesktopPuzzleServiceEnumResult>>,
     library: Option<DesktopCoordinatorLibrary>,
@@ -325,6 +330,8 @@ where
             pending_games: Vec::new(),
             engine: None,
             pending_engine: Vec::new(),
+            backup: None,
+            pending_backup: Vec::new(),
             puzzles: None,
             pending_puzzles: Vec::new(),
             library: None,
@@ -355,6 +362,11 @@ where
         self
     }
 
+    pub fn with_backup(mut self, backup: Arc<dyn DesktopBackupBridgeProvider>) -> Self {
+        self.backup = Some(backup);
+        self
+    }
+
     pub fn with_puzzles(
         mut self,
         owner: DesktopMessagesEntityId,
@@ -370,6 +382,7 @@ where
             self.complete_library().await?;
             self.complete_games().await?;
             self.complete_engine().await?;
+            self.complete_backup().await?;
             self.complete_puzzles().await?;
             if self.complete_controls().await? {
                 return Ok(());
@@ -405,6 +418,9 @@ where
                 }
                 (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_engine) => {
                     self.pending_engine[index].response = Some(response);
+                }
+                (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_backup) => {
+                    self.pending_backup[index].response = Some(response);
                 }
                 (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_games) => {
                     self.pending_games[index].response = Some(response);
@@ -493,6 +509,37 @@ where
                 self.dispatch_puzzle(work, owner, operation).await?;
             }
             DesktopEnumCommand::Engine(operation) => self.dispatch_engine(work, operation).await?,
+            DesktopEnumCommand::Backup(operation) => {
+                let failure = if self.backup.is_none() {
+                    Some(DesktopFailure::new(
+                        DesktopEnumFailureCode::ResourceRefusal,
+                        "The backup service is unavailable".to_owned(),
+                        true,
+                    ))
+                } else {
+                    None
+                };
+                match Self::retry(|| self.application.begin_commit(&work)).await {
+                    Ok(()) => {}
+                    Err(DesktopApplicationError::CancellationRequested) => {
+                        Self::retry(|| self.application.acknowledge_stopped(&work)).await?;
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+                let future = match (&self.backup, &failure) {
+                    (Some(backup), None) => Some(backup.execute(DesktopBackupBridgeRequest {
+                        received_at: work.receipt().received_at(),
+                        operation,
+                    })),
+                    (Some(_), Some(_)) | (None, _) => None,
+                };
+                self.pending_backup.push(DesktopCoordinatorPending {
+                    work,
+                    future,
+                    response: failure.map(Err),
+                });
+            }
             DesktopEnumCommand::Game(operation) => {
                 let response =
                     if work.request().command().expected_revision() != Some(operation.revision()) {
@@ -735,6 +782,7 @@ where
                 if self.pending_selection.is_some()
                     || !self.pending_games.is_empty()
                     || !self.pending_engine.is_empty()
+                    || !self.pending_backup.is_empty()
                     || !self.pending_puzzles.is_empty()
                     || !self.pending_library.is_empty()
                     || self.has_pending_editor()
@@ -1065,6 +1113,16 @@ where
             &mut self.pending_engine,
             DesktopApplication::complete_engine_control,
             |value| (DesktopEnumValue::Engine(Box::new(value)), None),
+        )
+        .await
+    }
+
+    async fn complete_backup(&mut self) -> Result<(), DesktopCoordinatorError> {
+        Self::complete_owned_pending(
+            &self.application,
+            &mut self.pending_backup,
+            |_application, _work, _response| Ok(()),
+            |value| (DesktopEnumValue::Backup(Box::new(value)), None),
         )
         .await
     }

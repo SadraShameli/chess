@@ -52,6 +52,7 @@ pub enum DesktopEnumCommand {
         operation: DesktopEditorCommandsEnumOperation,
     },
     Game(DesktopGameBridgeEnumOperation),
+    Backup(crate::desktop::backup_bridge::DesktopBackupBridgeEnumOperation),
     Engine(crate::desktop::engine_commands::DesktopEngineCommandsOperation),
     Puzzle {
         owner: DesktopMessagesEntityId,
@@ -85,6 +86,7 @@ impl DesktopEnumCommand {
             Self::Library(operation) => operation.is_available_while_closing(),
             Self::Puzzle { operation, .. } => operation.is_available_while_closing(),
             Self::Game(_)
+            | Self::Backup(_)
             | Self::Editor { .. }
             | Self::Engine(_)
             | Self::Bootstrap
@@ -166,6 +168,7 @@ impl DesktopEnumCommand {
             Self::Pause { owner } => Some(DesktopMessagesEnumControlKey::Pause(*owner)),
             Self::Quit => Some(DesktopMessagesEnumControlKey::Quit),
             Self::Library(_)
+            | Self::Backup(_)
             | Self::Editor { .. }
             | Self::Bootstrap
             | Self::FileSelect { .. }
@@ -204,6 +207,7 @@ impl DesktopEnumCommand {
             Self::Game(operation) => Some(operation.owner()),
             Self::FileSelect { owner, .. } => Some(*owner),
             Self::Bootstrap
+            | Self::Backup(_)
             | Self::StreamSubscribe
             | Self::StreamAcknowledge { .. }
             | Self::StreamResync { .. }

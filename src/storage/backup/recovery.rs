@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::storage::backup::error::BackupError;
 use crate::storage::backup::journal::{BackupRestoreEnumPhase, BackupRestoreJournal};
+use crate::storage::backup::restore::BackupRestorer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupRecoveryEnumOutcome {
@@ -27,6 +28,13 @@ impl BackupRecovery {
         let staged_present = staged.exists();
         let aside_present = aside.exists();
         let outcome = match (journal.phase(), live_present, aside_present, staged_present) {
+            (BackupRestoreEnumPhase::Pending, true, false, true) => {
+                BackupRestorer::install_blocking(data_directory, database, &journal)?;
+                return Ok(BackupRecoveryEnumOutcome::Completed);
+            }
+            (BackupRestoreEnumPhase::Pending, true, false, false) => {
+                BackupRecoveryEnumOutcome::RolledBack
+            }
             (BackupRestoreEnumPhase::Validated, true, false, _)
             | (BackupRestoreEnumPhase::Installing, true, false, true) => {
                 Self::remove_if_present(&staged)?;

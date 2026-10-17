@@ -214,6 +214,15 @@ impl DesktopGameSnapshot {
         self.allocation
     }
 
+    pub fn with_resources(
+        mut self,
+        admission: DesktopGameSnapshotEnumAdmission,
+        allocation: Option<DesktopGameSnapshotAllocation>,
+    ) -> Self {
+        self.set_resources(admission, allocation);
+        self
+    }
+
     pub(crate) fn set_resources(
         &mut self,
         admission: DesktopGameSnapshotEnumAdmission,

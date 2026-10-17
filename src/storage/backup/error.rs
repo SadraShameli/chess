@@ -43,6 +43,8 @@ pub enum BackupError {
     Integrity(String),
     #[error("The restore journal is missing, malformed or contradicts the files on disk")]
     JournalInconsistent,
+    #[error("A restore is already staged and waits for the next launch")]
+    RestoreAlreadyPending,
     #[error("The profile lease no longer protects {0}")]
     Lease(PathBuf),
 }

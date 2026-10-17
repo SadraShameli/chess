@@ -1,3 +1,4 @@
+mod backup;
 pub mod editor;
 mod library;
 
@@ -33,6 +34,7 @@ use crate::desktop::messages::{
 use crate::desktop::preferences::DesktopPreferences;
 use crate::desktop::puzzle_service::DesktopPuzzleServiceError;
 use crate::desktop::stream::DesktopStream;
+use crate::desktop::backup_commands::DesktopBackupCommandsPrerequisites;
 use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
@@ -302,6 +304,7 @@ pub struct PresentationApp {
     settings: PresentationSettingsController,
     audio_observer: PresentationAudioObserver,
     settings_open: bool,
+    backup: backup::PresentationAppBackup,
     settings_toggle_frame: Option<u64>,
     markings_identity: Option<(PresentationAppEnumWorkspace, Option<GameId>, Option<GameId>)>,
     inspector_open: bool,
@@ -364,6 +367,7 @@ impl PresentationApp {
             settings,
             audio_observer: PresentationAudioObserver::default(),
             settings_open: false,
+            backup: backup::PresentationAppBackup::new(),
             settings_toggle_frame: None,
             markings_identity: None,
             inspector_open: true,
@@ -621,8 +625,19 @@ impl PresentationApp {
         std::mem::take(&mut self.confirmed_quit_pending)
     }
 
-    pub fn has_pending_work(&self) -> bool {
+    fn has_unsaved_editor_state(&self) -> bool {
         self.editor
+            .as_ref()
+            .is_some_and(PresentationAppEditor::has_pending_work)
+            || self
+                .library
+                .as_ref()
+                .is_some_and(PresentationAppLibrary::has_pending_work)
+    }
+
+    pub fn has_pending_work(&self) -> bool {
+        self.backup.is_busy()
+            || self.editor
             .as_ref()
             .is_some_and(PresentationAppEditor::has_pending_work)
             || self
@@ -1094,6 +1109,7 @@ impl PresentationApp {
                 }),
                 DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. }) => false,
                 DesktopEnumCommand::Engine(_)
+                | DesktopEnumCommand::Backup(_)
                 | DesktopEnumCommand::Library(_)
                 | DesktopEnumCommand::Editor { .. }
                 | DesktopEnumCommand::Puzzle { .. }
@@ -1150,6 +1166,9 @@ impl PresentationApp {
             }
             DesktopEnumValue::Editor(_) => {
                 self.failure = Some("The editor response has no matching request".to_owned());
+            }
+            DesktopEnumValue::Backup(_) => {
+                self.failure = Some("The backup response has no matching request".to_owned());
             }
             DesktopEnumValue::Puzzle(_) => {
                 self.failure = Some(
@@ -1452,7 +1471,11 @@ impl PresentationApp {
         })
     }
 
-    fn show_settings(&mut self, ui: &mut Ui) {
+    fn show_settings<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        ui: &mut Ui,
+        port: &DesktopApplicationPort<C, W>,
+    ) {
         if ui.button("Reset Layout").clicked() {
             self.layout.reset();
             self.layout_reset_requested = true;
@@ -1475,6 +1498,16 @@ impl PresentationApp {
         ui.separator();
         self.study.show_panels(ui);
         self.apply_settings_outcome(&ui.ctx().clone(), outcome);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
+        let prerequisites = DesktopBackupCommandsPrerequisites {
+            games_paused_and_saved: self.games.iter().all(|game| {
+                game.snapshot.phase() != GameEnumPhase::Active && !game.snapshot.is_save_required()
+            }),
+            editors_have_no_unsaved_edits: !self.has_unsaved_editor_state(),
+        };
+        self.backup.show(ui, port, now_ms, prerequisites);
     }
 
     pub fn show<C, W, P>(
@@ -1754,7 +1787,7 @@ impl PresentationApp {
             .exact_size(self.layout.panel_width() * inspector_progress)
             .show(ui, |ui| {
                 if self.settings_open {
-                    self.show_settings(ui);
+                    self.show_settings(ui, port);
                     return;
                 }
                 if self.workspace == PresentationAppEnumWorkspace::Editor {

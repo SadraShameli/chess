@@ -120,6 +120,11 @@ use crate::storage::preferences_repository::StoragePreferencesRepository;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::desktop::layout::DesktopLayout;
 use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
+use crate::desktop::backup_bridge::DesktopBackupService;
+use crate::desktop::backup_commands::DesktopBackupCommands;
+use crate::storage::backup::create::BackupSpaceNative;
+use crate::storage::backup::error::BackupError;
+use crate::storage::backup::recovery::BackupRecovery;
 use crate::storage::editor_repository::StorageEditorRepository;
 use crate::storage::puzzle_repository::StoragePuzzleRepository;
 
@@ -188,6 +193,8 @@ pub enum DesktopNativeBootstrapError {
     },
     #[error("Native startup I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Backup(#[from] BackupError),
     #[error(transparent)]
     Range(#[from] TryFromIntError),
     #[error(transparent)]
@@ -306,6 +313,7 @@ type DesktopNativeBootstrapPuzzleService = DesktopNativePuzzleService<
 #[derive(Default)]
 struct DesktopNativeBootstrapServices {
     storage: Option<StorageDocumentStore>,
+    backup: Option<Arc<DesktopBackupService>>,
     engine: Option<EngineSession<EngineNativeProcess>>,
     startup: Option<EngineSessionStartup<EngineNativeProcess>>,
     executor_startup: Option<CapacityExecutor>,
@@ -325,6 +333,10 @@ struct DesktopNativeBootstrapServices {
 impl DesktopNativeBootstrapServices {
     fn is_shutdown_complete(&self) -> bool {
         self.puzzle_cleanup.is_none()
+            && self
+                .backup
+                .as_ref()
+                .is_none_or(|backup| backup.is_scheduler_stopped())
             && self.reports.as_ref().is_none_or(|host| Arc::strong_count(host) == 1)
             && self.library_cleanup.is_none()
             && self
@@ -410,6 +422,9 @@ impl DesktopNativeBootstrapLifecycle {
                 Err(error) => return Err(error.into()),
             }
             services.games = None;
+        }
+        if let Some(backup) = services.backup.take() {
+            backup.shutdown().await;
         }
         let DesktopNativeBootstrapServices {
             engine,
@@ -738,15 +753,33 @@ impl DesktopNativeBootstrapSupervisor {
             .submit(move |_cancellation| DesktopNativeResources::from_directory(&directory))?
             .join()
             .await??;
-        let storage = StorageDocumentStore::open(
-            self.lease
-                .identity()
-                .data_directory()
-                .join("library.sqlite3"),
-            self.budget.clone(),
-        )
-        .await?;
+        let data_directory = self.lease.identity().data_directory().to_path_buf();
+        let database = data_directory.join("library.sqlite3");
+        {
+            let recovery_directory = data_directory.clone();
+            let recovery_database = database.clone();
+            executor
+                .submit(move |_cancellation| {
+                    BackupRecovery::recover_blocking(&recovery_directory, &recovery_database)
+                })?
+                .join()
+                .await??;
+        }
+        let storage = StorageDocumentStore::open(database.clone(), self.budget.clone()).await?;
         self.lifecycle.services.lock().await.storage = Some(storage);
+        let backup = Arc::new(DesktopBackupService::new(
+            Arc::clone(&executor),
+            Arc::clone(&self.lease),
+            DesktopBackupCommands::new(
+                database,
+                data_directory.join("backups"),
+                BackupSpaceNative,
+                Vec::new(),
+                Vec::new(),
+            ),
+        ));
+        backup.start_scheduler();
+        self.lifecycle.services.lock().await.backup = Some(Arc::clone(&backup));
         let (mut engine_snapshot, package) = Self::engine(
             resources.engine().to_path_buf(),
             &executor,
@@ -951,7 +984,8 @@ impl DesktopNativeBootstrapSupervisor {
                 .with_games(Arc::new(game_port.clone()))
                 .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()))
                 .with_library(library_workspace, Arc::new(library_port))
-                .with_editor(editor_owner, editor_commands);
+                .with_editor(editor_owner, editor_commands)
+                .with_backup(backup);
         if let Some(engine_port) = &engine_port {
             coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
         }

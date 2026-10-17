@@ -171,6 +171,7 @@ impl DesktopNativeBootstrapGameFixture {
             | DesktopEnumCommand::StreamSubscribe
             | DesktopEnumCommand::StreamAcknowledge { .. }
             | DesktopEnumCommand::StreamResync { .. }
+            | DesktopEnumCommand::Backup(_)
             | DesktopEnumCommand::Stop { .. }
             | DesktopEnumCommand::Pause { .. }
             | DesktopEnumCommand::Quit => None,

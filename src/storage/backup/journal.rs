@@ -11,6 +11,7 @@ use crate::storage::backup::error::BackupError;
 #[serde(rename_all = "snake_case")]
 pub enum BackupRestoreEnumPhase {
     Validated,
+    Pending,
     Installing,
 }
 
