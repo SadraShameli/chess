@@ -40,7 +40,7 @@ use crate::game::storage_repository::{
     GameStorageRepository, GameStorageRevision, GameStorageSaveRequest,
 };
 use crate::storage::document_store::StorageDocumentStore;
-use crate::storage::game_document::StorageGameDocumentRepository;
+use crate::storage::library_played::StorageLibraryPlayedRepository;
 use crate::storage::library_repository::StorageLibraryError;
 
 struct DesktopGameSaveCancellationClock;
@@ -292,7 +292,7 @@ async fn cancelled_intermediate_checkpoint_is_retried_before_the_final_move_snap
         .await?;
     assert!(supervisor.writes.is_empty());
     assert_eq!(supervisor.storage_revision.value(), 2);
-    let repository = StorageGameDocumentRepository::new(store.client(), &executor);
+    let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
     let saved = repository
         .load(game)
         .await?

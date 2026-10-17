@@ -20,9 +20,8 @@ use chess::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionError, GameSessionOptions,
 };
 use chess::game::storage_repository::GameStorageRepository;
-use chess::storage::game_document::{
-    StorageGameDocument, StorageGameDocumentError, StorageGameDocumentRepository,
-};
+use chess::storage::game_document::{StorageGameDocument, StorageGameDocumentError};
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
@@ -130,7 +129,7 @@ async fn selected_game_search_budget_and_auto_flip_survive_registry_save_and_rel
         .await?;
     let (registry, result) = worker.await?;
     result?;
-    let repository = StorageGameDocumentRepository::new(runtime.store.client(), &runtime.executor);
+    let repository = StorageLibraryPlayedRepository::new(runtime.store.client(), &runtime.executor);
     let restored = repository
         .load(snapshot.id())
         .await?

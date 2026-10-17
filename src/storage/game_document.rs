@@ -10,9 +10,7 @@ use crate::board::enums::BoardEnumColor;
 use crate::board::r#move::BoardMoveError;
 use crate::board::square::BoardSquare;
 use crate::board::start::BoardStart;
-use crate::capacity::executor::{
-    CapacityExecutor, CapacityExecutorCancellation, CapacityExecutorError,
-};
+use crate::capacity::executor::{CapacityExecutorCancellation, CapacityExecutorError};
 use crate::clock::duration::ClockInstant;
 use crate::clock::stage::{ClockStage, ClockStageEnumBonus, ClockStageEnumQuota};
 use crate::clock::state::{
@@ -36,16 +34,10 @@ use crate::game::session::{
     GameSessionEnumState, GameSessionError, GameSessionOptions, GameSessionRestoreOptions,
     GameSessionRestoredMove,
 };
-use crate::game::storage_repository::{
-    GameStorageReceipt, GameStorageRecovered, GameStorageRepository, GameStorageRevision,
-    GameStorageSaveRequest,
-};
 use crate::game::takeback::GameTakebackEnumConsent;
 use crate::game::tree::{GameTree, GameTreeError};
 use crate::notation::game::{NotationGame, NotationGameError};
-use crate::storage::document_store::{
-    StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
-};
+use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::game_document::notation::StorageGameDocumentNotation;
 use crate::storage::game_document::records::{
     StorageGameDocumentAnnotations, StorageGameDocumentDuration, StorageGameDocumentMetadata,
@@ -1101,131 +1093,5 @@ impl StorageGameDocumentPlayed {
         };
         StorageGameDocumentError::check_cancellation(cancellation)?;
         Ok(GameSession::restore(snapshot)?)
-    }
-}
-
-pub struct StorageGameDocumentRepository<'a> {
-    client: StorageDocumentClient,
-    executor: &'a CapacityExecutor,
-}
-
-impl<'a> StorageGameDocumentRepository<'a> {
-    pub const fn new(client: StorageDocumentClient, executor: &'a CapacityExecutor) -> Self {
-        Self { client, executor }
-    }
-}
-
-impl GameStorageRepository for StorageGameDocumentRepository<'_> {
-    type Error = StorageGameDocumentError;
-
-    async fn save(
-        &self,
-        request: GameStorageSaveRequest,
-    ) -> Result<GameStorageReceipt, Self::Error> {
-        let game = request.game();
-        let game_revision = request.game_revision();
-        let expected_storage_revision = request.expected_storage_revision();
-        let json = self
-            .executor
-            .submit_waiting(move |cancellation| {
-                StorageGameDocument::from_snapshot(request.snapshot(), Some(cancellation))?
-                    .encode(Some(cancellation))
-            })
-            .await?
-            .join()
-            .await??;
-        let saved = self
-            .client
-            .save(game.as_uuid(), expected_storage_revision.value(), json)
-            .await?;
-        Ok(GameStorageReceipt::new(
-            game,
-            game_revision,
-            GameStorageRevision::new(saved.revision()),
-        ))
-    }
-
-    async fn load(&self, game: GameId) -> Result<Option<GameStorageRecovered>, Self::Error> {
-        let Some(document) = self.client.read(game.as_uuid()).await? else {
-            return Ok(None);
-        };
-        let storage_revision = GameStorageRevision::new(document.revision());
-        let session = self
-            .executor
-            .submit_waiting(move |cancellation| {
-                StorageGameDocument::recover(document.body(), Some(cancellation))
-            })
-            .await?
-            .join()
-            .await??;
-        if session.id() != game {
-            return Err(StorageGameDocumentError::Identity);
-        }
-        Ok(Some(GameStorageRecovered::new(session, storage_revision)))
-    }
-}
-
-#[cfg(test)]
-mod memory_tests {
-    use std::io::Write;
-
-    use crate::storage::document_store::StorageDocumentError;
-    use crate::storage::game_document::{
-        StorageGameDocumentEnumWriteFailure, StorageGameDocumentWriter,
-    };
-
-    #[test]
-    fn refused_growth_preserves_existing_encoded_bytes() -> Result<(), std::io::Error> {
-        let mut requests = Vec::new();
-        let mut writer = StorageGameDocumentWriter {
-            bytes: Vec::new(),
-            failure: None,
-            cancellation: None,
-            retained_bytes: 128,
-            reserve: |required| {
-                requests.push(required);
-                if requests.len() == 1 {
-                    Ok(())
-                } else {
-                    Err(StorageDocumentError::Saturated)
-                }
-            },
-        };
-        writer.write_all(b"abc")?;
-        let capacity = writer.bytes.capacity();
-        assert!(writer.write_all(b"defghijkl").is_err());
-        assert_eq!(writer.bytes, b"abc");
-        assert_eq!(writer.bytes.capacity(), capacity);
-        assert!(matches!(
-            writer.failure,
-            Some(StorageGameDocumentEnumWriteFailure::Memory(
-                StorageDocumentError::Saturated
-            ))
-        ));
-        drop(writer);
-        assert_eq!(requests, [136, 152]);
-        Ok(())
-    }
-
-    #[test]
-    fn overflowing_growth_refuses_before_requesting_memory() {
-        let mut requested = false;
-        let mut writer = StorageGameDocumentWriter {
-            bytes: vec![b'a'],
-            failure: None,
-            cancellation: None,
-            retained_bytes: 0,
-            reserve: |_required| {
-                requested = true;
-                Ok(())
-            },
-        };
-        assert!(matches!(
-            writer.reserve(usize::MAX),
-            Err(StorageGameDocumentEnumWriteFailure::Size)
-        ));
-        assert_eq!(writer.bytes, b"a");
-        drop(writer);
-        assert!(!requested);
     }
 }

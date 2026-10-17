@@ -13,7 +13,7 @@ use chess::desktop::game_registry::{
 use chess::game::enums::GameEnumPhase;
 use chess::game::storage_repository::GameStorageRepository;
 use chess::storage::document_store::StorageDocumentStore;
-use chess::storage::game_document::StorageGameDocumentRepository;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use rand::{SeedableRng, rngs::StdRng};
 use tokio::time::Instant;
 
@@ -115,7 +115,7 @@ async fn failed_quit_retains_explicit_save_and_quit_recovery_without_losing_the_
             .await?;
         assert!(registry.is_shutdown_complete());
         let repository =
-            StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+            StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
         let restored = repository
             .load(first.id())
             .await?
@@ -201,7 +201,7 @@ async fn independent_local_games_route_moves_publish_snapshots_and_shutdown_dura
     let (registry, result) = worker.await?;
     result?;
     assert!(registry.is_shutdown_complete());
-    let repository = StorageGameDocumentRepository::new(store.client(), &executor);
+    let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
     for game in [first.id(), second.id()] {
         let restored = repository
             .load(game)
@@ -350,7 +350,7 @@ async fn creation_deadline_still_requests_existing_game_cleanup_and_retains_pend
     phase.acknowledge_searches_stopped(generation)?;
     phase.try_enter_preparation(generation)?;
     phase.complete_preparation(generation)?;
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let paused = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let loaded = repository

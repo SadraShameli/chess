@@ -1760,7 +1760,7 @@ impl PresentationApp {
         let mut editor_viewport = None;
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
-                if let Some(action) = PresentationBoardToolbar::show(ui, scene.is_some()) {
+                if let Some(action) = PresentationBoardToolbar::show(ui, scene.is_some(), self.board.markings_mut()) {
                     camera_action = Some(action);
                     self.board.cancel_gesture();
                 }

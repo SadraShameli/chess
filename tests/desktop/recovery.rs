@@ -30,7 +30,7 @@ use chess::game::enums::{GameEnumMode, GameEnumPhase, GameEnumSeat, GameRevision
 use chess::game::pause::GamePauseEnumCause;
 use chess::game::session::{GameMetadata, GameSeats, GameSession, GameSessionOptions};
 use chess::game::storage_repository::{GameStorageRepository, GameStorageRevision};
-use chess::storage::game_document::StorageGameDocumentRepository;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use tokio::time::Instant;
 
 use crate::desktop_game_supervisor_storage::DesktopGameSupervisorFixtureStorage;
@@ -240,7 +240,7 @@ async fn computer_sleep_pause_survives_restart_without_charging_the_sleep_or_orp
     assert!(supervisor.is_shutdown_complete());
     drop((supervisor, port));
 
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let recovered = repository.load(game).await?.ok_or("missing saved game")?;
     assert!(!recovered.session().clock().is_running());
     let restored_view = recovered

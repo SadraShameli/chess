@@ -61,7 +61,8 @@ use crate::game::session::GameSession;
 use crate::game::storage_repository::GameStorageRepository;
 use crate::presentation::app::PresentationApp;
 use crate::storage::document_store::StorageDocumentStore;
-use crate::storage::game_document::{StorageGameDocument, StorageGameDocumentRepository};
+use crate::storage::game_document::StorageGameDocument;
+use crate::storage::library_played::StorageLibraryPlayedRepository;
 use crate::storage_document_write_fixture::StorageDocumentWriteFixtureEnumOperation;
 
 type DesktopGamePremoveTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -304,7 +305,7 @@ impl DesktopGamePremoveFixture {
         check: impl FnOnce(&DesktopGameSnapshot, &[(u64, GameSession)]) -> DesktopGamePremoveTestResult,
     ) -> DesktopGamePremoveTestResult {
         let checkpoints = self.checkpoints().await?;
-        let repository = StorageGameDocumentRepository::new(self.store.client(), &self.executor);
+        let repository = StorageLibraryPlayedRepository::new(self.store.client(), &self.executor);
         let restored = repository
             .load(saved.id())
             .await?

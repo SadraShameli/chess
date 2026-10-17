@@ -57,6 +57,17 @@ impl PresentationBoardScene {
         self.lifecycle
     }
 
+    pub fn fit(&self, rect: egui::Rect) -> egui::Rect {
+        let physical = self.viewport.physical_size();
+        let aspect = physical.x as f32 / physical.y.max(1) as f32;
+        let size = if rect.width() / rect.height().max(f32::EPSILON) > aspect {
+            egui::vec2(rect.height() * aspect, rect.height())
+        } else {
+            egui::vec2(rect.width(), rect.width() / aspect.max(f32::EPSILON))
+        };
+        egui::Rect::from_center_size(rect.center(), size)
+    }
+
     pub const fn viewport(&self) -> ScenePickingViewport {
         self.viewport
     }

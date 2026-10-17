@@ -17,6 +17,7 @@ use crate::presentation::board::enums::{
     PresentationBoardEnumCameraAction, PresentationBoardEnumInputSource,
     PresentationBoardEnumPremoveSquare,
 };
+use crate::presentation::board::markings::{PresentationBoardMarkColor, PresentationBoardMarkings};
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::{
     PresentationBoardSemanticGrid, PresentationBoardSemanticGridFeedback,
@@ -153,6 +154,12 @@ pub struct PresentationBoardView {
     retained: HashMap<PresentationBoardViewInputKey, PresentationBoardAction>,
     animation: Option<PresentationBoardAnimation>,
     observed: Option<DesktopBoardSnapshot>,
+    markings: PresentationBoardMarkings,
+    mark_gesture: Option<(
+        BoardSquare,
+        SceneRendererGeneration,
+        PresentationBoardMarkColor,
+    )>,
 }
 
 impl Default for PresentationBoardView {
@@ -174,7 +181,17 @@ impl PresentationBoardView {
             retained: HashMap::new(),
             animation: None,
             observed: None,
+            markings: PresentationBoardMarkings::default(),
+            mark_gesture: None,
         }
+    }
+
+    pub const fn markings(&self) -> &PresentationBoardMarkings {
+        &self.markings
+    }
+
+    pub fn markings_mut(&mut self) -> &mut PresentationBoardMarkings {
+        &mut self.markings
     }
 
     pub fn with_animation(clock: Arc<dyn ClockTimeProvider>, reduced_motion: bool) -> Self {
@@ -297,6 +314,7 @@ impl PresentationBoardView {
     }
 
     pub fn cancel_gesture(&mut self) {
+        self.mark_gesture = None;
         if let Some(picking) = &mut self.picking {
             picking.cancel();
         }
@@ -373,6 +391,8 @@ impl PresentationBoardView {
             ui.ctx().pixels_per_point(),
             input.render_scale,
         )?;
+        self.markings
+            .observe(self.observed.as_ref(), input.snapshot);
         let mut output = PresentationBoardViewFrame {
             viewport,
             actions: Vec::new(),
@@ -393,9 +413,14 @@ impl PresentationBoardView {
             return Ok(output);
         };
         self.synchronize(scene.generation());
+        let image_rect = if scene.viewport() == viewport {
+            rect
+        } else {
+            scene.fit(rect)
+        };
         ui.painter().image(
             scene.texture(),
-            rect,
+            image_rect,
             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
@@ -468,6 +493,16 @@ impl PresentationBoardView {
             }
         }
         output.has_semantic_grid = true;
+        self.mark_input(
+            ui,
+            input.enabled,
+            &mut *input.picker,
+            &response,
+            scene,
+            viewport,
+        )?;
+        self.markings
+            .paint(ui, scene, input.snapshot, self.selected);
         if let Some(square) = self.selected
             && let Some(rect) = PresentationBoardSemanticGrid::square_rect(square, scene)
         {
@@ -479,6 +514,57 @@ impl PresentationBoardView {
             );
         }
         Ok(output)
+    }
+
+    fn mark_input<P: PresentationBoardPickingProvider>(
+        &mut self,
+        ui: &Ui,
+        enabled: bool,
+        picker: &mut P,
+        response: &egui::Response,
+        scene: &PresentationBoardScene,
+        viewport: ScenePickingViewport,
+    ) -> Result<(), PresentationBoardViewError> {
+        let (pressed, released, point, modifiers, escape) = ui.input(|input| {
+            (
+                input.pointer.button_pressed(egui::PointerButton::Secondary),
+                input
+                    .pointer
+                    .button_released(egui::PointerButton::Secondary),
+                input.pointer.interact_pos(),
+                input.modifiers,
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape || !enabled {
+            self.mark_gesture = None;
+            return Ok(());
+        }
+        if !pressed && !released {
+            return Ok(());
+        }
+        let square = match point {
+            Some(point) if viewport.to_physical(point).is_some() => picker.pick(point)?,
+            Some(_) | None => None,
+        };
+        if pressed
+            && response.contains_pointer()
+            && let Some(square) = square
+        {
+            let color = PresentationBoardMarkColor::from_modifiers(
+                modifiers,
+                self.markings.selected_color(),
+            );
+            self.mark_gesture = Some((square, scene.generation(), color));
+        }
+        if released && let Some((origin, generation, color)) = self.mark_gesture.take() {
+            if generation == scene.generation()
+                && let Some(destination) = square
+            {
+                self.markings.toggle_arrow(origin, destination, color);
+            }
+        }
+        Ok(())
     }
 
     fn show_pending_move(ui: &Ui, scene: &PresentationBoardScene, intent: GamePremoveIntent) {

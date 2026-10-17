@@ -18,7 +18,7 @@ use chess::desktop::native::game_runtime::{
 };
 use chess::game::enums::GameEnumPhase;
 use chess::game::storage_repository::GameStorageRepository;
-use chess::storage::game_document::StorageGameDocumentRepository;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use rand::{SeedableRng, rngs::StdRng};
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
@@ -131,7 +131,7 @@ async fn quit_save_failure_keeps_snapshot_forwarding_alive_until_explicit_recove
     let (runtime, result) = worker.await?;
     result?;
     assert!(runtime.is_shutdown_complete());
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let restored = repository
         .load(created.id())
         .await?
@@ -308,7 +308,7 @@ async fn timed_out_shutdown_retains_an_accepted_move_and_retries_until_it_is_dur
     result?;
     assert!(runtime.is_shutdown_complete());
     assert!(port.is_shutdown_complete());
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let restored = repository
         .load(first.id())
         .await?

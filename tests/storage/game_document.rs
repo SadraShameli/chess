@@ -18,6 +18,7 @@ use chess::game::enums::{
     GameEnumEngineReadiness, GameEnumMarkingColor, GameEnumMode, GameEnumPhase, GameEnumSeat,
     GameId, GameMoveId,
 };
+use chess::game::library_organization::GameLibraryOrganizationTimestamp;
 use chess::game::move_node::{GameMoveNodeAnnotations, GameMoveNodeMarking, GameMoveNodeNag};
 use chess::game::pause::GamePauseEnumCause;
 use chess::game::session::{
@@ -26,6 +27,7 @@ use chess::game::session::{
     GameSessionMoveRequest, GameSessionOptions, GameSessionRestoredMove,
 };
 use chess::game::storage_repository::{
+    GameStorageContentEdit, GameStorageEnumContentChange, GameStorageEnumEditCause,
     GameStorageRepository, GameStorageRevision, GameStorageSaveRequest,
 };
 use chess::game::takeback::GameTakebackEnumConsent;
@@ -36,10 +38,11 @@ use chess::notation::game::{
 use chess::notation::game_identity::NotationGameIdentityEnumResult;
 use chess::notation::pgn_import::NotationPgnImport;
 use chess::storage::document_store::StorageDocumentStore;
-use chess::storage::game_document::{
-    StorageGameDocument, StorageGameDocumentError, StorageGameDocumentRepository,
-};
+use chess::storage::game_document::{StorageGameDocument, StorageGameDocumentError};
+use chess::storage::library_played::StorageLibraryPlayedRepository;
+use chess::storage::library_prepared::StorageLibraryEnumContentChange;
 use chess::storage::library_record::StorageLibraryEnumContent;
+use chess::storage::library_repository::StorageLibraryRepository;
 
 pub(crate) type StorageGameDocumentTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -840,11 +843,17 @@ async fn autosave_commits_one_complete_revision_and_conflict_preserves_it()
         StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget).await?;
     let session = StorageGameDocumentFixture::annotated()?;
     let receipt = {
-        let repository = StorageGameDocumentRepository::new(store.client(), &executor);
-        let request = GameStorageSaveRequest::capture(
+        let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
+        let request = GameStorageSaveRequest::capture_with_change(
             &session,
             ClockInstant::from_millis(2_000)?,
             GameStorageRevision::INITIAL,
+            GameStorageEnumContentChange::Changed(GameStorageContentEdit::new(
+                session.revision(),
+                session.revision(),
+                GameStorageEnumEditCause::Created,
+                GameLibraryOrganizationTimestamp::new(10)?,
+            )?),
         )?;
         let receipt = repository.save(request).await?;
         assert_eq!(receipt.game(), session.id());
@@ -873,7 +882,7 @@ async fn autosave_commits_one_complete_revision_and_conflict_preserves_it()
     let store =
         StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget).await?;
     {
-        let repository = StorageGameDocumentRepository::new(store.client(), &executor);
+        let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
         let recovered = repository
             .load(session.id())
             .await?
@@ -899,10 +908,23 @@ async fn a_document_under_the_wrong_database_identity_is_rejected() -> StorageGa
     let session = StorageGameDocumentFixture::session()?;
     let wrong: chess::game::enums::GameId = "0f6c64aa-4b6a-479f-92bb-7cbb29a73633".parse()?;
     let json = StorageGameDocument::capture(&session, ClockInstant::from_millis(2_000)?)?.json()?;
-    store.client().save(wrong.as_uuid(), 0, json).await?;
     {
-        let repository = StorageGameDocumentRepository::new(store.client(), &executor);
-        assert!(repository.load(wrong).await.is_err());
+        let library = StorageLibraryRepository::new(store.client(), &executor);
+        let prepared = library
+            .prepare_write(
+                wrong,
+                GameStorageRevision::INITIAL,
+                json,
+                StorageLibraryEnumContentChange::Changed(GameLibraryOrganizationTimestamp::new(
+                    10,
+                )?),
+            )
+            .await;
+        if let Ok(prepared) = prepared {
+            assert!(library.begin_save(prepared)?.wait().await.is_err());
+        }
+        let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
+        assert!(repository.load(wrong).await?.is_none());
         assert!(repository.load(session.id()).await?.is_none());
     }
     store.close().await?;

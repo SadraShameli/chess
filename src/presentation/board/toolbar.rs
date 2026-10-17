@@ -1,6 +1,8 @@
 use bevy_egui::egui::{self, Ui};
 
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
+use crate::presentation::board::markings::{PresentationBoardMarkColor, PresentationBoardMarkings};
+use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 
 pub struct PresentationBoardToolbar;
 
@@ -19,7 +21,11 @@ impl PresentationBoardToolbar {
         ("Flip board", PresentationBoardEnumCameraAction::Flip),
     ];
 
-    pub fn show(ui: &mut Ui, enabled: bool) -> Option<PresentationBoardEnumCameraAction> {
+    pub fn show(
+        ui: &mut Ui,
+        enabled: bool,
+        markings: &mut PresentationBoardMarkings,
+    ) -> Option<PresentationBoardEnumCameraAction> {
         let mut selected = None;
         ui.horizontal_wrapped(|ui| {
             for (label, action) in Self::ACTIONS {
@@ -31,6 +37,57 @@ impl PresentationBoardToolbar {
                 }
             }
         });
+        ui.horizontal_wrapped(|ui| {
+            Self::show_markings(ui, markings);
+        });
         selected
+    }
+
+    fn show_markings(ui: &mut Ui, markings: &mut PresentationBoardMarkings) {
+        ui.label("Marking color");
+        let mut color = markings.selected_color();
+        for choice in PresentationBoardMarkColor::ALL {
+            ui.selectable_value(
+                &mut color,
+                choice,
+                egui::RichText::new(choice.label()).color(choice.color()),
+            );
+        }
+        markings.select_color(color);
+        if ui
+            .add_enabled(
+                !markings.marks().is_empty(),
+                egui::Button::new("Clear Temporary Markings").small(),
+            )
+            .clicked()
+        {
+            markings.clear();
+        }
+        let aids = markings.aids_mut();
+        ui.checkbox(&mut aids.legal_dots, "Legal moves");
+        ui.checkbox(&mut aids.last_move, "Last move");
+        ui.checkbox(&mut aids.check, "Check");
+        ui.checkbox(&mut aids.coordinates, "Coordinates");
+        ui.checkbox(&mut aids.captured, "Captured");
+        if markings.aids().captured {
+            let captures = markings.captures();
+            let text = if captures.is_empty() {
+                "No captures".to_owned()
+            } else {
+                captures
+                    .iter()
+                    .map(|capture| {
+                        format!(
+                            "{} {} x{}",
+                            PresentationBoardSemanticGrid::color_name(capture.color),
+                            PresentationBoardSemanticGrid::piece_name(capture.kind),
+                            capture.count
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            ui.label(format!("Captured: {text}"));
+        }
     }
 }

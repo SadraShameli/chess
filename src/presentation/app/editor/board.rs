@@ -125,9 +125,14 @@ impl PresentationAppEditor {
             );
             return Ok(viewport);
         }
+        let image_rect = if scene.viewport() == viewport {
+            rect
+        } else {
+            scene.fit(rect)
+        };
         ui.painter().image(
             scene.texture(),
-            rect,
+            image_rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );

@@ -52,7 +52,7 @@ use chess::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use chess::scene::camera::SceneCamera;
 use chess::scene::enums::SceneEnumLifecycle;
 use chess::scene::renderer::SceneRendererGeneration;
-use chess::storage::game_document::StorageGameDocumentRepository;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use rand::{SeedableRng, rngs::StdRng};
 use tokio::sync::Notify;
 use tokio::task::{JoinError, JoinHandle};
@@ -620,8 +620,11 @@ impl DesktopLocalPlayFixture {
         let snapshot = self.snapshot()?;
         let saved = timeout(
             Self::WAIT,
-            StorageGameDocumentRepository::new(self.runtime.store.client(), &self.runtime.executor)
-                .load(snapshot.id()),
+            StorageLibraryPlayedRepository::new(
+                self.runtime.store.client(),
+                &self.runtime.executor,
+            )
+            .load(snapshot.id()),
         )
         .await??
         .ok_or("missing durable local game")?;

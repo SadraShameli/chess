@@ -35,7 +35,7 @@ use chess::game::enums::{GameEnumMode, GameEnumPhase, GameEnumSeat, GameRevision
 use chess::game::session::{GameMetadata, GameSeats, GameSession, GameSessionOptions};
 use chess::game::storage_repository::{GameStorageRepository, GameStorageRevision};
 use chess::storage::document_store::StorageDocumentStore;
-use chess::storage::game_document::StorageGameDocumentRepository;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use tokio::time::Instant;
 
 use crate::desktop_game_supervisor_storage::DesktopGameSupervisorFixtureStorage;
@@ -338,7 +338,7 @@ async fn retained_shutdown_retries_a_real_storage_failure_and_keeps_the_save_gat
         .await?;
     assert!(supervisor.is_shutdown_complete());
     assert!(!port.snapshot().snapshot.is_save_required());
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let restored = repository.load(game).await?.ok_or("missing retried game")?;
     assert_eq!(
         restored.session().revision(),
@@ -512,7 +512,7 @@ async fn native_local_game_start_move_and_quit_are_durable_and_restore_paused()
         .await?;
     assert_eq!(stopped.phase(), GameEnumPhase::Interrupted);
     tokio::time::timeout(Duration::from_secs(3), worker).await???;
-    let repository = StorageGameDocumentRepository::new(store.client(), &executor);
+    let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
     let recovered = repository.load(game).await?.ok_or("missing durable game")?;
     assert_eq!(recovered.session().revision(), stopped.revision());
     assert!(!recovered.session().clock().is_running());
@@ -658,7 +658,7 @@ async fn adjudication_retry_is_revision_checked_and_durably_preserves_unknown_st
         assert_eq!(proof.calls(), attempt);
         assert_eq!(port.snapshot().snapshot.revision(), retried.revision());
     }
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let restored = repository
         .load(before.id())
         .await?

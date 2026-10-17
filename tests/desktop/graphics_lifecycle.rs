@@ -16,7 +16,7 @@ use chess::game::enums::{GameEnumEngineReadiness, GameEnumPhase};
 use chess::game::pause::{GamePauseEnumCause, GamePauseEnumEngineBarrier, GamePauseEnumFault};
 use chess::game::session::GameSessionEnumInterruption;
 use chess::game::storage_repository::GameStorageRepository;
-use chess::storage::game_document::StorageGameDocumentRepository;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
 use tokio::time::Instant;
 
 use crate::desktop_game_registry_fixture::{
@@ -169,7 +169,7 @@ async fn graphics_controls_preserve_unrelated_states_and_durably_require_explici
         assert_eq!(current.clock(), original.clock());
         assert_eq!(current.outcome(), original.outcome());
     }
-    let repository = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+    let repository = StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
     let saved = repository
         .load(active.id())
         .await?
