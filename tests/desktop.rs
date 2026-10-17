@@ -104,3 +104,5 @@ mod desktop_preferences;
 
 #[path = "desktop/release_workflow.rs"]
 mod desktop_release_workflow;
+#[path = "desktop/security_boundaries.rs"]
+mod desktop_security_boundaries;

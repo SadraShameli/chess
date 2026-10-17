@@ -931,3 +931,27 @@ async fn a_document_under_the_wrong_database_identity_is_rejected() -> StorageGa
     executor.shutdown().await?;
     Ok(())
 }
+
+#[test]
+fn truncated_and_corrupted_documents_are_refused_without_panicking() -> StorageGameDocumentTestResult
+{
+    let json = StorageGameDocumentFixture::notation_json()?;
+    assert!(StorageGameDocument::recover_record(&json).is_ok());
+    for index in (0..json.len()).filter(|index| json.is_char_boundary(*index)) {
+        assert!(
+            StorageGameDocument::recover_record(&json[..index]).is_err(),
+            "a strict prefix of {index} bytes must not recover"
+        );
+    }
+    for index in (0..json.len()).step_by(13) {
+        let mut bytes = json.clone().into_bytes();
+        bytes[index] = 0x01;
+        if let Ok(corrupted) = String::from_utf8(bytes) {
+            let outcome = StorageGameDocument::recover_record(&corrupted);
+            assert!(outcome.is_err() || corrupted == json);
+        }
+    }
+    assert!(StorageGameDocument::recover_record("").is_err());
+    assert!(StorageGameDocument::recover_record("{}").is_err());
+    Ok(())
+}

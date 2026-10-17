@@ -1,6 +1,12 @@
 #[path = "board/position.rs"]
 mod board_position;
 
+#[path = "domain/boundaries.rs"]
+mod domain_boundaries;
+
+#[path = "domain/reference_manifest.rs"]
+mod domain_reference_manifest;
+
 #[path = "clock/persistence.rs"]
 mod clock_persistence;
 #[path = "clock/state.rs"]
