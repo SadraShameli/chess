@@ -29,6 +29,10 @@ use crate::storage::library_transaction::{
     StorageLibraryTransaction,
 };
 use crate::storage::migration::StorageMigrationRunner;
+use crate::storage::opening_repository::{
+    StorageOpeningEnumRequest, StorageOpeningEnumResponse, StorageOpeningError,
+    StorageOpeningTransaction,
+};
 use crate::storage::puzzle_repository::{
     StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
     StoragePuzzleWrite,
@@ -138,6 +142,12 @@ enum StorageDocumentEnumCommand {
         request: Box<StorageReportEnumRequest>,
         _admission: OwnedSemaphorePermit,
         result: oneshot::Sender<Result<StorageReportEnumResponse, StorageReportError>>,
+    },
+    Opening {
+        request: Box<StorageOpeningEnumRequest>,
+        _memory_reservation: OwnedSemaphorePermit,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<StorageOpeningEnumResponse, StorageOpeningError>>,
     },
     PuzzleInventory {
         after: Option<PuzzleSessionId>,
@@ -391,6 +401,23 @@ impl StorageDocumentClient {
         receiver.await?
     }
 
+    pub(crate) async fn opening(
+        &self,
+        request: StorageOpeningEnumRequest,
+        memory_bytes: usize,
+    ) -> Result<StorageOpeningEnumResponse, StorageOpeningError> {
+        let admission = self.admit()?;
+        let memory_reservation = Self::reserve_memory(&self.memory, memory_bytes)?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Opening {
+            request: Box::new(request),
+            _memory_reservation: memory_reservation,
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub(crate) async fn read_puzzle(
         &self,
         id: PuzzleSessionId,
@@ -581,6 +608,19 @@ impl StorageDocumentActor {
                     let outcome =
                         StorageReportTransaction::execute(self.connection.diesel(), *request);
                     drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
+                StorageDocumentEnumCommand::Opening {
+                    request,
+                    _memory_reservation,
+                    _admission,
+                    result,
+                } => {
+                    let outcome =
+                        StorageOpeningTransaction::execute(self.connection.diesel(), *request);
+                    drop((_memory_reservation, _admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
                     }

@@ -92,6 +92,8 @@ mod opening_corpus;
 mod opening_explorer;
 #[path = "opening/fixtures.rs"]
 mod opening_fixture;
+#[path = "opening/index.rs"]
+mod opening_index;
 #[path = "opening/query.rs"]
 mod opening_query;
 #[path = "opening/statistics.rs"]
