@@ -12,6 +12,8 @@ mod game_transition_fixture;
 mod presentation_action_registry;
 #[path = "presentation/analysis.rs"]
 mod presentation_analysis;
+#[path = "presentation/app_editor.rs"]
+mod presentation_app_editor;
 #[path = "presentation/engine_panels.rs"]
 mod presentation_engine_panels;
 #[path = "presentation/game/controller.rs"]

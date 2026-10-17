@@ -14,6 +14,11 @@ use uuid::Uuid;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
+use crate::storage::editor_repository::{
+    StorageEditorRepositoryEnumRequest, StorageEditorRepositoryEnumResponse,
+    StorageEditorRepositoryError, StorageEditorRepositoryPending,
+    StorageEditorRepositoryTransaction,
+};
 use crate::storage::library_repository::{StorageLibraryError, StorageLibraryPending};
 use crate::storage::library_transaction::{
     StorageLibraryEnumTransactionRequest, StorageLibraryEnumTransactionResponse,
@@ -102,6 +107,14 @@ impl StorageDocumentReceipt {
 }
 
 enum StorageDocumentEnumCommand {
+    Editor {
+        request: Box<StorageEditorRepositoryEnumRequest>,
+        memory_reservation: OwnedSemaphorePermit,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<
+            Result<StorageEditorRepositoryEnumResponse, StorageEditorRepositoryError>,
+        >,
+    },
     Library {
         request: Box<StorageLibraryEnumTransactionRequest>,
         _memory_reservation: OwnedSemaphorePermit,
@@ -275,6 +288,30 @@ impl StorageDocumentStore {
 }
 
 impl StorageDocumentClient {
+    pub(super) fn reserve_editor_memory(
+        &self,
+        memory_bytes: usize,
+    ) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
+        Self::reserve_memory(&self.memory, memory_bytes)
+    }
+
+    pub(super) fn begin_editor(
+        &self,
+        memory_bytes: usize,
+        request: impl FnOnce() -> StorageEditorRepositoryEnumRequest,
+    ) -> Result<StorageEditorRepositoryPending, StorageEditorRepositoryError> {
+        let admission = self.admit()?;
+        let memory_reservation = Self::reserve_memory(&self.memory, memory_bytes)?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Editor {
+            request: Box::new(request()),
+            memory_reservation,
+            _admission: admission,
+            result,
+        })?;
+        Ok(StorageEditorRepositoryPending::new(receiver))
+    }
+
     pub(crate) const fn library_preparation_origin(&self) -> Uuid {
         self.library_preparation_origin
     }
@@ -477,6 +514,26 @@ impl StorageDocumentActor {
         while let Some(command) = receiver.blocking_recv() {
             let lease = self.runtime.block_on(self.budget.lease(1))?;
             match command {
+                StorageDocumentEnumCommand::Editor {
+                    request,
+                    memory_reservation,
+                    _admission,
+                    result,
+                } => {
+                    let outcome = StorageEditorRepositoryTransaction::execute(
+                        &mut self.connection,
+                        *request,
+                        memory_reservation,
+                    );
+                    let unresolved = !self.connection.is_autocommit();
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                    if unresolved {
+                        return Err(StorageDocumentError::UnresolvedTransaction);
+                    }
+                }
                 StorageDocumentEnumCommand::Library {
                     request,
                     _memory_reservation,

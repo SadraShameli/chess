@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chess::capacity::phase::CapacityPhaseEnumState;
@@ -66,6 +67,10 @@ impl NativeEngineCompositionHarness {
         command: DesktopEnumCommand,
     ) -> NativeEngineCompositionResult<DesktopEnumValue> {
         let revision = match &command {
+            DesktopEnumCommand::Editor { operation, .. } => {
+                Some(DesktopCommand::editor_expected_revision(operation))
+            }
+            DesktopEnumCommand::Library(operation) => operation.expected_revision(),
             DesktopEnumCommand::Puzzle { operation, .. } => Some(operation.expected_revision()),
             DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
@@ -96,6 +101,12 @@ impl NativeEngineCompositionHarness {
                 return match response {
                     DesktopMessagesEnumResult::Value { value, .. } => Ok(value.clone()),
                     DesktopMessagesEnumResult::Failure(failure) => Err(failure.clone().into()),
+                    DesktopMessagesEnumResult::LibraryFailure(failure) => {
+                        Err(Arc::clone(failure).into())
+                    }
+                    DesktopMessagesEnumResult::EditorFailure(failure) => {
+                        Err(Arc::clone(failure).into())
+                    }
                     DesktopMessagesEnumResult::Cancelled
                     | DesktopMessagesEnumResult::Stopped
                     | DesktopMessagesEnumResult::Paused

@@ -75,6 +75,15 @@ impl EngineSearchLimit {
         Self(EngineSearchEnumLimit::Infinite)
     }
 
+    pub const fn is_position_budget(self) -> bool {
+        match self.0 {
+            EngineSearchEnumLimit::Depth(_)
+            | EngineSearchEnumLimit::Nodes(_)
+            | EngineSearchEnumLimit::MoveTime(_) => true,
+            EngineSearchEnumLimit::Infinite | EngineSearchEnumLimit::Clock(_) => false,
+        }
+    }
+
     pub fn depth(depth: u32) -> Result<Self, EngineSearchLimitError> {
         if !(1..=Self::MAX_DEPTH).contains(&depth) {
             return Err(EngineSearchLimitError::Depth);
@@ -122,3 +131,4 @@ impl EngineSearchLimit {
         Self::validate_number(value)
     }
 }
+pub mod persistence;

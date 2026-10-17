@@ -371,11 +371,11 @@ impl<
             return Err(StorageImportSessionRepositoryError::StaleCatalog.into());
         }
         let sqlite = self
-            .read(
-                self.resources
-                    .repository
-                    .estimate_commit_space(snapshot, footprint),
-            )
+            .read(self.resources.repository.estimate_commit_space(
+                snapshot,
+                footprint,
+                self.cancellation.clone(),
+            ))
             .await?;
         let session = self.id;
         let confirmation = self

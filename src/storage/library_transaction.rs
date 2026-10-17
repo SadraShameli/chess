@@ -16,10 +16,10 @@ use crate::game::library_organization::{
 };
 use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::import_session::{
-    StorageImportSessionCandidate, StorageImportSessionCandidateBody,
-    StorageImportSessionCandidatePage, StorageImportSessionCommitFootprint,
-    StorageImportSessionCommitReceipt, StorageImportSessionDestination,
-    StorageImportSessionSnapshot,
+    StorageImportSessionCancellation, StorageImportSessionCandidate,
+    StorageImportSessionCandidateBody, StorageImportSessionCandidatePage,
+    StorageImportSessionCommitFootprint, StorageImportSessionCommitReceipt,
+    StorageImportSessionDestination, StorageImportSessionSnapshot,
 };
 use crate::storage::library_import::{
     StorageLibraryImportCandidateRequest, StorageLibraryImportCommitRequest,
@@ -60,6 +60,7 @@ pub(crate) enum StorageLibraryEnumTransactionRequest {
     ImportEstimate {
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: StorageImportSessionCancellation,
     },
     CommitImport(Box<StorageLibraryImportCommitRequest>),
     #[cfg(test)]
@@ -154,6 +155,9 @@ pub(crate) enum StorageLibraryEnumTransactionResponse {
 pub(crate) struct StorageLibraryTransaction;
 
 impl StorageLibraryTransaction {
+    const BUMP_CATALOG_SQL: &'static str =
+        "UPDATE library_state SET revision = ?1 WHERE singleton = 1";
+
     pub(crate) fn execute(
         connection: &mut Connection,
         mut request: StorageLibraryEnumTransactionRequest,
@@ -250,12 +254,14 @@ impl StorageLibraryTransaction {
                 StorageLibraryEnumTransactionRequest::ImportEstimate {
                     snapshot,
                     footprint,
+                    cancellation,
                 } => StorageLibraryEnumTransactionResponse::ImportEstimate(
                     StorageLibraryTransactionImport::estimate(
                         &transaction,
                         *snapshot,
                         *footprint,
                         *certified,
+                        cancellation,
                     )?,
                 ),
                 StorageLibraryEnumTransactionRequest::CommitImport(request) => {
@@ -393,10 +399,7 @@ impl StorageLibraryTransaction {
         transaction: &Transaction<'_>,
     ) -> Result<StorageLibraryCatalogRevision, StorageLibraryError> {
         let revision = Self::catalog(transaction)?.next()?;
-        transaction.execute(
-            "UPDATE library_state SET revision = ?1 WHERE singleton = 1",
-            [revision.value().to_string()],
-        )?;
+        transaction.execute(Self::BUMP_CATALOG_SQL, [revision.value().to_string()])?;
         Ok(revision)
     }
 }

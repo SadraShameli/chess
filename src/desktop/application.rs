@@ -1,3 +1,5 @@
+mod library;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
@@ -8,6 +10,9 @@ use tokio::sync::Notify;
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::dto::{DesktopEnumEvent, DesktopEnumValue};
+use crate::desktop::editor_commands::{
+    DesktopEditorCommandsEnumResult, DesktopEditorCommandsError,
+};
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::{
@@ -54,6 +59,10 @@ pub enum DesktopApplicationError {
     ResyncRequired,
     #[error("The application is closing and cannot admit new ordinary work")]
     Closing,
+    #[error("The Library payload was refused before admission: {0}")]
+    LibraryPayload(#[source] Arc<crate::desktop::library_service::DesktopLibraryServiceError>),
+    #[error("The editor payload was refused before admission: {0}")]
+    EditorPayload(#[source] Arc<crate::desktop::editor_commands::DesktopEditorCommandsError>),
     #[error("The native action sequence is exhausted")]
     SequenceOverflow,
     #[error("Mutations require an expected entity revision")]
@@ -80,6 +89,36 @@ pub enum DesktopApplicationError {
     Time(#[from] ClockDurationError),
     #[error(transparent)]
     Wake(#[from] DesktopApplicationWakeError),
+}
+
+pub struct DesktopApplicationAction {
+    session: DesktopRequestId,
+    sequence: u64,
+    request_id: DesktopRequestId,
+}
+
+impl DesktopApplicationAction {
+    pub fn request_id(&self) -> DesktopRequestId {
+        self.request_id
+    }
+
+    pub fn bind(self, command: DesktopCommand) -> Result<DesktopRequest, DesktopApplicationError> {
+        Self::validate_command(&command)?;
+        Ok(DesktopRequest::new(
+            self.session,
+            self.sequence,
+            self.request_id,
+            command,
+        ))
+    }
+
+    fn validate_command(command: &DesktopCommand) -> Result<(), DesktopApplicationError> {
+        if command.operation().mutation_entity().is_some() && command.expected_revision().is_none()
+        {
+            return Err(DesktopApplicationError::MissingRevision);
+        }
+        Ok(())
+    }
 }
 
 struct DesktopApplicationReceiptState {
@@ -305,7 +344,6 @@ struct DesktopApplicationState {
     mutations: HashMap<DesktopMessagesEntityId, DesktopApplicationMutation>,
     controls: HashMap<DesktopMessagesEnumControlKey, DesktopApplicationControl>,
     ordinary_in_flight: usize,
-    retired_through: u64,
     last_time: Option<ClockInstant>,
     lifecycle: DesktopApplicationEnumLifecycle,
 }
@@ -330,7 +368,6 @@ impl DesktopApplicationState {
             mutations: HashMap::new(),
             controls: HashMap::new(),
             ordinary_in_flight: 0,
-            retired_through: 0,
             last_time: None,
             lifecycle: DesktopApplicationEnumLifecycle::Accepting,
         }
@@ -356,7 +393,6 @@ impl DesktopApplicationState {
             }
             self.completed.pop_front();
             self.entries.remove(&sequence);
-            self.retired_through = self.retired_through.max(sequence);
         }
         Ok(())
     }
@@ -371,9 +407,6 @@ impl DesktopApplicationState {
                 .get(&sequence)
                 .map(|entry| Some(entry.receipt.clone()))
                 .ok_or(DesktopApplicationError::ResyncRequired);
-        }
-        if request.sequence() <= self.retired_through {
-            return Err(DesktopApplicationError::ResyncRequired);
         }
         Ok(None)
     }
@@ -664,14 +697,7 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
     pub fn now(&self) -> Result<ClockInstant, DesktopApplicationError> {
         Ok(self.shared.clock.now()?)
     }
-    pub fn request(
-        &self,
-        command: DesktopCommand,
-    ) -> Result<DesktopRequest, DesktopApplicationError> {
-        if command.operation().mutation_entity().is_some() && command.expected_revision().is_none()
-        {
-            return Err(DesktopApplicationError::MissingRevision);
-        }
+    pub fn prepare_action(&self) -> Result<DesktopApplicationAction, DesktopApplicationError> {
         let sequence = self
             .shared
             .next_sequence
@@ -679,7 +705,19 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
                 sequence.checked_add(1)
             })
             .map_err(|_sequence| DesktopApplicationError::SequenceOverflow)?;
-        Ok(DesktopRequest::new(self.shared.session, sequence, command))
+        Ok(DesktopApplicationAction {
+            session: self.shared.session,
+            sequence,
+            request_id: DesktopRequestId::new(),
+        })
+    }
+
+    pub fn request(
+        &self,
+        command: DesktopCommand,
+    ) -> Result<DesktopRequest, DesktopApplicationError> {
+        DesktopApplicationAction::validate_command(&command)?;
+        self.prepare_action()?.bind(command)
     }
 
     pub fn try_submit(
@@ -688,6 +726,16 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
     ) -> Result<DesktopApplicationReceipt, DesktopApplicationError> {
         if request.session() != self.shared.session {
             return Err(DesktopApplicationError::WrongSession);
+        }
+        if let DesktopEnumCommand::Library(operation) = request.command().operation() {
+            operation
+                .validate_payload()
+                .map_err(|error| DesktopApplicationError::LibraryPayload(Arc::new(error)))?;
+        }
+        if let DesktopEnumCommand::Editor { operation, .. } = request.command().operation() {
+            operation
+                .validate_payload()
+                .map_err(|error| DesktopApplicationError::EditorPayload(Arc::new(error)))?;
         }
         let now = self.shared.clock.now()?;
         let received_at = request.first_receipt(now);
@@ -853,6 +901,54 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         self.complete_effect(work, DesktopMessagesEnumResult::Value { value, revision })
     }
 
+    pub(crate) fn complete_editor(
+        &self,
+        work: &DesktopApplicationWork,
+        response: &mut Option<
+            Result<DesktopEditorCommandsEnumResult, Arc<DesktopEditorCommandsError>>,
+        >,
+    ) -> Result<(), DesktopApplicationError> {
+        if !matches!(
+            work.request().command().operation(),
+            DesktopEnumCommand::Editor { .. }
+        ) {
+            return Err(DesktopApplicationError::InvalidTransition);
+        }
+        let outcome = response
+            .as_ref()
+            .ok_or(DesktopApplicationError::InvalidTransition)?;
+        let revision = match outcome {
+            Ok(
+                DesktopEditorCommandsEnumResult::Snapshot(snapshot)
+                | DesktopEditorCommandsEnumResult::Written { snapshot, .. },
+            ) => snapshot
+                .as_ref()
+                .map(|snapshot| DesktopRevision::for_editor(snapshot.context().revision())),
+            Ok(
+                DesktopEditorCommandsEnumResult::Fen { context, .. }
+                | DesktopEditorCommandsEnumResult::Play { context, .. },
+            ) => Some(DesktopRevision::for_editor(context.revision())),
+            Ok(DesktopEditorCommandsEnumResult::List(_)) | Err(_) => None,
+            Ok(DesktopEditorCommandsEnumResult::WritePending(_)) => {
+                return Err(DesktopApplicationError::CommitUnresolved);
+            }
+        };
+        self.complete_effect_with(work, outcome.is_ok(), || {
+            Ok(
+                match response
+                    .take()
+                    .ok_or(DesktopApplicationError::InvalidTransition)?
+                {
+                    Ok(value) => DesktopMessagesEnumResult::Value {
+                        value: DesktopEnumValue::Editor(Box::new(value)),
+                        revision,
+                    },
+                    Err(error) => DesktopMessagesEnumResult::EditorFailure(error),
+                },
+            )
+        })
+    }
+
     pub fn complete_failure(
         &self,
         work: &DesktopApplicationWork,
@@ -865,6 +961,16 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         &self,
         work: &DesktopApplicationWork,
         response: DesktopMessagesEnumResult,
+    ) -> Result<(), DesktopApplicationError> {
+        let is_value = matches!(response, DesktopMessagesEnumResult::Value { .. });
+        self.complete_effect_with(work, is_value, || Ok(response))
+    }
+
+    fn complete_effect_with(
+        &self,
+        work: &DesktopApplicationWork,
+        is_value: bool,
+        response: impl FnOnce() -> Result<DesktopMessagesEnumResult, DesktopApplicationError>,
     ) -> Result<(), DesktopApplicationError> {
         let now = self.shared.clock.now()?;
         let mut state = self.shared.state_at(now)?;
@@ -883,7 +989,7 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
                     .operation()
                     .mutation_entity()
                     .is_some()
-                    && matches!(response, DesktopMessagesEnumResult::Value { .. })
+                    && is_value
                 {
                     return Err(DesktopApplicationError::CommitNotStarted);
                 }
@@ -896,7 +1002,7 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
                 return Err(DesktopApplicationError::AlreadyCompleted);
             }
         }
-        state.complete(work.request.sequence(), response, now)?;
+        state.complete(work.request.sequence(), response()?, now)?;
         drop(state);
         self.shared.notify_presentation()
     }

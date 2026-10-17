@@ -73,6 +73,8 @@ mod puzzle_summary;
 #[path = "puzzle/timer.rs"]
 mod puzzle_timer;
 
+#[path = "board/editor.rs"]
+mod board_editor;
 #[path = "capacity/budget.rs"]
 mod capacity_budget;
 #[path = "capacity/native_partition.rs"]
@@ -81,3 +83,20 @@ mod capacity_native_partition;
 mod capacity_retained_shutdown;
 #[path = "capacity/waiting.rs"]
 mod capacity_waiting;
+#[path = "opening/book.rs"]
+mod opening_book;
+
+#[path = "opening/corpus.rs"]
+mod opening_corpus;
+#[path = "opening/fixtures.rs"]
+mod opening_fixture;
+#[path = "opening/query.rs"]
+mod opening_query;
+#[path = "opening/statistics.rs"]
+mod opening_statistics;
+#[path = "report/job.rs"]
+mod report_job;
+#[path = "report/scheduler.rs"]
+mod report_scheduler;
+#[path = "report/scoring.rs"]
+mod report_scoring;

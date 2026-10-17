@@ -118,6 +118,8 @@ pub enum DesktopNativeHostEvent {
 pub struct DesktopNativeHostServices {
     pub engine_panels: Option<PresentationEnginePanelsConnection>,
     pub puzzle_panel: Option<PresentationPuzzlePanelConnection>,
+    pub library_workspace: Option<crate::desktop::messages::DesktopMessagesEntityId>,
+    pub editor: Option<crate::presentation::app::editor::PresentationAppEditorConnection>,
     pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
@@ -608,6 +610,12 @@ impl DesktopNativeHost {
         }
         if let Some(connection) = services.puzzle_panel.take() {
             presentation.mount_puzzles(connection);
+        }
+        if let Some(workspace) = services.library_workspace.take() {
+            presentation.mount_library(workspace);
+        }
+        if let Some(connection) = services.editor.take() {
+            presentation.mount_editor(connection);
         }
         app.insert_resource(DesktopNativeHostState {
             services,
@@ -1290,13 +1298,7 @@ impl DesktopNativeHost {
         );
         let viewport = ScenePickingViewport::new(rectangle, rectangle, 1.0, 1.0)?;
         let mut renderer = SceneRenderer::spawn(world, templates, viewport, state.camera)?;
-        if let Some(snapshot) = state.presentation.board_snapshot() {
-            let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
-            renderer.apply_position(world, &position)?;
-            state.rendered_board = Some(snapshot.clone());
-        } else {
-            state.rendered_board = None;
-        }
+        Self::synchronize_board_scene(world, state, &mut renderer)?;
         world.insert_resource(renderer);
         Ok(())
     }
@@ -1316,6 +1318,36 @@ impl DesktopNativeHost {
         }
     }
 
+    fn synchronize_board_scene(
+        world: &mut World,
+        state: &mut DesktopNativeHostState,
+        renderer: &mut SceneRenderer,
+    ) -> Result<(), DesktopNativeHostError> {
+        if state.presentation.workspace()
+            == crate::presentation::app::PresentationAppEnumWorkspace::Editor
+        {
+            if let Some(snapshot) = state.presentation.editor_snapshot() {
+                renderer.apply_editor(world, snapshot)?;
+            } else if renderer.editor_binding().is_some() || state.rendered_board.is_some() {
+                renderer.clear_position(world)?;
+            }
+            state.rendered_board = None;
+        } else if let Some(snapshot) = state.presentation.board_snapshot() {
+            if !state.rendered_board.as_ref().is_some_and(|previous| {
+                previous.fen() == snapshot.fen() && previous.variant() == snapshot.variant()
+            }) || renderer.editor_binding().is_some()
+            {
+                let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
+                renderer.apply_position(world, &position)?;
+                state.rendered_board = Some(snapshot.clone());
+            }
+        } else if state.rendered_board.is_some() || renderer.editor_binding().is_some() {
+            renderer.clear_position(world)?;
+            state.rendered_board = None;
+        }
+        Ok(())
+    }
+
     fn update_scene(
         world: &mut World,
         state: &mut DesktopNativeHostState,
@@ -1330,18 +1362,7 @@ impl DesktopNativeHost {
         if !state.ready {
             world.insert_resource(WinitSettings::continuous());
         }
-        if let Some(snapshot) = state.presentation.board_snapshot() {
-            if !state.rendered_board.as_ref().is_some_and(|previous| {
-                previous.fen() == snapshot.fen() && previous.variant() == snapshot.variant()
-            }) {
-                let position = BoardPosition::from_fen(snapshot.fen(), snapshot.variant())?;
-                renderer.apply_position(world, &position)?;
-                state.rendered_board = Some(snapshot.clone());
-            }
-        } else if state.rendered_board.is_some() {
-            renderer.clear_position(world)?;
-            state.rendered_board = None;
-        }
+        Self::synchronize_board_scene(world, state, renderer)?;
         if state.ready {
             return Ok(());
         }
@@ -1448,6 +1469,9 @@ impl DesktopNativeHost {
                 PresentationBoardScene::from_renderer(renderer, &mut textures, state.camera)
             })
             .transpose()?;
+        state
+            .presentation
+            .bind_editor_scene(renderer.and_then(SceneRenderer::editor_binding));
         let mut ray_cast_state = SystemState::<MeshRayCast<'_, '_>>::new(world);
         let mut ray_cast = ray_cast_state.get_mut(world)?;
         let mut picker = |point| match renderer {

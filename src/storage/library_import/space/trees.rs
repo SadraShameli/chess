@@ -1,19 +1,92 @@
-use rusqlite::{Transaction, params};
+use rusqlite::Transaction;
 
-use crate::storage::import_session::StorageImportSessionCommitFootprint;
+use crate::storage::import_session::{
+    StorageImportSessionCancellation, StorageImportSessionCommitFootprint,
+    StorageImportSessionError,
+};
 use crate::storage::library_import::space::StorageLibraryImportSpace;
 use crate::storage::library_repository::StorageLibraryError;
 
 pub(super) struct StorageLibraryImportSpaceTrees {
-    pub(super) additional_pages: u64,
+    pub(super) new_page_budget: u64,
     pub(super) old_tree_pages: u64,
     pub(super) allocator_operations: u64,
+    #[cfg(test)]
+    inventory_vm_steps: u64,
 }
 
-struct StorageLibraryImportSpaceTree {
-    pages: u64,
-    records: u64,
-    depth: u64,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StorageLibraryImportSpaceEnumCardinality {
+    Exact(u64),
+    AtLeast(u64),
+}
+
+struct StorageLibraryImportSpaceProbe {
+    cardinality: StorageLibraryImportSpaceEnumCardinality,
+    #[cfg(test)]
+    inventory_vm_steps: u64,
+}
+
+#[derive(Clone, Copy)]
+enum StorageLibraryImportSpaceEnumTable {
+    Documents,
+    Entries,
+}
+
+impl StorageLibraryImportSpaceEnumTable {
+    #[cfg(test)]
+    const ALL: [Self; 2] = [Self::Documents, Self::Entries];
+
+    const fn probe_sql(self) -> &'static str {
+        match self {
+            Self::Documents => "SELECT id FROM documents ORDER BY id LIMIT ?1",
+            Self::Entries => "SELECT game_id FROM library_entries ORDER BY game_id LIMIT ?1",
+        }
+    }
+
+    fn from_name(name: &str) -> Result<Self, StorageLibraryError> {
+        match name {
+            "documents" => Ok(Self::Documents),
+            "library_entries" => Ok(Self::Entries),
+            _ => Err(StorageLibraryError::ImportLayout),
+        }
+    }
+
+    fn probe(
+        self,
+        transaction: &Transaction<'_>,
+        limit: u64,
+        check: &mut impl FnMut() -> Result<(), StorageImportSessionError>,
+    ) -> Result<StorageLibraryImportSpaceProbe, StorageLibraryError> {
+        check()?;
+        if limit == 0 {
+            return Err(StorageLibraryError::ImportLayout);
+        }
+        let mut statement = transaction.prepare(self.probe_sql())?;
+        check()?;
+        let mut rows = statement.query([i64::try_from(limit)?])?;
+        let mut records = 0_u64;
+        let cardinality = loop {
+            check()?;
+            let Some(row) = rows.next()? else {
+                break StorageLibraryImportSpaceEnumCardinality::Exact(records);
+            };
+            let _id = row.get_ref(0)?.as_str()?;
+            records = StorageLibraryImportSpace::add(records, 1)?;
+            check()?;
+            if records == limit {
+                break StorageLibraryImportSpaceEnumCardinality::AtLeast(limit);
+            }
+        };
+        drop(rows);
+        Ok(StorageLibraryImportSpaceProbe {
+            cardinality,
+            #[cfg(test)]
+            inventory_vm_steps: u64::try_from(
+                statement.get_status(rusqlite::StatementStatus::VmStep),
+            )?,
+        })
+    }
 }
 
 struct StorageLibraryImportSpacePayload {
@@ -29,10 +102,6 @@ enum StorageLibraryImportSpaceEnumTreeKind {
 }
 
 impl StorageLibraryImportSpaceEnumTreeKind {
-    const fn is_index(self) -> bool {
-        matches!(self, Self::Index)
-    }
-
     const fn max_local(self, page: u64) -> u64 {
         match self {
             Self::RowidTable => page - 35,
@@ -79,32 +148,8 @@ impl StorageLibraryImportSpacePayload {
     }
 }
 
-impl StorageLibraryImportSpaceTree {
-    const MAX_DEPTH: u64 = 20;
-
-    fn read(
-        transaction: &Transaction<'_>,
-        name: &str,
-        kind: StorageLibraryImportSpaceEnumTreeKind,
-    ) -> Result<Self, StorageLibraryError> {
-        let (pages, records, depth) = transaction.query_row(
-            "SELECT count(*) FILTER (WHERE pagetype <> 'overflow'), coalesce(sum(CASE WHEN pagetype = 'leaf' OR (?2 AND pagetype = 'internal') THEN ncell ELSE 0 END), 0), coalesce(max(CASE WHEN pagetype <> 'overflow' THEN length(path) - length(replace(path, '/', '')) END), 0) FROM dbstat WHERE name = ?1",
-            params![name, kind.is_index()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
-        )?;
-        let result = Self {
-            pages: u64::try_from(pages)?,
-            records: u64::try_from(records)?,
-            depth: u64::try_from(depth)?,
-        };
-        if result.pages == 0 || !(1..=Self::MAX_DEPTH).contains(&result.depth) {
-            return Err(StorageLibraryError::ImportLayout);
-        }
-        Ok(result)
-    }
-}
-
 impl StorageLibraryImportSpaceTrees {
+    const MAX_DEPTH: u64 = 20;
     const SERIAL_BYTES: u64 = 9;
     const UUID_BYTES: u64 = 36;
     const LOCATION_BYTES: u64 = 7;
@@ -121,16 +166,31 @@ impl StorageLibraryImportSpaceTrees {
         + 5 * 8
         + Self::LOCATION_BYTES;
 
+    fn touched_pages(count: u64) -> Result<u64, StorageLibraryError> {
+        StorageLibraryImportSpace::add(
+            StorageLibraryImportSpace::mul(
+                StorageLibraryImportSpace::mul(count, Self::MAX_DEPTH)?,
+                Self::OLD_SIBLINGS + 1,
+            )?,
+            count,
+        )
+    }
+
+    fn probe_limit(count: u64) -> Result<u64, StorageLibraryError> {
+        if count == 0 {
+            return Err(StorageLibraryError::ImportLayout);
+        }
+        Self::touched_pages(count)
+    }
+
     fn include(
         &mut self,
-        tree: StorageLibraryImportSpaceTree,
+        cardinality: StorageLibraryImportSpaceEnumCardinality,
         payload: StorageLibraryImportSpacePayload,
         page: u64,
         count: u64,
     ) -> Result<(), StorageLibraryError> {
-        let depth = StorageLibraryImportSpace::add(tree.depth, count.saturating_sub(1))?
-            .min(StorageLibraryImportSpaceTree::MAX_DEPTH);
-        let balances = StorageLibraryImportSpace::mul(count, depth)?;
+        let balances = StorageLibraryImportSpace::mul(count, Self::MAX_DEPTH)?;
         let overflow = payload.overflow(page, count)?;
         let allocations = StorageLibraryImportSpace::add(
             StorageLibraryImportSpace::add(
@@ -139,16 +199,23 @@ impl StorageLibraryImportSpaceTrees {
             )?,
             overflow,
         )?;
-        let records = StorageLibraryImportSpace::add(tree.records, count)?;
-        let structural = payload.kind.structural_pages(records)?;
-        let additional = allocations.min(StorageLibraryImportSpace::add(structural, overflow)?);
-        self.additional_pages = StorageLibraryImportSpace::add(self.additional_pages, additional)?;
-        let touched = StorageLibraryImportSpace::add(
-            StorageLibraryImportSpace::mul(balances, Self::OLD_SIBLINGS + 1)?,
-            count,
-        )?;
-        self.old_tree_pages =
-            StorageLibraryImportSpace::add(self.old_tree_pages, tree.pages.min(touched))?;
+        let touched = Self::touched_pages(count)?;
+        let old = match cardinality {
+            StorageLibraryImportSpaceEnumCardinality::Exact(records) => {
+                payload.kind.structural_pages(records)?.min(touched)
+            }
+            StorageLibraryImportSpaceEnumCardinality::AtLeast(minimum) => {
+                if minimum < touched {
+                    return Err(StorageLibraryError::ImportLayout);
+                }
+                touched
+            }
+        };
+        let incoming =
+            StorageLibraryImportSpace::add(payload.kind.structural_pages(count)?, overflow)?;
+        self.new_page_budget =
+            StorageLibraryImportSpace::add(self.new_page_budget, allocations.min(incoming))?;
+        self.old_tree_pages = StorageLibraryImportSpace::add(self.old_tree_pages, old)?;
         self.allocator_operations = StorageLibraryImportSpace::add(
             self.allocator_operations,
             StorageLibraryImportSpace::add(
@@ -163,16 +230,23 @@ impl StorageLibraryImportSpaceTrees {
         transaction: &Transaction<'_>,
         name: &str,
         footprint: StorageImportSessionCommitFootprint,
+        check: &mut impl FnMut() -> Result<(), StorageImportSessionError>,
     ) -> Result<StorageLibraryImportSpacePayload, StorageLibraryError> {
+        check()?;
         let mut statement = transaction.prepare("SELECT cid, name FROM pragma_index_xinfo(?1)")?;
+        check()?;
         let mut rows = statement.query([name])?;
         let mut columns = 0_u64;
         let mut fixed = 0_u64;
         let mut variable = false;
-        while let Some(row) = rows.next()? {
+        loop {
+            check()?;
+            let Some(row) = rows.next()? else {
+                break;
+            };
             let cid: i64 = row.get(0)?;
-            let name: Option<String> = row.get(1)?;
-            let bytes = match name.as_deref() {
+            let name = row.get_ref(1)?.as_str_or_null()?;
+            let bytes = match name {
                 None if cid == -1 => 8,
                 Some("id" | "game_id" | "folder_id") => Self::UUID_BYTES,
                 Some("location") => Self::LOCATION_BYTES,
@@ -221,30 +295,44 @@ impl StorageLibraryImportSpaceTrees {
         )
     }
 
-    pub(super) fn bound(
+    pub(super) fn plan_budget(
         transaction: &Transaction<'_>,
         footprint: StorageImportSessionCommitFootprint,
         page: u64,
+        cancellation: &StorageImportSessionCancellation,
     ) -> Result<Self, StorageLibraryError> {
-        let mut bound = Self {
-            additional_pages: 0,
+        Self::plan_budget_checked(transaction, footprint, page, &mut || cancellation.check())
+    }
+
+    fn plan_budget_checked(
+        transaction: &Transaction<'_>,
+        footprint: StorageImportSessionCommitFootprint,
+        page: u64,
+        check: &mut impl FnMut() -> Result<(), StorageImportSessionError>,
+    ) -> Result<Self, StorageLibraryError> {
+        check()?;
+        let limit = Self::probe_limit(footprint.count())?;
+        let documents =
+            StorageLibraryImportSpaceEnumTable::Documents.probe(transaction, limit, check)?;
+        let entries =
+            StorageLibraryImportSpaceEnumTable::Entries.probe(transaction, limit, check)?;
+        let mut budget = Self {
+            new_page_budget: 0,
             old_tree_pages: 0,
             allocator_operations: 0,
+            #[cfg(test)]
+            inventory_vm_steps: StorageLibraryImportSpace::add(
+                documents.inventory_vm_steps,
+                entries.inventory_vm_steps,
+            )?,
         };
-        for (name, total, fixed) in [
-            ("documents", footprint.body_bytes(), Self::DOCUMENT_FIXED),
-            (
-                "library_entries",
-                footprint.projection_bytes(),
-                Self::ENTRY_FIXED,
-            ),
+        for (probe, total, fixed) in [
+            (&documents, footprint.body_bytes(), Self::DOCUMENT_FIXED),
+            (&entries, footprint.projection_bytes(), Self::ENTRY_FIXED),
         ] {
-            bound.include(
-                StorageLibraryImportSpaceTree::read(
-                    transaction,
-                    name,
-                    StorageLibraryImportSpaceEnumTreeKind::RowidTable,
-                )?,
+            check()?;
+            budget.include(
+                probe.cardinality,
                 StorageLibraryImportSpacePayload::new(
                     total,
                     footprint.largest_frame_bytes(),
@@ -256,21 +344,33 @@ impl StorageLibraryImportSpaceTrees {
                 footprint.count(),
             )?;
         }
-        let mut statement = transaction.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name IN ('documents', 'library_entries')")?;
+        check()?;
+        let mut statement = transaction.prepare("SELECT name, tbl_name FROM sqlite_schema WHERE type = 'index' AND tbl_name IN ('documents', 'library_entries')")?;
+        check()?;
         let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(0)?;
-            bound.include(
-                StorageLibraryImportSpaceTree::read(
-                    transaction,
-                    &name,
-                    StorageLibraryImportSpaceEnumTreeKind::Index,
-                )?,
-                Self::index_payload(transaction, &name, footprint)?,
+        loop {
+            check()?;
+            let Some(row) = rows.next()? else {
+                break;
+            };
+            let name = row.get_ref(0)?.as_str()?;
+            let table = StorageLibraryImportSpaceEnumTable::from_name(row.get_ref(1)?.as_str()?)?;
+            let cardinality = match table {
+                StorageLibraryImportSpaceEnumTable::Documents => documents.cardinality,
+                StorageLibraryImportSpaceEnumTable::Entries => entries.cardinality,
+            };
+            budget.include(
+                cardinality,
+                Self::index_payload(transaction, name, footprint, check)?,
                 page,
                 footprint.count(),
             )?;
         }
-        Ok(bound)
+        check()?;
+        Ok(budget)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/storage/library_import_planning_work.rs"]
+mod planning_work_tests;

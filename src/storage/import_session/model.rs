@@ -839,6 +839,7 @@ pub trait StorageImportSessionRepository: Send + Sync + RefUnwindSafe + 'static 
         &self,
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: StorageImportSessionCancellation,
     ) -> StorageImportSessionRepositoryFuture<'_, u64>;
     fn commit_import(
         &self,

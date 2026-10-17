@@ -1467,31 +1467,42 @@ fn repeated_hidden_frames_do_not_create_an_interruption_or_repaint_loop()
 }
 
 #[test]
-fn games_workspace_and_missing_bound_window_cannot_acknowledge_ready()
+fn non_puzzle_workspaces_and_missing_bound_window_cannot_acknowledge_ready()
 -> DesktopNativePuzzleWindowTestResult {
     let mut fixture = DesktopNativePuzzleWindowFixture::new()?;
     assert_eq!(
         fixture.presentation.workspace(),
         PresentationAppEnumWorkspace::Games
     );
-    fixture.adapter.report_readiness(
-        DesktopNativePuzzleWindowFrame {
-            world: &fixture.world,
-            graphics_ready: true,
-            rendered_board: None,
-        },
-        &mut fixture.presentation,
-        &fixture.application.port(),
-    )?;
-    assert_eq!(
+    fixture
+        .presentation
+        .mount_library(DesktopMessagesEntityId::new());
+    for workspace in [
+        PresentationAppEnumWorkspace::Games,
+        PresentationAppEnumWorkspace::Library,
+    ] {
         fixture
-            .adapter
-            .readiness
-            .as_ref()
-            .ok_or("missing readiness")?
-            .value,
-        PuzzleTimerEnumReadiness::Hidden
-    );
+            .presentation
+            .select_workspace(workspace, &fixture.application.port())?;
+        fixture.adapter.report_readiness(
+            DesktopNativePuzzleWindowFrame {
+                world: &fixture.world,
+                graphics_ready: true,
+                rendered_board: None,
+            },
+            &mut fixture.presentation,
+            &fixture.application.port(),
+        )?;
+        assert_eq!(
+            fixture
+                .adapter
+                .readiness
+                .as_ref()
+                .ok_or("missing readiness")?
+                .value,
+            PuzzleTimerEnumReadiness::Hidden
+        );
+    }
     assert!(fixture.world.despawn(fixture.window));
     assert!(matches!(
         fixture.adapter.update(

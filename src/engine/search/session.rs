@@ -104,6 +104,7 @@ pub struct EngineSearchSessionSnapshot {
     cancellation: EngineSearchSessionEnumCancellation,
     lines: Vec<Arc<EngineAnalysisLine>>,
     latest_update: Option<Arc<EngineAnalysisLine>>,
+    primary_evaluation: Option<Arc<EngineAnalysisLine>>,
 }
 
 impl EngineSearchSessionSnapshot {
@@ -118,6 +119,9 @@ impl EngineSearchSessionSnapshot {
     }
     pub fn latest_update(&self) -> Option<&EngineAnalysisLine> {
         self.latest_update.as_deref()
+    }
+    pub fn primary_evaluation(&self) -> Option<&Arc<EngineAnalysisLine>> {
+        self.primary_evaluation.as_ref()
     }
 }
 
@@ -161,6 +165,7 @@ pub enum EngineSearchSessionEnumEvent {
 struct EngineSearchSessionAnalysis {
     candidates: BTreeMap<NonZeroU32, Arc<EngineAnalysisLine>>,
     latest: Option<Arc<EngineAnalysisLine>>,
+    primary_evaluation: Option<Arc<EngineAnalysisLine>>,
     limit: NonZeroU32,
     next_publication: Instant,
     dirty: bool,
@@ -172,6 +177,7 @@ impl EngineSearchSessionAnalysis {
         Ok(Self {
             candidates: BTreeMap::new(),
             latest: None,
+            primary_evaluation: None,
             limit,
             next_publication: started_at
                 .checked_add(Self::CADENCE)
@@ -185,6 +191,9 @@ impl EngineSearchSessionAnalysis {
             return Ok(());
         };
         let line = Arc::new(line);
+        if line.score().is_some() && line.rank().is_none_or(|rank| rank == NonZeroU32::MIN) {
+            self.primary_evaluation = Some(Arc::clone(&line));
+        }
         if line.score().is_some() && line.variation().is_some() {
             let rank = line.rank().unwrap_or(NonZeroU32::MIN);
             if rank > self.limit {
@@ -207,6 +216,7 @@ impl EngineSearchSessionAnalysis {
             cancellation,
             lines: self.candidates.values().map(Arc::clone).collect(),
             latest_update: self.latest.as_ref().map(Arc::clone),
+            primary_evaluation: self.primary_evaluation.as_ref().map(Arc::clone),
         }
     }
 
@@ -682,3 +692,4 @@ impl<P: EngineProcess> EngineSearchSession<P> {
         }
     }
 }
+pub mod persistence;

@@ -159,6 +159,8 @@ fn deleting_a_branch_keeps_siblings_ordered_and_rejects_root_deletion()
 fn move_identifiers_reject_nil_and_noncanonical_external_strings()
 -> Result<(), Box<dyn std::error::Error>> {
     let id = GameMoveId::from_str("123e4567-e89b-42d3-a456-426614174000")?;
+    assert_eq!(GameMoveId::try_from(id.as_uuid())?, id);
+    assert!(GameMoveId::try_from(uuid::Uuid::nil()).is_err());
     assert_eq!(
         serde_json::from_str::<GameMoveId>(&serde_json::to_string(&id)?)?,
         id

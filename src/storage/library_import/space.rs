@@ -3,7 +3,9 @@ mod trees;
 
 use rusqlite::Transaction;
 
-use crate::storage::import_session::StorageImportSessionCommitFootprint;
+use crate::storage::import_session::{
+    StorageImportSessionCancellation, StorageImportSessionCommitFootprint,
+};
 use crate::storage::library_import::space::layout::StorageLibraryImportSpaceLayout;
 use crate::storage::library_import::space::trees::StorageLibraryImportSpaceTrees;
 use crate::storage::library_repository::StorageLibraryError;
@@ -54,29 +56,36 @@ impl StorageLibraryImportSpace {
     pub(crate) fn plan(
         transaction: &Transaction<'_>,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: &StorageImportSessionCancellation,
     ) -> Result<Self, StorageLibraryError> {
-        let layout = StorageLibraryImportSpaceLayout::read(transaction)?;
-        let growth = StorageLibraryImportSpaceTrees::bound(transaction, footprint, layout.page)?;
+        cancellation.check()?;
+        let layout = StorageLibraryImportSpaceLayout::read(transaction, cancellation)?;
+        let budget = StorageLibraryImportSpaceTrees::plan_budget(
+            transaction,
+            footprint,
+            layout.page,
+            cancellation,
+        )?;
         let page_ceiling =
-            Self::add(layout.pages, growth.additional_pages)?.min(Self::SQLITE_MAX_PAGES);
+            Self::add(layout.pages, budget.new_page_budget)?.min(Self::SQLITE_MAX_PAGES);
         let additional_pages = page_ceiling.saturating_sub(layout.pages);
+        cancellation.check()?;
         let free = u64::try_from(transaction.pragma_query_value(
             None,
             "freelist_count",
             |row| row.get::<_, i64>(0),
         )?)?;
         let allocator_dirty = free.min(Self::mul(
-            growth.allocator_operations,
+            budget.allocator_operations,
             Self::FREELIST_OPERATION_PAGES,
         )?);
         let old_dirty = if layout.has_temporary_triggers {
             layout.pages
         } else {
             Self::add(
-                Self::add(growth.old_tree_pages, allocator_dirty)?,
+                Self::add(budget.old_tree_pages, allocator_dirty)?,
                 Self::HEADER_AND_CATALOG_PAGES,
             )?
-            .min(layout.pages)
         };
         let dirty = Self::add(old_dirty, additional_pages)?;
         let frame_bytes = Self::add(layout.page, Self::WAL_FRAME_HEADER_BYTES)?;
@@ -88,7 +97,12 @@ impl StorageLibraryImportSpace {
         let wal = wal_high_water.saturating_sub(layout.wal);
         let shm = Self::shm_bytes(wal_frames)?.saturating_sub(layout.shm);
         let main = Self::mul(page_ceiling, layout.page)?.saturating_sub(layout.main);
-        let statement_journal = Self::mul(dirty, Self::add(layout.page, 4)?)?;
+        let statement_journal = if layout.has_temporary_triggers {
+            Self::mul(dirty, Self::add(layout.page, 4)?)?
+        } else {
+            0
+        };
+        cancellation.check()?;
         Ok(Self {
             bytes: Self::add(Self::add(main, wal)?, Self::add(shm, statement_journal)?)?,
             page_ceiling,

@@ -1,6 +1,8 @@
 #[path = "scene/compatibility.rs"]
 mod scene_compatibility;
 
+#[path = "scene/editor.rs"]
+mod scene_editor;
 #[path = "scene/picking.rs"]
 mod scene_picking;
 #[path = "scene/renderer.rs"]

@@ -196,7 +196,7 @@ impl StorageLibraryPlyInterval {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StorageLibraryQueryOptions {
     pub location: StorageTrashEnumLocation,
     pub white: StorageLibraryEnumFilter<GameMetadataText>,

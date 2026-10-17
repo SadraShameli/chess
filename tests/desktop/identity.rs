@@ -68,3 +68,21 @@ fn stale_revisions_are_not_accepted() -> Result<(), Box<dyn std::error::Error>> 
     );
     Ok(())
 }
+#[test]
+fn editor_admission_gateways_preserve_typed_identity_and_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let id = chess::board::editor::BoardEditorDraftId::try_from(uuid::Uuid::from_u128(200))?;
+    let other = chess::board::editor::BoardEditorDraftId::try_from(uuid::Uuid::from_u128(201))?;
+    assert_ne!(
+        chess::desktop::messages::DesktopMessagesEntityId::for_editor(id),
+        chess::desktop::messages::DesktopMessagesEntityId::for_editor(other)
+    );
+    assert_eq!(
+        chess::desktop::identity::DesktopRevision::for_editor(
+            chess::board::editor::BoardEditorDraftRevision::new(u64::MAX)
+        )
+        .value(),
+        u64::MAX
+    );
+    Ok(())
+}

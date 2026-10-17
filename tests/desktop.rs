@@ -24,6 +24,8 @@ mod desktop_dialogs_proxy;
 mod desktop_identity;
 #[path = "desktop/installation.rs"]
 mod desktop_installation;
+#[path = "desktop/library_routing.rs"]
+mod desktop_library_routing;
 #[path = "desktop/native_bootstrap.rs"]
 mod desktop_native_bootstrap;
 #[path = "desktop/native_host.rs"]
@@ -81,3 +83,10 @@ mod game_transition_fixture;
 mod desktop_game_supervisor_storage;
 #[path = "desktop/local_play.rs"]
 mod desktop_local_play;
+
+#[path = "desktop/application_action.rs"]
+mod desktop_application_action;
+#[path = "desktop/coordinator_editor.rs"]
+mod desktop_coordinator_editor;
+#[path = "desktop/editor_commands/write_recovery_review.rs"]
+mod desktop_editor_commands_write_recovery_review;

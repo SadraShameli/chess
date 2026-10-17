@@ -268,6 +268,8 @@ impl NativeHostLifecycleDriver {
             Some(
                 DesktopMessagesEnumResult::Value { .. }
                 | DesktopMessagesEnumResult::Failure(_)
+                | DesktopMessagesEnumResult::LibraryFailure(_)
+                | DesktopMessagesEnumResult::EditorFailure(_)
                 | DesktopMessagesEnumResult::Cancelled
                 | DesktopMessagesEnumResult::Stopped
                 | DesktopMessagesEnumResult::Paused

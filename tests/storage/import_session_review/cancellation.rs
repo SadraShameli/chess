@@ -8,6 +8,7 @@ struct StorageImportSessionReviewCancellationObservation {
     completed_before_release: bool,
     read_dropped_before_release: bool,
     read_active_before_release: bool,
+    estimate_token_cancelled: Option<bool>,
 }
 
 impl StorageImportSessionReviewCancellationObservation {
@@ -40,6 +41,13 @@ impl StorageImportSessionReviewCancellationObservation {
                 completed_before_release: result.as_ref().is_some_and(Result::is_ok),
                 read_dropped_before_release: fixture.repository.gate.was_cancelled(),
                 read_active_before_release: fixture.repository.gate.is_active(),
+                estimate_token_cancelled: fixture
+                    .repository
+                    .estimate_token
+                    .lock()
+                    .map_err(|_poisoned| "poisoned estimate token")?
+                    .as_ref()
+                    .map(|token| token.is_cancelled()),
             };
             fixture.repository.gate.release();
             let settlement = match result {
@@ -104,5 +112,10 @@ async fn review_estimate_wait_cancels_before_repository_release()
     )
     .await?;
     assert!(observation.was_cancelled(), "{observation:?}");
+    assert_eq!(
+        observation.estimate_token_cancelled,
+        Some(true),
+        "{observation:?}"
+    );
     Ok(())
 }

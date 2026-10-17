@@ -379,6 +379,68 @@ async fn unchanged_annotations_reuse_the_existing_publication_when_no_bytes_rema
 }
 
 #[tokio::test]
+async fn unchanged_notes_and_markings_do_not_require_an_available_wall_clock()
+-> DesktopAnnotationOwnerTestResult {
+    let fixture = DesktopAnnotationOwnerFixture::new().await?;
+    let mut owner = fixture.open(100).await?;
+    fixture.notes(&mut owner, "already saved").await?;
+    let marking = GameMoveNodeMarking::circle(GameEnumMarkingColor::Green, "e4".parse()?);
+    fixture
+        .execute(
+            &mut owner,
+            DesktopAnnotationCommandsEnumAction::SaveMarkings {
+                markings: vec![marking],
+            },
+        )
+        .await?;
+    fixture.save(&mut owner, false).await?;
+    let context = owner.snapshot()?.context();
+    let calls = fixture.wall.calls.load(Ordering::SeqCst);
+    fixture.wall.unavailable.store(true, Ordering::SeqCst);
+    let mut results = Vec::new();
+    for action in [
+        DesktopAnnotationCommandsEnumAction::SaveNotesAndNags {
+            notes: "already saved".to_owned(),
+            nags: vec![GameMoveNodeNag::new(1)],
+        },
+        DesktopAnnotationCommandsEnumAction::SaveMarkings {
+            markings: vec![marking],
+        },
+    ] {
+        results.push(
+            fixture
+                .execute(&mut owner, action)
+                .await
+                .and_then(|result| match result {
+                    DesktopAnnotationCommandsEnumResult::Edited { change, snapshot } => {
+                        Ok((change, snapshot.context()))
+                    }
+                    DesktopAnnotationCommandsEnumResult::Snapshot(_)
+                    | DesktopAnnotationCommandsEnumResult::Tree(_)
+                    | DesktopAnnotationCommandsEnumResult::Children(_)
+                    | DesktopAnnotationCommandsEnumResult::Variation(_)
+                    | DesktopAnnotationCommandsEnumResult::Scope(_)
+                    | DesktopAnnotationCommandsEnumResult::PendingProjection { .. } => {
+                        Err("unchanged annotation returned another result kind".into())
+                    }
+                }),
+        );
+    }
+    let observed_calls = fixture.wall.calls.load(Ordering::SeqCst);
+    let dirty = owner.status().is_dirty();
+    let after = owner.snapshot()?.context();
+    drop(owner);
+    fixture.close().await?;
+    assert!(!dirty);
+    assert_eq!(after, context);
+    for result in results {
+        assert_eq!(result?, (GameAnnotationsEnumChange::Unchanged, context));
+    }
+    assert_eq!(observed_calls, calls);
+    Ok(())
+}
+
+#[tokio::test]
 async fn committed_projection_byte_refusal_retains_the_real_receipt_for_retry()
 -> DesktopAnnotationOwnerTestResult {
     let fixture = DesktopAnnotationOwnerFixture::new().await?;

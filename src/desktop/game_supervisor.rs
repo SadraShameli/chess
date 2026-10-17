@@ -599,6 +599,7 @@ pub struct DesktopGameSupervisor<F: DesktopGameSupervisorEngineFactory, C, P> {
     save_failure_at: Option<ClockInstant>,
     content_failure: Option<Arc<DesktopGameSupervisorError>>,
     quit_ready: bool,
+    last_storage_acknowledgment: Option<GameStorageReceipt>,
 }
 
 impl<F, C, P> DesktopGameSupervisor<F, C, P>
@@ -671,6 +672,7 @@ where
                 proof: options.proof,
                 factory: options.factory,
                 factory_shutdown_complete: false,
+                last_storage_acknowledgment: None,
                 engine: None,
                 active_search: None,
                 search_request: computed.search,
@@ -1709,6 +1711,7 @@ where
             Ok(receipt) => {
                 self.storage_revision = receipt.storage_revision();
                 let status = self.session.acknowledge(receipt)?;
+                self.last_storage_acknowledgment = Some(receipt);
                 if receipt.game_revision() == self.context().revision() {
                     self.save_failure = None;
                     self.save_failure_at = None;
@@ -1901,6 +1904,10 @@ where
         self.engine = None;
         self.active_search = None;
         Ok(())
+    }
+
+    pub const fn last_storage_acknowledgment(&self) -> Option<GameStorageReceipt> {
+        self.last_storage_acknowledgment
     }
 
     pub fn is_shutdown_complete(&self) -> bool {

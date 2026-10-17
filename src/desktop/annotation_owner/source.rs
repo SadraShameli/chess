@@ -23,6 +23,7 @@ use crate::game::storage_repository::{
     GameStorageContentEdit, GameStorageEnumEditCause, GameStorageRevision,
     GameStorageWallTimeProvider,
 };
+use crate::game::tree::GameTreePreparedAnnotations;
 use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRecord};
 
@@ -35,6 +36,40 @@ struct DesktopAnnotationOwnerSourceEdit {
     revision: GameRevision,
     generation: DesktopGameEditorGeneration,
     timestamp: GameLibraryOrganizationTimestamp,
+}
+
+struct DesktopAnnotationOwnerSourceAnnotationsApplied {
+    change: GameAnnotationsEnumChange,
+    edit: Option<DesktopAnnotationOwnerSourceEdit>,
+}
+
+impl DesktopAnnotationOwnerSourceEdit {
+    fn new(
+        revision: GameRevision,
+        generation: DesktopGameEditorGeneration,
+        wall_time: &dyn GameStorageWallTimeProvider,
+    ) -> Result<Self, DesktopAnnotationOwnerError> {
+        Ok(Self {
+            revision: revision.next()?,
+            generation: generation.next()?,
+            timestamp: wall_time.now()?,
+        })
+    }
+
+    fn commit_annotations(
+        prepared: GameTreePreparedAnnotations<'_>,
+        current: (GameRevision, DesktopGameEditorGeneration),
+        wall_time: &dyn GameStorageWallTimeProvider,
+    ) -> Result<DesktopAnnotationOwnerSourceAnnotationsApplied, DesktopAnnotationOwnerError> {
+        let edit = match prepared.change() {
+            GameAnnotationsEnumChange::Changed => Some(Self::new(current.0, current.1, wall_time)?),
+            GameAnnotationsEnumChange::Unchanged => None,
+        };
+        Ok(DesktopAnnotationOwnerSourceAnnotationsApplied {
+            change: prepared.commit(),
+            edit,
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -272,11 +307,17 @@ impl DesktopAnnotationOwnerSource {
         &self,
         wall_time: &dyn GameStorageWallTimeProvider,
     ) -> Result<DesktopAnnotationOwnerSourceEdit, DesktopAnnotationOwnerError> {
-        Ok(DesktopAnnotationOwnerSourceEdit {
-            revision: self.revision.next()?,
-            generation: self.generation.next()?,
-            timestamp: wall_time.now()?,
-        })
+        DesktopAnnotationOwnerSourceEdit::new(self.revision, self.generation, wall_time)
+    }
+
+    fn accept_annotations(
+        &mut self,
+        applied: DesktopAnnotationOwnerSourceAnnotationsApplied,
+    ) -> Result<DesktopAnnotationCommandsEnumResult, DesktopAnnotationOwnerError> {
+        if let Some(edit) = applied.edit {
+            self.accept(edit, GameStorageEnumEditCause::Annotation, applied.change);
+        }
+        self.edited(applied.change)
     }
 
     fn accept(
@@ -355,20 +396,24 @@ impl DesktopAnnotationOwnerSource {
                 self.publish_snapshot()
             }
             DesktopAnnotationCommandsEnumAction::SaveNotesAndNags { notes, nags } => {
-                let edit = self.preflight(wall_time)?;
+                let current = (self.revision, self.generation);
                 let selected = self.selected;
-                let change = self
+                let prepared = self
                     .notation_mut()?
-                    .save_notes_and_nags(selected, notes, nags)?;
-                self.accept(edit, GameStorageEnumEditCause::Annotation, change);
-                self.edited(change)
+                    .prepare_notes_and_nags(selected, notes, nags)?;
+                let applied = DesktopAnnotationOwnerSourceEdit::commit_annotations(
+                    prepared, current, wall_time,
+                )?;
+                self.accept_annotations(applied)
             }
             DesktopAnnotationCommandsEnumAction::SaveMarkings { markings } => {
-                let edit = self.preflight(wall_time)?;
+                let current = (self.revision, self.generation);
                 let selected = self.selected;
-                let change = self.notation_mut()?.save_markings(selected, markings)?;
-                self.accept(edit, GameStorageEnumEditCause::Annotation, change);
-                self.edited(change)
+                let prepared = self.notation_mut()?.prepare_markings(selected, markings)?;
+                let applied = DesktopAnnotationOwnerSourceEdit::commit_annotations(
+                    prepared, current, wall_time,
+                )?;
+                self.accept_annotations(applied)
             }
             DesktopAnnotationCommandsEnumAction::AppendStudyBranch { node, movement } => {
                 let edit = self.preflight(wall_time)?;

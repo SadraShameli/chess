@@ -1,5 +1,5 @@
 use std::future::{Future, poll_fn};
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -191,6 +191,7 @@ async fn coalescing_orders_whole_ranked_lines_without_merging_optional_statistic
     provider
         .emit("info depth 9 multipv 1 score cp 40 lowerbound pv e2e4")
         .await?;
+    provider.emit("info multipv 2 score cp -5").await?;
     provider.emit("info nodes 150 nps 1234").await?;
     let published = {
         let event = session.next_event(tag);
@@ -237,6 +238,17 @@ async fn coalescing_orders_whole_ranked_lines_without_merging_optional_statistic
     );
     assert_eq!(snapshot.lines()[0].nodes(), None);
     assert_eq!(snapshot.lines()[1].nodes(), Some(99));
+    let primary = snapshot
+        .primary_evaluation()
+        .ok_or("missing retained primary evaluation")?;
+    assert_eq!(primary.rank(), Some(NonZeroU32::MIN));
+    assert_eq!(
+        primary
+            .score()
+            .ok_or("missing retained primary score")?
+            .reported(),
+        EngineAnalysisEnumScore::Centipawns(40)
+    );
     assert_eq!(
         snapshot
             .latest_update()

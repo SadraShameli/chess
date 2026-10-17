@@ -85,6 +85,17 @@ impl TryFrom<String> for GameMoveId {
     }
 }
 
+impl TryFrom<Uuid> for GameMoveId {
+    type Error = GameIdentityError;
+
+    fn try_from(value: Uuid) -> Result<Self, Self::Error> {
+        if value.is_nil() {
+            return Err(GameIdentityError::Noncanonical);
+        }
+        Ok(Self(value))
+    }
+}
+
 impl From<GameMoveId> for String {
     fn from(value: GameMoveId) -> Self {
         value.0.to_string()

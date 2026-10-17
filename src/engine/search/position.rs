@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+use crate::board::enums::BoardEnumVariant;
 use crate::board::r#move::BoardMove;
 
 use crate::board::r#move::BoardMoveError;
@@ -32,10 +33,13 @@ impl EngineSearchPosition {
         initial: BoardPosition,
         history: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Result<Self, EngineSearchPositionError> {
-        let mut command = if initial == BoardPosition::standard() {
+        let fen = initial.fen();
+        let mut command = if initial.variant() == BoardEnumVariant::Standard
+            && fen == BoardPosition::standard().fen()
+        {
             "position startpos".to_owned()
         } else {
-            format!("position fen {}", initial.fen())
+            format!("position fen {fen}")
         };
         let mut current = initial.clone();
         let mut moves = Vec::new();

@@ -134,7 +134,7 @@ async fn dropped_puzzle_cleanup_retains_ownership_before_database_close()
         state.changed().await?;
     }
     let original = Instant::now() + Duration::from_secs(5);
-    let mut waiting = Box::pin(lifecycle.cleanup_puzzles(original));
+    let mut waiting = Box::pin(lifecycle.cleanup_feature_services(original));
     let was_pending =
         poll_fn(|context| Poll::Ready(waiting.as_mut().poll(context).is_pending())).await;
     drop(waiting);

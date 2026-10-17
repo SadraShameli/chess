@@ -3,9 +3,50 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use chess::board::enums::BoardEnumPieceKind;
 use chess::board::enums::BoardEnumVariant;
-use chess::board::position::BoardPosition;
+use chess::board::position::{BoardPosition, BoardPositionError};
 use chess::board::square::BoardSquare;
 use serde::Deserialize;
+
+#[test]
+fn standard_polyglot_keys_match_independent_start_and_e4_references()
+-> Result<(), Box<dyn std::error::Error>> {
+    let start = BoardPosition::standard();
+    assert_eq!(
+        start.standard_polyglot_key()?.value(),
+        0x463b_9618_1691_fc9c
+    );
+    assert_eq!(
+        start.play_uci("e2e4")?.standard_polyglot_key()?.value(),
+        0x823c_9b50_fd11_4196,
+    );
+    Ok(())
+}
+
+#[test]
+fn polyglot_uses_pseudo_legal_en_passant_without_changing_repetition_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let pinned = BoardPosition::from_fen(
+        "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        BoardEnumVariant::Standard,
+    )?;
+    let absent = BoardPosition::from_fen(
+        "k3r3/8/8/3pP3/8/8/8/4K3 w - - 17 24",
+        BoardEnumVariant::Standard,
+    )?;
+    assert_eq!(pinned.identity(), absent.identity());
+    assert_ne!(
+        pinned.standard_polyglot_key()?,
+        absent.standard_polyglot_key()?
+    );
+    let randomized = BoardPosition::from_fen(&pinned.fen(), BoardEnumVariant::Chess960)?;
+    assert!(matches!(
+        randomized.standard_polyglot_key(),
+        Err(BoardPositionError::UnsupportedPolyglotVariant(
+            BoardEnumVariant::Chess960
+        ))
+    ));
+    Ok(())
+}
 
 #[derive(Deserialize)]
 struct BoardPositionFixture {

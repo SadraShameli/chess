@@ -4,6 +4,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[path = "library_import_populated_review.rs"]
+mod populated_review;
+
 use crate::game::enums::GameId;
 use crate::storage::import_session::{
     StorageImportSession, StorageImportSessionEnumCommitOutcome, StorageImportSessionEnumVolume,
@@ -162,6 +165,7 @@ impl StorageLibraryImportSpaceReview {
     const RETAINED_PGN: &str = "[White \"Retained\"]\n\n1. d4 {preserved α annotation} *";
     const IMPORT_PGN: &str = "[White \"Space review\"]\n\n1. e4 {tiny import} *";
     const BALLAST_BYTES: usize = 2 * 1024 * 1024;
+    const TINY_IMPORT_ALLOWANCE_BYTES: u64 = 512 * 1024;
     const BALLAST_ID: uuid::Uuid = uuid::Uuid::from_u128(92_001);
 
     async fn new() -> StorageLibraryImportTestResult<Self> {
@@ -799,7 +803,8 @@ async fn cancelled_imports_with_real_wal_spills_fit_the_confirmed_allowance()
 async fn checkpointed_unrelated_overflow_does_not_refuse_a_sufficient_import_allowance()
 -> StorageLibraryImportTestResult {
     let baseline = StorageLibraryImportSpaceReview::new().await?;
-    let allowance = baseline.baseline_allowance().await?;
+    let baseline_allowance = baseline.baseline_allowance().await?;
+    let allowance = StorageLibraryImportSpaceReview::TINY_IMPORT_ALLOWANCE_BYTES;
     baseline
         .fixture
         .filesystem
@@ -809,6 +814,7 @@ async fn checkpointed_unrelated_overflow_does_not_refuse_a_sufficient_import_all
     assert!(baseline_growth <= allowance);
     baseline.assert_retained(false).await?;
     baseline.fixture.close().await?;
+    assert!(baseline_allowance <= allowance);
 
     let control = StorageLibraryImportSpaceReview::new().await?;
     control.add_checkpointed_ballast().await?;

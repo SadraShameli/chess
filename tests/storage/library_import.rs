@@ -235,8 +235,10 @@ impl StorageImportSessionRepository for StorageLibraryImportTestRepository {
         &self,
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: StorageImportSessionCancellation,
     ) -> StorageImportSessionRepositoryFuture<'_, u64> {
-        self.actual.estimate_commit_space(snapshot, footprint)
+        self.actual
+            .estimate_commit_space(snapshot, footprint, cancellation)
     }
     fn commit_import(
         &self,
@@ -1537,5 +1539,78 @@ async fn observed_recovery_finding_revokes_previously_certified_actor_coverage()
             .is_adoption_complete()
     );
     drop(owner);
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn temporary_entry_fault_rolls_back_prior_rows_and_the_current_document()
+-> StorageLibraryImportTestResult {
+    let fixture = StorageLibraryImportTestFixture::new().await?;
+    fixture.certify().await?;
+    fixture.capture_page_limit().await?;
+    let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
+    session.prepare().await?;
+    let ids = fixture.ids(&mut session).await?;
+    let last = ids.last().ok_or("missing second fault game")?;
+    fixture.sql(&format!(
+        "CREATE TEMP TRIGGER import_entry_fault BEFORE INSERT ON library_entries WHEN NEW.game_id = '{}' BEGIN SELECT RAISE(ABORT, 'entry statement fault'); END",
+        last.as_uuid(),
+    )).await?;
+    let confirmation = session.freeze().await?;
+    let error = session
+        .commit(confirmation)
+        .await
+        .err()
+        .ok_or("expected entry statement fault")?;
+    assert!(
+        error.to_string().contains("entry statement fault"),
+        "{error}"
+    );
+    fixture.assert_missing(&ids).await?;
+    fixture.assert_page_limit_restored().await?;
+    assert_eq!(
+        fixture
+            .repository()
+            .snapshot()
+            .await?
+            .catalog_stamp()
+            .value(),
+        0
+    );
+    session.cancel_retained().await?;
+    drop(session);
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn a_cancelled_estimate_retains_actor_usability_and_the_prior_page_limit()
+-> StorageLibraryImportTestResult {
+    let fixture = StorageLibraryImportTestFixture::new().await?;
+    fixture.certify().await?;
+    fixture.capture_page_limit().await?;
+    let repository = fixture.repository();
+    let snapshot = repository.snapshot().await?;
+    let cancellation = StorageImportSessionCancellation::new();
+    cancellation.cancel();
+    let error = repository
+        .estimate_commit_space(
+            snapshot,
+            StorageImportSessionCommitFootprint {
+                count: 1,
+                bodies: 1024,
+                projections: 1024,
+                largest: 2048 + StorageImportSessionPreparedCommit::header_length()?,
+            },
+            cancellation,
+        )
+        .await
+        .err()
+        .ok_or("expected cancelled actor estimate")?;
+    assert!(error.to_string().contains("cancelled"), "{error}");
+    fixture.assert_page_limit_restored().await?;
+    assert_eq!(repository.snapshot().await?, snapshot);
+    let ids = fixture.committed("1. e4 *").await?;
+    assert_eq!(ids.len(), 1);
+    drop(repository);
     fixture.close().await
 }

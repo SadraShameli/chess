@@ -234,6 +234,7 @@ pub struct DesktopAnnotationOwner {
     snapshot: Option<DesktopGameEditorPublication>,
     publishing: Option<DesktopGameEditorContext>,
     accepted: Option<GameStorageContentEdit>,
+    accepted_receipt: Option<DesktopApplicationReceipt>,
     durable: GameRevision,
     compute: Option<DesktopAnnotationOwnerCompute>,
     save: Option<DesktopAnnotationOwnerSave>,
@@ -260,6 +261,7 @@ impl DesktopAnnotationOwner {
             snapshot: None,
             publishing: None,
             accepted: None,
+            accepted_receipt: None,
             durable: GameRevision::ZERO,
             compute: None,
             save: None,
@@ -336,7 +338,14 @@ impl DesktopAnnotationOwner {
     ) -> Result<DesktopAnnotationCommandsEnumAdmission, DesktopAnnotationOwnerError> {
         let (receipt, expected, action) = command.into_parts();
         self.snapshot()?.context().check_expected(expected)?;
-        if receipt.is_cancellation_requested() {
+        let accepted_continuation =
+            matches!(action, DesktopAnnotationCommandsEnumAction::Checkpoint)
+                && self.status().is_dirty()
+                && self
+                    .accepted_receipt
+                    .as_ref()
+                    .is_some_and(|accepted| accepted.shares_outcome(&receipt));
+        if receipt.is_cancellation_requested() && !accepted_continuation {
             return Err(DesktopAnnotationOwnerError::Cancelled);
         }
         if matches!(action, DesktopAnnotationCommandsEnumAction::Snapshot) {
@@ -444,6 +453,7 @@ impl DesktopAnnotationOwner {
         &mut self,
         receipt: &DesktopApplicationReceipt,
     ) -> Result<DesktopAnnotationCommandsEnumResult, DesktopAnnotationOwnerError> {
+        let accepted_before = self.accepted;
         let pending = self
             .compute
             .as_ref()
@@ -472,6 +482,9 @@ impl DesktopAnnotationOwner {
         let retained_receipt = pending.receipt.clone();
         self.compute = None;
         let observation = self.refresh_observation();
+        if self.accepted != accepted_before {
+            self.accepted_receipt = Some(retained_receipt.clone());
+        }
         if self.publishing.is_some() {
             self.compute = Some(DesktopAnnotationOwnerCompute {
                 receipt: retained_receipt,

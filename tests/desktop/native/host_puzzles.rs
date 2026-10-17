@@ -296,6 +296,8 @@ impl DesktopNativeHostPuzzleFixture {
             services: DesktopNativeHostServices {
                 engine_panels: None,
                 puzzle_panel: None,
+                library_workspace: None,
+                editor: None,
                 puzzles,
                 port: application.port(),
                 wake,

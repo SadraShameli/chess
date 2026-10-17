@@ -107,6 +107,19 @@ fn empty_puzzle_workspace_never_falls_back_to_the_bootstrap_position()
             .fen(),
         initial
     );
+    app.mount_library(DesktopMessagesEntityId::new());
+    app.select_workspace(PresentationAppEnumWorkspace::Library, &port)?;
+    assert_eq!(app.workspace(), PresentationAppEnumWorkspace::Library);
+    assert!(app.board_snapshot().is_none());
+    assert!(app.game_snapshot().is_none());
+    assert!(!app.is_puzzle_input_ready());
+    app.select_workspace(PresentationAppEnumWorkspace::Games, &port)?;
+    assert_eq!(
+        app.board_snapshot()
+            .ok_or("missing restored Play board")?
+            .fen(),
+        initial
+    );
     Ok(())
 }
 

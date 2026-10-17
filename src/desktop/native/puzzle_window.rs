@@ -380,6 +380,9 @@ impl<P: DesktopPuzzleServiceProvider> DesktopNativePuzzleWindow<P> {
         }
         self.graphics_failed = graphics_failed;
         self.interruptions.admit(&self.provider, presentation);
+        if let Err(error) = presentation.synchronize_editor(application) {
+            presentation.report_failure(error);
+        }
         if let Err(error) = presentation.synchronize_puzzles(application) {
             presentation.report_failure(error);
         }
@@ -406,7 +409,7 @@ impl<P: DesktopPuzzleServiceProvider> DesktopNativePuzzleWindow<P> {
         self.interruptions.observe_concealment(&self.state.borrow());
         let readiness = if self.is_hidden(frame.world)?
             || self.interruptions.concealed.is_some()
-            || presentation.workspace() == PresentationAppEnumWorkspace::Games
+            || presentation.workspace() != PresentationAppEnumWorkspace::Puzzles
         {
             PuzzleTimerEnumReadiness::Hidden
         } else if synchronized {

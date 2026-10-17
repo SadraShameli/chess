@@ -10,7 +10,7 @@ use crate::game::enums::GameMoveId;
 use crate::game::move_node::{GameMoveNodeMarking, GameMoveNodeNag};
 use crate::game::storage_repository::GameStorageRevision;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DesktopAnnotationCommandsEnumAction {
     Snapshot,
     TreePage {

@@ -292,12 +292,24 @@ pub struct StorageLibraryRecovered {
     _memory: StorageLibraryMemory,
 }
 
+pub struct StorageLibrarySourceMemory {
+    _memory: StorageLibraryMemory,
+}
+
 impl StorageLibraryRecovered {
     pub fn record(&self) -> &StorageLibraryRecord {
         &self.record
     }
     pub fn into_record(self) -> StorageLibraryRecord {
         self.record
+    }
+    pub fn into_retained_record(self) -> (StorageLibraryRecord, StorageLibrarySourceMemory) {
+        (
+            self.record,
+            StorageLibrarySourceMemory {
+                _memory: self._memory,
+            },
+        )
     }
     pub const fn content_revision(&self) -> GameStorageRevision {
         self.content_revision

@@ -255,6 +255,9 @@ impl DesktopAnnotationOwner {
         let receipt = Arc::clone(saved);
         self.refresh_observation()?;
         self.durable = self.durable.max(covered);
+        if !self.status().is_dirty() {
+            self.accepted_receipt = None;
+        }
         self.save = None;
         self.failure = None;
         self.save_failed = false;

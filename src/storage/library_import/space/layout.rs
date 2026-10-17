@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rusqlite::Transaction;
 
-use crate::storage::import_session::StorageImportSessionError;
+use crate::storage::import_session::{StorageImportSessionCancellation, StorageImportSessionError};
 use crate::storage::library_import::space::StorageLibraryImportSpace;
 use crate::storage::library_repository::StorageLibraryError;
 
@@ -27,19 +27,34 @@ impl StorageLibraryImportSpaceLayout {
         }
     }
 
-    pub(super) fn read(transaction: &Transaction<'_>) -> Result<Self, StorageLibraryError> {
+    pub(super) fn read(
+        transaction: &Transaction<'_>,
+        cancellation: &StorageImportSessionCancellation,
+    ) -> Result<Self, StorageLibraryError> {
+        cancellation.check()?;
         let page = u64::try_from(
             transaction.pragma_query_value(None, "page_size", |row| row.get::<_, i64>(0))?,
         )?;
+        cancellation.check()?;
         let pages = u64::try_from(
             transaction.pragma_query_value(None, "page_count", |row| row.get::<_, i64>(0))?,
         )?;
+        cancellation.check()?;
         let auto_vacuum: u32 =
             transaction.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
+        cancellation.check()?;
         let journal: String =
             transaction.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+        cancellation.check()?;
         let encoding: String =
             transaction.pragma_query_value(None, "encoding", |row| row.get(0))?;
+        cancellation.check()?;
+        let foreign_keys: bool =
+            transaction.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+        cancellation.check()?;
+        let deferred_foreign_keys: bool =
+            transaction.pragma_query_value(None, "defer_foreign_keys", |row| row.get(0))?;
+        cancellation.check()?;
         let triggers: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('documents', 'library_entries', 'library_state'))",
             [],
@@ -50,10 +65,13 @@ impl StorageLibraryImportSpaceLayout {
             || auto_vacuum != 0
             || journal != "wal"
             || encoding != "UTF-8"
+            || !foreign_keys
+            || deferred_foreign_keys
             || triggers
         {
             return Err(StorageLibraryError::ImportLayout);
         }
+        cancellation.check()?;
         let path = transaction
             .path()
             .filter(|path| !path.is_empty())
@@ -69,9 +87,11 @@ impl StorageLibraryImportSpaceLayout {
         if header[20] != 0 {
             return Err(StorageLibraryError::ImportLayout);
         }
+        cancellation.check()?;
         let mut wal_path = OsString::from(path);
         wal_path.push("-wal");
         let wal = Self::length(Path::new(&wal_path))?;
+        cancellation.check()?;
         let mut shm_path = OsString::from(path);
         shm_path.push("-shm");
         let shm = Self::length(Path::new(&shm_path))?;
@@ -96,11 +116,13 @@ impl StorageLibraryImportSpaceLayout {
                 StorageLibraryImportSpace::WAL_FRAME_HEADER_BYTES,
             )?,
         )?;
+        cancellation.check()?;
         let has_temporary_triggers: bool = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE type = 'trigger')",
             [],
             |row| row.get(0),
         )?;
+        cancellation.check()?;
         Ok(Self {
             page,
             pages,

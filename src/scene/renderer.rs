@@ -18,8 +18,12 @@ use crate::board::enums::BoardEnumColor;
 use crate::board::piece::BoardPiece;
 use crate::board::position::BoardPosition;
 use crate::board::square::{BoardSquare, BoardSquareError};
+use crate::desktop::editor_commands::{
+    DesktopEditorCommandsContext, DesktopEditorCommandsSnapshot,
+};
 use crate::scene::assets::{SceneAssets, SceneAssetsNode};
 use crate::scene::camera::{SceneCamera, SceneCameraError, SceneCameraFrame};
+use crate::scene::editor::SceneEditorBinding;
 use crate::scene::enums::SceneEnumLifecycle;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport};
 
@@ -83,6 +87,7 @@ pub struct SceneRenderer {
     generation: SceneRendererGeneration,
     lifecycle: SceneEnumLifecycle,
     snapshot: Option<BoardPosition>,
+    editor_context: Option<DesktopEditorCommandsContext>,
     pieces: HashMap<BoardSquare, SceneRendererPiece>,
     entity_squares: HashMap<Entity, BoardSquare>,
 }
@@ -148,6 +153,7 @@ impl SceneRenderer {
             generation: SceneRendererGeneration::initial(),
             lifecycle: SceneEnumLifecycle::Initializing,
             snapshot: None,
+            editor_context: None,
             pieces: HashMap::default(),
             entity_squares: HashMap::default(),
         };
@@ -288,28 +294,58 @@ impl SceneRenderer {
         position: &BoardPosition,
     ) -> Result<bool, SceneRendererError> {
         self.require_renderable()?;
-        if self
-            .snapshot
-            .as_ref()
-            .is_some_and(|previous| previous.pieces().eq(position.pieces()))
+        if self.editor_context.is_none()
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|previous| previous.pieces().eq(position.pieces()))
         {
             return Ok(false);
         }
+        self.apply_pieces(world, position.pieces())?;
+        self.snapshot = Some(position.clone());
+        self.editor_context = None;
+        Ok(true)
+    }
+
+    pub fn editor_binding(&self) -> Option<SceneEditorBinding> {
+        self.editor_context
+            .map(|context| SceneEditorBinding::new(context, self.generation))
+    }
+
+    pub fn apply_editor(
+        &mut self,
+        world: &mut World,
+        snapshot: &DesktopEditorCommandsSnapshot,
+    ) -> Result<bool, SceneRendererError> {
+        self.require_renderable()?;
+        if self.editor_context == Some(snapshot.context()) {
+            return Ok(false);
+        }
+        self.apply_pieces(world, snapshot.draft().fields().pieces())?;
+        self.snapshot = None;
+        self.editor_context = Some(snapshot.context());
+        Ok(true)
+    }
+
+    fn apply_pieces(
+        &mut self,
+        world: &mut World,
+        pieces: impl Iterator<Item = (BoardSquare, BoardPiece)>,
+    ) -> Result<(), SceneRendererError> {
+        let pieces = pieces.collect::<HashMap<_, _>>();
         let generation = self.generation.next()?;
         let removed = self
             .pieces
             .iter()
             .filter_map(|(square, current)| {
-                (!position
-                    .pieces()
-                    .any(|entry| entry == (*square, current.piece)))
-                .then_some(*square)
+                (pieces.get(square) != Some(&current.piece)).then_some(*square)
             })
             .collect::<Vec<_>>();
         for square in removed {
             self.remove_piece(world, square)?;
         }
-        for (square, piece) in position.pieces() {
+        for (square, piece) in pieces {
             if self.pieces.contains_key(&square) {
                 continue;
             }
@@ -343,15 +379,14 @@ impl SceneRenderer {
                 },
             );
         }
-        self.snapshot = Some(position.clone());
         self.generation = generation;
         self.request_frame(world)?;
-        Ok(true)
+        Ok(())
     }
 
     pub fn clear_position(&mut self, world: &mut World) -> Result<bool, SceneRendererError> {
         self.require_renderable()?;
-        if self.snapshot.is_none() && self.pieces.is_empty() {
+        if self.snapshot.is_none() && self.editor_context.is_none() && self.pieces.is_empty() {
             return Ok(false);
         }
         let generation = self.generation.next()?;
@@ -360,6 +395,7 @@ impl SceneRenderer {
             self.remove_piece(world, square)?;
         }
         self.snapshot = None;
+        self.editor_context = None;
         self.generation = generation;
         self.request_frame(world)?;
         Ok(true)

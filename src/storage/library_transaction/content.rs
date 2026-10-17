@@ -15,6 +15,12 @@ use crate::storage::trash::StorageTrashEnumLocation;
 pub(super) struct StorageLibraryTransactionContent;
 
 impl StorageLibraryTransactionContent {
+    pub(super) const INSERT_DOCUMENT_SQL: &'static str =
+        "INSERT INTO documents(id, revision, body) VALUES (?1, '1', ?2)";
+    pub(super) const PROJECT_SQL: &'static str = "INSERT INTO library_entries(game_id, content_revision, organization_revision, content_kind, rules_variant, start_kind, mode, result, white_display, white_key, black_display, black_key, date_year, date_month, date_day, opening_display, opening_key, opening_code, plies, identity_initial_fen, identity_mainline_uci, content_sha256, modified_ms, favorite, folder_id, location, trashed_ms)
+             VALUES (?1, ?2, '0', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 0, ?23, 'library', NULL)
+             ON CONFLICT(game_id) DO UPDATE SET content_revision = excluded.content_revision, content_kind = excluded.content_kind, rules_variant = excluded.rules_variant, start_kind = excluded.start_kind, mode = excluded.mode, result = excluded.result, white_display = excluded.white_display, white_key = excluded.white_key, black_display = excluded.black_display, black_key = excluded.black_key, date_year = excluded.date_year, date_month = excluded.date_month, date_day = excluded.date_day, opening_display = excluded.opening_display, opening_key = excluded.opening_key, opening_code = excluded.opening_code, plies = excluded.plies, identity_initial_fen = excluded.identity_initial_fen, identity_mainline_uci = excluded.identity_mainline_uci, content_sha256 = excluded.content_sha256, modified_ms = excluded.modified_ms";
+
     pub(super) fn save(
         transaction: &Transaction<'_>,
         prepared: &StorageLibraryPreparedWrite,
@@ -104,7 +110,7 @@ impl StorageLibraryTransactionContent {
             return Err(StorageLibraryError::ImportExisting);
         }
         transaction.execute(
-            "INSERT INTO documents(id, revision, body) VALUES (?1, '1', ?2)",
+            Self::INSERT_DOCUMENT_SQL,
             params![insert.id.as_uuid().to_string(), insert.body],
         )?;
         Self::project(
@@ -158,15 +164,32 @@ impl StorageLibraryTransactionContent {
         let p = write.projection;
         let date = p.date();
         transaction.execute(
-            "INSERT INTO library_entries(game_id, content_revision, organization_revision, content_kind, rules_variant, start_kind, mode, result, white_display, white_key, black_display, black_key, date_year, date_month, date_day, opening_display, opening_key, opening_code, plies, identity_initial_fen, identity_mainline_uci, content_sha256, modified_ms, favorite, folder_id, location, trashed_ms)
-             VALUES (?1, ?2, '0', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 0, ?23, 'library', NULL)
-             ON CONFLICT(game_id) DO UPDATE SET content_revision = excluded.content_revision, content_kind = excluded.content_kind, rules_variant = excluded.rules_variant, start_kind = excluded.start_kind, mode = excluded.mode, result = excluded.result, white_display = excluded.white_display, white_key = excluded.white_key, black_display = excluded.black_display, black_key = excluded.black_key, date_year = excluded.date_year, date_month = excluded.date_month, date_day = excluded.date_day, opening_display = excluded.opening_display, opening_key = excluded.opening_key, opening_code = excluded.opening_code, plies = excluded.plies, identity_initial_fen = excluded.identity_initial_fen, identity_mainline_uci = excluded.identity_mainline_uci, content_sha256 = excluded.content_sha256, modified_ms = excluded.modified_ms",
-            params![write.id.as_uuid().to_string(), write.revision.value().to_string(), StorageLibraryProjection::kind_sql(p.kind()),
-                StorageLibraryProjection::variant_sql(p.variant()), p.start().sql(), p.mode().map(StorageLibraryProjection::mode_sql), p.result().pgn_token(),
-                p.white().map(|text| text.as_str()), p.white_key(), p.black().map(|text| text.as_str()), p.black_key(),
-                date.and_then(|date| date.year()), date.and_then(|date| date.month()), date.and_then(|date| date.day()),
-                p.opening().map(|text| text.as_str()), p.opening_key(), p.code().map(|code| code.as_str()), p.plies(),
-                write.identity.initial_fen(), write.identity.mainline(), write.identity.body_digest().bytes().as_slice(), write.modified, write.folder.map(|folder| folder.to_string())],
+            Self::PROJECT_SQL,
+            params![
+                write.id.as_uuid().to_string(),
+                write.revision.value().to_string(),
+                StorageLibraryProjection::kind_sql(p.kind()),
+                StorageLibraryProjection::variant_sql(p.variant()),
+                p.start().sql(),
+                p.mode().map(StorageLibraryProjection::mode_sql),
+                p.result().pgn_token(),
+                p.white().map(|text| text.as_str()),
+                p.white_key(),
+                p.black().map(|text| text.as_str()),
+                p.black_key(),
+                date.and_then(|date| date.year()),
+                date.and_then(|date| date.month()),
+                date.and_then(|date| date.day()),
+                p.opening().map(|text| text.as_str()),
+                p.opening_key(),
+                p.code().map(|code| code.as_str()),
+                p.plies(),
+                write.identity.initial_fen(),
+                write.identity.mainline(),
+                write.identity.body_digest().bytes().as_slice(),
+                write.modified,
+                write.folder.map(|folder| folder.to_string())
+            ],
         )?;
         Ok(())
     }

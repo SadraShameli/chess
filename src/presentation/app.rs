@@ -1,3 +1,8 @@
+pub mod editor;
+mod library;
+
+pub use crate::presentation::app::library::PresentationAppLibraryError;
+
 use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 
@@ -32,6 +37,10 @@ use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
+use crate::presentation::app::editor::{PresentationAppEditor, PresentationAppEditorError};
+use crate::presentation::app::library::{
+    PresentationAppLibrary, PresentationAppLibraryEnumNavigation,
+};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
@@ -83,6 +92,10 @@ pub enum PresentationAppError {
     EnginePanels(#[from] PresentationEnginePanelsError),
     #[error(transparent)]
     PuzzlePanel(#[from] PresentationPuzzlePanelError),
+    #[error(transparent)]
+    Library(#[from] PresentationAppLibraryError),
+    #[error(transparent)]
+    Editor(#[from] PresentationAppEditorError),
     #[error("The puzzle interruption was refused: {0}")]
     PuzzleInterruption(#[from] Arc<DesktopPuzzleServiceError>),
     #[error("This game input identity was already used for another command")]
@@ -101,10 +114,16 @@ pub enum PresentationAppError {
 #[path = "../../tests/presentation/app_puzzles.rs"]
 mod puzzle_tests;
 
+#[cfg(test)]
+#[path = "../../tests/presentation/app_library.rs"]
+mod library_tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentationAppEnumWorkspace {
     Games,
     Puzzles,
+    Library,
+    Editor,
 }
 
 struct PresentationAppPending {
@@ -216,6 +235,8 @@ pub struct PresentationApp {
     selected_game: Option<GameId>,
     engine_panels: Option<PresentationEnginePanels>,
     puzzle_panel: Option<PresentationPuzzlePanel>,
+    library: Option<PresentationAppLibrary>,
+    editor: Option<PresentationAppEditor>,
     workspace: PresentationAppEnumWorkspace,
     new_game: Option<PresentationGameNewGame>,
     game_retained: HashMap<DesktopRequestId, PresentationAppGameRetained>,
@@ -243,6 +264,7 @@ pub struct PresentationApp {
     preferences: DesktopPreferences,
     settings_open: bool,
     settings_toggle_frame: Option<u64>,
+    navigation_frame: Option<u64>,
 }
 
 impl Default for PresentationApp {
@@ -262,6 +284,8 @@ impl PresentationApp {
             selected_game: None,
             engine_panels: None,
             puzzle_panel: None,
+            library: None,
+            editor: None,
             workspace: PresentationAppEnumWorkspace::Games,
             new_game: None,
             game_retained: HashMap::new(),
@@ -289,6 +313,7 @@ impl PresentationApp {
             preferences: DesktopPreferences::default(),
             settings_open: false,
             settings_toggle_frame: None,
+            navigation_frame: None,
         }
     }
 
@@ -302,6 +327,86 @@ impl PresentationApp {
 
     pub fn mount_puzzles(&mut self, connection: PresentationPuzzlePanelConnection) {
         self.puzzle_panel = Some(PresentationPuzzlePanel::new(connection));
+    }
+
+    pub fn mount_library(&mut self, workspace: DesktopMessagesEntityId) {
+        self.library = Some(PresentationAppLibrary::new(workspace));
+    }
+
+    pub fn synchronize_library<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        let target = match &mut self.library {
+            Some(library) => library.synchronize(port)?,
+            None => None,
+        };
+        if let Some(target) = target {
+            self.apply_library_navigation(target, port)?;
+        }
+        Ok(())
+    }
+
+    fn apply_library_navigation<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        target: PresentationAppLibraryEnumNavigation,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        match target {
+            PresentationAppLibraryEnumNavigation::OpenSaved(intent) => {
+                if let Some(library) = &mut self.library {
+                    library.dispatch_panel(*intent, port)?;
+                }
+            }
+            PresentationAppLibraryEnumNavigation::Workspace(workspace) => {
+                self.select_workspace_unguarded(workspace, port)?
+            }
+            PresentationAppLibraryEnumNavigation::NewGame => {
+                self.select_workspace_unguarded(PresentationAppEnumWorkspace::Games, port)?;
+                self.new_game = Some(PresentationGameNewGame::new());
+                self.settings_open = false;
+            }
+            PresentationAppLibraryEnumNavigation::Game(game) => {
+                self.select_workspace_unguarded(PresentationAppEnumWorkspace::Games, port)?;
+                self.selected_game = Some(game);
+                self.new_game = None;
+                self.board.cancel_gesture();
+            }
+            PresentationAppLibraryEnumNavigation::Quit => self.request_quit_unguarded(),
+        }
+        Ok(())
+    }
+
+    fn navigate<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        target: PresentationAppLibraryEnumNavigation,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        if self.guard_editor_navigation(&target)? {
+            return self.synchronize_editor(port);
+        }
+        self.navigate_library(target, port)
+    }
+
+    fn navigate_library<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        target: PresentationAppLibraryEnumNavigation,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        let target = match &mut self.library {
+            Some(library) => {
+                let target = library.request_navigation(target)?;
+                if library.has_guard() {
+                    self.settings_open = false;
+                }
+                target
+            }
+            None => Some(target),
+        };
+        if let Some(target) = target {
+            self.apply_library_navigation(target, port)?;
+        }
+        Ok(())
     }
 
     pub const fn puzzle_panel(&self) -> Option<&PresentationPuzzlePanel> {
@@ -336,6 +441,23 @@ impl PresentationApp {
         if workspace == self.workspace {
             return Ok(());
         }
+        self.navigate(
+            PresentationAppLibraryEnumNavigation::Workspace(workspace),
+            port,
+        )
+    }
+
+    fn select_workspace_unguarded<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        workspace: PresentationAppEnumWorkspace,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        if workspace == PresentationAppEnumWorkspace::Editor
+            && self.workspace != PresentationAppEnumWorkspace::Editor
+            && let Some(editor) = &mut self.editor
+        {
+            editor.source_workspace = self.workspace;
+        }
         if self.workspace == PresentationAppEnumWorkspace::Puzzles
             && let Some(panel) = &mut self.puzzle_panel
         {
@@ -344,10 +466,11 @@ impl PresentationApp {
         self.workspace = workspace;
         self.board.cancel_gesture();
         self.board.set_selected(None);
-        if workspace == PresentationAppEnumWorkspace::Puzzles {
+        if workspace != PresentationAppEnumWorkspace::Games {
             self.new_game = None;
             self.settings_open = false;
-            if let Some(panel) = &mut self.puzzle_panel
+            if workspace == PresentationAppEnumWorkspace::Puzzles
+                && let Some(panel) = &mut self.puzzle_panel
                 && panel.inventory().is_none()
                 && panel.controller().is_none()
                 && !panel.has_pending_work()
@@ -383,7 +506,7 @@ impl PresentationApp {
     ) -> Result<(), PresentationAppError> {
         let input_ready = self.is_puzzle_input_ready();
         if let Some(panel) = &mut self.puzzle_panel {
-            let readiness = if self.workspace == PresentationAppEnumWorkspace::Games {
+            let readiness = if self.workspace != PresentationAppEnumWorkspace::Puzzles {
                 PuzzleTimerEnumReadiness::Hidden
             } else if readiness == PuzzleTimerEnumReadiness::Ready && !input_ready {
                 PuzzleTimerEnumReadiness::BoardNotReady
@@ -427,9 +550,17 @@ impl PresentationApp {
     }
 
     pub fn has_pending_work(&self) -> bool {
-        self.engine_panels
+        self.editor
             .as_ref()
-            .is_some_and(PresentationEnginePanels::has_pending_work)
+            .is_some_and(PresentationAppEditor::has_pending_work)
+            || self
+                .library
+                .as_ref()
+                .is_some_and(PresentationAppLibrary::has_pending_work)
+            || self
+                .engine_panels
+                .as_ref()
+                .is_some_and(PresentationEnginePanels::has_pending_work)
             || !self.pending.is_empty()
             || !self.game_pending.is_empty()
             || self
@@ -445,45 +576,57 @@ impl PresentationApp {
     }
 
     pub fn game_snapshot(&self) -> Option<&DesktopGameSnapshot> {
-        if self.workspace == PresentationAppEnumWorkspace::Puzzles {
+        if self.workspace != PresentationAppEnumWorkspace::Games {
             return None;
         }
-        self.games
+        Self::selected_game_snapshot(&self.games, self.selected_game)
+    }
+
+    fn selected_game_snapshot(
+        games: &[PresentationAppGame],
+        selected: Option<GameId>,
+    ) -> Option<&DesktopGameSnapshot> {
+        games
             .iter()
-            .find(|game| Some(game.snapshot.id()) == self.selected_game)
+            .find(|game| Some(game.snapshot.id()) == selected)
             .map(|game| &game.snapshot)
     }
 
     pub fn board_snapshot(&self) -> Option<&DesktopBoardSnapshot> {
         Self::board_for_workspace(
             self.workspace,
-            &self.games,
-            self.selected_game,
+            Self::selected_game_snapshot(&self.games, self.selected_game),
             self.snapshot.as_ref(),
             self.puzzle_panel.as_ref(),
+            self.library.as_ref(),
         )
     }
 
     fn board_for_workspace<'a>(
         workspace: PresentationAppEnumWorkspace,
-        games: &'a [PresentationAppGame],
-        selected: Option<GameId>,
+        game: Option<&'a DesktopGameSnapshot>,
         bootstrap: Option<&'a DesktopBootstrapSnapshot>,
         puzzles: Option<&'a PresentationPuzzlePanel>,
+        library: Option<&'a PresentationAppLibrary>,
     ) -> Option<&'a DesktopBoardSnapshot> {
         match workspace {
-            PresentationAppEnumWorkspace::Games => games
-                .iter()
-                .find(|game| Some(game.snapshot.id()) == selected)
-                .map(|game| game.snapshot.board())
+            PresentationAppEnumWorkspace::Editor => None,
+            PresentationAppEnumWorkspace::Games => game
+                .map(DesktopGameSnapshot::board)
                 .or_else(|| bootstrap.map(DesktopBootstrapSnapshot::board)),
             PresentationAppEnumWorkspace::Puzzles => {
                 puzzles.and_then(PresentationPuzzlePanel::board)
+            }
+            PresentationAppEnumWorkspace::Library => {
+                library.and_then(PresentationAppLibrary::board)
             }
         }
     }
 
     pub fn accept_game_snapshot(&mut self, snapshot: DesktopGameSnapshot) -> bool {
+        if let Some(library) = &mut self.library {
+            library.observe_live_source(&snapshot);
+        }
         let id = snapshot.id();
         let notice = snapshot.notice();
         if let Some(game) = self.games.iter_mut().find(|game| game.snapshot.id() == id) {
@@ -599,6 +742,31 @@ impl PresentationApp {
     }
 
     pub fn request_quit(&mut self) {
+        match self.guard_editor_navigation(&PresentationAppLibraryEnumNavigation::Quit) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                self.failure = Some(error.to_string());
+                return;
+            }
+        }
+        if let Some(library) = &mut self.library {
+            match library.request_navigation(PresentationAppLibraryEnumNavigation::Quit) {
+                Ok(Some(PresentationAppLibraryEnumNavigation::Quit)) => {}
+                Ok(_) => {
+                    self.settings_open = false;
+                    return;
+                }
+                Err(error) => {
+                    self.failure = Some(error.to_string());
+                    return;
+                }
+            }
+        }
+        self.request_quit_unguarded();
+    }
+
+    fn request_quit_unguarded(&mut self) {
         if !self.quit_confirmation {
             self.quit_confirmation = true;
             self.quit_focus_pending = true;
@@ -708,6 +876,8 @@ impl PresentationApp {
                         false,
                     )),
                     DesktopMessagesEnumResult::Value { .. }
+                    | DesktopMessagesEnumResult::LibraryFailure(_)
+                    | DesktopMessagesEnumResult::EditorFailure(_)
                     | DesktopMessagesEnumResult::Stopped
                     | DesktopMessagesEnumResult::Paused
                     | DesktopMessagesEnumResult::QuitReady
@@ -749,6 +919,8 @@ impl PresentationApp {
                 }),
                 DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. }) => false,
                 DesktopEnumCommand::Engine(_)
+                | DesktopEnumCommand::Library(_)
+                | DesktopEnumCommand::Editor { .. }
                 | DesktopEnumCommand::Puzzle { .. }
                 | DesktopEnumCommand::Bootstrap
                 | DesktopEnumCommand::FileSelect { .. }
@@ -765,6 +937,12 @@ impl PresentationApp {
     fn accept_response(&mut self, response: DesktopMessagesEnumResult) {
         match response {
             DesktopMessagesEnumResult::Value { value, .. } => self.accept_value(value),
+            DesktopMessagesEnumResult::LibraryFailure(failure) => {
+                self.failure = Some(failure.to_string());
+            }
+            DesktopMessagesEnumResult::EditorFailure(failure) => {
+                self.failure = Some(failure.to_string());
+            }
             DesktopMessagesEnumResult::Failure(failure) => {
                 if matches!(
                     failure.code(),
@@ -791,6 +969,13 @@ impl PresentationApp {
 
     fn accept_value(&mut self, value: DesktopEnumValue) {
         match value {
+            DesktopEnumValue::Library(_) => {
+                self.failure =
+                    Some("The Library response has no matching panel request".to_owned());
+            }
+            DesktopEnumValue::Editor(_) => {
+                self.failure = Some("The editor response has no matching request".to_owned());
+            }
             DesktopEnumValue::Puzzle(_) => {
                 self.failure = Some(
                     "An unexpected puzzle response was refused. Refresh the puzzle view".to_owned(),
@@ -1113,6 +1298,37 @@ impl PresentationApp {
         }
     }
 
+    fn show_camera(
+        ui: &mut Ui,
+        scene: Option<&PresentationBoardScene>,
+    ) -> Option<PresentationBoardEnumCameraAction> {
+        let mut selected = None;
+        ui.heading("Camera");
+        ui.horizontal_wrapped(|ui| {
+            for (label, action) in [
+                ("Rotate left", PresentationBoardEnumCameraAction::RotateLeft),
+                (
+                    "Rotate right",
+                    PresentationBoardEnumCameraAction::RotateRight,
+                ),
+                ("Tilt up", PresentationBoardEnumCameraAction::TiltUp),
+                ("Tilt down", PresentationBoardEnumCameraAction::TiltDown),
+                ("Zoom in", PresentationBoardEnumCameraAction::ZoomIn),
+                ("Zoom out", PresentationBoardEnumCameraAction::ZoomOut),
+                ("Reset view", PresentationBoardEnumCameraAction::Reset),
+                ("Flip board", PresentationBoardEnumCameraAction::Flip),
+            ] {
+                if ui
+                    .add_enabled(scene.is_some(), egui::Button::new(label))
+                    .clicked()
+                {
+                    selected = Some(action);
+                }
+            }
+        });
+        selected
+    }
+
     pub fn show<C, W, P>(
         &mut self,
         ui: &mut Ui,
@@ -1132,6 +1348,12 @@ impl PresentationApp {
                 .request_discard("apply initial native theme before layout");
         }
         self.poll();
+        if let Err(error) = self.synchronize_library(port) {
+            self.report_failure(error);
+        }
+        if let Err(error) = self.synchronize_editor(port) {
+            self.report_failure(error);
+        }
         if let Err(error) = self.synchronize_puzzles(port) {
             self.report_failure(error);
         }
@@ -1171,6 +1393,7 @@ impl PresentationApp {
         let mut actions = Vec::new();
         let mut camera_action = None;
         let mut workspace = None;
+        let mut navigation = None;
         egui::Panel::top("chess.header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(
@@ -1184,15 +1407,12 @@ impl PresentationApp {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Quit").clicked() {
-                        self.request_quit();
+                        navigation = Some(PresentationAppLibraryEnumNavigation::Quit);
                     }
                     if ui.button("New Game").clicked() && self.new_game_toggle_frame != Some(frame)
                     {
-                        self.new_game = Some(PresentationGameNewGame::new());
                         self.new_game_toggle_frame = Some(frame);
-                        self.settings_open = false;
-                        self.board.cancel_gesture();
-                        workspace = Some(PresentationAppEnumWorkspace::Games);
+                        navigation = Some(PresentationAppLibraryEnumNavigation::NewGame);
                     }
                     if ui.button("Settings").clicked() && self.settings_toggle_frame != Some(frame)
                     {
@@ -1226,6 +1446,18 @@ impl PresentationApp {
                 }
                 if ui
                     .add_enabled(
+                        self.library.is_some(),
+                        egui::Button::selectable(
+                            self.workspace == PresentationAppEnumWorkspace::Library,
+                            "Library",
+                        ),
+                    )
+                    .clicked()
+                {
+                    workspace = Some(PresentationAppEnumWorkspace::Library);
+                }
+                if ui
+                    .add_enabled(
                         self.puzzle_panel.is_some(),
                         egui::Button::selectable(
                             self.workspace == PresentationAppEnumWorkspace::Puzzles,
@@ -1236,6 +1468,18 @@ impl PresentationApp {
                 {
                     workspace = Some(PresentationAppEnumWorkspace::Puzzles);
                 }
+                if ui
+                    .add_enabled(
+                        self.editor.is_some(),
+                        egui::Button::selectable(
+                            self.workspace == PresentationAppEnumWorkspace::Editor,
+                            "Editor",
+                        ),
+                    )
+                    .clicked()
+                {
+                    workspace = Some(PresentationAppEnumWorkspace::Editor);
+                }
                 let mut selected = self.selected_game;
                 for (index, game) in self.games.iter().enumerate() {
                     let label = format!("Game {}", index.saturating_add(1));
@@ -1244,20 +1488,28 @@ impl PresentationApp {
                         .clicked()
                     {
                         selected = Some(game.snapshot.id());
-                        workspace = Some(PresentationAppEnumWorkspace::Games);
+                        navigation = Some(PresentationAppLibraryEnumNavigation::Game(
+                            game.snapshot.id(),
+                        ));
                     }
                 }
                 if selected != self.selected_game {
-                    self.selected_game = selected;
-                    self.new_game = None;
-                    self.board.cancel_gesture();
+                    navigation = selected.map(PresentationAppLibraryEnumNavigation::Game);
                 }
             });
         });
-        if let Some(workspace) = workspace
-            && let Err(error) = self.select_workspace(workspace, port)
-        {
-            self.report_failure(error);
+        if !ui.is_sizing_pass() && self.navigation_frame != Some(frame) {
+            if let Some(target) = navigation {
+                self.navigation_frame = Some(frame);
+                if let Err(error) = self.navigate(target, port) {
+                    self.report_failure(error);
+                }
+            } else if let Some(workspace) = workspace {
+                self.navigation_frame = Some(frame);
+                if let Err(error) = self.select_workspace(workspace, port) {
+                    self.report_failure(error);
+                }
+            }
         }
         if self.workspace == PresentationAppEnumWorkspace::Games
             && let Some(panels) = &mut self.engine_panels
@@ -1286,12 +1538,60 @@ impl PresentationApp {
                         DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. })
                     )
             });
+        if self.workspace == PresentationAppEnumWorkspace::Library {
+            egui::Panel::left("chess.library.query")
+                .default_size(PresentationThemeTokens::PANEL_WIDTH)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let positions = if let Some(editor) = &mut self.editor {
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(&mut editor.positions_visible, false, "Games");
+                                ui.selectable_value(
+                                    &mut editor.positions_visible,
+                                    true,
+                                    "Positions",
+                                );
+                            });
+                            editor.positions_visible
+                        } else {
+                            false
+                        };
+                        if positions {
+                            if let Err(error) = self.show_positions(ui, port) {
+                                self.report_failure(error);
+                            }
+                            return;
+                        }
+                        if let Some(library) = &mut self.library
+                            && let Err(error) = library.show_query(ui, port)
+                        {
+                            self.failure = Some(error.to_string());
+                        }
+                    });
+                });
+        }
         egui::Panel::right("chess.inspector")
             .default_size(PresentationThemeTokens::PANEL_WIDTH)
             .min_size(PresentationThemeTokens::PANEL_WIDTH)
             .show(ui, |ui| {
                 if self.settings_open {
                     self.show_settings(ui);
+                    return;
+                }
+                if self.workspace == PresentationAppEnumWorkspace::Editor {
+                    ui.add_enabled_ui(!self.quit_confirmation, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            if let Err(error) = self.show_editor(ui, port) { self.report_failure(error); }
+                            ui.separator();
+                            if let Some(action) = Self::show_camera(ui, scene) { camera_action = Some(action); self.board.cancel_gesture(); }
+                        });
+                    });
+                    return;
+                }
+                if self.workspace == PresentationAppEnumWorkspace::Library {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(library) = &mut self.library && let Err(error) = library.show_editor(ui, port) { self.failure = Some(error.to_string()); }
+                    });
                     return;
                 }
                 if self.workspace == PresentationAppEnumWorkspace::Puzzles {
@@ -1360,24 +1660,7 @@ impl PresentationApp {
                     self.failure = Some(error.to_string());
                 }
                 ui.separator();
-                ui.heading("Camera");
-                ui.horizontal_wrapped(|ui| {
-                    for (label, action) in [
-                        ("Rotate left", PresentationBoardEnumCameraAction::RotateLeft),
-                        ("Rotate right", PresentationBoardEnumCameraAction::RotateRight),
-                        ("Tilt up", PresentationBoardEnumCameraAction::TiltUp),
-                        ("Tilt down", PresentationBoardEnumCameraAction::TiltDown),
-                        ("Zoom in", PresentationBoardEnumCameraAction::ZoomIn),
-                        ("Zoom out", PresentationBoardEnumCameraAction::ZoomOut),
-                        ("Reset view", PresentationBoardEnumCameraAction::Reset),
-                        ("Flip board", PresentationBoardEnumCameraAction::Flip),
-                    ] {
-                        if ui.add_enabled(scene.is_some(), egui::Button::new(label)).clicked() {
-                            camera_action = Some(action);
-                            self.board.cancel_gesture();
-                        }
-                    }
-                });
+                if let Some(action) = Self::show_camera(ui, scene) { camera_action = Some(action); self.board.cancel_gesture(); }
                 ui.separator();
                 ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(ui.visuals().weak_text_color()));
             });
@@ -1429,6 +1712,8 @@ impl PresentationApp {
             self.board.set_selected(game.controller.selected());
         }
         let can_enter_moves = match self.workspace {
+            PresentationAppEnumWorkspace::Editor => false,
+            PresentationAppEnumWorkspace::Library => false,
             PresentationAppEnumWorkspace::Puzzles => self
                 .puzzle_panel
                 .as_ref()
@@ -1458,8 +1743,25 @@ impl PresentationApp {
                     && !game.is_save_required()
             })
             .and_then(DesktopGameSnapshot::premove);
+        let mut editor_viewport = None;
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
+                if self.workspace == PresentationAppEnumWorkspace::Editor {
+                    if let Some(editor) = &mut self.editor {
+                        editor_viewport = Some(
+                            editor
+                                .show_board(
+                                    ui,
+                                    port,
+                                    scene,
+                                    picker,
+                                    !self.quit_confirmation && !self.settings_open,
+                                )
+                                .map_err(PresentationAppError::from)?,
+                        );
+                    }
+                    return Ok::<_, PresentationAppError>(None);
+                }
                 ui.horizontal(|ui| {
                     ui.strong("White");
                     if self.selected_game.is_none()
@@ -1473,10 +1775,10 @@ impl PresentationApp {
                 });
                 let board_snapshot = Self::board_for_workspace(
                     self.workspace,
-                    &self.games,
-                    self.selected_game,
+                    Self::selected_game_snapshot(&self.games, self.selected_game),
                     self.snapshot.as_ref(),
                     self.puzzle_panel.as_ref(),
+                    self.library.as_ref(),
                 );
                 let result = match board_snapshot {
                     Some(snapshot) => self
@@ -1498,15 +1800,19 @@ impl PresentationApp {
                     None => {
                         ui.label(match self.workspace {
                             PresentationAppEnumWorkspace::Games => "Loading the saved position",
+                            PresentationAppEnumWorkspace::Library => {
+                                "Open a saved game to display its 3D board"
+                            }
                             PresentationAppEnumWorkspace::Puzzles => {
                                 "The puzzle board is hidden until its run is ready and resumed"
                             }
+                            PresentationAppEnumWorkspace::Editor => "Open a position draft",
                         });
                         Ok(None)
                     }
                 };
                 ui.strong("Black");
-                result
+                result.map_err(PresentationAppError::from)
             })
             .inner?;
         if self.quit_confirmation {
@@ -1692,7 +1998,8 @@ impl PresentationApp {
             game.controller.restore_board_focus(ui.ctx(), scene);
         }
         Ok(PresentationAppFrame {
-            viewport: board_frame.as_ref().map(|frame| frame.viewport()),
+            viewport: editor_viewport
+                .or_else(|| board_frame.as_ref().map(|frame| frame.viewport())),
             board_actions: board_frame.map_or_else(Vec::new, |frame| frame.actions().to_vec()),
             camera_action,
         })

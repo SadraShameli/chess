@@ -1,3 +1,4 @@
+pub mod editor;
 pub mod enums;
 pub mod r#move;
 pub mod notation;

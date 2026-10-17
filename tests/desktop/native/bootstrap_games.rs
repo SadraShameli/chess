@@ -159,6 +159,10 @@ impl DesktopNativeBootstrapGameFixture {
         command: DesktopEnumCommand,
     ) -> DesktopNativeBootstrapGameTestResult<DesktopMessagesEnumResult> {
         let revision = match &command {
+            DesktopEnumCommand::Editor { operation, .. } => {
+                Some(DesktopCommand::editor_expected_revision(operation))
+            }
+            DesktopEnumCommand::Library(operation) => operation.expected_revision(),
             DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
             DesktopEnumCommand::Puzzle { operation, .. } => Some(operation.expected_revision()),

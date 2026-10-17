@@ -753,3 +753,28 @@ async fn terminal_positions_never_reach_engine_io_and_restarts_get_new_generatio
     second.expect("shutdown").await?;
     Ok(())
 }
+#[test]
+fn analysis_position_preserves_custom_standard_move_counters_in_engine_commands()
+-> Result<(), Box<dyn std::error::Error>> {
+    let standard = BoardPosition::standard();
+    let default = EngineSearchPosition::new(standard.clone(), std::iter::empty::<&str>())?;
+    assert_eq!(default.command(), "position startpos");
+    for (halfmove, fullmove) in [(7, 1), (0, 42), (17, 24)] {
+        let initial = BoardPosition::from_fen(
+            &format!("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - {halfmove} {fullmove}"),
+            BoardEnumVariant::Standard,
+        )?;
+        assert_eq!(initial, standard);
+        let root = EngineSearchPosition::new(initial.clone(), std::iter::empty::<&str>())?;
+        let continuation = EngineSearchPosition::new(initial.clone(), ["g1f3"])?;
+        assert_eq!(root.initial().fen(), initial.fen());
+        assert_eq!(root.current().fen(), initial.fen());
+        assert_eq!(root.command(), format!("position fen {}", initial.fen()));
+        assert_eq!(
+            continuation.command(),
+            format!("position fen {} moves g1f3", initial.fen())
+        );
+        assert_ne!(root, default);
+    }
+    Ok(())
+}

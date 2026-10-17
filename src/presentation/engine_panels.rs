@@ -783,6 +783,8 @@ impl PresentationEnginePanels {
             }
             DesktopMessagesEnumResult::Cancelled => self.reject(action, Self::cancelled()),
             DesktopMessagesEnumResult::Value { .. }
+            | DesktopMessagesEnumResult::LibraryFailure(_)
+            | DesktopMessagesEnumResult::EditorFailure(_)
             | DesktopMessagesEnumResult::Stopped
             | DesktopMessagesEnumResult::Paused
             | DesktopMessagesEnumResult::QuitReady

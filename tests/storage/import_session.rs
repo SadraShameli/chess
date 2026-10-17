@@ -266,8 +266,12 @@ impl StorageImportSessionRepository for StorageImportSessionTestRepository {
         &self,
         _snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: StorageImportSessionCancellation,
     ) -> StorageImportSessionRepositoryFuture<'_, u64> {
         Box::pin(async move {
+            cancellation
+                .check()
+                .map_err(|error| StorageImportSessionRepositoryError::Effect(Box::new(error)))?;
             footprint
                 .body_bytes()
                 .checked_add(footprint.projection_bytes())

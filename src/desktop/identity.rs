@@ -22,6 +22,10 @@ impl DesktopRequestId {
     pub(crate) const fn for_game(game: crate::game::enums::GameId) -> Self {
         Self(game.as_uuid())
     }
+
+    pub(crate) const fn for_editor(draft: crate::board::editor::BoardEditorDraftId) -> Self {
+        Self(draft.as_uuid())
+    }
 }
 
 impl Default for DesktopRequestId {
@@ -62,7 +66,23 @@ pub struct DesktopRevision(u64);
 impl DesktopRevision {
     pub const ZERO: Self = Self(0);
 
+    pub const fn for_editor(revision: crate::board::editor::BoardEditorDraftRevision) -> Self {
+        Self(revision.value())
+    }
+
     pub const fn for_game(revision: crate::game::enums::GameRevision) -> Self {
+        Self(revision.value())
+    }
+
+    pub const fn for_game_storage(
+        revision: crate::game::storage_repository::GameStorageRevision,
+    ) -> Self {
+        Self(revision.value())
+    }
+
+    pub const fn for_library_catalog(
+        revision: crate::storage::library_repository::StorageLibraryCatalogRevision,
+    ) -> Self {
         Self(revision.value())
     }
 

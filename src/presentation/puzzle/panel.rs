@@ -751,7 +751,11 @@ impl PresentationPuzzlePanel {
                 self.fail_intent(urgent, failure.clone())
                     .and(Err(PresentationPuzzlePanelError::Failure(failure)))
             }
-            DesktopMessagesEnumResult::Value { .. } => Err(PresentationPuzzlePanelError::Response),
+            DesktopMessagesEnumResult::Value { .. }
+            | DesktopMessagesEnumResult::LibraryFailure(_)
+            | DesktopMessagesEnumResult::EditorFailure(_) => {
+                Err(PresentationPuzzlePanelError::Response)
+            }
         };
         match result {
             Ok(()) => {

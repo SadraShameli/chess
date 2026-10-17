@@ -1,8 +1,7 @@
 use std::ffi::OsString;
-use std::future::{Future, poll_fn};
+use std::future::poll_fn;
 use std::num::{NonZeroU32, TryFromIntError};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::{Arc, Mutex, TryLockError};
 use std::task::Poll;
 use std::time::{Duration, Instant as StandardInstant};
@@ -17,6 +16,7 @@ use tokio::sync::{Mutex as AsyncMutex, oneshot, watch};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{Instant, timeout_at};
 
+use crate::board::editor::{BoardEditorDraftError, BoardEditorDraftId};
 use crate::board::position::BoardPosition;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
@@ -37,10 +37,15 @@ use crate::desktop::coordinator::{
 use crate::desktop::dto::{
     DesktopBootstrapSnapshot, DesktopEngineIdentity, DesktopEnumEngineSnapshot,
 };
+use crate::desktop::editor_commands::DesktopEditorCommands;
 use crate::desktop::game_bridge::DesktopGameBridgeProvider;
 use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryReceipt};
 use crate::desktop::identity::DesktopRequestId;
+use crate::desktop::library_service::DesktopLibraryServiceOptions;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId};
+use crate::desktop::native::bootstrap::cleanup::{
+    DesktopNativeBootstrapCleanup, DesktopNativeBootstrapCleanupEnumOutcome,
+};
 use crate::desktop::native::dialogs_proxy::DesktopNativeDialogsProxy;
 use crate::desktop::native::engine_runtime::{
     DesktopNativeEngineRuntime, DesktopNativeEngineRuntimeOptions,
@@ -60,6 +65,9 @@ use crate::desktop::native::game_service::{
 };
 use crate::desktop::native::host::{
     DesktopNativeHost, DesktopNativeHostError, DesktopNativeHostEvent, DesktopNativeHostServices,
+};
+use crate::desktop::native::library_service::{
+    DesktopNativeLibraryService, DesktopNativeLibraryServiceError,
 };
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
 use crate::desktop::native::puzzle_service::{
@@ -97,9 +105,21 @@ use crate::engine::package::selector::{
 };
 use crate::engine::process_provider::{EngineNativeProcess, EngineNativeProcessProvider};
 use crate::engine::session::{EngineSession, EngineSessionError, EngineSessionStartup};
+use crate::presentation::app::editor::{
+    PresentationAppEditorConnection, PresentationAppEditorDraftIdProvider,
+};
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
+use crate::storage::editor_repository::StorageEditorRepository;
 use crate::storage::puzzle_repository::StoragePuzzleRepository;
+
+struct DesktopNativeBootstrapEditorDraftIds;
+
+impl PresentationAppEditorDraftIdProvider for DesktopNativeBootstrapEditorDraftIds {
+    fn next_id(&self) -> Result<BoardEditorDraftId, BoardEditorDraftError> {
+        BoardEditorDraftId::try_from(uuid::Uuid::new_v4())
+    }
+}
 
 #[cfg(test)]
 #[path = "../../../tests/desktop/native/bootstrap_games.rs"]
@@ -108,6 +128,12 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../tests/desktop/native/bootstrap_puzzles.rs"]
 mod puzzle_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/desktop/native/bootstrap_library.rs"]
+mod library_tests;
+
+mod cleanup;
 
 #[cfg(unix)]
 use crate::desktop::native::activation::unix::{
@@ -186,6 +212,8 @@ pub enum DesktopNativeBootstrapError {
     GameService(#[from] DesktopNativeGameServiceError),
     #[error("The saved puzzle service failed: {0}")]
     PuzzleService(#[from] Arc<DesktopPuzzleServiceError>),
+    #[error(transparent)]
+    LibraryService(#[from] DesktopNativeLibraryServiceError),
     #[error("The native game lifecycle operation failed: {0}")]
     GameRuntime(#[source] Arc<DesktopNativeGameRuntimeError>),
     #[error("The native game registry operation failed: {0}")]
@@ -264,21 +292,6 @@ type DesktopNativeBootstrapPuzzleService = DesktopNativePuzzleService<
     DesktopNativeEventLoopWake,
     DesktopNativePuzzleRuntimeSchedulerTokio,
 >;
-type DesktopNativeBootstrapPuzzleCleanupFuture = Pin<
-    Box<
-        dyn Future<
-                Output = (
-                    DesktopNativeBootstrapPuzzleService,
-                    Result<(), Arc<DesktopPuzzleServiceError>>,
-                ),
-            > + Send,
-    >,
->;
-
-struct DesktopNativeBootstrapPuzzleCleanup {
-    deadline: Instant,
-    future: DesktopNativeBootstrapPuzzleCleanupFuture,
-}
 
 #[derive(Default)]
 struct DesktopNativeBootstrapServices {
@@ -289,7 +302,9 @@ struct DesktopNativeBootstrapServices {
     executor: Option<Arc<CapacityExecutor>>,
     games: Option<DesktopNativeGameService>,
     puzzles: Option<DesktopNativeBootstrapPuzzleService>,
-    puzzle_cleanup: Option<DesktopNativeBootstrapPuzzleCleanup>,
+    puzzle_cleanup: Option<DesktopNativeBootstrapCleanup<DesktopNativeBootstrapPuzzleService>>,
+    library: Option<DesktopNativeLibraryService>,
+    library_cleanup: Option<DesktopNativeBootstrapCleanup<DesktopNativeLibraryService>>,
     analysis: Option<
         DesktopNativeEngineRuntime<EngineNativeProcessProvider, DesktopNativeGameResourcesMemory>,
     >,
@@ -299,6 +314,11 @@ struct DesktopNativeBootstrapServices {
 impl DesktopNativeBootstrapServices {
     fn is_shutdown_complete(&self) -> bool {
         self.puzzle_cleanup.is_none()
+            && self.library_cleanup.is_none()
+            && self
+                .library
+                .as_ref()
+                .is_none_or(DesktopNativeLibraryService::is_shutdown_complete)
             && self
                 .puzzles
                 .as_ref()
@@ -353,7 +373,7 @@ impl DesktopNativeBootstrapLifecycle {
     }
 
     async fn cleanup(&self, deadline: Instant) -> Result<(), DesktopNativeBootstrapError> {
-        self.cleanup_puzzles(deadline).await?;
+        self.cleanup_feature_services(deadline).await?;
         let mut services = timeout_at(deadline, self.services.lock())
             .await
             .map_err(|_elapsed| DesktopNativeBootstrapError::CleanupDeadline)?;
@@ -465,16 +485,27 @@ impl DesktopNativeBootstrapLifecycle {
         pending
     }
 
-    async fn cleanup_puzzles(&self, deadline: Instant) -> Result<(), DesktopNativeBootstrapError> {
+    async fn cleanup_feature_services(
+        &self,
+        deadline: Instant,
+    ) -> Result<(), DesktopNativeBootstrapError> {
         let effective_deadline = {
             let services = self
                 .services
                 .try_lock()
                 .map_err(|_busy| DesktopNativeBootstrapError::CleanupBusy)?;
-            services
+            let puzzle = services
                 .puzzle_cleanup
                 .as_ref()
-                .map_or(deadline, |cleanup| cleanup.deadline.min(deadline))
+                .map(|cleanup| cleanup.deadline);
+            let library = services
+                .library_cleanup
+                .as_ref()
+                .map(|cleanup| cleanup.deadline);
+            puzzle
+                .into_iter()
+                .chain(library)
+                .fold(deadline, Instant::min)
         };
         timeout_at(
             effective_deadline,
@@ -485,38 +516,40 @@ impl DesktopNativeBootstrapLifecycle {
                         return Poll::Ready(Err(DesktopNativeBootstrapError::CleanupBusy));
                     }
                 };
-                if services.puzzle_cleanup.is_none() {
-                    let Some(mut puzzles) = services.puzzles.take() else {
-                        return Poll::Ready(Ok(()));
-                    };
-                    services.puzzle_cleanup = Some(DesktopNativeBootstrapPuzzleCleanup {
-                        deadline,
-                        future: Box::pin(async move {
-                            let outcome = puzzles.shutdown_retained(deadline).await;
-                            (puzzles, outcome)
-                        }),
-                    });
-                }
-                let Some(cleanup) = services.puzzle_cleanup.as_mut() else {
-                    return Poll::Ready(Err(DesktopNativeBootstrapError::HostServices));
-                };
-                let Poll::Ready((puzzles, outcome)) = cleanup.future.as_mut().poll(context) else {
-                    return Poll::Pending;
-                };
-                services.puzzle_cleanup = None;
-                let complete = puzzles.is_shutdown_complete();
-                if !complete {
-                    services.puzzles = Some(puzzles);
-                }
-                Poll::Ready(match outcome {
-                    Ok(()) if complete => Ok(()),
-                    Ok(()) => Err(DesktopNativeBootstrapError::CleanupDeadline),
-                    Err(error) if complete => {
-                        services.retain_terminal(error.into());
-                        Ok(())
+                let DesktopNativeBootstrapServices {
+                    library,
+                    library_cleanup,
+                    puzzles,
+                    puzzle_cleanup,
+                    ..
+                } = &mut *services;
+                let library = DesktopNativeBootstrapCleanup::poll(
+                    library,
+                    library_cleanup,
+                    deadline,
+                    context,
+                );
+                let puzzles =
+                    DesktopNativeBootstrapCleanup::poll(puzzles, puzzle_cleanup, deadline, context);
+                let mut pending = false;
+                let mut failure = Ok(());
+                for outcome in [library, puzzles] {
+                    match outcome {
+                        Poll::Pending => pending = true,
+                        Poll::Ready(DesktopNativeBootstrapCleanupEnumOutcome::Complete) => {}
+                        Poll::Ready(DesktopNativeBootstrapCleanupEnumOutcome::Terminal(error)) => {
+                            services.retain_terminal(error)
+                        }
+                        Poll::Ready(DesktopNativeBootstrapCleanupEnumOutcome::Retained(error)) => {
+                            failure = DesktopNativeBootstrapError::combine(failure, Err(error))
+                        }
                     }
-                    Err(error) => Err(error.into()),
-                })
+                }
+                match failure {
+                    Err(error) => Poll::Ready(Err(error)),
+                    Ok(()) if pending => Poll::Pending,
+                    Ok(()) => Poll::Ready(Ok(())),
+                }
             }),
         )
         .await
@@ -770,7 +803,7 @@ impl DesktopNativeBootstrapSupervisor {
                 Arc::clone(&clock),
                 Arc::clone(&engine_resources),
             ),
-            storage: storage_client,
+            storage: storage_client.clone(),
             executor: Arc::clone(&executor),
             clock: Arc::clone(&clock),
             proof: Arc::new(DesktopNativeGameService::proof()),
@@ -786,6 +819,29 @@ impl DesktopNativeBootstrapSupervisor {
                 .ok_or(DesktopNativeBootstrapError::HostServices)?;
             games.restore().await?;
             games.start()?
+        };
+        let library_workspace = DesktopMessagesEntityId::new();
+        let editor_owner = DesktopMessagesEntityId::new();
+        let editor_commands =
+            DesktopEditorCommands::new(StorageEditorRepository::new(storage_client.clone()));
+        let library = DesktopNativeLibraryService::new(
+            DesktopLibraryServiceOptions {
+                workspace: library_workspace,
+                storage: storage_client,
+                executor: Arc::clone(&executor),
+                games: game_port.registry_port().clone(),
+                wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
+            },
+            tokio::runtime::Handle::current(),
+        );
+        let library_port = {
+            let mut retained = self.lifecycle.services.lock().await;
+            retained.library = Some(library);
+            retained
+                .library
+                .as_mut()
+                .ok_or(DesktopNativeBootstrapError::HostServices)?
+                .start()?
         };
         let mut engine_port = None;
         let mut engine_panels = None;
@@ -843,7 +899,9 @@ impl DesktopNativeBootstrapSupervisor {
         );
         let mut coordinator = DesktopCoordinator::new(application, clock, snapshot, services)
             .with_games(Arc::new(game_port.clone()))
-            .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()));
+            .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()))
+            .with_library(library_workspace, Arc::new(library_port))
+            .with_editor(editor_owner, editor_commands);
         if let Some(engine_port) = &engine_port {
             coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
         }
@@ -857,6 +915,11 @@ impl DesktopNativeBootstrapSupervisor {
         let (events, receiver) = DesktopNativeHost::event_channel();
         let host = DesktopNativeHostServices {
             engine_panels,
+            library_workspace: Some(library_workspace),
+            editor: Some(PresentationAppEditorConnection::new(
+                editor_owner,
+                Arc::new(DesktopNativeBootstrapEditorDraftIds),
+            )),
             puzzle_panel: Some(PresentationPuzzlePanelConnection {
                 owner: puzzle_owner,
                 state: puzzle_port.state(),

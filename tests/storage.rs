@@ -16,6 +16,8 @@ mod storage_retained_shutdown;
 mod storage_dataset_package;
 #[path = "storage/dataset_selection.rs"]
 mod storage_dataset_selection;
+#[path = "storage/editor_repository.rs"]
+mod storage_editor_repository;
 #[path = "storage/game_document.rs"]
 mod storage_game_document;
 #[path = "storage/library.rs"]

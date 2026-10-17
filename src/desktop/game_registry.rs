@@ -1,3 +1,16 @@
+mod closing;
+mod saved;
+
+use crate::desktop::game_registry::closing::{
+    DesktopGameRegistryCloseAdmission, DesktopGameRegistryClosing,
+    DesktopGameRegistrySavedAdmission,
+};
+pub use crate::desktop::game_registry::closing::{
+    DesktopGameRegistryCloseCertificate, DesktopGameRegistryCloseEnumObservation,
+    DesktopGameRegistryCloseEnumProof, DesktopGameRegistryCloseReceipt,
+    DesktopGameRegistryCloseTarget,
+};
+
 use std::collections::{HashMap, VecDeque};
 use std::future::{Future, pending, poll_fn};
 use std::panic::{RefUnwindSafe, UnwindSafe};
@@ -29,6 +42,10 @@ use crate::desktop::game_bridge::{
     DesktopGameBridgeRequest,
 };
 use crate::desktop::game_commands::{DesktopGameCommandsEnumAction, DesktopGameCommandsRequest};
+pub use crate::desktop::game_registry::saved::DesktopGameRegistrySavedOpenReceipt;
+use crate::desktop::game_registry::saved::{
+    DesktopGameRegistrySavedOpen, DesktopGameRegistrySavedRequest,
+};
 use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::game_supervisor::{
     DesktopGameSupervisor, DesktopGameSupervisorEditorReceipt, DesktopGameSupervisorEngineFactory,
@@ -50,8 +67,18 @@ use crate::storage::document_store::StorageDocumentClient;
 #[path = "../../tests/desktop/game_premove.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "../../tests/desktop/game_registry/closing.rs"]
+mod closing_tests;
+
+#[cfg(test)]
+#[path = "../../tests/desktop/game_registry/closing_review.rs"]
+mod closing_review_tests;
+
 #[derive(Debug, Error)]
 pub enum DesktopGameRegistryError {
+    #[error("The saved library game could not be opened: {0}")]
+    Library(#[source] Box<crate::storage::library_repository::StorageLibraryError>),
     #[error("The game registry cannot admit another request")]
     Busy,
     #[error("The game registry is closed")]
@@ -60,6 +87,12 @@ pub enum DesktopGameRegistryError {
     UnknownGame,
     #[error("A game with this identity is already registered")]
     DuplicateGame,
+    #[error("The close target no longer matches the installed owner or revision")]
+    CloseConflict,
+    #[error("The close operation has not observed its final save and shutdown")]
+    CloseIncomplete,
+    #[error("The game close admission owner is poisoned")]
+    ClosePoisoned,
     #[error("The game registry received a session request through its creation queue")]
     InvalidCreate,
     #[error("The game registry has no matching preparation generation")]
@@ -116,7 +149,7 @@ impl DesktopGameRegistryError {
         let code = match self {
             Self::Busy => DesktopEnumFailureCode::ResourceRefusal,
             Self::Closed => DesktopEnumFailureCode::Cancelled,
-            Self::UnknownGame | Self::DuplicateGame | Self::InvalidCreate => {
+            Self::UnknownGame | Self::DuplicateGame | Self::InvalidCreate | Self::CloseConflict => {
                 DesktopEnumFailureCode::InvalidInput
             }
             Self::Supervisor(error) => {
@@ -130,7 +163,10 @@ impl DesktopGameRegistryError {
                     DesktopEnumFailureCode::InternalFailure
                 }
             }
-            Self::PreparationGeneration
+            Self::Library(_)
+            | Self::CloseIncomplete
+            | Self::ClosePoisoned
+            | Self::PreparationGeneration
             | Self::RandomPoisoned
             | Self::MissingCreation
             | Self::Factory { .. }
@@ -250,6 +286,8 @@ impl DesktopGameRegistryReceipt {
 #[derive(Clone)]
 pub struct DesktopGameRegistryPort {
     creates: mpsc::Sender<DesktopGameRegistryCreate>,
+    saved: DesktopGameRegistrySavedAdmission,
+    close_admission: Arc<DesktopGameRegistryCloseAdmission>,
     controls: mpsc::Sender<DesktopGameRegistryControl>,
     held_controls: Arc<AtomicU8>,
     sessions: Arc<RwLock<HashMap<GameId, DesktopGameSupervisorPort>>>,
@@ -266,6 +304,8 @@ impl DesktopGameRegistryPort {
         game: GameId,
         receipt: DesktopApplicationReceipt,
     ) -> Result<DesktopGameSupervisorEditorReceipt, DesktopGameRegistryError> {
+        let admission = self.close_admission.lock()?;
+        admission.check_game(game)?;
         self.editor_port(game)?
             .try_open_editor(receipt)
             .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
@@ -275,6 +315,8 @@ impl DesktopGameRegistryPort {
         &self,
         command: DesktopAnnotationCommands,
     ) -> Result<DesktopGameSupervisorEditorReceipt, DesktopGameRegistryError> {
+        let admission = self.close_admission.lock()?;
+        admission.check_game(command.expected().game())?;
         self.editor_port(command.expected().game())?
             .try_submit_editor(command)
             .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
@@ -403,16 +445,25 @@ impl DesktopGameBridgeProvider for DesktopGameRegistryPort {
                         .get(&game)
                         .cloned()
                         .ok_or_else(|| DesktopGameRegistryError::UnknownGame.failure())?;
-                    let receipt = supervisor
-                        .try_submit(DesktopGameCommandsRequest {
-                            request_id: request.request_id,
-                            expected_revision: revision,
-                            received_at: request.received_at,
-                            action,
-                        })
-                        .map_err(|error| {
-                            DesktopGameRegistryError::Supervisor(Arc::new(error)).failure()
-                        })?;
+                    let receipt = {
+                        let admission = port
+                            .close_admission
+                            .lock()
+                            .map_err(|error| error.failure())?;
+                        admission
+                            .check_game(game)
+                            .map_err(|error| error.failure())?;
+                        supervisor
+                            .try_submit(DesktopGameCommandsRequest {
+                                request_id: request.request_id,
+                                expected_revision: revision,
+                                received_at: request.received_at,
+                                action,
+                            })
+                            .map_err(|error| {
+                                DesktopGameRegistryError::Supervisor(Arc::new(error)).failure()
+                            })?
+                    };
                     receipt
                         .wait()
                         .await
@@ -459,9 +510,17 @@ impl DesktopGameBridgeProvider for DesktopGameRegistryPort {
 type DesktopGameRegistryActor<F, C, P> =
     DesktopGameSupervisor<<F as DesktopGameRegistryFactoryProvider>::Factory, C, P>;
 type DesktopGameRegistryActorOutcome<F, C, P> = (
+    GameId,
+    watch::Receiver<DesktopGameSupervisorEvent>,
     DesktopGameRegistryActor<F, C, P>,
     Result<(), DesktopGameSupervisorError>,
 );
+
+struct DesktopGameRegistryRetained<F: DesktopGameRegistryFactoryProvider, C, P> {
+    game: GameId,
+    owner: watch::Receiver<DesktopGameSupervisorEvent>,
+    actor: DesktopGameRegistryActor<F, C, P>,
+}
 type DesktopGameRegistryCreateFuture<F, C, P> = Pin<
     Box<
         dyn Future<
@@ -474,6 +533,15 @@ type DesktopGameRegistryCreateFuture<F, C, P> = Pin<
 >;
 type DesktopGameRegistryActivationFuture =
     Pin<Box<dyn Future<Output = Result<DesktopGameSnapshot, DesktopGameRegistryError>> + Send>>;
+struct DesktopGameRegistryCreation<F: DesktopGameRegistryFactoryProvider, C, P> {
+    game: GameId,
+    future: DesktopGameRegistryCreateFuture<F, C, P>,
+}
+
+struct DesktopGameRegistryActivation {
+    game: GameId,
+    future: DesktopGameRegistryActivationFuture,
+}
 type DesktopGameRegistryWatchFuture = Pin<
     Box<
         dyn Future<
@@ -496,14 +564,19 @@ pub struct DesktopGameRegistry<F: DesktopGameRegistryFactoryProvider, C, P, R> {
     random: Arc<Mutex<R>>,
     sessions: Arc<RwLock<HashMap<GameId, DesktopGameSupervisorPort>>>,
     creates: mpsc::Receiver<DesktopGameRegistryCreate>,
+    saved_requests: mpsc::Receiver<DesktopGameRegistrySavedRequest>,
+    saved: Option<DesktopGameRegistrySavedOpen<F, C, P>>,
+    saved_closed: bool,
+    saved_sources: HashMap<GameId, crate::storage::library_repository::StorageLibrarySourceMemory>,
+    closing: DesktopGameRegistryClosing<F, C, P>,
     controls: mpsc::Receiver<DesktopGameRegistryControl>,
-    creating: Option<DesktopGameRegistryCreateFuture<F, C, P>>,
+    creating: Option<DesktopGameRegistryCreation<F, C, P>>,
     installing: VecDeque<(DesktopGameRegistryActor<F, C, P>, DesktopGameSupervisorPort)>,
-    activating: Option<DesktopGameRegistryActivationFuture>,
+    activating: Option<DesktopGameRegistryActivation>,
     creation_response: Option<oneshot::Sender<Result<DesktopGameSnapshot, DesktopFailure>>>,
     tasks: JoinSet<DesktopGameRegistryActorOutcome<F, C, P>>,
-    retained: Vec<DesktopGameRegistryActor<F, C, P>>,
-    watches: Vec<DesktopGameRegistryWatchFuture>,
+    retained: Vec<DesktopGameRegistryRetained<F, C, P>>,
+    watches: Vec<(GameId, DesktopGameRegistryWatchFuture)>,
     snapshots: watch::Sender<Vec<DesktopGameSnapshot>>,
     closed: Arc<AtomicBool>,
     preparation: Option<CapacityPhaseGeneration>,
@@ -528,11 +601,15 @@ where
     pub fn new(options: DesktopGameRegistryOptions<F, C, P, R>) -> (Self, DesktopGameRegistryPort) {
         let sessions = Arc::new(RwLock::new(HashMap::new()));
         let (creates, create_receiver) = mpsc::channel(DesktopGameRegistryPort::CREATE_CAPACITY);
+        let (saved, saved_requests) = mpsc::channel(DesktopGameRegistryPort::CREATE_CAPACITY);
         let (controls, control_receiver) = mpsc::channel(DesktopGameRegistryPort::CONTROL_CAPACITY);
         let (snapshots, snapshot_receiver) = watch::channel(Vec::new());
         let closed = Arc::new(AtomicBool::new(false));
+        let close_admission = Arc::new(DesktopGameRegistryCloseAdmission::new());
         let port = DesktopGameRegistryPort {
             creates,
+            saved: DesktopGameRegistrySavedAdmission::new(saved, Arc::clone(&close_admission)),
+            close_admission: Arc::clone(&close_admission),
             controls,
             held_controls: Arc::new(AtomicU8::new(0)),
             sessions: Arc::clone(&sessions),
@@ -550,6 +627,11 @@ where
                 random: Arc::new(Mutex::new(options.random)),
                 sessions,
                 creates: create_receiver,
+                saved_requests,
+                saved: None,
+                saved_closed: false,
+                saved_sources: HashMap::new(),
+                closing: DesktopGameRegistryClosing::new(close_admission),
                 controls: control_receiver,
                 creating: None,
                 installing: VecDeque::new(),
@@ -574,6 +656,7 @@ where
         restored: DesktopGameRegistryRestored,
     ) -> Result<(), DesktopGameRegistryError> {
         let game = restored.session.id();
+        self.closing.admission.lock()?.check_game(game)?;
         if self.sessions.read().await.contains_key(&game) {
             return Err(DesktopGameRegistryError::DuplicateGame);
         }
@@ -601,6 +684,8 @@ where
     }
 
     pub async fn run(&mut self) -> Result<(), DesktopGameRegistryError> {
+        self.resume_saved_installation(Instant::now() + Self::CONTROL_TIMEOUT)
+            .await?;
         let operation = self.run_loop().await;
         if operation.is_err() {
             self.closed.store(true, Ordering::Release);
@@ -610,10 +695,13 @@ where
 
     async fn run_loop(&mut self) -> Result<(), DesktopGameRegistryError> {
         loop {
+            self.progress_closes()?;
             if self.stopping
                 && self.tasks.is_empty()
                 && self.creating.is_none()
                 && self.activating.is_none()
+                && self.saved.is_none()
+                && self.closing.is_shutdown_complete()
             {
                 return if self.retained.is_empty() {
                     Ok(())
@@ -622,13 +710,18 @@ where
                         .await
                 };
             }
-            if self.creates_closed && self.controls_closed && !self.stopping {
+            if self.creates_closed && self.saved_closed && self.controls_closed && !self.stopping {
                 self.shutdown_retained(Instant::now() + Self::CONTROL_TIMEOUT)
                     .await?;
                 return Ok(());
             }
+            let close_admission = Arc::clone(&self.closing.admission);
             tokio::select! {
                 biased;
+                () = close_admission.changed.notified() => {}
+                ready = Self::close_ready(&mut self.closing), if !self.closing.operations.is_empty() => {
+                    self.finish_close_step(ready)?;
+                }
                 control = self.controls.recv(), if !self.controls_closed && !self.stopping => {
                     match control {
                         Some(control) => self.handle_control(control).await?,
@@ -643,6 +736,9 @@ where
                     self.activating = None;
                     self.finish_activation(result)?;
                 }
+                result = Self::saved_ready(&mut self.saved), if self.saved.is_some() => {
+                    self.finish_saved_step(result, Instant::now() + Self::CONTROL_TIMEOUT).await?;
+                }
                 task = self.tasks.join_next(), if !self.tasks.is_empty() => {
                     if let Some(result) = task { self.observe_actor(result)?; }
                 }
@@ -650,10 +746,16 @@ where
                     let (game, receiver, result) = watched;
                     self.observe_snapshot(game, receiver, result);
                 }
-                creation = self.creates.recv(), if !self.creates_closed && self.creating.is_none() && self.activating.is_none() && !self.stopping => {
+                creation = self.creates.recv(), if !self.creates_closed && self.creating.is_none() && self.activating.is_none() && self.saved.is_none() && !self.stopping => {
                     match creation {
                         Some(creation) => self.begin_creation(creation),
                         None => self.creates_closed = true,
+                    }
+                }
+                opening = self.saved_requests.recv(), if !self.saved_closed && self.saved.is_none() && self.creating.is_none() && self.activating.is_none() && !self.stopping => {
+                    match opening {
+                        Some(opening) => self.begin_saved_open(opening),
+                        None => self.saved_closed = true,
                     }
                 }
             }
@@ -678,7 +780,7 @@ where
     fn prepare_creation(
         &mut self,
         request: DesktopGameBridgeRequest,
-    ) -> Result<DesktopGameRegistryCreateFuture<F, C, P>, DesktopGameRegistryError> {
+    ) -> Result<DesktopGameRegistryCreation<F, C, P>, DesktopGameRegistryError> {
         let configuration = match request.operation {
             DesktopGameBridgeEnumOperation::Create {
                 configuration,
@@ -689,6 +791,7 @@ where
             }
         };
         let game = uuid::Uuid::new_v4().to_string().parse()?;
+        self.closing.admission.lock()?.check_game(game)?;
         let root = uuid::Uuid::new_v4().to_string().parse()?;
         let factory = self.factory_provider.factory(game).map_err(|source| {
             DesktopGameRegistryError::Factory {
@@ -701,32 +804,35 @@ where
         let clock = Arc::clone(&self.clock);
         let wall_time = Arc::clone(&self.wall_time);
         let proof = Arc::clone(&self.proof);
-        Ok(Box::pin(async move {
-            let session = executor
-                .submit_waiting(move |_cancellation| {
-                    let mut random = random
-                        .lock()
-                        .map_err(|_poisoned| DesktopGameRegistryError::RandomPoisoned)?;
-                    Self::session(game, root, configuration, &mut random)
+        Ok(DesktopGameRegistryCreation {
+            game,
+            future: Box::pin(async move {
+                let session = executor
+                    .submit_waiting(move |_cancellation| {
+                        let mut random = random
+                            .lock()
+                            .map_err(|_poisoned| DesktopGameRegistryError::RandomPoisoned)?;
+                        Self::session(game, root, configuration, &mut random)
+                    })
+                    .await?
+                    .join()
+                    .await??;
+                let search_config = session.engine_search_config();
+                DesktopGameSupervisor::new(DesktopGameSupervisorOptions {
+                    session,
+                    storage_revision: GameStorageRevision::INITIAL,
+                    storage,
+                    executor,
+                    clock,
+                    wall_time,
+                    proof,
+                    factory,
+                    search_config,
                 })
-                .await?
-                .join()
-                .await??;
-            let search_config = session.engine_search_config();
-            DesktopGameSupervisor::new(DesktopGameSupervisorOptions {
-                session,
-                storage_revision: GameStorageRevision::INITIAL,
-                storage,
-                executor,
-                clock,
-                wall_time,
-                proof,
-                factory,
-                search_config,
-            })
-            .await
-            .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
-        }))
+                .await
+                .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
+            }),
+        })
     }
 
     fn session(
@@ -793,6 +899,7 @@ where
                                 action: DesktopGameCommandsEnumAction::Start,
                             })
                             .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
+                            .map(|receipt| (snapshot.id(), receipt))
                         }),
                     Err(error) => Err(error),
                 }
@@ -800,13 +907,16 @@ where
             Err(error) => Err(error),
         };
         match activation {
-            Ok(receipt) => {
-                self.activating = Some(Box::pin(async move {
-                    receipt
-                        .wait()
-                        .await
-                        .map_err(DesktopGameRegistryError::Supervisor)
-                }));
+            Ok((game, receipt)) => {
+                self.activating = Some(DesktopGameRegistryActivation {
+                    game,
+                    future: Box::pin(async move {
+                        receipt
+                            .wait()
+                            .await
+                            .map_err(DesktopGameRegistryError::Supervisor)
+                    }),
+                });
                 Ok(())
             }
             Err(error) => self.finish_activation(Err(error)),
@@ -854,11 +964,12 @@ where
             let snapshot = port.snapshot().snapshot;
             let game = snapshot.id();
             let receiver = port.events();
+            let actor_owner = receiver.clone();
             sessions.insert(game, port.clone());
             drop(sessions);
             self.tasks.spawn(async move {
                 let result = actor.run().await;
-                (actor, result)
+                (game, actor_owner, actor, result)
             });
             self.watch(game, receiver);
             self.publish(snapshot);
@@ -892,21 +1003,24 @@ where
         receiver: watch::Receiver<DesktopGameSupervisorEvent>,
         result: Result<(), watch::error::RecvError>,
     ) {
-        if result.is_ok() {
+        if result.is_ok() && !self.closing.is_closed(game) {
             self.publish(receiver.borrow().snapshot.clone());
             self.watch(game, receiver);
         }
     }
 
     fn watch(&mut self, game: GameId, mut receiver: watch::Receiver<DesktopGameSupervisorEvent>) {
-        self.watches.push(Box::pin(async move {
-            let result = receiver.changed().await;
-            (game, receiver, result)
-        }));
+        self.watches.push((
+            game,
+            Box::pin(async move {
+                let result = receiver.changed().await;
+                (game, receiver, result)
+            }),
+        ));
     }
 
     fn poll_watches(
-        watches: &mut Vec<DesktopGameRegistryWatchFuture>,
+        watches: &mut Vec<(GameId, DesktopGameRegistryWatchFuture)>,
         context: &mut Context<'_>,
     ) -> Poll<(
         GameId,
@@ -914,7 +1028,7 @@ where
         Result<(), watch::error::RecvError>,
     )> {
         for index in 0..watches.len() {
-            if let Poll::Ready(result) = watches[index].as_mut().poll(context) {
+            if let Poll::Ready(result) = watches[index].1.as_mut().poll(context) {
                 drop(watches.swap_remove(index));
                 return Poll::Ready(result);
             }
@@ -1128,10 +1242,18 @@ where
         &mut self,
         result: Result<DesktopGameRegistryActorOutcome<F, C, P>, tokio::task::JoinError>,
     ) -> Result<(), DesktopGameRegistryError> {
-        let (actor, result) = result?;
-        if !actor.is_shutdown_complete() {
-            self.retained.push(actor);
+        let (game, owner, actor, result) = result?;
+        if let Err(error) = self.progress_closes() {
+            self.retained
+                .push(DesktopGameRegistryRetained { game, owner, actor });
+            return Err(error);
         }
+        if self.closing.accepts_actor(game, &owner) {
+            self.observe_close_actor(game, actor, result)?;
+            return Ok(());
+        }
+        self.retained
+            .push(DesktopGameRegistryRetained { game, owner, actor });
         result.map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
     }
 
@@ -1143,6 +1265,10 @@ where
             && self.installing.is_empty()
             && self.activating.is_none()
             && self.creation_response.is_none()
+            && self.saved.is_none()
+            && self.saved_requests.is_empty()
+            && self.saved_sources.is_empty()
+            && self.closing.is_shutdown_complete()
     }
 
     pub async fn shutdown_retained(
@@ -1150,7 +1276,9 @@ where
         deadline: Instant,
     ) -> Result<(), DesktopGameRegistryError> {
         self.closed.store(true, Ordering::Release);
+        self.progress_closes()?;
         self.creates.close();
+        self.saved_requests.close();
         self.controls.close();
         while let Ok(creation) = self.creates.try_recv() {
             if let Err(abandoned) = creation
@@ -1168,11 +1296,15 @@ where
                 drop(abandoned);
             }
         }
+        while let Ok(opening) = self.saved_requests.try_recv() {
+            opening.complete(Err(Arc::new(DesktopGameRegistryError::Closed)));
+        }
         self.creates_closed = true;
         self.controls_closed = true;
+        self.saved_closed = true;
         let mut failure = None;
         if let Some(creating) = &mut self.creating {
-            match timeout_at(deadline, creating).await {
+            match timeout_at(deadline, creating.future.as_mut()).await {
                 Ok(result) => {
                     self.creating = None;
                     if let Err(error) = self.finish_creation(result, deadline).await {
@@ -1188,6 +1320,9 @@ where
         if let Err(error) = self.finish_installations(deadline).await {
             DesktopGameRegistryError::record(&mut failure, error);
         }
+        if let Err(error) = self.drain_saved_open(deadline).await {
+            DesktopGameRegistryError::record(&mut failure, error);
+        }
         if self.creating.is_none()
             && self.activating.is_none()
             && self.creation_response.is_some()
@@ -1199,7 +1334,7 @@ where
             .broadcast(DesktopGameCommandsEnumAction::Quit, deadline)
             .await;
         if let Some(activating) = &mut self.activating {
-            match timeout_at(deadline, activating).await {
+            match timeout_at(deadline, activating.future.as_mut()).await {
                 Ok(result) => {
                     self.activating = None;
                     if let Err(error) = self.finish_activation(result) {
@@ -1236,6 +1371,17 @@ where
         if let Err(error) = self.cleanup_retained(deadline).await {
             DesktopGameRegistryError::record(&mut failure, error);
         }
+        if let Err(error) = self.drain_closes(deadline).await {
+            DesktopGameRegistryError::record(&mut failure, error);
+        }
+        if self.tasks.is_empty()
+            && self.retained.is_empty()
+            && self.creating.is_none()
+            && self.installing.is_empty()
+            && self.saved.is_none()
+        {
+            self.saved_sources.clear();
+        }
         if self.is_shutdown_complete() {
             self.stopping = true;
             self.watches.clear();
@@ -1250,14 +1396,18 @@ where
         let mut failure = None;
         let mut index = 0;
         while index < self.retained.len() {
-            let result = self.retained[index].shutdown_retained(deadline).await;
+            let result = if self.retained[index].actor.is_shutdown_complete() {
+                Ok(())
+            } else {
+                self.retained[index].actor.shutdown_retained(deadline).await
+            };
             if let Err(error) = result {
                 DesktopGameRegistryError::record(
                     &mut failure,
                     DesktopGameRegistryError::Supervisor(Arc::new(error)),
                 );
             }
-            if self.retained[index].is_shutdown_complete() {
+            if self.retained[index].actor.is_shutdown_complete() {
                 self.retained.swap_remove(index);
             } else {
                 index += 1;
@@ -1267,22 +1417,22 @@ where
     }
 
     async fn activation_ready(
-        activating: &mut Option<DesktopGameRegistryActivationFuture>,
+        activating: &mut Option<DesktopGameRegistryActivation>,
     ) -> Result<DesktopGameSnapshot, DesktopGameRegistryError> {
         match activating {
-            Some(activating) => activating.await,
+            Some(activating) => activating.future.as_mut().await,
             None => pending().await,
         }
     }
 
     async fn creation_ready(
-        creating: &mut Option<DesktopGameRegistryCreateFuture<F, C, P>>,
+        creating: &mut Option<DesktopGameRegistryCreation<F, C, P>>,
     ) -> Result<
         (DesktopGameRegistryActor<F, C, P>, DesktopGameSupervisorPort),
         DesktopGameRegistryError,
     > {
         match creating {
-            Some(creating) => creating.await,
+            Some(creating) => creating.future.as_mut().await,
             None => pending().await,
         }
     }

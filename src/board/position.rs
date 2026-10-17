@@ -23,6 +23,17 @@ pub enum BoardPositionError {
     CounterRange,
     #[error("Structurally invalid position: {0:?}")]
     IllegalPosition(PositionErrorKinds),
+    #[error("Polyglot keys are unavailable for variant {0:?}")]
+    UnsupportedPolyglotVariant(BoardEnumVariant),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoardPositionPolyglotKey(u64);
+
+impl BoardPositionPolyglotKey {
+    pub const fn value(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -80,6 +91,19 @@ impl BoardPosition {
 
     pub fn variant(&self) -> BoardEnumVariant {
         self.variant
+    }
+
+    pub fn standard_polyglot_key(&self) -> Result<BoardPositionPolyglotKey, BoardPositionError> {
+        match self.variant {
+            BoardEnumVariant::Standard => Ok(BoardPositionPolyglotKey(
+                self.chess
+                    .zobrist_hash::<shakmaty::zobrist::Zobrist64>(EnPassantMode::PseudoLegal)
+                    .0,
+            )),
+            BoardEnumVariant::Chess960 => {
+                Err(BoardPositionError::UnsupportedPolyglotVariant(self.variant))
+            }
+        }
     }
 
     pub fn turn(&self) -> BoardEnumColor {

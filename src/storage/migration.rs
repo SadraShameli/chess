@@ -17,6 +17,7 @@ impl StorageMigration {
             Self::new(1, include_str!("migrations/0001_core.sql").into()),
             Self::new(2, include_str!("migrations/0002_puzzles.sql").into()),
             Self::new(3, include_str!("migrations/0003_library.sql").into()),
+            Self::new(4, include_str!("migrations/0004_editor.sql").into()),
         ]
     }
 

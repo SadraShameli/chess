@@ -224,6 +224,8 @@ impl PresentationPuzzlePanelFixture {
         match work.request().command().operation() {
             DesktopEnumCommand::Puzzle { operation, .. } => Ok(operation),
             DesktopEnumCommand::Game(_)
+            | DesktopEnumCommand::Editor { .. }
+            | DesktopEnumCommand::Library(_)
             | DesktopEnumCommand::Engine(_)
             | DesktopEnumCommand::Bootstrap
             | DesktopEnumCommand::FileSelect { .. }

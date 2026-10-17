@@ -2,12 +2,16 @@ use std::sync::{Arc, OnceLock};
 
 use crate::clock::duration::ClockInstant;
 use crate::desktop::dto::DesktopEnumValue;
+use crate::desktop::editor_commands::{
+    DesktopEditorCommandsEnumOperation, DesktopEditorCommandsError,
+};
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::file_handle::DesktopFileHandleOwner;
 use crate::desktop::game_bridge::DesktopGameBridgeEnumOperation;
 use crate::desktop::game_commands::DesktopGameCommandsEnumAction;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
+use crate::desktop::library_service::{DesktopLibraryServiceError, DesktopLibraryServiceOperation};
 use crate::desktop::puzzle_bridge::DesktopPuzzleBridgeEnumOperation;
 use crate::desktop::puzzle_service::DesktopPuzzleServiceEnumOperation;
 use crate::puzzle::persistence::PuzzlePersistenceEnumCommand;
@@ -19,6 +23,9 @@ use crate::puzzle::timer::{PuzzleTimerEnumPauseReason, PuzzleTimerEnumReadiness}
 pub struct DesktopMessagesEntityId(DesktopRequestId);
 
 impl DesktopMessagesEntityId {
+    pub const fn for_editor(draft: crate::board::editor::BoardEditorDraftId) -> Self {
+        Self(DesktopRequestId::for_editor(draft))
+    }
     pub const fn for_game(game: crate::game::enums::GameId) -> Self {
         Self(DesktopRequestId::for_game(game))
     }
@@ -39,6 +46,11 @@ impl Default for DesktopMessagesEntityId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DesktopEnumCommand {
+    Library(DesktopLibraryServiceOperation),
+    Editor {
+        owner: DesktopMessagesEntityId,
+        operation: DesktopEditorCommandsEnumOperation,
+    },
     Game(DesktopGameBridgeEnumOperation),
     Engine(crate::desktop::engine_commands::DesktopEngineCommandsOperation),
     Puzzle {
@@ -70,8 +82,10 @@ pub enum DesktopEnumCommand {
 impl DesktopEnumCommand {
     pub fn is_available_while_closing(&self) -> bool {
         match self {
+            Self::Library(operation) => operation.is_available_while_closing(),
             Self::Puzzle { operation, .. } => operation.is_available_while_closing(),
             Self::Game(_)
+            | Self::Editor { .. }
             | Self::Engine(_)
             | Self::Bootstrap
             | Self::FileSelect { .. }
@@ -150,7 +164,9 @@ impl DesktopEnumCommand {
             Self::Stop { owner } => Some(DesktopMessagesEnumControlKey::Stop(*owner)),
             Self::Pause { owner } => Some(DesktopMessagesEnumControlKey::Pause(*owner)),
             Self::Quit => Some(DesktopMessagesEnumControlKey::Quit),
-            Self::Bootstrap
+            Self::Library(_)
+            | Self::Editor { .. }
+            | Self::Bootstrap
             | Self::FileSelect { .. }
             | Self::StreamSubscribe
             | Self::StreamAcknowledge { .. }
@@ -160,6 +176,8 @@ impl DesktopEnumCommand {
 
     pub fn mutation_entity(&self) -> Option<DesktopMessagesEntityId> {
         match self {
+            Self::Library(operation) => operation.mutation_entity(),
+            Self::Editor { owner, operation } => operation.is_mutation().then_some(*owner),
             Self::Puzzle { owner, operation } => match operation {
                 DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
                 | DesktopPuzzleServiceEnumOperation::Session {
@@ -269,6 +287,32 @@ pub struct DesktopCommand {
 }
 
 impl DesktopCommand {
+    pub fn editor(
+        owner: DesktopMessagesEntityId,
+        operation: DesktopEditorCommandsEnumOperation,
+    ) -> Self {
+        let expected_revision = Some(Self::editor_expected_revision(&operation));
+        Self::new(
+            DesktopEnumCommand::Editor { owner, operation },
+            expected_revision,
+        )
+    }
+
+    pub(crate) fn editor_expected_revision(
+        operation: &DesktopEditorCommandsEnumOperation,
+    ) -> DesktopRevision {
+        operation
+            .expected()
+            .map_or(DesktopRevision::ZERO, |context| {
+                DesktopRevision::for_editor(context.revision())
+            })
+    }
+
+    pub fn library(operation: DesktopLibraryServiceOperation) -> Self {
+        let expected_revision = operation.expected_revision();
+        Self::new(DesktopEnumCommand::Library(operation), expected_revision)
+    }
+
     pub fn puzzle(
         owner: DesktopMessagesEntityId,
         operation: DesktopPuzzleServiceEnumOperation,
@@ -309,11 +353,16 @@ struct DesktopMessagesRequestIdentity {
 pub struct DesktopRequest(Arc<DesktopMessagesRequestIdentity>);
 
 impl DesktopRequest {
-    pub(crate) fn new(session: DesktopRequestId, sequence: u64, command: DesktopCommand) -> Self {
+    pub(crate) fn new(
+        session: DesktopRequestId,
+        sequence: u64,
+        request_id: DesktopRequestId,
+        command: DesktopCommand,
+    ) -> Self {
         Self(Arc::new(DesktopMessagesRequestIdentity {
             session,
             sequence,
-            request_id: DesktopRequestId::new(),
+            request_id,
             command,
             received_at: OnceLock::new(),
             admitted_sequence: OnceLock::new(),
@@ -358,6 +407,8 @@ impl DesktopRequest {
 
 #[derive(Clone, Debug)]
 pub enum DesktopMessagesEnumResult {
+    LibraryFailure(Arc<DesktopLibraryServiceError>),
+    EditorFailure(Arc<DesktopEditorCommandsError>),
     Value {
         value: DesktopEnumValue,
         revision: Option<DesktopRevision>,

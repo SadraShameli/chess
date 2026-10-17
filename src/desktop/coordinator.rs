@@ -1,3 +1,6 @@
+mod editor;
+mod library;
+
 use std::collections::HashSet;
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
@@ -16,6 +19,10 @@ use crate::desktop::application::{
     DesktopApplication, DesktopApplicationError, DesktopApplicationWakeProvider,
     DesktopApplicationWork,
 };
+use crate::desktop::coordinator::editor::{
+    DesktopCoordinatorEditor, DesktopCoordinatorEditorPending,
+};
+use crate::desktop::coordinator::library::DesktopCoordinatorLibrary;
 use crate::desktop::dto::{DesktopBootstrapSnapshot, DesktopEnumEvent, DesktopEnumValue};
 use crate::desktop::engine_bridge::{
     DesktopEngineBridgeEnumResult, DesktopEngineBridgeProvider, DesktopEngineBridgeRequest,
@@ -31,6 +38,9 @@ use crate::desktop::file_handle::{
 use crate::desktop::game_bridge::{DesktopGameBridgeProvider, DesktopGameBridgeRequest};
 use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
+use crate::desktop::library_service::{
+    DesktopLibraryServiceEnumResult, DesktopLibraryServiceError,
+};
 use crate::desktop::messages::{DesktopEnumCommand, DesktopMessagesEntityId};
 use crate::desktop::puzzle_service::{
     DesktopPuzzleServiceEnumOperation, DesktopPuzzleServiceEnumResult, DesktopPuzzleServiceError,
@@ -121,13 +131,13 @@ struct DesktopCoordinatorSelection<P> {
     selection: DesktopCoordinatorSelectionFuture<P>,
 }
 
-type DesktopCoordinatorPendingFuture<T> =
-    Pin<Box<dyn Future<Output = Result<T, DesktopFailure>> + Send>>;
+type DesktopCoordinatorPendingFuture<T, E = DesktopFailure> =
+    Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
-struct DesktopCoordinatorPending<T> {
+struct DesktopCoordinatorPending<T, E = DesktopFailure> {
     work: DesktopApplicationWork,
-    future: Option<DesktopCoordinatorPendingFuture<T>>,
-    response: Option<Result<T, DesktopFailure>>,
+    future: Option<DesktopCoordinatorPendingFuture<T, E>>,
+    response: Option<Result<T, E>>,
 }
 
 struct DesktopCoordinatorPuzzles {
@@ -135,8 +145,8 @@ struct DesktopCoordinatorPuzzles {
     provider: Arc<dyn DesktopPuzzleServiceProvider>,
 }
 
-impl<T> DesktopCoordinatorPending<T> {
-    async fn ready(pending: &mut [Self]) -> (usize, Result<T, DesktopFailure>) {
+impl<T, E> DesktopCoordinatorPending<T, E> {
+    async fn ready(pending: &mut [Self]) -> (usize, Result<T, E>) {
         poll_fn(|context| {
             for (index, pending) in pending.iter_mut().enumerate() {
                 if let Some(future) = &mut pending.future
@@ -259,6 +269,12 @@ where
     pending_engine: Vec<DesktopCoordinatorPending<DesktopEngineBridgeEnumResult>>,
     puzzles: Option<DesktopCoordinatorPuzzles>,
     pending_puzzles: Vec<DesktopCoordinatorPending<DesktopPuzzleServiceEnumResult>>,
+    library: Option<DesktopCoordinatorLibrary>,
+    pending_library: Vec<
+        DesktopCoordinatorPending<DesktopLibraryServiceEnumResult, Arc<DesktopLibraryServiceError>>,
+    >,
+    editor: Option<DesktopCoordinatorEditor>,
+    pending_editor: Option<DesktopCoordinatorEditorPending>,
     engine_quit: Option<DesktopCoordinatorEngineQuitEnumPhase>,
     shutdown_notice: Option<(DesktopRequestId, DesktopFailure)>,
     quit_retry_deadline: Option<Instant>,
@@ -311,6 +327,10 @@ where
             pending_engine: Vec::new(),
             puzzles: None,
             pending_puzzles: Vec::new(),
+            library: None,
+            pending_library: Vec::new(),
+            editor: None,
+            pending_editor: None,
             engine_quit: None,
             shutdown_notice: None,
             quit_retry_deadline: None,
@@ -346,6 +366,8 @@ where
 
     pub async fn run(&mut self) -> Result<(), DesktopCoordinatorError> {
         loop {
+            self.complete_editor().await?;
+            self.complete_library().await?;
             self.complete_games().await?;
             self.complete_engine().await?;
             self.complete_puzzles().await?;
@@ -374,6 +396,12 @@ where
                 }
                 (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_puzzles) => {
                     self.pending_puzzles[index].response = Some(response);
+                }
+                (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_library) => {
+                    self.pending_library[index].response = Some(response);
+                }
+                (editor, response) = DesktopCoordinatorEditorPending::ready(&mut self.pending_editor) => {
+                    self.finish_editor(editor, response)?;
                 }
                 (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_engine) => {
                     self.pending_engine[index].response = Some(response);
@@ -455,6 +483,12 @@ where
         work: DesktopApplicationWork,
     ) -> Result<(), DesktopCoordinatorError> {
         match work.request().command().operation().clone() {
+            DesktopEnumCommand::Library(operation) => {
+                self.dispatch_library(work, operation).await?
+            }
+            DesktopEnumCommand::Editor { owner, operation } => {
+                self.dispatch_editor(work, owner, operation).await?;
+            }
             DesktopEnumCommand::Puzzle { owner, operation } => {
                 self.dispatch_puzzle(work, owner, operation).await?;
             }
@@ -665,6 +699,11 @@ where
                         .ok_or(DesktopCoordinatorError::QuitDeadlineRange)?,
                 };
                 self.quit_deadline = Some(deadline);
+                if retry.is_some()
+                    && let Err(error) = self.retry_editor_cleanup()
+                {
+                    self.record_shutdown_failure(index, error);
+                }
                 if let Some(deadline) = retry
                     && let (Some(quit), Some(engine)) = (&mut self.engine_quit, &self.engine)
                     && let Err(error) = quit.retry(engine.as_ref(), deadline)
@@ -697,6 +736,8 @@ where
                     || !self.pending_games.is_empty()
                     || !self.pending_engine.is_empty()
                     || !self.pending_puzzles.is_empty()
+                    || !self.pending_library.is_empty()
+                    || self.has_pending_editor()
                     || self.shutdown_failure.is_some()
                     || self
                         .engine_quit

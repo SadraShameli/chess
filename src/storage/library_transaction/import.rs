@@ -5,11 +5,11 @@ use tokio::sync::Semaphore;
 
 use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::import_session::{
-    StorageImportSessionCandidate, StorageImportSessionCandidateBody,
-    StorageImportSessionCandidateCursor, StorageImportSessionCandidatePage,
-    StorageImportSessionCatalogStamp, StorageImportSessionCommitFootprint,
-    StorageImportSessionCommitReceipt, StorageImportSessionDestination, StorageImportSessionError,
-    StorageImportSessionSnapshot,
+    StorageImportSessionCancellation, StorageImportSessionCandidate,
+    StorageImportSessionCandidateBody, StorageImportSessionCandidateCursor,
+    StorageImportSessionCandidatePage, StorageImportSessionCatalogStamp,
+    StorageImportSessionCommitFootprint, StorageImportSessionCommitReceipt,
+    StorageImportSessionDestination, StorageImportSessionError, StorageImportSessionSnapshot,
 };
 use crate::storage::library_import::{
     StorageLibraryImportCandidateRequest, StorageLibraryImportCommitRequest,
@@ -65,7 +65,9 @@ impl StorageLibraryTransactionImport {
         transaction: &Transaction<'_>,
         snapshot: StorageImportSessionSnapshot,
         certified: bool,
+        cancellation: &StorageImportSessionCancellation,
     ) -> Result<(), StorageLibraryError> {
+        cancellation.check()?;
         if !certified || !snapshot.is_adoption_complete() {
             return Err(StorageLibraryError::AdoptionRequired);
         }
@@ -74,6 +76,7 @@ impl StorageLibraryTransactionImport {
         {
             return Err(StorageLibraryError::ImportCatalog);
         }
+        cancellation.check()?;
         Self::destination(transaction, snapshot.destination())
     }
 
@@ -187,9 +190,11 @@ impl StorageLibraryTransactionImport {
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
         certified: bool,
+        cancellation: &StorageImportSessionCancellation,
     ) -> Result<u64, StorageLibraryError> {
-        Self::validate(transaction, snapshot, certified)?;
-        Ok(StorageLibraryImportSpace::plan(transaction, footprint)?.bytes())
+        cancellation.check()?;
+        Self::validate(transaction, snapshot, certified, cancellation)?;
+        Ok(StorageLibraryImportSpace::plan(transaction, footprint, cancellation)?.bytes())
     }
 
     pub(super) fn commit(
@@ -199,18 +204,20 @@ impl StorageLibraryTransactionImport {
         origin: uuid::Uuid,
         scope: &mut Option<StorageLibraryImportPageLimit>,
     ) -> Result<StorageImportSessionCommitReceipt, StorageLibraryError> {
+        request.cancellation.check()?;
         let snapshot = StorageImportSessionSnapshot::new(
             request.prepared.catalog_stamp(),
             true,
             request.prepared.destination(),
         );
-        Self::validate(transaction, snapshot, certified)?;
+        Self::validate(transaction, snapshot, certified, &request.cancellation)?;
         request.prepared.recheck_space()?;
         let footprint = request.prepared.footprint();
-        let space = StorageLibraryImportSpace::plan(transaction, footprint)?;
+        let space = StorageLibraryImportSpace::plan(transaction, footprint, &request.cancellation)?;
         if space.bytes() > request.prepared.confirmation().sqlite_bytes() {
             return Err(StorageLibraryError::ImportSpaceIncreased);
         }
+        request.cancellation.check()?;
         StorageLibraryImportPageLimit::install(transaction, space.page_ceiling(), scope)?;
         let mut count = 0_u64;
         let mut bodies = 0_u64;
@@ -257,3 +264,7 @@ impl StorageLibraryTransactionImport {
         Ok(StorageImportSessionCommitReceipt::new(commit_id, count))
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/storage/library_import_journal.rs"]
+mod journal_tests;

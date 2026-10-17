@@ -14,7 +14,7 @@ use crate::game::annotations::{
 use crate::game::enums::GameMoveId;
 use crate::game::move_node::{GameMoveNodeMarking, GameMoveNodeNag};
 use crate::game::session::{GameMetadata, GameMetadataText};
-use crate::game::tree::{GameTree, GameTreeError};
+use crate::game::tree::{GameTree, GameTreeError, GameTreePreparedAnnotations};
 use crate::notation::game_identity::NotationGameIdentityEnumResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,10 +182,16 @@ impl NotationGame {
         notes: String,
         nags: Vec<GameMoveNodeNag>,
     ) -> Result<GameAnnotationsEnumChange, NotationGameError> {
-        Ok(self
-            .tree
-            .prepare_notes_and_nags(node, notes, nags)?
-            .commit())
+        Ok(self.prepare_notes_and_nags(node, notes, nags)?.commit())
+    }
+
+    pub(crate) fn prepare_notes_and_nags(
+        &mut self,
+        node: GameMoveId,
+        notes: String,
+        nags: Vec<GameMoveNodeNag>,
+    ) -> Result<GameTreePreparedAnnotations<'_>, NotationGameError> {
+        Ok(self.tree.prepare_notes_and_nags(node, notes, nags)?)
     }
 
     pub fn save_markings(
@@ -193,7 +199,15 @@ impl NotationGame {
         node: GameMoveId,
         markings: Vec<GameMoveNodeMarking>,
     ) -> Result<GameAnnotationsEnumChange, NotationGameError> {
-        Ok(self.tree.prepare_markings(node, markings)?.commit())
+        Ok(self.prepare_markings(node, markings)?.commit())
+    }
+
+    pub(crate) fn prepare_markings(
+        &mut self,
+        node: GameMoveId,
+        markings: Vec<GameMoveNodeMarking>,
+    ) -> Result<GameTreePreparedAnnotations<'_>, NotationGameError> {
+        Ok(self.tree.prepare_markings(node, markings)?)
     }
 
     pub fn preview_variation(

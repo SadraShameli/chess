@@ -225,12 +225,14 @@ impl<W: GameStorageWallTimeProvider + ?Sized + 'static> StorageImportSessionRepo
         &self,
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: StorageImportSessionCancellation,
     ) -> StorageImportSessionRepositoryFuture<'_, u64> {
         Box::pin(async move {
             let StorageLibraryEnumTransactionResponse::ImportEstimate(bytes) = self
                 .execute(StorageLibraryEnumTransactionRequest::ImportEstimate {
                     snapshot,
                     footprint,
+                    cancellation,
                 })
                 .await?
             else {

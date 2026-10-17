@@ -139,7 +139,7 @@ pub enum EngineOptionEnumDescriptor {
 }
 
 impl EngineOptionEnumDescriptor {
-    fn descriptor(self) -> String {
+    pub(crate) fn descriptor(self) -> String {
         match self {
             Self::Spin(spin) => spin.descriptor(),
             Self::Check(default) => format!("check default {default}"),

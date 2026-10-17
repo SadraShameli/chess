@@ -306,6 +306,7 @@ pub(super) struct StorageImportSessionReviewRepository {
     inner: Arc<StorageImportSessionTestRepository>,
     counters: Arc<StorageImportSessionReviewCounters>,
     pub(super) gate: StorageImportSessionReviewReadGate,
+    pub(super) estimate_token: Mutex<Option<StorageImportSessionCancellation>>,
 }
 
 impl StorageImportSessionRepository for StorageImportSessionReviewRepository {
@@ -364,12 +365,20 @@ impl StorageImportSessionRepository for StorageImportSessionReviewRepository {
         &self,
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
+        cancellation: StorageImportSessionCancellation,
     ) -> StorageImportSessionRepositoryFuture<'_, u64> {
         Box::pin(async move {
+            *self
+                .estimate_token
+                .lock()
+                .map_err(|_poisoned| StorageImportSessionRepositoryError::InvalidResponse)? =
+                Some(cancellation.clone());
             self.gate
                 .pass(StorageImportSessionReviewEnumRead::Estimate)
                 .await?;
-            self.inner.estimate_commit_space(snapshot, footprint).await
+            self.inner
+                .estimate_commit_space(snapshot, footprint, cancellation)
+                .await
         })
     }
     fn commit_import(
@@ -407,6 +416,7 @@ impl StorageImportSessionReviewFixture {
                 inner: Arc::clone(&base.repository),
                 counters: Arc::clone(&counters),
                 gate: StorageImportSessionReviewReadGate::new(),
+                estimate_token: Mutex::new(None),
             }),
             counters,
             base,
