@@ -6,7 +6,8 @@ use std::time::Duration;
 use chess::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use chess::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use chess::engine::package::manifest::{
-    EnginePackageEntry, EnginePackageEnumTarget, EnginePackageManifest, EnginePackageManifestError,
+    EnginePackageEntry, EnginePackageEnumProfile, EnginePackageEnumTarget, EnginePackageManifest,
+    EnginePackageManifestError,
 };
 use chess::package::digest::{PackageDigest, PackageDigestError};
 use chess::storage::atomic_file::{
@@ -43,6 +44,11 @@ pub(crate) enum ToolsEngineBuildError {
     SourceMismatch,
     #[error("The network size or SHA-256 differs from the approved model")]
     NetworkMismatch,
+    #[error("The {profile} profile is not available for {target}")]
+    UnsupportedProfile {
+        profile: &'static str,
+        target: &'static str,
+    },
     #[error("Cannot encode the engine manifest: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -50,7 +56,9 @@ pub(crate) enum ToolsEngineBuildError {
 #[cfg(test)]
 mod tests {
     use crate::engine::build::ToolsEngineBuild;
-    use chess::engine::package::manifest::{EnginePackageEnumTarget, EnginePackageManifest};
+    use chess::engine::package::manifest::{
+        EnginePackageEnumProfile, EnginePackageEnumTarget, EnginePackageManifest,
+    };
 
     #[test]
     fn published_engine_bytes_match_the_verified_source_and_manifest()
@@ -60,7 +68,13 @@ mod tests {
         std::fs::write(&built, b"verified engine fixture")?;
         let output = directory.path().join("package");
         let target = EnginePackageEnumTarget::current()?;
-        ToolsEngineBuild::publish(&built, &output, target, "test compiler".to_owned())?;
+        ToolsEngineBuild::publish(
+            &built,
+            &output,
+            target,
+            EnginePackageEnumProfile::Portable,
+            "test compiler".to_owned(),
+        )?;
         assert_eq!(
             std::fs::read(output.join(target.relative_path()))?,
             std::fs::read(built)?
@@ -93,6 +107,7 @@ pub(crate) struct ToolsEngineBuild {
     root: PathBuf,
     checkout: PathBuf,
     target: EnginePackageEnumTarget,
+    profile: EnginePackageEnumProfile,
     budget: CapacityBudget,
     executor: CapacityExecutor,
 }
@@ -108,9 +123,24 @@ impl ToolsEngineBuild {
             root,
             checkout,
             target: EnginePackageEnumTarget::current()?,
+            profile: EnginePackageEnumProfile::Portable,
             budget,
             executor,
         })
+    }
+
+    pub(crate) fn with_profile(
+        mut self,
+        profile: EnginePackageEnumProfile,
+    ) -> Result<Self, ToolsEngineBuildError> {
+        if !self.target.supports_profile(profile) {
+            return Err(ToolsEngineBuildError::UnsupportedProfile {
+                profile: profile.label(),
+                target: self.target.triple(),
+            });
+        }
+        self.profile = profile;
+        Ok(self)
     }
 
     pub(crate) async fn run(self) -> Result<(), ToolsEngineBuildError> {
@@ -144,14 +174,19 @@ impl ToolsEngineBuild {
                 "--locked",
                 "--release",
                 "--features",
-                "syzygy",
+                &self.profile.cargo_features().join(","),
                 "--target",
                 self.target.triple(),
             ])
             .env("EVALFILE", model)
             .env("CARGO_TARGET_DIR", &build_target)
             .env_remove("RUSTFLAGS")
-            .env("CARGO_ENCODED_RUSTFLAGS", self.target.portable_flags())
+            .env(
+                "CARGO_ENCODED_RUSTFLAGS",
+                self.profile
+                    .rustflags()
+                    .unwrap_or(self.target.portable_flags()),
+            )
             .env("CFLAGS", "-O3");
         if self.target == EnginePackageEnumTarget::MacosArm {
             command.env("MACOSX_DEPLOYMENT_TARGET", "14.0");
@@ -173,9 +208,16 @@ impl ToolsEngineBuild {
             .join(executable);
         let destination = self.root.join("resources/engine");
         let target = self.target;
+        let profile = self.profile;
         self.executor
             .submit(move |_cancellation| {
-                Self::publish(&built, &destination, target, compiler.trim().to_owned())
+                Self::publish(
+                    &built,
+                    &destination,
+                    target,
+                    profile,
+                    compiler.trim().to_owned(),
+                )
             })?
             .join()
             .await??;
@@ -332,6 +374,7 @@ impl ToolsEngineBuild {
         built: &Path,
         directory: &Path,
         target: EnginePackageEnumTarget,
+        profile: EnginePackageEnumProfile,
         compiler: String,
     ) -> Result<(), ToolsEngineBuildError> {
         std::fs::create_dir_all(directory.join("bin"))?;
@@ -339,7 +382,16 @@ impl ToolsEngineBuild {
         let bytes = file.metadata()?.len();
         let digest = PackageDigest::read(file.try_clone()?)?;
         file.rewind()?;
-        let entry = EnginePackageEntry::portable(target, bytes, digest, compiler)?;
+        let entry = match profile {
+            EnginePackageEnumProfile::Portable => {
+                EnginePackageEntry::portable(target, bytes, digest, compiler)?
+            }
+            EnginePackageEnumProfile::X8664V3
+            | EnginePackageEnumProfile::X8664V4
+            | EnginePackageEnumProfile::Numa => {
+                EnginePackageEntry::profiled(target, profile, bytes, digest, compiler)?
+            }
+        };
         let manifest_path = directory.join("manifest.json");
         let manifest = if manifest_path.try_exists()? {
             let mut manifest = EnginePackageManifest::parse(&std::fs::read(&manifest_path)?)?;
@@ -352,7 +404,7 @@ impl ToolsEngineBuild {
         let mut json = serde_json::to_vec_pretty(&manifest)?;
         json.push(b'\n');
         let mut stage = StorageAtomicFileStage::new(StorageAtomicFileTarget::capture(
-            directory.join(target.relative_path()),
+            directory.join(target.profile_path(profile)),
         )?)?;
         let mut buffer = vec![0; 64 * 1024];
         loop {
@@ -363,7 +415,7 @@ impl ToolsEngineBuild {
             stage.write(&buffer[..count])?;
         }
         stage.commit()?;
-        let path = directory.join(target.relative_path());
+        let path = directory.join(target.profile_path(profile));
         let permissions = std::fs::metadata(built)?.permissions();
         std::fs::set_permissions(path, permissions)?;
         let mut stage =

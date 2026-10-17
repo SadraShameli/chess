@@ -26,6 +26,10 @@ mod desktop_identity;
 mod desktop_installation;
 #[path = "desktop/library_routing.rs"]
 mod desktop_library_routing;
+#[path = "desktop/game_recovery_policy.rs"]
+mod desktop_game_recovery_policy;
+#[path = "desktop/migration_continuity.rs"]
+mod desktop_migration_continuity;
 #[path = "desktop/native_bootstrap.rs"]
 mod desktop_native_bootstrap;
 #[path = "desktop/native_host.rs"]

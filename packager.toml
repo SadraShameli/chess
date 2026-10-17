@@ -1,0 +1,49 @@
+product-name = "Chess"
+identifier = "app.reckless.chess"
+version = "0.1.0"
+description = "Offline desktop chess with a bundled Reckless engine"
+authors = ["SadraShameli"]
+out-dir = "target/packager"
+binaries-dir = "target/release"
+binaries = [{ path = "chess", main = true }]
+icons = [
+    "resources/branding/icon.png",
+    "resources/branding/icon.ico",
+    "resources/branding/icon.icns",
+]
+resources = [
+    { src = "resources/pieces/chess.glb", target = "pieces/chess.glb" },
+    { src = "resources/pieces/provenance.json", target = "pieces/provenance.json" },
+    { src = "resources/engine/manifest.json", target = "engine/manifest.json" },
+    { src = "resources/engine/bin/*", target = "engine/bin" },
+    { src = "resources/sounds/*", target = "sounds" },
+    { src = "resources/fonts/OFL.txt", target = "licenses/Inter-OFL.txt" },
+    { src = "resources/licenses/*", target = "licenses" },
+    { src = "resources/notices/manifest.json", target = "notices/manifest.json" },
+    { src = "docs/third-party-notices.md", target = "notices/third-party-notices.md" },
+]
+
+[nsis]
+install-mode = "both"
+languages = ["English"]
+display-language-selector = false
+compression = "lzma"
+
+[macos]
+minimum-system-version = "14.0"
+signing-identity = "-"
+
+[dmg]
+window-size = { width = 660, height = 400 }
+
+[deb]
+depends = [
+    "libc6 (>= 2.35)",
+    "libvulkan1",
+    "libxkbcommon0",
+    "libwayland-client0",
+    "libx11-6",
+    "xdg-desktop-portal",
+]
+
+[appimage]

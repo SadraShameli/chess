@@ -244,7 +244,10 @@ fn the_layout_merges_into_existing_preferences_without_dropping_sibling_keys()
     let merged = DesktopNativeLayoutStore::merge(Some(r#"{"theme":"dark"}"#), &layout)?;
     assert!(merged.contains("\"theme\":\"dark\""));
     assert_eq!(DesktopNativeLayoutStore::extract(&merged)?, Some(layout));
-    assert_eq!(DesktopNativeLayoutStore::extract(r#"{"theme":"dark"}"#)?, None);
+    assert_eq!(
+        DesktopNativeLayoutStore::extract(r#"{"theme":"dark"}"#)?,
+        None
+    );
     assert!(DesktopNativeLayoutStore::merge(Some("[]"), &layout).is_err());
     assert!(DesktopNativeLayoutStore::extract("not json").is_err());
     Ok(())

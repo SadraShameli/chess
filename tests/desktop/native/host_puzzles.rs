@@ -310,6 +310,7 @@ impl DesktopNativeHostPuzzleFixture {
                 budget,
                 dialog_ready,
                 clock: Arc::clone(&clock),
+                games: None,
                 layout: crate::desktop::layout::DesktopLayout::default(),
                 layout_store: None,
             },
@@ -335,7 +336,9 @@ impl DesktopNativeHostPuzzleFixture {
             validated_surface: None,
             pending_view: None,
             pending_camera: None,
-            adaptive: DesktopNativeHostAdaptive::new(crate::desktop::layout::DesktopLayout::default()),
+            adaptive: DesktopNativeHostAdaptive::new(
+                crate::desktop::layout::DesktopLayout::default(),
+            ),
             dialog_ready: false,
             dialog_admission_closed: false,
             exit_authorized: false,

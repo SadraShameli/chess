@@ -56,7 +56,9 @@ use crate::desktop::identity::DesktopRequestId;
 use crate::game::adjudication::GameAdjudicationMateProofProvider;
 use crate::game::configuration::GameConfiguration;
 use crate::game::engine_provider::GameEngineProvider;
-use crate::game::enums::{GameId, GameIdentityError, GameMoveId, GameRevisionError};
+use crate::game::enums::{
+    GameEnumPhase, GameId, GameIdentityError, GameMoveId, GameRevisionError,
+};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::{GameMetadata, GameSession, GameSessionError, GameSessionOptions};
 use crate::game::storage_repository::{GameStorageRevision, GameStorageWallTimeProvider};
@@ -240,6 +242,9 @@ enum DesktopGameRegistryEnumControl {
     RecoverGraphics {
         deadline: Instant,
     },
+    ResumeInterrupted {
+        deadline: Instant,
+    },
 }
 
 impl DesktopGameRegistryEnumControl {
@@ -250,6 +255,7 @@ impl DesktopGameRegistryEnumControl {
             Self::Shutdown { .. } => 2,
             Self::PauseGraphics { .. } => 3,
             Self::RecoverGraphics { .. } => 4,
+            Self::ResumeInterrupted { .. } => 5,
         }
     }
 }
@@ -382,6 +388,13 @@ impl DesktopGameRegistryPort {
         deadline: Instant,
     ) -> Result<DesktopGameRegistryReceipt, DesktopGameRegistryError> {
         self.control(DesktopGameRegistryEnumControl::RecoverGraphics { deadline })
+    }
+
+    pub fn resume_interrupted_all(
+        &self,
+        deadline: Instant,
+    ) -> Result<DesktopGameRegistryReceipt, DesktopGameRegistryError> {
+        self.control(DesktopGameRegistryEnumControl::ResumeInterrupted { deadline })
     }
 
     fn control(
@@ -1105,6 +1118,26 @@ where
                 self.broadcast(DesktopGameCommandsEnumAction::RecoverGraphics, deadline)
                     .await
             }
+            DesktopGameRegistryEnumControl::ResumeInterrupted { deadline } => {
+                let ports: Vec<_> = self
+                    .sessions
+                    .read()
+                    .await
+                    .values()
+                    .filter(|port| {
+                        port.snapshot().snapshot.phase() == GameEnumPhase::Interrupted
+                    })
+                    .cloned()
+                    .collect();
+                let received_at = self.clock.now()?;
+                self.broadcast_to(
+                    ports,
+                    DesktopGameCommandsEnumAction::Resume,
+                    received_at,
+                    deadline,
+                )
+                .await
+            }
         };
         let result = result.map_err(Arc::new);
         let shutdown_failure = if self.stopping {
@@ -1136,6 +1169,17 @@ where
         deadline: Instant,
     ) -> Result<(), DesktopGameRegistryError> {
         let ports: Vec<_> = self.sessions.read().await.values().cloned().collect();
+        self.broadcast_to(ports, action, received_at, deadline)
+            .await
+    }
+
+    async fn broadcast_to(
+        &mut self,
+        ports: Vec<DesktopGameSupervisorPort>,
+        action: DesktopGameCommandsEnumAction,
+        received_at: ClockInstant,
+        deadline: Instant,
+    ) -> Result<(), DesktopGameRegistryError> {
         let mut receipts = Vec::with_capacity(ports.len());
         let mut failure = None;
         for port in ports {

@@ -1,5 +1,7 @@
 use std::num::NonZeroU64;
 
+use crate::game::pause::GamePauseEnumCause;
+use crate::game::recovery::{GameRecovery, GameRecoveryEnumTrigger};
 use crate::puzzle::timer::PuzzleTimerEnumPauseReason;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,42 @@ pub struct DesktopNativeLifecycle {
 impl DesktopNativeLifecycle {
     pub const fn new(puzzle_window: DesktopNativeLifecyclePuzzleWindowId) -> Self {
         Self { puzzle_window }
+    }
+
+    pub const fn game_trigger(
+        signal: DesktopNativeLifecycleEnumSignal,
+    ) -> Option<GameRecoveryEnumTrigger> {
+        match signal {
+            DesktopNativeLifecycleEnumSignal::Window { event, .. } => match event {
+                DesktopNativeLifecycleEnumWindowEvent::FocusLost => {
+                    Some(GameRecoveryEnumTrigger::FocusLost)
+                }
+                DesktopNativeLifecycleEnumWindowEvent::FocusGained => {
+                    Some(GameRecoveryEnumTrigger::FocusGained)
+                }
+                DesktopNativeLifecycleEnumWindowEvent::Hidden
+                | DesktopNativeLifecycleEnumWindowEvent::Visible
+                | DesktopNativeLifecycleEnumWindowEvent::Minimized
+                | DesktopNativeLifecycleEnumWindowEvent::Restored
+                | DesktopNativeLifecycleEnumWindowEvent::Occluded
+                | DesktopNativeLifecycleEnumWindowEvent::Exposed => None,
+            },
+            DesktopNativeLifecycleEnumSignal::Suspend => {
+                Some(GameRecoveryEnumTrigger::ComputerSleep)
+            }
+            DesktopNativeLifecycleEnumSignal::Resumed => {
+                Some(GameRecoveryEnumTrigger::WakeFromSleep)
+            }
+        }
+    }
+
+    pub const fn game_interruption(
+        signal: DesktopNativeLifecycleEnumSignal,
+    ) -> Option<GamePauseEnumCause> {
+        match Self::game_trigger(signal) {
+            Some(trigger) => GameRecovery::pause_cause(trigger),
+            None => None,
+        }
     }
 
     pub fn puzzle_interruption(

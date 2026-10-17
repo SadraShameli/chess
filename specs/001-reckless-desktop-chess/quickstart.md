@@ -158,6 +158,15 @@ AppImage's maintained stable tooling and reproducibility remain an explicit
 release gate. Installer sizes must meet GitHub's per-asset limit independently
 of the client's download cap. [Packaging](contracts/packaging.md) owns details.
 
+## Install and uninstall validation
+
+Follow [docs/install.md](../../docs/install.md) on each supported operating system.
+Windows is unsigned and needs the SmartScreen More info, Run anyway step. macOS needs
+the manual Open Anyway approval. Ubuntu needs the documented graphics, portal and
+desktop packages prepared offline. Record every result, including failures, in
+[evidence/us5.md](evidence/us5.md). Staged packages are checked with
+`chess-tools package-verify` and the notices with `chess-tools notices-check`.
+
 ## Starter preparation validation
 
 Use frozen local miniature source fixtures before preparing the large starter

@@ -956,6 +956,7 @@ impl DesktopNativeBootstrapSupervisor {
             DesktopLayout::default()
         });
         let host = DesktopNativeHostServices {
+            games: Some(game_port.registry_port().clone()),
             layout,
             layout_store: Some(layout_store),
             clock: Arc::clone(&clock),

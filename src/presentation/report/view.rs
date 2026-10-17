@@ -59,6 +59,7 @@ impl PresentationReportView {
             let mut confirm = false;
             let mut discard = false;
             let modal = egui::Modal::new(egui::Id::new("report.replacement")).show(ui.ctx(), |ui| {
+                crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "Replace this report");
                 ui.heading("Replace this report?");
                 ui.label("The new analysis starts from scratch. The existing report is kept until you confirm.");
                 discard = ui.button("Keep Existing Report").clicked();

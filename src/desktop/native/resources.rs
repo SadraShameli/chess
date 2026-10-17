@@ -17,12 +17,25 @@ pub enum DesktopNativeResourcesError {
     },
     #[error("The native resource is not a regular file inside its package: {0}")]
     InvalidFile(PathBuf),
+    #[error("A required packaged resource is missing: {0}")]
+    MissingRequired(&'static str),
     #[error("The native asset does not match its packaged provenance: {0}")]
     Integrity(PathBuf),
     #[error("The bundled resource provenance is invalid: {0}")]
     Provenance(#[from] serde_json::Error),
     #[error(transparent)]
     Digest(#[from] PackageDigestError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopNativeResourcesReport {
+    missing_optional: Vec<&'static str>,
+}
+
+impl DesktopNativeResourcesReport {
+    pub fn missing_optional(&self) -> &[&'static str] {
+        &self.missing_optional
+    }
 }
 
 #[derive(Deserialize)]
@@ -45,6 +58,9 @@ pub struct DesktopNativeResources {
 
 impl DesktopNativeResources {
     pub const PIECES_ASSET: &str = "pieces/chess.glb";
+    pub const ENGINE_MANIFEST: &str = "engine/manifest.json";
+    pub const REQUIRED: [&'static str; 2] = [Self::PIECES_ASSET, Self::ENGINE_MANIFEST];
+    pub const OPTIONAL: [&'static str; 2] = ["sounds", "licenses"];
 
     pub fn from_directory(directory: &Path) -> Result<Self, DesktopNativeResourcesError> {
         if !directory.is_absolute() {
@@ -65,6 +81,18 @@ impl DesktopNativeResources {
             pieces,
             engine,
         })
+    }
+
+    pub fn inspect(&self) -> Result<DesktopNativeResourcesReport, DesktopNativeResourcesError> {
+        for relative in Self::REQUIRED {
+            Self::file(&self.root, relative)
+                .map_err(|_error| DesktopNativeResourcesError::MissingRequired(relative))?;
+        }
+        let missing_optional = Self::OPTIONAL
+            .into_iter()
+            .filter(|relative| !self.root.join(relative).exists())
+            .collect();
+        Ok(DesktopNativeResourcesReport { missing_optional })
     }
 
     pub fn root(&self) -> &Path {

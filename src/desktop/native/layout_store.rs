@@ -2,7 +2,9 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::desktop::layout::DesktopLayout;
-use crate::storage::preferences_repository::{StoragePreferencesError, StoragePreferencesRepository};
+use crate::storage::preferences_repository::{
+    StoragePreferencesError, StoragePreferencesRepository,
+};
 
 #[derive(Debug, Error)]
 pub enum DesktopNativeLayoutStoreError {

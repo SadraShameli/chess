@@ -1,6 +1,9 @@
 #[path = "native/compatibility.rs"]
 mod native_compatibility;
 
+#[path = "native/installation.rs"]
+mod native_installation;
+
 #[path = "native/host_lifecycle.rs"]
 mod native_host_lifecycle;
 
@@ -28,6 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     match arguments.as_slice() {
         [] => native_compatibility::NativeCompatibilityHarness::run()?,
+        [operation, directory] if operation == "--installation" => {
+            native_installation::NativeInstallationHarness::run(std::path::Path::new(directory))?;
+        }
         [operation] if operation == "--host-lifecycle" => {
             native_host_lifecycle::NativeHostLifecycleHarness::run()?;
         }

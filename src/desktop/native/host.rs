@@ -58,9 +58,8 @@ use crate::capacity::phase::{
 };
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProviderMonotonic;
-use crate::desktop::layout::{
-    DesktopLayout, DesktopLayoutDisplay, DesktopLayoutError,
-};
+use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryPort};
+use crate::desktop::layout::{DesktopLayout, DesktopLayoutDisplay, DesktopLayoutError};
 use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
 use crate::desktop::renderer_commands::{
     DesktopRendererCommands, DesktopRendererCommandsEnumCause, DesktopRendererCommandsEnumState,
@@ -134,6 +133,7 @@ pub struct DesktopNativeHostServices {
     pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub clock: Arc<ClockTimeProviderMonotonic>,
+    pub games: Option<DesktopGameRegistryPort>,
     pub layout: DesktopLayout,
     pub layout_store: Option<Arc<DesktopNativeLayoutStore>>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
@@ -221,6 +221,8 @@ pub enum DesktopNativeHostError {
     Renderer(#[from] DesktopRendererCommandsError),
     #[error(transparent)]
     Layout(#[from] DesktopLayoutError),
+    #[error(transparent)]
+    GameRegistry(#[from] DesktopGameRegistryError),
     #[error(transparent)]
     Camera(#[from] SceneCameraError),
     #[error(transparent)]
@@ -1118,6 +1120,9 @@ impl DesktopNativeHost {
         renderer: &mut SceneRenderer,
         rendering: bool,
     ) -> Result<(), DesktopNativeHostError> {
+        if let Some(mode) = state.presentation.take_quality_mode() {
+            state.adaptive.quality.set_mode(mode);
+        }
         let now = state.services.port.now()?;
         let delta = world
             .get_resource::<bevy::prelude::Time>()
@@ -1135,6 +1140,22 @@ impl DesktopNativeHost {
         Ok(())
     }
 
+    fn resume_interrupted_games(
+        state: &mut DesktopNativeHostState,
+    ) -> Result<(), DesktopNativeHostError> {
+        state.adaptive.renderer.resume_games()?;
+        if let Some(games) = &state.services.games {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            let receipt = games.resume_interrupted_all(deadline)?;
+            state.services.runtime.spawn(async move {
+                if let Err(error) = receipt.wait().await {
+                    eprintln!("Interrupted games could not be resumed: {error}");
+                }
+            });
+        }
+        Ok(())
+    }
+
     fn observe_layout(
         state: &mut DesktopNativeHostState,
         context: &egui::Context,
@@ -1147,7 +1168,11 @@ impl DesktopNativeHost {
         let now = state.services.port.now()?;
         let (outer, inner, monitor) = context.input(|input| {
             let viewport = input.viewport();
-            (viewport.outer_rect, viewport.inner_rect, viewport.monitor_size)
+            (
+                viewport.outer_rect,
+                viewport.inner_rect,
+                viewport.monitor_size,
+            )
         });
         if let (Some(outer), Some(inner)) = (outer, inner) {
             state.adaptive.layout.set_window(
@@ -1749,7 +1774,7 @@ impl DesktopNativeHost {
                 context.request_repaint();
             }
             Some(PresentationBoardRecoveryEnumIntent::ResumeGames) => {
-                state.adaptive.renderer.resume_games()?;
+                Self::resume_interrupted_games(state)?;
             }
             None => {}
         }

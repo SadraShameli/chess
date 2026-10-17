@@ -82,7 +82,13 @@ use crate::presentation::puzzle::panel::{
 };
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
+use crate::desktop::layout::DesktopLayout;
+use crate::desktop::renderer_commands::DesktopRendererCommands;
+use crate::presentation::board::recovery::{
+    PresentationBoardRecovery, PresentationBoardRecoveryEnumIntent,
+};
 use crate::scene::camera::SceneCamera;
+use crate::scene::quality::{SceneQualityEnumMode, SceneQualityEnumTier};
 use crate::scene::picking::ScenePickingViewport;
 
 #[derive(Debug, Error)]
@@ -301,6 +307,8 @@ pub struct PresentationApp {
     renderer_commands: DesktopRendererCommands,
     recovery_intent: Option<PresentationBoardRecoveryEnumIntent>,
     render_scale: f32,
+    quality_mode: SceneQualityEnumMode,
+    quality_mode_changed: bool,
     camera_queue: Vec<PresentationBoardEnumCameraAction>,
     navigation_frame: Option<u64>,
 }
@@ -360,6 +368,8 @@ impl PresentationApp {
             renderer_commands: DesktopRendererCommands::new(),
             recovery_intent: None,
             render_scale: 1.0,
+            quality_mode: SceneQualityEnumMode::Automatic,
+            quality_mode_changed: false,
             camera_queue: Vec::new(),
             navigation_frame: None,
         }
@@ -1358,6 +1368,20 @@ impl PresentationApp {
             self.layout.reset();
             self.layout_reset_requested = true;
         }
+        ui.label("Board quality");
+        let mut quality = self.quality_mode;
+        for (label, mode) in [
+            ("Automatic", SceneQualityEnumMode::Automatic),
+            ("Low", SceneQualityEnumMode::Manual(SceneQualityEnumTier::Low)),
+            ("Medium", SceneQualityEnumMode::Manual(SceneQualityEnumTier::Medium)),
+            ("High", SceneQualityEnumMode::Manual(SceneQualityEnumTier::High)),
+        ] {
+            ui.radio_value(&mut quality, mode, label);
+        }
+        if quality != self.quality_mode {
+            self.quality_mode = quality;
+            self.quality_mode_changed = true;
+        }
         let outcome = PresentationSettingsView::show(ui, &mut self.settings);
         self.apply_settings_outcome(&ui.ctx().clone(), outcome);
     }
@@ -2190,6 +2214,14 @@ impl PresentationApp {
         if render_scale.is_finite() {
             self.render_scale = render_scale.clamp(0.75, 1.0);
         }
+    }
+
+    pub const fn quality_mode(&self) -> SceneQualityEnumMode {
+        self.quality_mode
+    }
+
+    pub fn take_quality_mode(&mut self) -> Option<SceneQualityEnumMode> {
+        std::mem::take(&mut self.quality_mode_changed).then_some(self.quality_mode)
     }
 
     pub fn report_notice(&mut self, message: String) {

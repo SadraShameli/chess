@@ -13,15 +13,18 @@ use thiserror::Error;
 mod assets;
 mod data;
 mod engine;
+mod packaging;
 
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools data-verify <sources.json> <cache-directory> | engine-build | engine-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools data-verify <sources.json> <cache-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa] | engine-check | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
     #[error(transparent)]
     Coverage(#[from] engine::ToolsEngineCoverageCommandError),
+    #[error(transparent)]
+    Packaging(#[from] packaging::ToolsPackagingError),
     #[error("The operation failed ({operation}); cleanup also failed ({cleanup})")]
     Execution {
         #[source]
@@ -147,7 +150,8 @@ impl ToolsEnumEngineWorkflow {
 
 enum ToolsEnumCommand {
     VerifyData { sources: PathBuf, cache: PathBuf },
-    BuildEngine,
+    BuildEngine(chess::engine::package::manifest::EnginePackageEnumProfile),
+    Packaging(packaging::ToolsPackagingEnumCommand),
     CheckEngine,
     RunEngineWorkflow(ToolsEnumEngineWorkflow),
     #[cfg(feature = "asset-tools")]
@@ -204,12 +208,24 @@ impl ToolsEnumCommand {
                     engine::ToolsEnginePgoInputs::new(source.into(), model.into(), output.into()),
                 )));
             }
+            [command, flag, name] if command == "engine-build" && flag == "--profile" => {
+                let profile = chess::engine::package::manifest::EnginePackageEnumProfile::ALL
+                    .into_iter()
+                    .find(|profile| {
+                        profile.file_suffix().unwrap_or("portable") == name.to_str().unwrap_or("")
+                    })
+                    .ok_or(ToolsCommandError::Usage)?;
+                return Ok(Self::BuildEngine(profile));
+            }
             [command, output] if command == "engine-queued-check" => {
                 return Ok(Self::RunEngineWorkflow(ToolsEnumEngineWorkflow::Queued(
                     output.into(),
                 )));
             }
             _ => {}
+        }
+        if let Some(packaging) = packaging::ToolsPackagingEnumCommand::parse(&supplied) {
+            return Ok(Self::Packaging(packaging?));
         }
         #[cfg(feature = "asset-tools")]
         {
@@ -248,7 +264,9 @@ impl ToolsEnumCommand {
         }
         let mut args = supplied.into_iter();
         match (args.next().as_deref(), args.next()) {
-            (Some(command), None) if command == OsStr::new("engine-build") => Ok(Self::BuildEngine),
+            (Some(command), None) if command == OsStr::new("engine-build") => {
+                Ok(Self::BuildEngine(chess::engine::package::manifest::EnginePackageEnumProfile::Portable))
+            }
             (Some(command), None) if command == OsStr::new("engine-check") => Ok(Self::CheckEngine),
             _ => Err(ToolsCommandError::Usage),
         }
@@ -261,19 +279,24 @@ impl ToolsEnumCommand {
                 println!("Verified {verified} frozen dataset sources");
             }
             Self::RunEngineWorkflow(workflow) => workflow.execute()?,
-            Self::BuildEngine => {
+            Self::BuildEngine(profile) => {
                 let temporary = tempfile::tempdir()?;
                 let budget = chess::capacity::budget::CapacityBudget::discover()?;
                 let build = engine::ToolsEngineBuild::new(
                     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
                     temporary.path().join("Reckless"),
                     budget,
-                )?;
+                )?
+                .with_profile(profile)?;
                 let runtime = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()?;
                 runtime.block_on(build.run())?;
                 temporary.close()?;
+            }
+            Self::Packaging(command) => {
+                let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                println!("{}", command.execute(&root)?);
             }
             Self::CheckEngine => {
                 let runtime = tokio::runtime::Builder::new_multi_thread()

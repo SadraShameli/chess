@@ -1,0 +1,4 @@
+{
+  "note": "Only released schema versions need upgrade fixtures. No release exists yet, so no upgrade path is required.",
+  "released": []
+}
