@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::num::NonZeroU32;
 
 use chess::clock::duration::ClockDuration;
@@ -72,7 +73,7 @@ fn identity_restores_the_full_registry_and_the_historical_threads_maximum()
         identity.capabilities().version()
     );
     assert!(restored.capabilities().options().next().is_some());
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         assert_eq!(
             restored.capabilities().descriptor(option),
             identity.capabilities().descriptor(option)

@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::{Future, poll_fn};
@@ -96,7 +97,7 @@ impl EngineProcess for DesktopWorkbenchExportTestProcess {
                 self.lines.push_back("id name Reckless 0.9.0".to_owned());
                 self.lines
                     .push_back(format!("id author {}", EngineIdentity::AUTHOR));
-                self.lines.extend(EngineEnumOption::ALL.map(|option| {
+                self.lines.extend(EngineEnumOption::iter().map(|option| {
                     format!("option name {} type {}", option.name(), option.descriptor())
                 }));
                 self.lines.push_back("uciok".to_owned());

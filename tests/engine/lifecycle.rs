@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::sync::{
@@ -268,7 +269,7 @@ impl EngineProcess for EngineLifecycleProcess {
                 self.emit("id name Reckless 0.9.0".to_owned()).await?;
                 self.emit(format!("id author {}", EngineIdentity::AUTHOR))
                     .await?;
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     let descriptor = if let (EngineEnumOption::Threads, Some(maximum)) =
                         (option, self.threads_maximum)
                     {

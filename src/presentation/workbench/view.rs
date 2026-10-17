@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::BTreeMap;
 
 use bevy_egui::egui::{self, Ui};
@@ -200,7 +201,7 @@ impl PresentationWorkbenchView {
         self.show_package(ui, engine);
         ui.small("Save each edited option explicitly. CPU and memory admission is rechecked by the backend at an idle configuration barrier.");
         let mut intent = None;
-        for option in EngineEnumOption::ALL {
+        for option in EngineEnumOption::iter() {
             ui.push_id(option.name(), |ui| {
                 ui.group(|ui| {
                     if intent.is_some() {

@@ -26,32 +26,23 @@ pub enum PresentationAnalysisConfigurationError {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
 pub enum PresentationAnalysisConfigurationEnumMode {
+    #[strum(serialize = "Infinite")]
     Infinite,
+    #[strum(serialize = "Depth")]
     Depth,
+    #[strum(serialize = "Nodes")]
     Nodes,
+    #[strum(serialize = "Move time")]
     MoveTime,
+    #[strum(serialize = "Clock")]
     Clock,
 }
 
 impl PresentationAnalysisConfigurationEnumMode {
-    pub const ALL: [Self; 5] = [
-        Self::Infinite,
-        Self::Depth,
-        Self::Nodes,
-        Self::MoveTime,
-        Self::Clock,
-    ];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Infinite => "Infinite",
-            Self::Depth => "Depth",
-            Self::Nodes => "Nodes",
-            Self::MoveTime => "Move time",
-            Self::Clock => "Clock",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

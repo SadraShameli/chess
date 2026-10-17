@@ -5,22 +5,21 @@ use crate::desktop::game_snapshot::{DesktopGameSnapshot, DesktopGameSnapshotEnum
 use crate::game::enums::{GameEnumPhase, GameId};
 use crate::presentation::game::play::PresentationGamePlayClock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display)]
 pub enum PresentationGameOverviewEnumStatus {
+    #[strum(serialize = "Running")]
     Running,
+    #[strum(serialize = "Waiting for engine capacity")]
     WaitingForCapacity,
+    #[strum(serialize = "Paused")]
     Paused,
+    #[strum(serialize = "Finished")]
     Finished,
 }
 
 impl PresentationGameOverviewEnumStatus {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Running => "Running",
-            Self::WaitingForCapacity => "Waiting for engine capacity",
-            Self::Paused => "Paused",
-            Self::Finished => "Finished",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use chess::engine::package::host::EnginePackageHost;
 use chess::engine::package::manifest::{
     EnginePackageEntry, EnginePackageEnumProfile, EnginePackageEnumTarget, EnginePackageManifest,
@@ -332,13 +333,13 @@ fn a_tampered_profile_binary_fails_its_checksum() -> EnginePackageResult {
 #[test]
 fn every_profile_has_a_distinct_path_and_serialization() -> EnginePackageResult {
     let mut paths = std::collections::HashSet::new();
-    for profile in EnginePackageEnumProfile::ALL {
+    for profile in EnginePackageEnumProfile::iter() {
         assert!(paths.insert(TARGET.profile_path(profile)));
         let json = serde_json::to_string(&profile)?;
         let restored: EnginePackageEnumProfile = serde_json::from_str(&json)?;
         assert_eq!(restored, profile);
     }
-    assert_eq!(paths.len(), EnginePackageEnumProfile::ALL.len());
+    assert_eq!(paths.len(), EnginePackageEnumProfile::iter().len());
     assert_eq!(
         TARGET.profile_path(EnginePackageEnumProfile::Portable),
         TARGET.relative_path()
@@ -389,11 +390,6 @@ fn glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason() ->
 #[test]
 fn profile_and_target_spellings_are_unchanged_and_the_iterator_matches_the_registry()
 -> EnginePackageResult {
-    use strum::IntoEnumIterator;
-    assert_eq!(
-        EnginePackageEnumProfile::iter().collect::<Vec<_>>(),
-        EnginePackageEnumProfile::ALL
-    );
     let labels = [
         (EnginePackageEnumProfile::Portable, "Portable baseline"),
         (EnginePackageEnumProfile::X8664V3, "x86-64-v3"),

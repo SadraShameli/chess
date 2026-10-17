@@ -23,7 +23,8 @@ impl ToolsPackagingEnumCommand {
             return None;
         }
         let platform = |name: &str| {
-            ToolsPackagingEnumPlatform::parse(name).ok_or(ToolsPackagingError::Usage)
+            name.parse::<ToolsPackagingEnumPlatform>()
+                .map_err(|_unknown| ToolsPackagingError::Usage)
         };
         match text.as_slice() {
             ["package-plan", name] => Some(platform(name).map(Self::Plan)),

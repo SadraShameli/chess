@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use thiserror::Error;
@@ -74,7 +75,7 @@ impl EngineCapabilities {
     }
 
     pub fn validate(&self) -> Result<(), EngineCapabilitiesError> {
-        if self.options.len() != EngineEnumOption::ALL.len() {
+        if self.options.len() != EngineEnumOption::iter().len() {
             return Err(EngineCapabilitiesError::MissingOptions);
         }
         Ok(())

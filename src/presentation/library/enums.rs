@@ -4,16 +4,25 @@ use crate::desktop::library_service::{
 use crate::presentation::library::error::PresentationLibraryError;
 use crate::storage::library_metadata::StorageLibraryMetadataEnumRequest;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display)]
 pub(crate) enum PresentationLibraryEnumLane {
+    #[strum(serialize = "Games")]
     Query,
+    #[strum(serialize = "Folders")]
     Folders,
+    #[strum(serialize = "Tags")]
     Tags,
+    #[strum(serialize = "Folder details")]
     Folder,
+    #[strum(serialize = "Open saved game")]
     Open,
+    #[strum(serialize = "Organize library")]
     Organize,
+    #[strum(serialize = "Trash")]
     Trash,
+    #[strum(serialize = "Import games")]
     Import,
+    #[strum(serialize = "Export game")]
     Export,
 }
 
@@ -59,17 +68,7 @@ impl PresentationLibraryEnumLane {
         }
     }
 
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Query => "Games",
-            Self::Folders => "Folders",
-            Self::Tags => "Tags",
-            Self::Folder => "Folder details",
-            Self::Open => "Open saved game",
-            Self::Organize => "Organize library",
-            Self::Trash => "Trash",
-            Self::Import => "Import games",
-            Self::Export => "Export game",
-        }
+    pub(crate) fn label(self) -> &'static str {
+        self.into()
     }
 }

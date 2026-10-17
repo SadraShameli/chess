@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy::math::Vec3;
 use bevy_egui::egui::{self, Id, Key, Rect, Sense, Ui, UiBuilder, accesskit};
 
@@ -109,7 +110,7 @@ impl PresentationBoardSemanticGrid {
             label.push_str(", legal destination");
         }
         if let Some(intent) = feedback.pending_move {
-            for role in PresentationBoardEnumPremoveSquare::ALL {
+            for role in PresentationBoardEnumPremoveSquare::iter() {
                 if role.square(intent) == square {
                     label.push_str(role.semantic_label());
                 }
@@ -234,7 +235,7 @@ impl PresentationBoardSemanticGrid {
                             egui::Stroke::new(2.0, ui.visuals().text_color()),
                             egui::StrokeKind::Inside,
                         );
-                        for direction in PresentationBoardEnumDirection::ALL {
+                        for direction in PresentationBoardEnumDirection::iter() {
                             if process_keyboard
                                 && ui.ctx().input_mut(|input| {
                                     input.consume_key(egui::Modifiers::NONE, direction.key())

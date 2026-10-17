@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
@@ -77,7 +78,7 @@ impl EngineProcess for PresentationAnalysisFixtureProcess {
             "uci" => {
                 self.reply("id name Reckless 0.9.0".into())?;
                 self.reply(format!("id author {}", EngineIdentity::AUTHOR))?;
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     self.reply(format!(
                         "option name {} type {}",
                         option.name(),

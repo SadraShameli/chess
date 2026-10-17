@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +25,7 @@ impl EngineStartupProvider {
             format!("id author {}", EngineIdentity::AUTHOR),
         ]);
         lines.extend(
-            EngineEnumOption::ALL.map(|option| {
+            EngineEnumOption::iter().map(|option| {
                 format!("option name {} type {}", option.name(), option.descriptor())
             }),
         );
@@ -116,7 +117,7 @@ async fn startup_discovers_the_full_pinned_registry_and_orders_readiness()
     assert_eq!(session.identity().name(), "Reckless 0.9.0");
     assert_eq!(
         session.identity().capabilities().options().len(),
-        EngineEnumOption::ALL.len()
+        EngineEnumOption::iter().len()
     );
     assert_eq!(provider.commands()?, ["uci", "isready"]);
     session.shutdown().await?;

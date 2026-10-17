@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 
 use bevy_egui::egui;
@@ -61,7 +62,7 @@ impl EngineProcess for PresentationWorkbenchFixtureProcess {
                     "id name Reckless 0.9.0".to_owned(),
                     format!("id author {}", EngineIdentity::AUTHOR),
                 ];
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     let descriptor = if option == EngineEnumOption::Threads {
                         "spin default 1 min 1 max 2048".to_owned()
                     } else {

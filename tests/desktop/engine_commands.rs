@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -863,7 +864,7 @@ async fn native_actor_shutdown_preempts_pending_configuration_without_an_option_
     let mut actor = DesktopEngineCommandsTestActor::new().await?;
     let snapshot = actor.fixture.context;
     let mut capabilities = chess::engine::capabilities::EngineCapabilities::default();
-    for option in chess::engine::enums::EngineEnumOption::ALL {
+    for option in chess::engine::enums::EngineEnumOption::iter() {
         capabilities.discover(&format!(
             "option name {} type {}",
             option.name(),

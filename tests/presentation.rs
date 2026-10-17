@@ -13,6 +13,8 @@ mod presentation_board_animation;
 mod presentation_board_input;
 #[path = "presentation/board/layout.rs"]
 mod presentation_board_layout;
+#[path = "presentation/strum_tables.rs"]
+mod presentation_strum_tables;
 #[path = "presentation/board/markings.rs"]
 mod presentation_board_markings;
 

@@ -10,15 +10,15 @@ pub enum PresentationBoardEnumInputSource {
     Accessibility { occurrence: usize },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
 pub(crate) enum PresentationBoardEnumPremoveSquare {
+    #[strum(serialize = "Premove from")]
     Source,
+    #[strum(serialize = "Premove to")]
     Destination,
 }
 
 impl PresentationBoardEnumPremoveSquare {
-    pub(crate) const ALL: [Self; 2] = [Self::Source, Self::Destination];
-
     pub(crate) const fn square(self, intent: GamePremoveIntent) -> BoardSquare {
         match self {
             Self::Source => intent.origin(),
@@ -26,11 +26,8 @@ impl PresentationBoardEnumPremoveSquare {
         }
     }
 
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Source => "Premove from",
-            Self::Destination => "Premove to",
-        }
+    pub(crate) fn label(self) -> &'static str {
+        self.into()
     }
 
     pub(crate) const fn semantic_label(self) -> &'static str {
@@ -60,7 +57,7 @@ pub enum PresentationBoardEnumCameraAction {
     Flip,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum PresentationBoardEnumDirection {
     Up,
     Down,
@@ -69,8 +66,6 @@ pub enum PresentationBoardEnumDirection {
 }
 
 impl PresentationBoardEnumDirection {
-    pub const ALL: [Self; 4] = [Self::Up, Self::Down, Self::Left, Self::Right];
-
     pub const fn key(self) -> Key {
         match self {
             Self::Up => Key::ArrowUp,

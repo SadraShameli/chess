@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
@@ -83,7 +84,7 @@ impl EngineProcess for ReportFixtureProcess {
                 EnginePackageManifest::VERSION
             ))?;
             self.emit(format!("id author {}", EngineIdentity::AUTHOR))?;
-            for option in EngineEnumOption::ALL {
+            for option in EngineEnumOption::iter() {
                 self.emit(format!(
                     "option name {} type {}",
                     option.name(),

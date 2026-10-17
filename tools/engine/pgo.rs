@@ -262,12 +262,16 @@ pub(crate) enum ToolsEnginePgoEnumStage {
     Sample,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Serialize, strum::IntoStaticStr, strum::Display)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ToolsEnginePgoEnumBuild {
+    #[strum(serialize = "baseline")]
     Baseline,
+    #[strum(serialize = "instrumented")]
     Instrument,
+    #[strum(serialize = "optimized")]
     Optimize,
+    #[strum(serialize = "spsa")]
     Spsa,
 }
 
@@ -300,12 +304,7 @@ impl ToolsEnginePgoEnumBuild {
     }
 
     fn directory(self) -> &'static str {
-        match self {
-            Self::Baseline => "baseline",
-            Self::Instrument => "instrumented",
-            Self::Optimize => "optimized",
-            Self::Spsa => "spsa",
-        }
+        self.into()
     }
 
     fn stage(self) -> ToolsEnginePgoEnumStage {

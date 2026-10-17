@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
@@ -130,7 +131,7 @@ impl PresentationWorkbenchSnapshot {
         &self.tablebases
     }
     pub fn options(&self) -> impl ExactSizeIterator<Item = EngineEnumOption> {
-        EngineEnumOption::ALL.into_iter()
+        EngineEnumOption::iter()
     }
 
     pub fn value(&self, option: EngineEnumOption) -> Option<EngineOptionsEnumValue> {

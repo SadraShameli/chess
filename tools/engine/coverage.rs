@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt::{Display, Formatter};
 use std::path::{Component, Path};
@@ -41,50 +42,39 @@ pub(crate) enum ToolsEngineCoverageError {
     Workflow(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::IntoStaticStr, strum::Display, strum::EnumString)]
 pub(crate) enum ToolsEngineCoverageEnumCategory {
+    #[strum(serialize = "OPT")]
     Option,
+    #[strum(serialize = "PRO")]
     Protocol,
+    #[strum(serialize = "SRC")]
     Search,
+    #[strum(serialize = "OUT")]
     Output,
+    #[strum(serialize = "CHS")]
     Chess,
+    #[strum(serialize = "EVA")]
     Evaluation,
+    #[strum(serialize = "CPU")]
     Cpu,
+    #[strum(serialize = "TB")]
     Tablebase,
+    #[strum(serialize = "NUM")]
     Numa,
+    #[strum(serialize = "DEV")]
     Developer,
 }
 
 impl ToolsEngineCoverageEnumCategory {
     fn parse(value: &str) -> Result<Self, ToolsEngineCoverageError> {
-        match value {
-            "OPT" => Ok(Self::Option),
-            "PRO" => Ok(Self::Protocol),
-            "SRC" => Ok(Self::Search),
-            "OUT" => Ok(Self::Output),
-            "CHS" => Ok(Self::Chess),
-            "EVA" => Ok(Self::Evaluation),
-            "CPU" => Ok(Self::Cpu),
-            "TB" => Ok(Self::Tablebase),
-            "NUM" => Ok(Self::Numa),
-            "DEV" => Ok(Self::Developer),
-            _ => Err(ToolsEngineCoverageError::Identity(value.to_owned())),
-        }
+        value
+            .parse()
+            .map_err(|_unknown| ToolsEngineCoverageError::Identity(value.to_owned()))
     }
 
-    const fn prefix(self) -> &'static str {
-        match self {
-            Self::Option => "OPT",
-            Self::Protocol => "PRO",
-            Self::Search => "SRC",
-            Self::Output => "OUT",
-            Self::Chess => "CHS",
-            Self::Evaluation => "EVA",
-            Self::Cpu => "CPU",
-            Self::Tablebase => "TB",
-            Self::Numa => "NUM",
-            Self::Developer => "DEV",
-        }
+    fn prefix(self) -> &'static str {
+        self.into()
     }
 }
 
@@ -151,8 +141,7 @@ impl ToolsEngineCoverageEnumBinding {
     fn parse(id: ToolsEngineCoverageId, facility: &str) -> Result<Self, ToolsEngineCoverageError> {
         if id.category() == ToolsEngineCoverageEnumCategory::Option {
             let name = facility.trim_matches('`');
-            return EngineEnumOption::ALL
-                .into_iter()
+            return EngineEnumOption::iter()
                 .find(|option| option.name() == name)
                 .map(Self::Option)
                 .ok_or(ToolsEngineCoverageError::Registry);
@@ -343,7 +332,7 @@ impl ToolsEngineCoverageInventory {
         if entries.is_empty() {
             return Err(ToolsEngineCoverageError::Inventory);
         }
-        for option in EngineEnumOption::ALL {
+        for option in EngineEnumOption::iter() {
             Self::require_binding(&entries, ToolsEngineCoverageEnumBinding::Option(option))?;
         }
         for operation in WorkbenchEnumOperation::ALL {

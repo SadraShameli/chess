@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::Future;
@@ -87,7 +88,7 @@ impl EngineProcessProvider for EngineRetainedShutdownProvider {
             format!("id author {}", EngineIdentity::AUTHOR),
         ]);
         lines.extend(
-            EngineEnumOption::ALL.map(|option| {
+            EngineEnumOption::iter().map(|option| {
                 format!("option name {} type {}", option.name(), option.descriptor())
             }),
         );

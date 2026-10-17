@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use thiserror::Error;
 
 use crate::clock::duration::{ClockDuration, ClockDurationError};
@@ -113,7 +114,7 @@ impl ReportJobConfiguration {
             && self.identity.name() == identity.name()
             && self.identity.author() == identity.author()
             && self.identity.capabilities().version() == identity.capabilities().version()
-            && EngineEnumOption::ALL.into_iter().all(|option| {
+            && EngineEnumOption::iter().all(|option| {
                 self.identity.capabilities().descriptor(option)
                     == identity.capabilities().descriptor(option)
             })

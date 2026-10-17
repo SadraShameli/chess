@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::Future;
@@ -112,7 +113,7 @@ impl EngineProcess for EngineDiagnosticsTestProcess {
                             EngineProcessEnumPipe::Stdout,
                             &format!("id author {}", EngineIdentity::AUTHOR),
                         )?;
-                        for option in EngineEnumOption::ALL {
+                        for option in EngineEnumOption::iter() {
                             self.emit(
                                 EngineProcessEnumPipe::Stdout,
                                 &format!(

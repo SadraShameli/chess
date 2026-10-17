@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy_egui::egui::{Key, Modifiers, Ui};
 
 use crate::board::enums::BoardEnumPieceKind;
@@ -62,7 +63,7 @@ impl PresentationEditorView {
             self.submitted_frame = Some(frame);
             return Ok(Some(controller.key(key)?));
         }
-        for direction in PresentationBoardEnumDirection::ALL {
+        for direction in PresentationBoardEnumDirection::iter() {
             if ui.input_mut(|input| input.consume_key(Modifiers::NONE, direction.key())) {
                 self.submitted_frame = Some(frame);
                 controller.focus_direction(direction, scene)?;

@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 #[path = "report_persistence_codecs/analysis.rs"]
 mod analysis;
 #[path = "report_persistence_codecs/fixture.rs"]
@@ -24,7 +25,7 @@ impl EngineReportPersistenceFixture {
         maximum: u32,
     ) -> EngineReportPersistenceTestResult<chess::engine::capabilities::EngineCapabilities> {
         let mut capabilities = chess::engine::capabilities::EngineCapabilities::default();
-        for option in chess::engine::enums::EngineEnumOption::ALL {
+        for option in chess::engine::enums::EngineEnumOption::iter() {
             let descriptor = if option == chess::engine::enums::EngineEnumOption::Threads {
                 format!("spin default 1 min 1 max {maximum}")
             } else {

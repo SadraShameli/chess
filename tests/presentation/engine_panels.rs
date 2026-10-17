@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use chess::board::start::BoardStart;
 use chess::clock::duration::ClockInstant;
 use chess::clock::state::ClockState;
@@ -218,7 +219,7 @@ impl EngineProcess for PresentationEnginePanelsProcess {
             }
             self.reply("id name Reckless 0.9.0")?;
             self.reply(format!("id author {}", EngineIdentity::AUTHOR))?;
-            for option in EngineEnumOption::ALL {
+            for option in EngineEnumOption::iter() {
                 self.reply(format!(
                     "option name {} type {}",
                     option.name(),

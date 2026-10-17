@@ -222,11 +222,6 @@ Converted tables:
 
 Left as they are, with the reason:
 
-- `ALL` constants on `EngineEnumOption`, `GameConfigurationEnumPreset` and
-  `EnginePackageEnumProfile` stay because `src/presentation`, `src/desktop`,
-  `tools/` and tests index them (`ALL.map`, array equality, `.len()`). Each now
-  has an `EnumIter` order test against `ALL`; remove `ALL` once the
-  presentation and desktop lanes move to `iter()`.
 - `NotationGameIdentityEnumResult::pgn_token` and
   `EngineDiagnosticEnumCommand::command` match on enums with data or format
   arguments, which strum cannot derive.
@@ -271,3 +266,40 @@ Left alone: enums that already used strum (`StorageReportEnum*`,
 the SQL probe text in `library_import/space/layout.rs` (`query`), which is query
 text and not an enum spelling table; `disk.rs` `index()`, which is a positional
 index and not a spelling.
+
+### T311 follow-up: presentation, tools and the `ALL` constants (lane-c, written without a build)
+
+The `ALL` constants on `EngineEnumOption`, `GameConfigurationEnumPreset` and
+`EnginePackageEnumProfile` are deleted, together with the tests that compared
+them with `iter()`. Every consumer in `src/report`, `src/engine`,
+`src/presentation`, `tools/` and `tests/` now calls `iter()` and imports
+`strum::IntoEnumIterator`. The capability record list length in
+`src/engine/capabilities/persistence.rs` now uses `strum::EnumCount` on
+`EngineEnumOption`. `src/desktop` needed no source change; only test call sites
+in `tests/desktop` moved.
+
+Also converted (all with `IntoStaticStr` and `Display`; `EnumIter` where an `ALL`
+existed, which is deleted; `EnumString` where a parse table existed):
+
+| Enum | Table replaced |
+| --- | --- |
+| `PresentationActionEnumId`, `PresentationActionEnumWorkspace` | `label()` |
+| `PresentationBoardEnumPremoveSquare` | `label()` and `ALL` |
+| `PresentationBoardEnumDirection` | `ALL` only |
+| `PresentationBoardMarkColor` | `label()` and `ALL` |
+| `PresentationGameConfigurationEnumClockFormat`, `PresentationGameConfigurationEnumBonus` | `label()` and `ALL` |
+| `PresentationAnalysisConfigurationEnumMode` | `label()` and `ALL` |
+| `PresentationLibraryEnumLane` | `label()` |
+| `PresentationGameOverviewEnumStatus` | `label()` |
+| `PresentationSettingsUpdateEnumAction` | `label()` |
+| `PresentationShortcutEnumPlatform` | `command_name()` |
+| `ToolsAssetsSoundsEnumCue` | `file_name()` and `ALL` |
+| `ToolsEnginePgoEnumBuild` | `directory()` |
+| `ToolsPackagingEnumPlatform` | `name()` and `parse()` (now `EnumString`) |
+| `ToolsEngineCoverageEnumCategory` | `prefix()` and `parse()` (now `EnumString`, mapped to the typed identity error) |
+
+Left as hand-written, with the reason: second string tables on an enum that
+already has one (`semantic_label`, `ToolsAssetsSoundsEnumCue::category`);
+tables keyed on foreign enums (`WorkbenchEnumOperation`, `UpdateEnumPhase`,
+`UpdateEnumFailure`); sentence tables that take data (`play.rs`, `report/view.rs`,
+`semantic_grid.rs`); and `pieces.rs`, whose tables key on a struct field.

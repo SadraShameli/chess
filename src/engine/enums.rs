@@ -10,6 +10,7 @@
     strum::IntoStaticStr,
     strum::Display,
     strum::EnumIter,
+    strum::EnumCount,
 )]
 pub enum EngineEnumOption {
     #[strum(serialize = "Hash")]
@@ -32,17 +33,6 @@ pub enum EngineEnumOption {
 
 impl EngineEnumOption {
     const THREADS_BOUND_MULTIPLIER: u32 = 4;
-
-    pub const ALL: [Self; 8] = [
-        Self::Hash,
-        Self::Threads,
-        Self::MoveOverhead,
-        Self::Minimal,
-        Self::ClearHash,
-        Self::Chess960,
-        Self::MultiPv,
-        Self::SyzygyPath,
-    ];
 
     pub fn name(self) -> &'static str {
         self.into()

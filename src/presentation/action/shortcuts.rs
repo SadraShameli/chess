@@ -2,9 +2,11 @@ use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesEnumShortcutAction,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display)]
 pub enum PresentationShortcutEnumPlatform {
+    #[strum(serialize = "Cmd")]
     Mac,
+    #[strum(serialize = "Ctrl")]
     Other,
 }
 
@@ -17,11 +19,8 @@ impl PresentationShortcutEnumPlatform {
         }
     }
 
-    const fn command_name(self) -> &'static str {
-        match self {
-            Self::Mac => "Cmd",
-            Self::Other => "Ctrl",
-        }
+    fn command_name(self) -> &'static str {
+        self.into()
     }
 }
 

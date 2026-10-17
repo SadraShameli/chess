@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -135,7 +136,7 @@ impl EngineProcess for DesktopNativeGameEngineFixtureProcess {
                     .emit("id name Reckless 0.9.0".to_owned())?;
                 self.observations
                     .emit(format!("id author {}", EngineIdentity::AUTHOR))?;
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     self.observations.emit(format!(
                         "option name {} type {}",
                         option.name(),
@@ -149,7 +150,7 @@ impl EngineProcess for DesktopNativeGameEngineFixtureProcess {
                 self.observations.emit("bestmove g1f3".to_owned())?;
             }
             value if self.observations.acknowledge.load(Ordering::SeqCst) => {
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     if let Some(number) =
                         value.strip_prefix(&format!("setoption name {} value ", option.name()))
                     {

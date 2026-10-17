@@ -170,13 +170,6 @@ impl EnginePackageEnumProfile {
     ];
     const NEON_FEATURES: [EnginePackagePlatformEnumFeature; 1] =
         [EnginePackagePlatformEnumFeature::Neon];
-    pub const ALL: [Self; 5] = [
-        Self::Portable,
-        Self::X8664V3,
-        Self::X8664V4,
-        Self::Numa,
-        Self::AppleNeon,
-    ];
 
     pub fn label(self) -> &'static str {
         self.into()

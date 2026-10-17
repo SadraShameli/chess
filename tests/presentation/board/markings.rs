@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy_egui::egui::Modifiers;
 
 use chess::board::enums::{BoardEnumColor, BoardEnumPieceKind, BoardEnumVariant};
@@ -25,7 +26,7 @@ fn snapshot(fen: &str) -> Result<DesktopBoardSnapshot, Box<dyn std::error::Error
 fn colors_are_the_four_approved_shades_and_modifiers_pick_them() {
     let green = PresentationBoardMarkColor::default();
     assert_eq!(green, PresentationBoardMarkColor::Green);
-    assert_eq!(PresentationBoardMarkColor::ALL.len(), 4);
+    assert_eq!(PresentationBoardMarkColor::iter().len(), 4);
     let none = Modifiers::NONE;
     let shift = Modifiers::SHIFT;
     let alt = Modifiers::ALT;

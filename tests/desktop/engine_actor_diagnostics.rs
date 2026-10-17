@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1204,7 +1205,7 @@ async fn ambiguous_configuration_quiesce_reaps_and_requires_explicit_retry_witho
     fixture.controls.configuration.block();
     let mut actor = DesktopEngineActorDiagnosticsActor::new(fixture)?;
     let mut capabilities = chess::engine::capabilities::EngineCapabilities::default();
-    for option in chess::engine::enums::EngineEnumOption::ALL {
+    for option in chess::engine::enums::EngineEnumOption::iter() {
         capabilities.discover(&format!(
             "option name {} type {}",
             option.name(),

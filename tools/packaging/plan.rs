@@ -30,29 +30,19 @@ pub(crate) enum ToolsPackagingError {
     Digest(#[from] chess::package::digest::PackageDigestError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumString)]
 pub(crate) enum ToolsPackagingEnumPlatform {
+    #[strum(serialize = "windows")]
     Windows,
+    #[strum(serialize = "macos")]
     Macos,
+    #[strum(serialize = "linux")]
     Linux,
 }
 
 impl ToolsPackagingEnumPlatform {
-    pub(crate) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "windows" => Some(Self::Windows),
-            "macos" => Some(Self::Macos),
-            "linux" => Some(Self::Linux),
-            _ => None,
-        }
-    }
-
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Windows => "windows",
-            Self::Macos => "macos",
-            Self::Linux => "linux",
-        }
+    pub(crate) fn name(self) -> &'static str {
+        self.into()
     }
 
     pub(crate) const fn is_current(self) -> bool {
@@ -139,5 +129,26 @@ impl ToolsPackagingPlan {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolsPackagingEnumPlatform;
+
+    #[test]
+    fn platform_names_round_trip_through_strum() {
+        for platform in [
+            ToolsPackagingEnumPlatform::Windows,
+            ToolsPackagingEnumPlatform::Macos,
+            ToolsPackagingEnumPlatform::Linux,
+        ] {
+            assert_eq!(
+                platform.name().parse::<ToolsPackagingEnumPlatform>(),
+                Ok(platform)
+            );
+        }
+        assert!("freebsd".parse::<ToolsPackagingEnumPlatform>().is_err());
+        assert_eq!(ToolsPackagingEnumPlatform::Macos.name(), "macos");
     }
 }

@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy_egui::egui::{self, Ui};
 
 use crate::board::enums::BoardEnumColor;
@@ -241,7 +242,7 @@ impl PresentationGameNewGame {
     fn show_clock(&mut self, ui: &mut Ui) {
         ui.strong("Time control");
         ui.horizontal_wrapped(|ui| {
-            for preset in GameConfigurationEnumPreset::ALL {
+            for preset in GameConfigurationEnumPreset::iter() {
                 ui.radio_value(
                     &mut self.draft.control,
                     PresentationGameConfigurationEnumControl::Preset(preset),
@@ -262,7 +263,7 @@ impl PresentationGameNewGame {
         egui::ComboBox::from_id_salt("new_game_clock_format")
             .selected_text(self.draft.clock_format.label())
             .show_ui(ui, |ui| {
-                for format in PresentationGameConfigurationEnumClockFormat::ALL {
+                for format in PresentationGameConfigurationEnumClockFormat::iter() {
                     ui.selectable_value(&mut self.draft.clock_format, format, format.label());
                 }
             });
@@ -347,7 +348,7 @@ impl PresentationGameNewGame {
             egui::ComboBox::from_id_salt("stage_bonus")
                 .selected_text(stage.bonus.label())
                 .show_ui(ui, |ui| {
-                    for bonus in PresentationGameConfigurationEnumBonus::ALL {
+                    for bonus in PresentationGameConfigurationEnumBonus::iter() {
                         ui.selectable_value(&mut stage.bonus, bonus, bonus.label());
                     }
                 });

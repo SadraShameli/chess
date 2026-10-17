@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy_egui::egui::{self, Ui};
 
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
@@ -46,7 +47,7 @@ impl PresentationBoardToolbar {
     fn show_markings(ui: &mut Ui, markings: &mut PresentationBoardMarkings) {
         ui.label("Marking color");
         let mut color = markings.selected_color();
-        for choice in PresentationBoardMarkColor::ALL {
+        for choice in PresentationBoardMarkColor::iter() {
             ui.selectable_value(
                 &mut color,
                 choice,

@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::error::Error;
 use std::num::NonZeroUsize;
 
@@ -52,7 +53,7 @@ impl WorkbenchExportFixture {
 
     fn capabilities() -> Result<EngineCapabilities, Box<dyn Error>> {
         let mut capabilities = EngineCapabilities::default();
-        for option in EngineEnumOption::ALL {
+        for option in EngineEnumOption::iter() {
             capabilities.discover(&format!(
                 "option name {} type {}",
                 option.name(),

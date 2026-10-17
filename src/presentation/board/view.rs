@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -541,7 +542,7 @@ impl PresentationBoardView {
         let painter = ui
             .painter()
             .with_clip_rect(scene.viewport().image().intersect(ui.clip_rect()));
-        for role in PresentationBoardEnumPremoveSquare::ALL {
+        for role in PresentationBoardEnumPremoveSquare::iter() {
             let Some(rect) = PresentationBoardSemanticGrid::square_rect(role.square(intent), scene)
             else {
                 continue;

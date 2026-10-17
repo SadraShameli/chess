@@ -14,25 +14,33 @@ use crate::presentation::board::view::PresentationBoardPickingProvider;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport};
 use crate::scene::renderer::{SceneRendererError, SceneRendererGeneration};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum PresentationBoardMarkColor {
     #[default]
+    #[strum(serialize = "Green")]
     Green,
+    #[strum(serialize = "Red")]
     Red,
+    #[strum(serialize = "Blue")]
     Blue,
+    #[strum(serialize = "Yellow")]
     Yellow,
 }
 
 impl PresentationBoardMarkColor {
-    pub const ALL: [Self; 4] = [Self::Green, Self::Red, Self::Blue, Self::Yellow];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Green => "Green",
-            Self::Red => "Red",
-            Self::Blue => "Blue",
-            Self::Yellow => "Yellow",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub const fn color(self) -> Color32 {

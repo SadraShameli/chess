@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::num::NonZeroUsize;
@@ -69,7 +70,7 @@ impl WorkbenchExecutorFixture {
             ),
             WorkbenchEnumOperation::Bench => {
                 let mut capabilities = EngineCapabilities::default();
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     capabilities.discover(&format!(
                         "option name {} type {}",
                         option.name(),
@@ -141,7 +142,7 @@ impl WorkbenchExecutorFixture {
         assert_eq!(actual.package().digest(), expected.package().digest());
         assert_eq!(actual.identity().name(), expected.identity().name());
         assert_eq!(actual.identity().author(), expected.identity().author());
-        for option in EngineEnumOption::ALL {
+        for option in EngineEnumOption::iter() {
             assert_eq!(
                 actual.identity().capabilities().descriptor(option),
                 expected.identity().capabilities().descriptor(option)
@@ -360,7 +361,7 @@ impl EngineProcess for WorkbenchExecutorProcess {
                     "id name Reckless 0.9.0".to_owned(),
                     format!("id author {}", EngineIdentity::AUTHOR),
                 ]);
-                self.lines.extend(EngineEnumOption::ALL.map(|option| {
+                self.lines.extend(EngineEnumOption::iter().map(|option| {
                     let descriptor = if option == EngineEnumOption::Threads {
                         WorkbenchExecutorFixture::THREADS_DESCRIPTOR.to_owned()
                     } else {
@@ -1031,7 +1032,7 @@ async fn explicit_bench_resources_match_the_admitted_workers_hash_and_command()
         (16, 1, 12)
     );
     let mut capabilities = EngineCapabilities::default();
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         capabilities.discover(&format!(
             "option name {} type {}",
             option.name(),

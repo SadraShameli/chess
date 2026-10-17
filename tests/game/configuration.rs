@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use rand::{SeedableRng, rngs::StdRng};
 
 use chess::board::enums::BoardEnumColor;
@@ -53,8 +54,8 @@ fn every_selected_preset_has_the_approved_base_and_exclusive_fischer_increment()
         Some((900_000, 10_000)),
         Some((1_800_000, 0)),
     ];
-    assert_eq!(GameConfigurationEnumPreset::ALL.len(), expected.len());
-    for (preset, expected) in GameConfigurationEnumPreset::ALL.into_iter().zip(expected) {
+    assert_eq!(GameConfigurationEnumPreset::iter().len(), expected.len());
+    for (preset, expected) in GameConfigurationEnumPreset::iter().zip(expected) {
         let control = preset.time_control()?;
         match expected {
             None => assert!(!control.is_timed()),
@@ -137,15 +138,10 @@ fn custom_start_and_local_opponents_retain_their_authoritative_domain_values()
 #[test]
 fn preset_labels_are_unchanged_and_the_iterator_matches_the_registry()
 -> Result<(), Box<dyn std::error::Error>> {
-    use strum::IntoEnumIterator;
     let labels = [
         "Untimed", "1+0", "2+1", "3+0", "3+2", "5+0", "5+3", "10+0", "10+5", "15+10", "30+0",
     ];
-    assert_eq!(
-        GameConfigurationEnumPreset::iter().collect::<Vec<_>>(),
-        GameConfigurationEnumPreset::ALL
-    );
-    for (preset, label) in GameConfigurationEnumPreset::ALL.into_iter().zip(labels) {
+    for (preset, label) in GameConfigurationEnumPreset::iter().zip(labels) {
         assert_eq!(preset.label(), label);
         assert_eq!(label.parse::<GameConfigurationEnumPreset>()?, preset);
     }

@@ -3,30 +3,29 @@ use bevy_egui::egui::Ui;
 use crate::update::credentials::UpdateCredentialEnumStatus;
 use crate::update::state::{UpdateEnumFailure, UpdateEnumPhase, UpdateState};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display)]
 pub enum PresentationSettingsUpdateEnumAction {
+    #[strum(serialize = "Check for updates")]
     Check,
+    #[strum(serialize = "Enter update credential")]
     EnterCredential,
+    #[strum(serialize = "Use credential for this session only")]
     UseSessionCredential,
+    #[strum(serialize = "Approve this network for the download")]
     Approve,
+    #[strum(serialize = "Download newer version")]
     Download,
+    #[strum(serialize = "Cancel")]
     Cancel,
+    #[strum(serialize = "Retry")]
     Retry,
+    #[strum(serialize = "Install")]
     Install,
 }
 
 impl PresentationSettingsUpdateEnumAction {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Check => "Check for updates",
-            Self::EnterCredential => "Enter update credential",
-            Self::UseSessionCredential => "Use credential for this session only",
-            Self::Approve => "Approve this network for the download",
-            Self::Download => "Download newer version",
-            Self::Cancel => "Cancel",
-            Self::Retry => "Retry",
-            Self::Install => "Install",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

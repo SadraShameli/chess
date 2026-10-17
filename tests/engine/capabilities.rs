@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use chess::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError};
 use chess::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 
@@ -39,7 +40,7 @@ fn dynamic_threads_descriptor_accepts_the_advertised_high_core_bound()
 fn fixed_descriptors_remain_exact_and_every_duplicate_is_rejected()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut capabilities = EngineCapabilities::default();
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         let line = format!("option name {} type {}", option.name(), option.descriptor());
         capabilities.discover(&line)?;
         assert_eq!(

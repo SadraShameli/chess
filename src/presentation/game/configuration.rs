@@ -35,35 +35,25 @@ pub enum PresentationGameConfigurationError {
     StartIndex(#[from] BoardStartIndexError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
 pub enum PresentationGameConfigurationEnumClockFormat {
+    #[strum(serialize = "Sudden death")]
     SuddenDeath,
+    #[strum(serialize = "Fischer increment")]
     Fischer,
+    #[strum(serialize = "Staged")]
     Staged,
+    #[strum(serialize = "Cyclic")]
     Cyclic,
+    #[strum(serialize = "Simple delay")]
     SimpleDelay,
+    #[strum(serialize = "Bronstein delay")]
     Bronstein,
 }
 
 impl PresentationGameConfigurationEnumClockFormat {
-    pub const ALL: [Self; 6] = [
-        Self::SuddenDeath,
-        Self::Fischer,
-        Self::Staged,
-        Self::Cyclic,
-        Self::SimpleDelay,
-        Self::Bronstein,
-    ];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::SuddenDeath => "Sudden death",
-            Self::Fischer => "Fischer increment",
-            Self::Staged => "Staged",
-            Self::Cyclic => "Cyclic",
-            Self::SimpleDelay => "Simple delay",
-            Self::Bronstein => "Bronstein delay",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub(super) const fn bonus(
@@ -80,29 +70,21 @@ impl PresentationGameConfigurationEnumClockFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
 pub enum PresentationGameConfigurationEnumBonus {
+    #[strum(serialize = "No increment or delay")]
     None,
+    #[strum(serialize = "Fischer increment")]
     Fischer,
+    #[strum(serialize = "Simple delay")]
     SimpleDelay,
+    #[strum(serialize = "Bronstein delay")]
     Bronstein,
 }
 
 impl PresentationGameConfigurationEnumBonus {
-    pub const ALL: [Self; 4] = [
-        Self::None,
-        Self::Fischer,
-        Self::SimpleDelay,
-        Self::Bronstein,
-    ];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::None => "No increment or delay",
-            Self::Fischer => "Fischer increment",
-            Self::SimpleDelay => "Simple delay",
-            Self::Bronstein => "Bronstein delay",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     fn resolve(self, millis: u64) -> Result<ClockStageEnumBonus, ClockDurationError> {

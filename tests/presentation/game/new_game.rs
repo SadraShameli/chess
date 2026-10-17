@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy_egui::egui;
 use egui_kittest::{
     Harness,
@@ -144,7 +145,7 @@ fn zero_engine_budget_disables_start_without_losing_edits() -> PresentationGameN
 #[test]
 fn custom_formats_keep_delay_increment_stage_and_cycle_semantics_distinct()
 -> PresentationGameNewGameTestResult {
-    for format in PresentationGameConfigurationEnumClockFormat::ALL {
+    for format in PresentationGameConfigurationEnumClockFormat::iter() {
         let mut form = PresentationGameNewGame::new();
         let stages = if format == PresentationGameConfigurationEnumClockFormat::Staged {
             vec![
@@ -249,7 +250,7 @@ fn invalid_stage_quotas_and_overflow_are_typed_and_presets_recover_the_form()
 fn all_presets_are_accessible_and_custom_editor_positions_require_explicit_start()
 -> PresentationGameNewGameTestResult {
     let mut harness = PresentationGameNewGameFixture::harness()?;
-    for preset in GameConfigurationEnumPreset::ALL {
+    for preset in GameConfigurationEnumPreset::iter() {
         harness.get_by_label(preset.label()).click_accesskit();
         harness.run_ok().ok_or("Preset selection did not settle")?;
         assert_eq!(

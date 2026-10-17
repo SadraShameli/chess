@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::BTreeMap;
 
 use chess::engine::capabilities::EngineCapabilitiesVersion;
@@ -121,7 +122,7 @@ fn canonical_inventory_binds_every_real_option_and_workbench_registry_member_onc
 -> Result<(), Box<dyn std::error::Error>> {
     let inventory = ToolsEngineCoverageInventory::pinned()?;
     assert!(inventory.entries().len() > 0);
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         assert_eq!(
             inventory
                 .entries()

@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::BTreeSet;
 
 use chess::engine::enums::EngineEnumOption;
@@ -40,8 +41,7 @@ fn contract_rows_are_unique_and_option_rows_match_the_option_registry() {
         .filter(|(id, _facility)| id.starts_with("OPT-"))
         .map(|(_id, facility)| facility.clone())
         .collect();
-    let registry: Vec<String> = EngineEnumOption::ALL
-        .iter()
+    let registry: Vec<String> = EngineEnumOption::iter()
         .map(|option| option.name().to_owned())
         .collect();
     assert_eq!(options, registry);

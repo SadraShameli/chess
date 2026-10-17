@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::path::{Path, PathBuf};
 
 use chess::package::digest::PackageDigest;
@@ -22,24 +23,21 @@ struct ToolsAssetsSoundsTone {
     amplitude: f64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
 pub(crate) enum ToolsAssetsSoundsEnumCue {
+    #[strum(serialize = "move.wav")]
     Move,
+    #[strum(serialize = "check.wav")]
     Check,
+    #[strum(serialize = "result.wav")]
     Result,
+    #[strum(serialize = "low-time.wav")]
     LowTime,
 }
 
 impl ToolsAssetsSoundsEnumCue {
-    pub(crate) const ALL: [Self; 4] = [Self::Move, Self::Check, Self::Result, Self::LowTime];
-
-    const fn file_name(self) -> &'static str {
-        match self {
-            Self::Move => "move.wav",
-            Self::Check => "check.wav",
-            Self::Result => "result.wav",
-            Self::LowTime => "low-time.wav",
-        }
+    fn file_name(self) -> &'static str {
+        self.into()
     }
 
     const fn category(self) -> &'static str {
@@ -218,7 +216,7 @@ impl ToolsAssetsSounds {
     pub(crate) fn generate() -> Result<ToolsAssetsSoundsOutput, ToolsAssetsSoundsError> {
         let mut files = Vec::new();
         let mut entries = Vec::new();
-        for cue in ToolsAssetsSoundsEnumCue::ALL {
+        for cue in ToolsAssetsSoundsEnumCue::iter() {
             let wave = Self::render(cue);
             entries.push(ToolsAssetsSoundsManifestEntry {
                 file: cue.file_name(),

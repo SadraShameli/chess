@@ -46,20 +46,6 @@ pub enum GameConfigurationEnumPreset {
 }
 
 impl GameConfigurationEnumPreset {
-    pub const ALL: [Self; 11] = [
-        Self::Untimed,
-        Self::OnePlusZero,
-        Self::TwoPlusOne,
-        Self::ThreePlusZero,
-        Self::ThreePlusTwo,
-        Self::FivePlusZero,
-        Self::FivePlusThree,
-        Self::TenPlusZero,
-        Self::TenPlusFive,
-        Self::FifteenPlusTen,
-        Self::ThirtyPlusZero,
-    ];
-
     pub fn label(self) -> &'static str {
         self.into()
     }

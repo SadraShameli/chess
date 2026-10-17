@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::path::Path;
 
 use thiserror::Error;
@@ -105,7 +106,7 @@ impl NativeEngineOptionsHarness {
                     .await?;
                 let generation = session.generation();
                 let mut covered = Vec::new();
-                for option in EngineEnumOption::ALL {
+                for option in EngineEnumOption::iter() {
                     let setting = EngineOptionsSetting::new(
                         Self::value(option, &path)?,
                         session.identity().capabilities(),
@@ -137,7 +138,7 @@ impl NativeEngineOptionsHarness {
                         EngineOptionsSetting::new(value, session.identity().capabilities())?;
                     session.configure_option(setting).await?;
                 }
-                if covered != EngineEnumOption::ALL || session.generation() != generation {
+                if covered != EngineEnumOption::iter().collect::<Vec<_>>() || session.generation() != generation {
                     return Err(NativeEngineOptionsError::Invariant(
                         "registry coverage and stable process generation",
                     ));

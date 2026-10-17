@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::{
@@ -245,8 +246,7 @@ impl ToolsEnumCommand {
                 )));
             }
             [command, flag, name] if command == "engine-build" && flag == "--profile" => {
-                let profile = chess::engine::package::manifest::EnginePackageEnumProfile::ALL
-                    .into_iter()
+                let profile = chess::engine::package::manifest::EnginePackageEnumProfile::iter()
                     .find(|profile| {
                         profile.file_suffix().unwrap_or("portable") == name.to_str().unwrap_or("")
                     })

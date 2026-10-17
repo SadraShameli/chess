@@ -1,6 +1,7 @@
 #[path = "workbench/fixture.rs"]
 mod fixture;
 
+use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
 
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -34,8 +35,8 @@ async fn mounted_registry_covers_every_option_with_dynamic_descriptors()
     let fixture = PresentationWorkbenchFixture::new().await?;
     let controller = fixture.controller()?;
     let snapshot = controller.engine().ok_or("missing engine snapshot")?;
-    assert_eq!(snapshot.options().count(), EngineEnumOption::ALL.len());
-    for option in EngineEnumOption::ALL {
+    assert_eq!(snapshot.options().count(), EngineEnumOption::iter().len());
+    for option in EngineEnumOption::iter() {
         let descriptor = snapshot
             .capabilities()
             .descriptor(option)
@@ -58,7 +59,7 @@ async fn mounted_registry_covers_every_option_with_dynamic_descriptors()
         }
     }
     let mut harness = PresentationWorkbenchMounted::harness(controller)?;
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         match option {
             EngineEnumOption::Hash
             | EngineEnumOption::Threads

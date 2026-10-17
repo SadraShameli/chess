@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::Future;
@@ -88,7 +89,7 @@ impl EngineProcessProvider for EngineSessionStartupTestProvider {
                     "id name Reckless 0.9.0".to_owned(),
                     format!("id author {}", EngineIdentity::AUTHOR),
                 ]);
-                lines.extend(EngineEnumOption::ALL.map(|option| {
+                lines.extend(EngineEnumOption::iter().map(|option| {
                     format!("option name {} type {}", option.name(), option.descriptor())
                 }));
                 lines.extend(["uciok".to_owned(), "readyok".to_owned()]);

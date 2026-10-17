@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::fmt::{Display, Formatter, Write};
 use std::marker::PhantomData;
 
@@ -232,7 +233,7 @@ struct EngineIdentityRecordData {
     registry_version: u32,
     name: EngineRecordText<256>,
     author: EngineRecordText<256>,
-    descriptors: EngineRecordList<EngineRecordText<256>, { EngineEnumOption::ALL.len() }>,
+    descriptors: EngineRecordList<EngineRecordText<256>, { <EngineEnumOption as strum::EnumCount>::COUNT }>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,7 +247,7 @@ impl EngineIdentityRecord {
     pub fn capture(identity: &EngineIdentity) -> Result<Self, EnginePersistenceError> {
         identity.capabilities().validate()?;
         let mut descriptors = EngineRecordList::new();
-        for option in EngineEnumOption::ALL {
+        for option in EngineEnumOption::iter() {
             let descriptor = identity
                 .capabilities()
                 .descriptor(option)

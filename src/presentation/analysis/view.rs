@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use bevy_egui::egui::{self, Ui};
 use thiserror::Error;
 
@@ -149,7 +150,7 @@ impl PresentationAnalysisView {
         let mut mode = self.configuration.mode();
         ui.label("Search mode");
         ui.horizontal_wrapped(|ui| {
-            for choice in PresentationAnalysisConfigurationEnumMode::ALL {
+            for choice in PresentationAnalysisConfigurationEnumMode::iter() {
                 ui.radio_value(&mut mode, choice, choice.label());
             }
         });

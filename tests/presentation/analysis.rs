@@ -1,6 +1,7 @@
 #[path = "analysis/fixture.rs"]
 mod fixture;
 
+use strum::IntoEnumIterator;
 use bevy_egui::egui;
 use egui_kittest::{
     Harness,
@@ -75,7 +76,7 @@ impl PresentationAnalysisMounted {
 #[test]
 fn exclusive_modes_use_validated_backend_limits_and_reject_invalid_inputs()
 -> PresentationAnalysisTestResult {
-    for mode in PresentationAnalysisConfigurationEnumMode::ALL {
+    for mode in PresentationAnalysisConfigurationEnumMode::iter() {
         let configuration = PresentationAnalysisConfiguration::for_mode(mode);
         assert_eq!(configuration.mode(), mode);
         configuration.validate()?;

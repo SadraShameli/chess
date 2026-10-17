@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
@@ -85,7 +86,7 @@ impl EngineProcess for ReportAnalysisUpdateReviewProcess {
         if command == "uci" {
             self.emit(format!("id name {}", self.identity.name()))?;
             self.emit(format!("id author {}", self.identity.author()))?;
-            for option in EngineEnumOption::ALL {
+            for option in EngineEnumOption::iter() {
                 self.emit(format!(
                     "option name {} type {}",
                     option.name(),

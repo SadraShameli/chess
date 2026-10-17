@@ -3,22 +3,21 @@ use crate::desktop::identity::DesktopRevision;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId};
 use crate::desktop::preferences::DesktopPreferencesEnumShortcutAction;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::Display)]
 pub enum PresentationActionEnumId {
+    #[strum(serialize = "Subscribe to state")]
     Subscribe,
+    #[strum(serialize = "Refresh state")]
     Refresh,
+    #[strum(serialize = "Select local file")]
     SelectFile,
+    #[strum(serialize = "Confirm quit")]
     ConfirmQuit,
 }
 
 impl PresentationActionEnumId {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Subscribe => "Subscribe to state",
-            Self::Refresh => "Refresh state",
-            Self::SelectFile => "Select local file",
-            Self::ConfirmQuit => "Confirm quit",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub fn command(self, file_owner: DesktopMessagesEntityId) -> DesktopCommand {
@@ -53,12 +52,17 @@ impl PresentationActionRegistry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::Display)]
 pub enum PresentationActionEnumWorkspace {
+    #[strum(serialize = "Open command palette")]
     OpenPalette,
+    #[strum(serialize = "New game")]
     NewGame,
+    #[strum(serialize = "Open settings")]
     OpenSettings,
+    #[strum(serialize = "Flip board")]
     FlipBoard,
+    #[strum(serialize = "Quit")]
     Quit,
 }
 
@@ -81,14 +85,8 @@ impl PresentationActionEnumAvailability {
 }
 
 impl PresentationActionEnumWorkspace {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::OpenPalette => "Open command palette",
-            Self::NewGame => "New game",
-            Self::OpenSettings => "Open settings",
-            Self::FlipBoard => "Flip board",
-            Self::Quit => "Quit",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub const fn shortcut_action(self) -> Option<DesktopPreferencesEnumShortcutAction> {

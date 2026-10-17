@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::future::{Future, poll_fn};
 use std::num::NonZeroU32;
 use std::task::Poll;
@@ -320,7 +321,7 @@ impl EngineOptionsFixture {
 
     fn capabilities() -> EngineOptionsTestResult<EngineCapabilities> {
         let mut capabilities = EngineCapabilities::default();
-        for option in EngineEnumOption::ALL {
+        for option in EngineEnumOption::iter() {
             capabilities.discover(&format!(
                 "option name {} type {}",
                 option.name(),
@@ -342,7 +343,7 @@ fn versioned_settings_validate_every_registered_descriptor_and_path_before_appli
     );
     assert!(EngineCapabilitiesVersion::try_from(0).is_err());
     assert!(EngineCapabilitiesVersion::try_from(2).is_err());
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         let setting =
             EngineOptionsSetting::new(EngineOptionsFixture::value(option)?, &capabilities)?;
         assert_eq!(setting.option(), option);
@@ -393,7 +394,7 @@ async fn every_registered_option_is_applied_with_its_actual_response_and_readine
 -> EngineOptionsTestResult {
     let fixture = EnginePackageFixture::new()?;
     let mut covered = Vec::new();
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         let mut provider = EngineLifecycleProvider::new();
         let mut session = provider.start(&fixture).await?;
         let generation = session.generation();
@@ -441,7 +442,7 @@ async fn every_registered_option_is_applied_with_its_actual_response_and_readine
         session.shutdown().await?;
         provider.expect("shutdown").await?;
     }
-    assert_eq!(covered, EngineEnumOption::ALL);
+    assert_eq!(covered, EngineEnumOption::iter().collect::<Vec<_>>());
     Ok(())
 }
 
@@ -477,7 +478,7 @@ async fn active_search_refuses_every_setting_without_changing_resources_or_gener
         .await?;
     provider.expect("position startpos").await?;
     provider.expect("go infinite").await?;
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         let setting = EngineOptionsSetting::new(
             EngineOptionsFixture::value(option)?,
             session.identity().capabilities(),
@@ -763,7 +764,7 @@ async fn multipv_boundaries_apply_and_unexpected_acknowledgments_fail_closed()
     }
     session.shutdown().await?;
     provider.expect("shutdown").await?;
-    for option in EngineEnumOption::ALL {
+    for option in EngineEnumOption::iter() {
         let mut provider = EngineLifecycleProvider::new();
         let mut session = provider.start(&fixture).await?;
         let setting = EngineOptionsSetting::new(
@@ -1013,7 +1014,6 @@ fn search_scores_and_raw_evaluation_are_distinct_white_perspective_results()
 fn engine_option_spellings_are_unchanged_and_the_iterator_drives_the_registry()
 -> Result<(), Box<dyn std::error::Error>> {
     use chess::engine::enums::EngineEnumOption;
-    use strum::IntoEnumIterator;
     let expected = [
         (EngineEnumOption::Hash, "Hash"),
         (EngineEnumOption::Threads, "Threads"),
@@ -1024,7 +1024,6 @@ fn engine_option_spellings_are_unchanged_and_the_iterator_drives_the_registry()
         (EngineEnumOption::MultiPv, "MultiPV"),
         (EngineEnumOption::SyzygyPath, "SyzygyPath"),
     ];
-    assert_eq!(EngineEnumOption::iter().collect::<Vec<_>>(), EngineEnumOption::ALL);
     for (option, spelling) in expected {
         assert_eq!(option.name(), spelling);
         assert_eq!(option.to_string(), spelling);
