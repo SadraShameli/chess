@@ -34,11 +34,8 @@ pub mod puzzle_bridge;
 pub mod puzzle_commands;
 pub mod puzzle_service;
 pub mod puzzle_snapshot;
-<<<<<<< ours
 pub mod renderer_commands;
-=======
 pub mod report_commands;
->>>>>>> theirs
 pub mod request_cache;
 pub mod stream;
 pub mod workbench_commands;
