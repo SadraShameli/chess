@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use crate::game::library_organization::GameLibraryOrganizationError;
 use crate::game::session::GameMetadataError;
+use crate::storage::import_session::StorageImportSessionError;
 use crate::storage::library_repository::StorageLibraryError;
 
 #[derive(Debug, Error)]
@@ -30,6 +31,8 @@ pub enum PresentationLibraryError {
     MissingGame,
     #[error("Preview the Trash action and confirm the exact plan first")]
     MissingPlan,
+    #[error("Review and freeze the import preview before committing")]
+    MissingConfirmation,
     #[error("Reload the library from the first page")]
     ResyncRequired,
     #[error("Library editor actions belong to the annotation panel")]
@@ -40,6 +43,8 @@ pub enum PresentationLibraryError {
     PlyRange,
     #[error("A numeric filter is invalid: {0}")]
     Number(#[from] std::num::ParseIntError),
+    #[error(transparent)]
+    ImportRequest(#[from] StorageImportSessionError),
     #[error(transparent)]
     Metadata(#[from] GameMetadataError),
     #[error(transparent)]

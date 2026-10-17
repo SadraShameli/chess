@@ -3,7 +3,11 @@ use std::fmt::{Debug, Formatter};
 use crate::desktop::annotation_commands::DesktopAnnotationCommandsEnumAction;
 use crate::desktop::game_editor::{DesktopGameEditorContext, DesktopGameEditorEnumSource};
 use crate::desktop::identity::DesktopRevision;
+use crate::desktop::library_service::export::DesktopLibraryServiceExport;
+use crate::desktop::library_service::file::DesktopLibraryServiceFile;
+use crate::desktop::library_service::import::DesktopLibraryServiceEnumImportAction;
 use crate::desktop::library_service::DesktopLibraryServiceError;
+use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::enums::GameId;
 use crate::game::library_organization::{
@@ -38,6 +42,9 @@ pub enum DesktopLibraryServiceEnumAction {
     ApplyTrash(StorageTrashConfirmedRequest),
     Restore(GameLibraryOrganizationGameTarget),
     RemoveFolder(StorageTrashPlan),
+    ConfirmGameTrash(StorageTrashPlan),
+    Import(DesktopLibraryServiceEnumImportAction),
+    Export(DesktopLibraryServiceExport),
 }
 
 impl Debug for DesktopLibraryServiceEnumAction {
@@ -68,6 +75,12 @@ impl Debug for DesktopLibraryServiceEnumAction {
                 .field(&request.plan().action())
                 .finish(),
             Self::Restore(request) => formatter.debug_tuple("Restore").field(request).finish(),
+            Self::Import(action) => formatter.debug_tuple("Import").field(action).finish(),
+            Self::Export(request) => formatter.debug_tuple("Export").field(request).finish(),
+            Self::ConfirmGameTrash(plan) => formatter
+                .debug_tuple("ConfirmGameTrash")
+                .field(&plan.action())
+                .finish(),
             Self::RemoveFolder(plan) => formatter
                 .debug_tuple("RemoveFolder")
                 .field(&plan.action())
@@ -121,6 +134,9 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => None,
         }
     }
@@ -164,7 +180,10 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
-            | DesktopLibraryServiceEnumAction::RemoveFolder(_) => 0,
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_) => 0,
         };
         let bytes = payload
             .checked_add(std::mem::size_of::<Self>())
@@ -203,6 +222,9 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -221,6 +243,9 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -231,6 +256,35 @@ impl DesktopLibraryServiceOperation {
             | DesktopGameEditorEnumSource::Notation { revision } => revision,
         };
         DesktopRevision::for_game(revision)
+    }
+
+    pub fn file_selection(&self) -> Option<(&DesktopLibraryServiceFile, DesktopFileEnumPurpose)> {
+        match &self.action {
+            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Prepare(
+                file,
+            )) => Some((file, DesktopFileEnumPurpose::ReadFile)),
+            DesktopLibraryServiceEnumAction::Export(request) => {
+                Some((request.destination(), DesktopFileEnumPurpose::WriteFile))
+            }
+            DesktopLibraryServiceEnumAction::Import(
+                DesktopLibraryServiceEnumImportAction::Page(_)
+                | DesktopLibraryServiceEnumImportAction::Detail(_)
+                | DesktopLibraryServiceEnumImportAction::Choose { .. }
+                | DesktopLibraryServiceEnumImportAction::Freeze
+                | DesktopLibraryServiceEnumImportAction::Commit(_)
+                | DesktopLibraryServiceEnumImportAction::Cancel,
+            )
+            | DesktopLibraryServiceEnumAction::Query { .. }
+            | DesktopLibraryServiceEnumAction::Metadata(_)
+            | DesktopLibraryServiceEnumAction::Open { .. }
+            | DesktopLibraryServiceEnumAction::Editor { .. }
+            | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_) => None,
+        }
     }
 
     pub fn is_available_while_closing(&self) -> bool {
@@ -251,6 +305,9 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => false,
         }
     }
@@ -265,6 +322,9 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }

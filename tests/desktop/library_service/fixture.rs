@@ -186,6 +186,7 @@ impl DesktopLibraryServiceFixture {
             executor: Arc::clone(&executor),
             games: games.clone(),
             wall_time: Arc::<DesktopLibraryServiceTestWall>::clone(&wall),
+            imports: None,
         });
         Ok(Self {
             directory,

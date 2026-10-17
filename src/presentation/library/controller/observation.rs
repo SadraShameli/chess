@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::library_service::{
+    DesktopLibraryServiceEnumImportAction, DesktopLibraryServiceEnumImportResult,
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumDisposition,
     DesktopLibraryServiceEnumResult, DesktopLibraryServiceError, DesktopLibraryServiceOperation,
 };
@@ -60,7 +61,8 @@ impl PresentationLibraryController {
             }
             (
                 DesktopLibraryServiceEnumAction::ApplyTrash(_)
-                | DesktopLibraryServiceEnumAction::RemoveFolder(_),
+                | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+                | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_),
                 DesktopLibraryServiceEnumResult::Trashed(_),
             )
             | (
@@ -72,6 +74,16 @@ impl PresentationLibraryController {
                 self.folders = None;
                 self.folder = None;
             }
+            (
+                DesktopLibraryServiceEnumAction::Import(action),
+                DesktopLibraryServiceEnumResult::Import(result),
+            ) => self.observe_import(action, result)?,
+            (
+                DesktopLibraryServiceEnumAction::Export(_),
+                DesktopLibraryServiceEnumResult::Exported(bytes),
+            ) => {
+                self.export_bytes = Some(*bytes);
+            }
             (DesktopLibraryServiceEnumAction::Editor { action: crate::desktop::annotation_commands::DesktopAnnotationCommandsEnumAction::RetrySave, .. }, DesktopLibraryServiceEnumResult::Opened(publication)) if lane == PresentationLibraryEnumLane::Open => self.pending[index].check_opened(publication)?,
             (
                 DesktopLibraryServiceEnumAction::Query { .. }
@@ -82,11 +94,16 @@ impl PresentationLibraryController {
                 | DesktopLibraryServiceEnumAction::ApplyTrash(_)
                 | DesktopLibraryServiceEnumAction::Restore(_)
                 | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+                | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+                | DesktopLibraryServiceEnumAction::Import(_)
+                | DesktopLibraryServiceEnumAction::Export(_)
                 | DesktopLibraryServiceEnumAction::Editor { .. },
                 DesktopLibraryServiceEnumResult::Query(_)
                 | DesktopLibraryServiceEnumResult::Metadata(_)
                 | DesktopLibraryServiceEnumResult::Opened(_)
                 | DesktopLibraryServiceEnumResult::Organized(_)
+                | DesktopLibraryServiceEnumResult::Import(_)
+                | DesktopLibraryServiceEnumResult::Exported(_)
                 | DesktopLibraryServiceEnumResult::TrashPlan(_)
                 | DesktopLibraryServiceEnumResult::Trashed(_)
                 | DesktopLibraryServiceEnumResult::Restored(_)
@@ -99,6 +116,77 @@ impl PresentationLibraryController {
         }
         self.failures[lane.index()] = None;
         self.finish(index);
+        Ok(())
+    }
+
+    fn observe_import(
+        &mut self,
+        action: &DesktopLibraryServiceEnumImportAction,
+        result: &DesktopLibraryServiceEnumImportResult,
+    ) -> Result<(), PresentationLibraryError> {
+        match (action, result) {
+            (
+                DesktopLibraryServiceEnumImportAction::Prepare(_),
+                DesktopLibraryServiceEnumImportResult::Preview(summary),
+            ) => {
+                self.import.clear();
+                self.import.summary = Some(Arc::clone(summary));
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Choose { .. },
+                DesktopLibraryServiceEnumImportResult::Preview(summary),
+            ) => {
+                self.import.summary = Some(Arc::clone(summary));
+                self.import.confirmation = None;
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Page(_),
+                DesktopLibraryServiceEnumImportResult::Page(page),
+            ) => {
+                self.import.page = Some(Arc::clone(page));
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Detail(_),
+                DesktopLibraryServiceEnumImportResult::Detail(detail),
+            ) => {
+                self.import.detail = Some(Arc::clone(detail));
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Freeze,
+                DesktopLibraryServiceEnumImportResult::Confirmation(confirmation),
+            ) => {
+                self.import.confirmation = Some(confirmation.clone());
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Commit(_),
+                DesktopLibraryServiceEnumImportResult::Committed(outcome),
+            ) => {
+                self.import.clear();
+                self.import.outcome = Some(Arc::clone(outcome));
+                self.needs_resync = true;
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Cancel,
+                DesktopLibraryServiceEnumImportResult::Cancelled(_),
+            ) => {
+                self.import.clear();
+            }
+            (
+                DesktopLibraryServiceEnumImportAction::Prepare(_)
+                | DesktopLibraryServiceEnumImportAction::Page(_)
+                | DesktopLibraryServiceEnumImportAction::Detail(_)
+                | DesktopLibraryServiceEnumImportAction::Choose { .. }
+                | DesktopLibraryServiceEnumImportAction::Freeze
+                | DesktopLibraryServiceEnumImportAction::Commit(_)
+                | DesktopLibraryServiceEnumImportAction::Cancel,
+                DesktopLibraryServiceEnumImportResult::Preview(_)
+                | DesktopLibraryServiceEnumImportResult::Page(_)
+                | DesktopLibraryServiceEnumImportResult::Detail(_)
+                | DesktopLibraryServiceEnumImportResult::Confirmation(_)
+                | DesktopLibraryServiceEnumImportResult::Committed(_)
+                | DesktopLibraryServiceEnumImportResult::Cancelled(_),
+            ) => return Err(PresentationLibraryError::WrongResult),
+        }
         Ok(())
     }
 
@@ -202,6 +290,16 @@ impl PresentationLibraryController {
             | DesktopLibraryServiceError::Registry(_)
             | DesktopLibraryServiceError::Annotation(_)
             | DesktopLibraryServiceError::Context(_)
+            | DesktopLibraryServiceError::ImportUnavailable
+            | DesktopLibraryServiceError::ImportActive
+            | DesktopLibraryServiceError::ImportNotActive
+            | DesktopLibraryServiceError::Import(_)
+            | DesktopLibraryServiceError::ExportUnsupported
+            | DesktopLibraryServiceError::Export(_)
+            | DesktopLibraryServiceError::FileSelection(_)
+            | DesktopLibraryServiceError::AtomicFile(_)
+            | DesktopLibraryServiceError::FileNotSelected
+            | DesktopLibraryServiceError::FileAlreadySelected
             | DesktopLibraryServiceError::Executor(_) => false,
         }
     }

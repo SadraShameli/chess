@@ -13,10 +13,12 @@ pub(crate) enum PresentationLibraryEnumLane {
     Open,
     Organize,
     Trash,
+    Import,
+    Export,
 }
 
 impl PresentationLibraryEnumLane {
-    pub(crate) const COUNT: usize = 7;
+    pub(crate) const COUNT: usize = 9;
 
     pub(crate) fn operation(
         operation: &DesktopLibraryServiceOperation,
@@ -33,7 +35,10 @@ impl PresentationLibraryEnumLane {
             DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
-            | DesktopLibraryServiceEnumAction::RemoveFolder(_) => Self::Trash,
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_) => Self::Trash,
+            DesktopLibraryServiceEnumAction::Import(_) => Self::Import,
+            DesktopLibraryServiceEnumAction::Export(_) => Self::Export,
             DesktopLibraryServiceEnumAction::Editor { .. } => {
                 return Err(PresentationLibraryError::EditorAction);
             }
@@ -49,6 +54,8 @@ impl PresentationLibraryEnumLane {
             Self::Open => 4,
             Self::Organize => 5,
             Self::Trash => 6,
+            Self::Import => 7,
+            Self::Export => 8,
         }
     }
 
@@ -61,6 +68,8 @@ impl PresentationLibraryEnumLane {
             Self::Open => "Open saved game",
             Self::Organize => "Organize library",
             Self::Trash => "Trash",
+            Self::Import => "Import games",
+            Self::Export => "Export game",
         }
     }
 }

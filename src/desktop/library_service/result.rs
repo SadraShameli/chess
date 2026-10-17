@@ -6,6 +6,7 @@ use crate::desktop::annotation_commands::{
 };
 use crate::desktop::game_editor::{DesktopGameEditorContext, DesktopGameEditorPublication};
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
+use crate::desktop::library_service::import::DesktopLibraryServiceEnumImportResult;
 use crate::desktop::library_service::DesktopLibraryServiceOperation;
 use crate::game::enums::GameRevision;
 use crate::game::library_organization::GameLibraryOrganizationReceipt;
@@ -39,6 +40,8 @@ pub enum DesktopLibraryServiceEnumResult {
     Metadata(StorageLibraryMetadataEnumResponse),
     Opened(DesktopGameEditorPublication),
     Organized(GameLibraryOrganizationReceipt),
+    Import(DesktopLibraryServiceEnumImportResult),
+    Exported(u64),
     TrashPlan(StorageTrashPlan),
     Trashed(StorageTrashReceipt),
     Restored(StorageTrashReceipt),
@@ -65,7 +68,9 @@ impl DesktopLibraryServiceEnumResult {
             | Self::Organized(_)
             | Self::TrashPlan(_)
             | Self::Trashed(_)
-            | Self::Restored(_) => None,
+            | Self::Restored(_)
+            | Self::Import(_)
+            | Self::Exported(_) => None,
         }
     }
 
@@ -101,6 +106,8 @@ impl DesktopLibraryServiceEnumResult {
             },
             Self::Opened(_)
             | Self::Organized(_)
+            | Self::Import(_)
+            | Self::Exported(_)
             | Self::Editor(_)
             | Self::PendingSnapshot { .. }
             | Self::Saved { .. } => return None,
@@ -139,6 +146,8 @@ impl Debug for DesktopLibraryServiceEnumResult {
                 .debug_tuple("Opened")
                 .field(&snapshot.context())
                 .finish(),
+            Self::Import(result) => formatter.debug_tuple("Import").field(result).finish(),
+            Self::Exported(bytes) => formatter.debug_tuple("Exported").field(bytes).finish(),
             Self::TrashPlan(plan) => formatter.debug_tuple("TrashPlan").field(plan).finish(),
             Self::Trashed(receipt) => formatter.debug_tuple("Trashed").field(receipt).finish(),
             Self::Restored(receipt) => formatter.debug_tuple("Restored").field(receipt).finish(),

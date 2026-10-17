@@ -6,6 +6,8 @@ use std::sync::Arc;
 use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::library_service::{
+    DesktopLibraryServiceEnumImportAction, DesktopLibraryServiceExport,
+    DesktopLibraryServiceFile,
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceError, DesktopLibraryServiceOperation,
 };
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
@@ -18,6 +20,12 @@ use crate::game::storage_repository::GameStorageRevision;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
 use crate::presentation::library::intent::{PresentationLibraryIntent, PresentationLibraryPending};
+use crate::storage::import_session::{
+    StorageImportSessionConfirmation, StorageImportSessionDetailPage,
+    StorageImportSessionDetailRequest, StorageImportSessionEnumChoice,
+    StorageImportSessionEnumCommitOutcome, StorageImportSessionPage,
+    StorageImportSessionPageRequest, StorageImportSessionSummary,
+};
 use crate::storage::library_metadata::{
     StorageLibraryMetadataEnumRequest, StorageLibraryMetadataFolderPage,
     StorageLibraryMetadataFolderRead, StorageLibraryMetadataTagPage,
@@ -29,6 +37,36 @@ use crate::storage::library_query::{
     StorageLibraryQuery, StorageLibraryQueryCursor, StorageLibraryQueryOptions,
     StorageLibraryQueryPage,
 };
+
+#[derive(Default)]
+pub struct PresentationLibraryImport {
+    pub(crate) summary: Option<Arc<StorageImportSessionSummary>>,
+    pub(crate) page: Option<Arc<StorageImportSessionPage>>,
+    pub(crate) detail: Option<Arc<StorageImportSessionDetailPage>>,
+    pub(crate) confirmation: Option<StorageImportSessionConfirmation>,
+    pub(crate) outcome: Option<Arc<StorageImportSessionEnumCommitOutcome>>,
+}
+
+impl PresentationLibraryImport {
+    pub fn summary(&self) -> Option<&StorageImportSessionSummary> {
+        self.summary.as_deref()
+    }
+    pub fn page(&self) -> Option<&StorageImportSessionPage> {
+        self.page.as_deref()
+    }
+    pub fn detail(&self) -> Option<&StorageImportSessionDetailPage> {
+        self.detail.as_deref()
+    }
+    pub const fn confirmation(&self) -> Option<&StorageImportSessionConfirmation> {
+        self.confirmation.as_ref()
+    }
+    pub fn outcome(&self) -> Option<&StorageImportSessionEnumCommitOutcome> {
+        self.outcome.as_deref()
+    }
+    pub(crate) fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
 
 pub struct PresentationLibraryController {
     workspace: DesktopMessagesEntityId,
@@ -43,6 +81,8 @@ pub struct PresentationLibraryController {
     failures: [Option<Arc<DesktopLibraryServiceError>>; PresentationLibraryEnumLane::COUNT],
     needs_resync: bool,
     trash_plan: Option<StorageTrashPlan>,
+    import: PresentationLibraryImport,
+    export_bytes: Option<u64>,
 }
 
 impl PresentationLibraryController {
@@ -62,6 +102,8 @@ impl PresentationLibraryController {
             failures: std::array::from_fn(|_| None),
             needs_resync: false,
             trash_plan: None,
+            import: PresentationLibraryImport::default(),
+            export_bytes: None,
         }
     }
 
@@ -269,12 +311,145 @@ impl PresentationLibraryController {
         self.begin(input, DesktopLibraryServiceEnumAction::RemoveFolder(plan))
     }
 
+    pub fn confirm_game_trash(
+        &mut self,
+        input: DesktopRequestId,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        if self.has_input(input) {
+            return Ok(None);
+        }
+        let plan = self
+            .trash_plan
+            .clone()
+            .filter(|plan| {
+                matches!(
+                    plan.action(),
+                    StorageTrashPreviewRequest::MoveToTrash(_)
+                        | StorageTrashPreviewRequest::PermanentlyDelete(_)
+                )
+            })
+            .ok_or(PresentationLibraryError::MissingPlan)?;
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan),
+        )
+    }
+
     pub const fn trash_plan(&self) -> Option<&StorageTrashPlan> {
         self.trash_plan.as_ref()
     }
 
     pub fn dismiss_trash_plan(&mut self) {
         self.trash_plan = None;
+    }
+
+    pub fn import_prepare(
+        &mut self,
+        input: DesktopRequestId,
+        file: DesktopLibraryServiceFile,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(
+                DesktopLibraryServiceEnumImportAction::Prepare(file),
+            ),
+        )
+    }
+
+    pub fn import_page(
+        &mut self,
+        input: DesktopRequestId,
+        request: StorageImportSessionPageRequest,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Page(
+                request,
+            )),
+        )
+    }
+
+    pub fn import_detail(
+        &mut self,
+        input: DesktopRequestId,
+        request: StorageImportSessionDetailRequest,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Detail(
+                request,
+            )),
+        )
+    }
+
+    pub fn import_choose(
+        &mut self,
+        input: DesktopRequestId,
+        ordinal: u64,
+        choice: StorageImportSessionEnumChoice,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(
+                DesktopLibraryServiceEnumImportAction::Choose { ordinal, choice },
+            ),
+        )
+    }
+
+    pub fn import_freeze(
+        &mut self,
+        input: DesktopRequestId,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Freeze),
+        )
+    }
+
+    pub fn import_commit(
+        &mut self,
+        input: DesktopRequestId,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        if self.has_input(input) {
+            return Ok(None);
+        }
+        let confirmation = self
+            .import
+            .confirmation
+            .clone()
+            .ok_or(PresentationLibraryError::MissingConfirmation)?;
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(
+                DesktopLibraryServiceEnumImportAction::Commit(confirmation),
+            ),
+        )
+    }
+
+    pub fn import_cancel(
+        &mut self,
+        input: DesktopRequestId,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Cancel),
+        )
+    }
+
+    pub fn export_game(
+        &mut self,
+        input: DesktopRequestId,
+        export: DesktopLibraryServiceExport,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(input, DesktopLibraryServiceEnumAction::Export(export))
+    }
+
+    pub const fn import(&self) -> &PresentationLibraryImport {
+        &self.import
+    }
+
+    pub const fn export_bytes(&self) -> Option<u64> {
+        self.export_bytes
     }
 
     pub fn can_retry_open(&self) -> bool {

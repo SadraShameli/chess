@@ -6,6 +6,8 @@ mod annotation_checkpoint_regressions;
 mod editor;
 #[path = "library_service/fixture.rs"]
 pub(crate) mod fixture;
+#[path = "library_service/import_export.rs"]
+mod import_export;
 #[path = "library_service/pagination.rs"]
 mod pagination;
 #[path = "library_service/played_recovery_review.rs"]

@@ -175,3 +175,94 @@ async fn favorite_button_emits_one_exact_organization_mutation_and_toggles_off_a
     assert_eq!(observation?, (1, true, true));
     Ok(())
 }
+
+#[tokio::test]
+async fn trash_preview_and_blank_tag_creation_emit_only_the_valid_exact_action()
+-> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        let game = DesktopLibraryServiceFixture::id(1300)?;
+        fixture.seed_notation(game, "[White \"Ada\"]\n\n1. e4 *").await?;
+        let mut panel = PresentationLibraryPanel::new(fixture.service.workspace);
+        let query = panel.controller_mut().refresh(DesktopRequestId::new())?.ok_or("query")?;
+        fixture.execute(panel.controller_mut(), &query).await??;
+        let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 1000.0)).build_ui_state(
+            |ui, (panel, effects): &mut (PresentationLibraryPanel, Vec<PresentationLibraryEnumEffect>)| {
+                let produced = panel.show(ui);
+                if !produced.is_empty() {
+                    ui.ctx().request_discard("Exercise trash input");
+                }
+                effects.extend(produced);
+            }, (panel, Vec::<PresentationLibraryEnumEffect>::new())
+        );
+        let initial = std::mem::take(&mut harness.state_mut().1);
+        for effect in initial {
+            let PresentationLibraryEnumEffect::Dispatch(intent) = effect else { return Err("metadata opened a game".into()); };
+            fixture.execute(harness.state_mut().0.controller_mut(), &intent).await??;
+        }
+        harness.run_steps(3);
+        harness.get_by_label("Create tag").click();
+        harness.run_steps(3);
+        let blank = harness.state().1.len();
+        harness.get_by_label("Preview Move to Trash").click();
+        harness.run_steps(3);
+        let effects = std::mem::take(&mut harness.state_mut().1);
+        let count = effects.len();
+        let mut exact = false;
+        for effect in effects {
+            let PresentationLibraryEnumEffect::Dispatch(intent) = effect else { return Err("trash opened a game".into()); };
+            exact = matches!(intent.operation().action(), DesktopLibraryServiceEnumAction::PreviewTrash(crate::storage::trash::StorageTrashPreviewRequest::MoveToTrash(id)) if *id == game);
+            fixture.execute(harness.state_mut().0.controller_mut(), &intent).await??;
+        }
+        harness.run_steps(3);
+        let confirmation = harness.query_all_by_label("Confirm Move to Trash").count();
+        Ok((blank, count, exact, confirmation))
+    }.await;
+    fixture.close().await?;
+    assert_eq!(observation?, (0, 1, true, 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn import_and_export_buttons_request_a_native_file_without_dispatching()
+-> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        let game = DesktopLibraryServiceFixture::id(1400)?;
+        fixture.seed_notation(game, "[White \"Ada\"]\n\n1. e4 *").await?;
+        let mut panel = PresentationLibraryPanel::new(fixture.service.workspace);
+        let query = panel.controller_mut().refresh(DesktopRequestId::new())?.ok_or("query")?;
+        fixture.execute(panel.controller_mut(), &query).await??;
+        let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 1400.0)).build_ui_state(
+            |ui, (panel, effects): &mut (PresentationLibraryPanel, Vec<PresentationLibraryEnumEffect>)| {
+                let produced = panel.show(ui);
+                if !produced.is_empty() {
+                    ui.ctx().request_discard("Exercise file requests");
+                }
+                effects.extend(produced);
+            }, (panel, Vec::<PresentationLibraryEnumEffect>::new())
+        );
+        let initial = std::mem::take(&mut harness.state_mut().1);
+        for effect in initial {
+            let PresentationLibraryEnumEffect::Dispatch(intent) = effect else { return Err("metadata opened a game".into()); };
+            fixture.execute(harness.state_mut().0.controller_mut(), &intent).await??;
+        }
+        harness.run_steps(3);
+        harness.get_by_label("Export mainline PGN").click();
+        harness.run_steps(3);
+        let effects = std::mem::take(&mut harness.state_mut().1);
+        let export = effects.len() == 1
+            && matches!(&effects[0], PresentationLibraryEnumEffect::SelectFile(crate::presentation::library::view::PresentationLibraryEnumFileRequest::ExportDestination { game: id, selection: crate::notation::pgn_export::NotationPgnExportEnumSelection::Mainline, .. }) if *id == game);
+        harness.get_by_label("Import games").click();
+        harness.run_steps(3);
+        harness.get_by_label("Choose PGN file to import").click();
+        harness.run_steps(3);
+        let effects = std::mem::take(&mut harness.state_mut().1);
+        let import = effects.len() == 1
+            && matches!(&effects[0], PresentationLibraryEnumEffect::SelectFile(crate::presentation::library::view::PresentationLibraryEnumFileRequest::ImportSource));
+        Ok((export, import))
+    }.await;
+    fixture.close().await?;
+    assert_eq!(observation?, (true, true));
+    Ok(())
+}

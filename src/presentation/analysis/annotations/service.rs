@@ -99,6 +99,8 @@ impl PresentationAnalysisAnnotations {
             DesktopLibraryServiceEnumResult::Query(_)
             | DesktopLibraryServiceEnumResult::Metadata(_)
             | DesktopLibraryServiceEnumResult::Organized(_)
+            | DesktopLibraryServiceEnumResult::Import(_)
+            | DesktopLibraryServiceEnumResult::Exported(_)
             | DesktopLibraryServiceEnumResult::TrashPlan(_)
             | DesktopLibraryServiceEnumResult::Trashed(_)
             | DesktopLibraryServiceEnumResult::Restored(_)

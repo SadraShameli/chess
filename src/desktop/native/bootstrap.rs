@@ -852,6 +852,7 @@ impl DesktopNativeBootstrapSupervisor {
                 executor: Arc::clone(&executor),
                 games: game_port.registry_port().clone(),
                 wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
+                imports: None,
             },
             tokio::runtime::Handle::current(),
         );

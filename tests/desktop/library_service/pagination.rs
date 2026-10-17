@@ -254,3 +254,56 @@ async fn remove_folder_action_applies_a_previewed_plan_with_a_service_timestamp(
     );
     fixture.close().await
 }
+
+#[tokio::test]
+async fn confirm_game_trash_uses_the_registry_close_certificate_for_move_and_delete()
+-> DesktopLibraryServiceTestResult {
+    use crate::storage::trash::{StorageTrashEnumAppliedAction, StorageTrashPreviewRequest};
+    let mut fixture = DesktopLibraryServiceFixture::new().await?;
+    fixture.seed(950, true).await?;
+    fixture.seed(951, true).await?;
+    let moved = DesktopLibraryServiceFixture::id(950)?;
+    let deleted = DesktopLibraryServiceFixture::id(951)?;
+    let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
+        .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
+            StorageTrashPreviewRequest::MoveToTrash(moved),
+        ))
+        .await?
+    else {
+        return Err("missing move plan".into());
+    };
+    let DesktopLibraryServiceEnumResult::Trashed(receipt) = fixture
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan))
+        .await?
+    else {
+        return Err("missing move receipt".into());
+    };
+    assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Trashed(moved));
+    let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
+        .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
+            StorageTrashPreviewRequest::MoveToTrash(deleted),
+        ))
+        .await?
+    else {
+        return Err("missing second move plan".into());
+    };
+    fixture
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan))
+        .await?;
+    let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
+        .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
+            StorageTrashPreviewRequest::PermanentlyDelete(deleted),
+        ))
+        .await?
+    else {
+        return Err("missing delete plan".into());
+    };
+    let DesktopLibraryServiceEnumResult::Trashed(receipt) = fixture
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan))
+        .await?
+    else {
+        return Err("missing delete receipt".into());
+    };
+    assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Deleted(deleted));
+    fixture.close().await
+}

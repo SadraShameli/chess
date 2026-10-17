@@ -1,5 +1,8 @@
+mod export;
 mod folders;
+mod import;
 mod navigation;
+mod organization;
 mod trash;
 
 use bevy_egui::egui::{self, Id, Ui};
@@ -9,6 +12,9 @@ use crate::desktop::library_service::{
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumDisposition,
 };
 use crate::desktop::messages::DesktopMessagesEntityId;
+use crate::game::enums::GameId;
+use crate::game::storage_repository::GameStorageRevision;
+use crate::notation::pgn_export::NotationPgnExportEnumSelection;
 use crate::game::library_organization::{
     GameLibraryOrganizationEnumMutation, GameLibraryOrganizationGameTarget,
 };
@@ -20,11 +26,23 @@ use crate::presentation::library::intent::PresentationLibraryIntent;
 use crate::presentation::library::rows::PresentationLibraryRows;
 use crate::storage::library_metadata::StorageLibraryMetadataEnumRequest;
 use crate::storage::library_query::StorageLibraryQueryOptions;
+use crate::storage::trash::StorageTrashPreviewRequest;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresentationLibraryEnumFileRequest {
+    ImportSource,
+    ExportDestination {
+        game: GameId,
+        storage_revision: GameStorageRevision,
+        selection: NotationPgnExportEnumSelection,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub enum PresentationLibraryEnumEffect {
     Dispatch(PresentationLibraryIntent),
     OpenSaved(PresentationLibraryIntent),
+    SelectFile(PresentationLibraryEnumFileRequest),
 }
 
 pub struct PresentationLibraryPanel {
@@ -32,6 +50,8 @@ pub struct PresentationLibraryPanel {
     filters: PresentationLibraryFilters,
     frame: PresentationLibraryFrame,
     input_error: Option<PresentationLibraryError>,
+    new_folder_name: String,
+    new_tag_name: String,
 }
 
 impl PresentationLibraryPanel {
@@ -41,6 +61,8 @@ impl PresentationLibraryPanel {
             filters: PresentationLibraryFilters::default(),
             frame: PresentationLibraryFrame::default(),
             input_error: None,
+            new_folder_name: String::new(),
+            new_tag_name: String::new(),
         }
     }
 
@@ -99,8 +121,12 @@ impl PresentationLibraryPanel {
                     self.collect(result, &mut effects);
                 }
             });
+            ui.collapsing("Import games", |ui| self.import_controls(ui, &mut effects));
+            self.export_status(ui);
+            self.organization_creation(ui, &mut effects);
             self.trash_controls(ui, &mut effects);
             self.folder_removal(ui, &mut effects);
+            self.game_trash_confirmation(ui, &mut effects);
             self.errors(ui);
             if self.controller.can_retry_open() {
                 let retry = ui.button("Retry opening");
@@ -181,6 +207,9 @@ impl PresentationLibraryPanel {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::Import(_)
+            | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Editor { .. } => {
                 PresentationLibraryEnumEffect::Dispatch(intent)
             }
@@ -196,6 +225,8 @@ impl PresentationLibraryPanel {
             PresentationLibraryEnumLane::Open,
             PresentationLibraryEnumLane::Organize,
             PresentationLibraryEnumLane::Trash,
+            PresentationLibraryEnumLane::Import,
+            PresentationLibraryEnumLane::Export,
         ] {
             let Some(error) = self.controller.failure(lane) else {
                 continue;
@@ -234,6 +265,7 @@ impl PresentationLibraryPanel {
         }
         let in_trash = self.in_trash();
         let can_trash = !self.controller.is_pending(PresentationLibraryEnumLane::Trash);
+        let can_export = !self.controller.is_pending(PresentationLibraryEnumLane::Export);
         let Some(page) = self.controller.page() else {
             if !self.controller.is_query_pending() {
                 ui.label("Games are unavailable until the library is reloaded");
@@ -250,6 +282,9 @@ impl PresentationLibraryPanel {
         let mut selected = None;
         let mut favorite = None;
         let mut restore = None;
+        let mut trash = None;
+        let mut export = None;
+        let mut organization_error = None;
         egui::ScrollArea::vertical()
             .id_salt("library-games")
             .show(ui, |ui| {
@@ -265,12 +300,44 @@ impl PresentationLibraryPanel {
                                 if self.frame.clicked(ui, &button) {
                                     restore = Some(Self::restore_target(row));
                                 }
+                                let delete = ui.add_enabled(
+                                    can_trash,
+                                    egui::Button::new("Preview permanent delete"),
+                                );
+                                if self.frame.clicked(ui, &delete) {
+                                    trash = Some(StorageTrashPreviewRequest::PermanentlyDelete(
+                                        row.id(),
+                                    ));
+                                }
                                 return;
                             }
                             let open =
                                 ui.add_enabled(can_open, egui::Button::new("Open saved game"));
                             if self.frame.clicked(ui, &open) {
                                 selected = Some(row.id());
+                            }
+                            if let Some(request) =
+                                Self::export_buttons(ui, &mut self.frame, row, can_export)
+                            {
+                                export = Some(request);
+                            }
+                            let move_to_trash = ui.add_enabled(
+                                can_trash,
+                                egui::Button::new("Preview Move to Trash"),
+                            );
+                            if self.frame.clicked(ui, &move_to_trash) {
+                                trash = Some(StorageTrashPreviewRequest::MoveToTrash(row.id()));
+                            }
+                            match Self::row_organization(
+                                ui,
+                                &mut self.frame,
+                                &self.controller,
+                                row,
+                                can_organize,
+                            ) {
+                                Ok(Some(mutation)) => favorite = Some(mutation),
+                                Ok(None) => {}
+                                Err(error) => organization_error = Some(error),
                             }
                             let is_favorite = row.organization().is_favorite();
                             let label = if is_favorite {
@@ -296,6 +363,15 @@ impl PresentationLibraryPanel {
             let result = self.controller.open_saved(DesktopRequestId::new(), game);
             self.collect(result, effects);
         }
+        if let Some(error) = organization_error {
+            self.input_error = Some(error.into());
+        }
+        if let Some(request) = export {
+            Self::export_effect(request, effects);
+        }
+        if let Some(request) = trash {
+            self.request_game_trash(request, effects);
+        }
         if let Some(target) = restore {
             let result = self.controller.restore(DesktopRequestId::new(), target);
             self.collect(result, effects);
@@ -318,7 +394,7 @@ impl PresentationLibraryPanel {
 }
 
 #[derive(Default)]
-struct PresentationLibraryFrame {
+pub(super) struct PresentationLibraryFrame {
     frame: Option<u64>,
     inputs: Vec<Id>,
 }

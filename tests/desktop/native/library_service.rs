@@ -28,6 +28,7 @@ fn service(fixture: &DesktopLibraryServiceFixture) -> DesktopNativeLibraryServic
             executor: Arc::clone(&fixture.executor),
             games: fixture.games.clone(),
             wall_time: Arc::clone(&fixture.wall) as Arc<_>,
+            imports: None,
         },
         tokio::runtime::Handle::current(),
     )

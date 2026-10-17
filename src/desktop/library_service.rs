@@ -1,3 +1,6 @@
+mod export;
+mod file;
+mod import;
 mod notation;
 mod operation;
 mod played;
@@ -30,6 +33,14 @@ use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::library_service::notation::{
     DesktopLibraryServiceNotation, DesktopLibraryServiceNotationProjection,
 };
+pub use crate::desktop::library_service::export::DesktopLibraryServiceExport;
+pub use crate::desktop::library_service::file::DesktopLibraryServiceFile;
+pub use crate::desktop::library_service::import::{
+    DesktopLibraryServiceEnumImportAction, DesktopLibraryServiceEnumImportResult,
+    DesktopLibraryServiceImportBackend, DesktopLibraryServiceImportFuture,
+    DesktopLibraryServiceImportSession, DesktopLibraryServiceImportStorage,
+    DesktopLibraryServiceImports,
+};
 pub use crate::desktop::library_service::operation::{
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceOperation,
 };
@@ -51,6 +62,10 @@ use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::enums::GameId;
 use crate::game::storage_repository::GameStorageWallTimeProvider;
 use crate::storage::document_store::{StorageDocumentClient, StorageDocumentStore};
+use crate::desktop::file_handle::DesktopFileHandleError;
+use crate::notation::pgn_export::NotationPgnExportError;
+use crate::storage::atomic_file::StorageAtomicFileError;
+use crate::storage::import_session::StorageImportSessionError;
 use crate::storage::library_repository::StorageLibraryError;
 
 #[derive(Debug, Error)]
@@ -86,6 +101,26 @@ pub enum DesktopLibraryServiceError {
     Retained(#[source] Arc<Self>),
     #[error("The library owner remains active beyond its cleanup deadline: {0}")]
     Deadline(#[source] tokio::time::error::Elapsed),
+    #[error("Importing games is unavailable in this session")]
+    ImportUnavailable,
+    #[error("Finish or cancel the current import before starting another")]
+    ImportActive,
+    #[error("Start an import preview first")]
+    ImportNotActive,
+    #[error("The import failed: {0}")]
+    Import(#[source] Arc<StorageImportSessionError>),
+    #[error("Saved played games cannot be exported from the library yet")]
+    ExportUnsupported,
+    #[error("The PGN export failed: {0}")]
+    Export(#[source] Arc<NotationPgnExportError>),
+    #[error("The selected file is unavailable: {0}")]
+    FileSelection(#[source] Arc<DesktopFileHandleError>),
+    #[error("The file could not be written: {0}")]
+    AtomicFile(#[source] Arc<StorageAtomicFileError>),
+    #[error("Select a file before starting this action")]
+    FileNotSelected,
+    #[error("This file selection was already consumed")]
+    FileAlreadySelected,
     #[error("The library repository operation failed: {0}")]
     Library(#[source] Box<StorageLibraryError>),
     #[error("The running game operation failed: {0}")]
@@ -119,6 +154,16 @@ impl DesktopLibraryServiceError {
             | Self::Protocol
             | Self::Poisoned
             | Self::Deadline(_)
+            | Self::ImportUnavailable
+            | Self::ImportActive
+            | Self::ImportNotActive
+            | Self::Import(_)
+            | Self::ExportUnsupported
+            | Self::Export(_)
+            | Self::FileSelection(_)
+            | Self::AtomicFile(_)
+            | Self::FileNotSelected
+            | Self::FileAlreadySelected
             | Self::Library(_)
             | Self::Registry(_)
             | Self::Annotation(_)
@@ -163,6 +208,7 @@ pub struct DesktopLibraryServiceOptions {
     pub executor: Arc<CapacityExecutor>,
     pub games: DesktopGameRegistryPort,
     pub wall_time: Arc<dyn GameStorageWallTimeProvider>,
+    pub imports: Option<Arc<DesktopLibraryServiceImports>>,
 }
 
 struct DesktopLibraryServiceSource {
@@ -324,6 +370,7 @@ impl DesktopLibraryService {
             wall_time: Arc::clone(&self.options.wall_time),
         };
         let games = self.options.games.clone();
+        let imports = self.options.imports.clone();
         let reply = played.as_ref().map_or_else(
             || Arc::clone(&envelope.reply),
             |played| Arc::clone(&played.completion),
@@ -332,7 +379,7 @@ impl DesktopLibraryService {
             reply,
             future: Box::pin(
                 DesktopLibraryServiceWork::new(envelope, notation, played)
-                    .execute(progress, resources, games),
+                    .execute(progress, resources, games, imports),
             ),
         });
     }

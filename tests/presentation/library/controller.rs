@@ -597,3 +597,30 @@ async fn trash_preview_runs_in_its_own_lane_without_resync() -> DesktopLibrarySe
     assert_eq!(observation?, (true, true, false));
     Ok(())
 }
+
+#[tokio::test]
+async fn import_commit_needs_a_frozen_confirmation_and_import_steps_share_one_lane()
+-> DesktopLibraryServiceTestResult {
+    let fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        let mut controller = PresentationLibraryController::new(fixture.service.workspace);
+        let refused = matches!(
+            controller.import_commit(DesktopRequestId::new()),
+            Err(PresentationLibraryError::MissingConfirmation)
+        );
+        let cancel = controller
+            .import_cancel(DesktopRequestId::new())?
+            .ok_or("cancel")?;
+        let busy = matches!(
+            controller.import_freeze(DesktopRequestId::new()),
+            Err(PresentationLibraryError::Busy)
+        );
+        controller.abandon_intent(&cancel)?;
+        let released = controller.import_freeze(DesktopRequestId::new())?.is_some();
+        Ok((refused, busy, released))
+    }
+    .await;
+    fixture.close().await?;
+    assert_eq!(observation?, (true, true, true));
+    Ok(())
+}

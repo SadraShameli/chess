@@ -27,6 +27,7 @@ async fn dropped_bootstrap_library_cleanup_retains_the_actor_until_its_query_fin
             executor: Arc::clone(&fixture.executor),
             games: fixture.games.clone(),
             wall_time: Arc::clone(&fixture.wall) as Arc<_>,
+            imports: None,
         },
         tokio::runtime::Handle::current(),
     );

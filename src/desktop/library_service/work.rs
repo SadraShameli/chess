@@ -15,6 +15,7 @@ use crate::desktop::game_supervisor::DesktopGameSupervisorEditorReceipt;
 use crate::desktop::library_service::notation::{
     DesktopLibraryServiceNotation, DesktopLibraryServiceNotationProjection,
 };
+use crate::desktop::library_service::import::DesktopLibraryServiceImports;
 use crate::desktop::library_service::played::DesktopLibraryServicePlayed;
 use crate::desktop::library_service::port::{
     DesktopLibraryServiceEnvelope, DesktopLibraryServiceResponse,
@@ -25,8 +26,16 @@ use crate::desktop::library_service::{
 };
 use crate::desktop::annotation_owner::DesktopAnnotationOwnerError;
 use crate::game::library_organization::GameLibraryOrganizationRequest;
+use crate::desktop::game_registry::{
+    DesktopGameRegistryCloseCertificate, DesktopGameRegistryCloseEnumObservation,
+};
+use crate::desktop::library_commands::{
+    DesktopLibraryCommandsConfirmation, DesktopLibraryCommandsError,
+};
+use crate::game::library_organization::GameLibraryOrganizationTimestamp;
 use crate::storage::trash::{
-    StorageTrashConfirmedRequest, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
+    StorageTrashReceipt, StorageTrashRestoreRequest,
 };
 use crate::storage::library_metadata::StorageLibraryMetadataRepository;
 use crate::storage::library_query::StorageLibraryQuery;
@@ -62,8 +71,9 @@ impl DesktopLibraryServiceWork {
         progress: Option<watch::Sender<DesktopLibraryServiceNotationProjection>>,
         resources: DesktopAnnotationOwnerResources,
         games: DesktopGameRegistryPort,
+        imports: Option<Arc<DesktopLibraryServiceImports>>,
     ) -> Self {
-        let result = self.perform(progress, resources, games).await;
+        let result = self.perform(progress, resources, games, imports).await;
         let retained = self
             .played
             .as_ref()
@@ -96,6 +106,7 @@ impl DesktopLibraryServiceWork {
         progress: Option<watch::Sender<DesktopLibraryServiceNotationProjection>>,
         resources: DesktopAnnotationOwnerResources,
         games: DesktopGameRegistryPort,
+        imports: Option<Arc<DesktopLibraryServiceImports>>,
     ) -> Result<DesktopLibraryServiceEnumResult, DesktopLibraryServiceError> {
         let original = self.played.as_ref().map_or_else(
             || Arc::clone(&self.envelope.reply),
@@ -228,6 +239,17 @@ impl DesktopLibraryServiceWork {
                         .await?,
                 ))
             }
+            DesktopLibraryServiceEnumAction::Import(import) => {
+                let imports = imports.ok_or(DesktopLibraryServiceError::ImportUnavailable)?;
+                Ok(DesktopLibraryServiceEnumResult::Import(
+                    imports.run(import).await?,
+                ))
+            }
+            DesktopLibraryServiceEnumAction::Export(export) => {
+                Ok(DesktopLibraryServiceEnumResult::Exported(
+                    export.run(resources).await?,
+                ))
+            }
             DesktopLibraryServiceEnumAction::PreviewTrash(request) => {
                 Ok(DesktopLibraryServiceEnumResult::TrashPlan(
                     StorageLibraryRepository::new(resources.client, &resources.executor)
@@ -267,6 +289,43 @@ impl DesktopLibraryServiceWork {
                     _ => Err(StorageLibraryError::Protocol.into()),
                 }
             }
+            DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan) => {
+                let (StorageTrashPreviewRequest::MoveToTrash(game)
+                | StorageTrashPreviewRequest::PermanentlyDelete(game)) = plan.action()
+                else {
+                    return Err(StorageLibraryError::LifecycleRequired.into());
+                };
+                let revision = plan
+                    .content_revision()
+                    .ok_or(StorageLibraryError::LifecycleRequired)?;
+                let timestamp = resources
+                    .wall_time
+                    .now()
+                    .map_err(DesktopAnnotationOwnerError::from)?;
+                let target = games.try_not_open_close_target(game, revision)?;
+                let mut closing = games.try_close_game(target)?;
+                let certificate = closing
+                    .wait()
+                    .await
+                    .map_err(DesktopLibraryServiceError::Registry)?;
+                match Self::apply_closed_trash(plan, &certificate, timestamp, resources).await {
+                    Ok(receipt) => {
+                        games.try_finish_close(
+                            &certificate,
+                            DesktopGameRegistryCloseEnumObservation::TrashCommitted(&receipt),
+                        )?;
+                        Ok(DesktopLibraryServiceEnumResult::Trashed(receipt))
+                    }
+                    Err(error) => {
+                        let released = games.try_finish_close(
+                            &certificate,
+                            DesktopGameRegistryCloseEnumObservation::CancelConfirmed,
+                        );
+                        drop(released);
+                        Err(error)
+                    }
+                }
+            }
             DesktopLibraryServiceEnumAction::Restore(target) => {
                 let timestamp = resources
                     .wall_time
@@ -304,6 +363,32 @@ impl DesktopLibraryServiceWork {
                     }
                 }
             }
+        }
+    }
+
+    async fn apply_closed_trash(
+        plan: StorageTrashPlan,
+        certificate: &DesktopGameRegistryCloseCertificate,
+        timestamp: GameLibraryOrganizationTimestamp,
+        resources: DesktopAnnotationOwnerResources,
+    ) -> Result<StorageTrashReceipt, DesktopLibraryServiceError> {
+        let request = DesktopLibraryCommandsConfirmation::confirm(plan)
+            .prepare(certificate, timestamp)
+            .map_err(|error| match error {
+                DesktopLibraryCommandsError::Storage(source) => {
+                    DesktopLibraryServiceError::Library(source)
+                }
+                DesktopLibraryCommandsError::Lifecycle(source) => {
+                    DesktopLibraryServiceError::Registry(Arc::new(source))
+                }
+            })?;
+        match StorageLibraryRepository::new(resources.client, &resources.executor)
+            .begin_destruction(request)?
+            .wait()
+            .await?
+        {
+            StorageLibraryEnumMutationReceipt::DestructionApplied(receipt) => Ok(receipt),
+            _ => Err(StorageLibraryError::Protocol.into()),
         }
     }
 

@@ -9,6 +9,7 @@ use crate::desktop::coordinator::{
     DesktopCoordinatorLifecycleProvider, DesktopCoordinatorPending,
 };
 use crate::desktop::error::{DesktopEnumFailureCode, DesktopFailure};
+use crate::desktop::file_handle::DesktopFileHandleError;
 use crate::desktop::library_service::{
     DesktopLibraryServiceOperation, DesktopLibraryServiceProvider, DesktopLibraryServiceRequest,
 };
@@ -71,6 +72,28 @@ where
             };
         if let Some(failure) = failure {
             return self.fail(&work, failure).await;
+        }
+        if let Some((file, purpose)) = operation.file_selection() {
+            let now = self.clock.now()?;
+            let owner = operation.workspace().file_handle_owner();
+            let handle = file.handle();
+            let filled = self
+                .files
+                .as_mut()
+                .ok_or(DesktopFileHandleError::Saturated)
+                .and_then(|files| files.registry.consume(handle, owner, purpose, now))
+                .map_err(|error| error.to_string())
+                .and_then(|selection| {
+                    file.fill(selection).map_err(|error| error.to_string())
+                });
+            if let Err(message) = filled {
+                return self
+                    .fail(
+                        &work,
+                        DesktopFailure::new(DesktopEnumFailureCode::FileUnavailable, message, true),
+                    )
+                    .await;
+            }
         }
         match Self::retry(|| self.application.begin_commit(&work)).await {
             Ok(()) => {}
