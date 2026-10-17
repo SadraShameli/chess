@@ -259,43 +259,316 @@ enum PuzzleCsvImportEnumState {
 }
 
 #[derive(Clone, Copy)]
-enum PuzzleCsvImportEnumQuote {
-    FieldStart,
+enum PuzzleCsvImportEnumFieldPhase {
+    Start,
     Unquoted,
     Quoted,
-    AfterQuote,
+    Closed,
 }
 
-#[derive(Default)]
-struct PuzzleCsvImportRecord {
-    decoded: Vec<u8>,
-    ends: Vec<usize>,
-    encoded_bytes: usize,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PuzzleCsvImportEnumFramed {
+    Data,
+    CarriageReturn,
+    Terminator,
 }
 
-impl PuzzleCsvImportRecord {
-    fn end_field(&mut self) {
-        self.ends.push(self.decoded.len());
+struct PuzzleCsvImportFraming {
+    phase: PuzzleCsvImportEnumFieldPhase,
+    fields: usize,
+    encoded: usize,
+}
+
+impl PuzzleCsvImportFraming {
+    const MAX_ROW_BYTES: usize = 1_048_576;
+
+    fn new() -> Self {
+        Self {
+            phase: PuzzleCsvImportEnumFieldPhase::Start,
+            fields: 0,
+            encoded: 0,
+        }
     }
 
-    fn into_fields(mut self) -> Result<Vec<String>, (usize, Utf8Error)> {
-        self.end_field();
+    fn column(&self) -> usize {
+        self.fields + 1
+    }
+
+    fn is_fresh(&self) -> bool {
+        self.encoded == 0
+    }
+
+    fn is_quoted(&self) -> bool {
+        matches!(self.phase, PuzzleCsvImportEnumFieldPhase::Quoted)
+    }
+
+    fn advance(
+        &mut self,
+        byte: u8,
+    ) -> Result<PuzzleCsvImportEnumFramed, PuzzleCsvImportIssueError> {
+        if !self.is_quoted() {
+            if byte == b'\n' {
+                return Ok(PuzzleCsvImportEnumFramed::Terminator);
+            }
+            if byte == b'\r' {
+                return Ok(PuzzleCsvImportEnumFramed::CarriageReturn);
+            }
+        }
+        if self.encoded == Self::MAX_ROW_BYTES {
+            return Err(PuzzleCsvImportIssueError::RowTooLarge {
+                limit: Self::MAX_ROW_BYTES,
+            });
+        }
+        self.encoded += 1;
+        match (self.phase, byte) {
+            (PuzzleCsvImportEnumFieldPhase::Start, b'"') => {
+                self.phase = PuzzleCsvImportEnumFieldPhase::Quoted;
+            }
+            (PuzzleCsvImportEnumFieldPhase::Quoted, b'"') => {
+                self.phase = PuzzleCsvImportEnumFieldPhase::Closed;
+            }
+            (PuzzleCsvImportEnumFieldPhase::Closed, b'"') => {
+                self.phase = PuzzleCsvImportEnumFieldPhase::Quoted;
+            }
+            (PuzzleCsvImportEnumFieldPhase::Unquoted, b'"') => {
+                return Err(PuzzleCsvImportIssueError::UnexpectedQuote);
+            }
+            (
+                PuzzleCsvImportEnumFieldPhase::Start
+                | PuzzleCsvImportEnumFieldPhase::Unquoted
+                | PuzzleCsvImportEnumFieldPhase::Closed,
+                b',',
+            ) => {
+                self.fields += 1;
+                self.phase = PuzzleCsvImportEnumFieldPhase::Start;
+            }
+            (PuzzleCsvImportEnumFieldPhase::Closed, _) => {
+                return Err(PuzzleCsvImportIssueError::TrailingQuotedData);
+            }
+            (PuzzleCsvImportEnumFieldPhase::Quoted, _) => {}
+            (PuzzleCsvImportEnumFieldPhase::Start | PuzzleCsvImportEnumFieldPhase::Unquoted, _) => {
+                self.phase = PuzzleCsvImportEnumFieldPhase::Unquoted;
+            }
+        }
+        Ok(PuzzleCsvImportEnumFramed::Data)
+    }
+}
+
+struct PuzzleCsvImportSourceFailure {
+    column: usize,
+    issue: PuzzleCsvImportIssueError,
+    record_framed: bool,
+}
+
+impl PuzzleCsvImportSourceFailure {
+    fn terminal(column: usize, issue: PuzzleCsvImportIssueError) -> Self {
+        Self {
+            column,
+            issue,
+            record_framed: false,
+        }
+    }
+
+    fn framed(column: usize, source: Utf8Error) -> Self {
+        Self {
+            column,
+            issue: PuzzleCsvImportIssueError::Utf8(source),
+            record_framed: true,
+        }
+    }
+
+    fn row_too_large(column: usize) -> Self {
+        Self::terminal(
+            column,
+            PuzzleCsvImportIssueError::RowTooLarge {
+                limit: PuzzleCsvImportFraming::MAX_ROW_BYTES,
+            },
+        )
+    }
+}
+
+struct PuzzleCsvImportSource<R> {
+    reader: R,
+    decoder: csv_core::Reader,
+    output: Box<[u8]>,
+    ends: Box<[usize]>,
+    framing: PuzzleCsvImportFraming,
+}
+
+impl<R: BufRead> PuzzleCsvImportSource<R> {
+    const MAX_FIELDS: usize = 4096;
+
+    fn new(reader: R) -> Self {
+        Self {
+            reader,
+            decoder: Self::decoder_without_bom_stripping(),
+            output: vec![0; PuzzleCsvImportFraming::MAX_ROW_BYTES + 1].into_boxed_slice(),
+            ends: vec![0; Self::MAX_FIELDS].into_boxed_slice(),
+            framing: PuzzleCsvImportFraming::new(),
+        }
+    }
+
+    fn decoder_without_bom_stripping() -> csv_core::Reader {
+        let mut decoder = csv_core::Reader::new();
+        decoder.read_record(b"\n", &mut [], &mut []);
+        decoder
+    }
+
+    fn read_record(
+        &mut self,
+        cancellation: &impl Fn() -> bool,
+    ) -> Result<Option<Vec<String>>, PuzzleCsvImportSourceFailure> {
+        self.framing = PuzzleCsvImportFraming::new();
+        let mut output_len = 0;
+        let mut ends_len = 0;
+        loop {
+            let column = self.framing.column();
+            Self::check_cancellation(column, cancellation)?;
+            let input = self.reader.fill_buf().map_err(|source| {
+                PuzzleCsvImportSourceFailure::terminal(
+                    column,
+                    PuzzleCsvImportIssueError::Read(source),
+                )
+            })?;
+            Self::check_cancellation(column, cancellation)?;
+            if input.is_empty() {
+                return self.finish(output_len, ends_len);
+            }
+            let first = input.first().copied();
+            if self.framing.is_fresh() && matches!(first, Some(b'\n' | b'\r')) {
+                self.reader.consume(1);
+                if first == Some(b'\r') {
+                    self.require_line_feed(column, cancellation)?;
+                }
+                return Ok(Some(vec![String::new()]));
+            }
+            let (result, consumed, written, ended) = self.decoder.read_record(
+                input,
+                &mut self.output[output_len..],
+                &mut self.ends[ends_len..],
+            );
+            let mut framed = PuzzleCsvImportEnumFramed::Data;
+            for &byte in input.iter().take(consumed) {
+                let column = self.framing.column();
+                match self.framing.advance(byte) {
+                    Ok(PuzzleCsvImportEnumFramed::Data) => {}
+                    Ok(event) => framed = event,
+                    Err(issue) => {
+                        return Err(PuzzleCsvImportSourceFailure::terminal(column, issue));
+                    }
+                }
+            }
+            self.reader.consume(consumed);
+            output_len += written;
+            ends_len += ended;
+            match result {
+                csv_core::ReadRecordResult::InputEmpty => {}
+                csv_core::ReadRecordResult::OutputFull
+                | csv_core::ReadRecordResult::OutputEndsFull => {
+                    return Err(PuzzleCsvImportSourceFailure::row_too_large(
+                        self.framing.column(),
+                    ));
+                }
+                csv_core::ReadRecordResult::Record => {
+                    if framed == PuzzleCsvImportEnumFramed::CarriageReturn {
+                        self.require_line_feed(self.framing.column(), cancellation)?;
+                    }
+                    return self.fields(ends_len).map(Some);
+                }
+                csv_core::ReadRecordResult::End => return Ok(None),
+            }
+        }
+    }
+
+    fn finish(
+        &mut self,
+        output_len: usize,
+        ends_len: usize,
+    ) -> Result<Option<Vec<String>>, PuzzleCsvImportSourceFailure> {
+        let column = self.framing.column();
+        if self.framing.is_quoted() {
+            return Err(PuzzleCsvImportSourceFailure::terminal(
+                column,
+                PuzzleCsvImportIssueError::UnclosedQuote,
+            ));
+        }
+        if self.framing.is_fresh() {
+            return Ok(None);
+        }
+        let (result, _, _, ended) = self.decoder.read_record(
+            &[],
+            &mut self.output[output_len..],
+            &mut self.ends[ends_len..],
+        );
+        match result {
+            csv_core::ReadRecordResult::Record => self.fields(ends_len + ended).map(Some),
+            csv_core::ReadRecordResult::End => Ok(None),
+            csv_core::ReadRecordResult::InputEmpty
+            | csv_core::ReadRecordResult::OutputFull
+            | csv_core::ReadRecordResult::OutputEndsFull => {
+                Err(PuzzleCsvImportSourceFailure::row_too_large(column))
+            }
+        }
+    }
+
+    fn fields(&self, ends_len: usize) -> Result<Vec<String>, PuzzleCsvImportSourceFailure> {
         let mut start = 0;
         self.ends
-            .into_iter()
+            .iter()
+            .take(ends_len)
             .enumerate()
-            .map(|(index, end)| {
-                let value = std::str::from_utf8(&self.decoded[start..end])
-                    .map_err(|source| (index + 1, source))?;
+            .map(|(index, &end)| {
+                let value = std::str::from_utf8(&self.output[start..end])
+                    .map_err(|source| PuzzleCsvImportSourceFailure::framed(index + 1, source))?;
                 start = end;
                 Ok(value.to_owned())
             })
             .collect()
     }
+
+    fn require_line_feed(
+        &mut self,
+        column: usize,
+        cancellation: &impl Fn() -> bool,
+    ) -> Result<(), PuzzleCsvImportSourceFailure> {
+        Self::check_cancellation(column, cancellation)?;
+        let next = self
+            .reader
+            .fill_buf()
+            .map(|buffer| buffer.first().copied())
+            .map_err(|source| {
+                PuzzleCsvImportSourceFailure::terminal(
+                    column,
+                    PuzzleCsvImportIssueError::Read(source),
+                )
+            })?;
+        Self::check_cancellation(column, cancellation)?;
+        if next != Some(b'\n') {
+            return Err(PuzzleCsvImportSourceFailure::terminal(
+                column,
+                PuzzleCsvImportIssueError::BareCarriageReturn,
+            ));
+        }
+        self.reader.consume(1);
+        Ok(())
+    }
+
+    fn check_cancellation(
+        column: usize,
+        cancellation: &impl Fn() -> bool,
+    ) -> Result<(), PuzzleCsvImportSourceFailure> {
+        if cancellation() {
+            return Err(PuzzleCsvImportSourceFailure::terminal(
+                column,
+                PuzzleCsvImportIssueError::Cancelled,
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct PuzzleCsvImport<R> {
-    reader: R,
+    source: PuzzleCsvImportSource<R>,
     dataset: PuzzleSelectionDataset,
     headers: Option<Vec<PuzzleCsvImportHeader>>,
     logical_row: usize,
@@ -303,11 +576,11 @@ pub struct PuzzleCsvImport<R> {
 }
 
 impl<R: BufRead> PuzzleCsvImport<R> {
-    pub const MAX_ROW_BYTES: usize = 1_048_576;
+    pub const MAX_ROW_BYTES: usize = PuzzleCsvImportFraming::MAX_ROW_BYTES;
 
     pub fn new(reader: R, dataset: PuzzleSelectionDataset) -> Self {
         Self {
-            reader,
+            source: PuzzleCsvImportSource::new(reader),
             dataset,
             headers: None,
             logical_row: 0,
@@ -406,125 +679,18 @@ impl<R: BufRead> PuzzleCsvImport<R> {
                 PuzzleCsvImportIssueError::RowNumberOverflow,
             )
         })?;
-        let mut record = PuzzleCsvImportRecord::default();
-        let mut quote = PuzzleCsvImportEnumQuote::FieldStart;
-        loop {
-            let column = Some(record.ends.len() + 1);
-            let Some(byte) = self.read_byte(column, cancellation)? else {
-                match quote {
-                    PuzzleCsvImportEnumQuote::Quoted => {
-                        return Err(self.error(
-                            column,
-                            PuzzleCsvImportEnumContinuation::Terminated,
-                            PuzzleCsvImportIssueError::UnclosedQuote,
-                        ));
-                    }
-                    PuzzleCsvImportEnumQuote::FieldStart
-                    | PuzzleCsvImportEnumQuote::Unquoted
-                    | PuzzleCsvImportEnumQuote::AfterQuote => {}
-                }
-                if record.encoded_bytes == 0 {
-                    return Ok(None);
-                }
-                break;
-            };
-            if !matches!(quote, PuzzleCsvImportEnumQuote::Quoted) {
-                if byte == b'\n' {
-                    break;
-                }
-                if byte == b'\r' {
-                    if self.read_byte(column, cancellation)? != Some(b'\n') {
-                        return Err(self.error(
-                            column,
-                            PuzzleCsvImportEnumContinuation::Terminated,
-                            PuzzleCsvImportIssueError::BareCarriageReturn,
-                        ));
-                    }
-                    break;
-                }
-            }
-            if record.encoded_bytes == Self::MAX_ROW_BYTES {
-                return Err(self.error(
-                    column,
-                    PuzzleCsvImportEnumContinuation::Terminated,
-                    PuzzleCsvImportIssueError::RowTooLarge {
-                        limit: Self::MAX_ROW_BYTES,
-                    },
-                ));
-            }
-            record.encoded_bytes += 1;
-            match (quote, byte) {
-                (PuzzleCsvImportEnumQuote::FieldStart, b'"') => {
-                    quote = PuzzleCsvImportEnumQuote::Quoted;
-                }
-                (PuzzleCsvImportEnumQuote::Quoted, b'"') => {
-                    quote = PuzzleCsvImportEnumQuote::AfterQuote;
-                }
-                (PuzzleCsvImportEnumQuote::AfterQuote, b'"') => {
-                    record.decoded.push(byte);
-                    quote = PuzzleCsvImportEnumQuote::Quoted;
-                }
-                (PuzzleCsvImportEnumQuote::Unquoted, b'"') => {
-                    return Err(self.error(
-                        column,
-                        PuzzleCsvImportEnumContinuation::Terminated,
-                        PuzzleCsvImportIssueError::UnexpectedQuote,
-                    ));
-                }
-                (
-                    PuzzleCsvImportEnumQuote::FieldStart
-                    | PuzzleCsvImportEnumQuote::Unquoted
-                    | PuzzleCsvImportEnumQuote::AfterQuote,
-                    b',',
-                ) => {
-                    record.end_field();
-                    quote = PuzzleCsvImportEnumQuote::FieldStart;
-                }
-                (PuzzleCsvImportEnumQuote::AfterQuote, _) => {
-                    return Err(self.error(
-                        column,
-                        PuzzleCsvImportEnumContinuation::Terminated,
-                        PuzzleCsvImportIssueError::TrailingQuotedData,
-                    ));
-                }
-                (PuzzleCsvImportEnumQuote::Quoted, _) => record.decoded.push(byte),
-                (PuzzleCsvImportEnumQuote::FieldStart | PuzzleCsvImportEnumQuote::Unquoted, _) => {
-                    record.decoded.push(byte);
-                    quote = PuzzleCsvImportEnumQuote::Unquoted;
-                }
-            }
-        }
-        record.into_fields().map(Some).map_err(|(column, source)| {
-            self.error(
-                Some(column),
-                self.complete_record_continuation(),
-                PuzzleCsvImportIssueError::Utf8(source),
-            )
-        })
+        self.source
+            .read_record(cancellation)
+            .map_err(|failure| self.source_error(failure))
     }
 
-    fn read_byte(
-        &mut self,
-        column: Option<usize>,
-        cancellation: &impl Fn() -> bool,
-    ) -> Result<Option<u8>, PuzzleCsvImportError> {
-        self.check_cancellation(column, cancellation)?;
-        let byte = self
-            .reader
-            .fill_buf()
-            .map(|buffer| buffer.first().copied())
-            .map_err(|source| {
-                self.error(
-                    column,
-                    PuzzleCsvImportEnumContinuation::Terminated,
-                    PuzzleCsvImportIssueError::Read(source),
-                )
-            })?;
-        self.check_cancellation(column, cancellation)?;
-        if byte.is_some() {
-            self.reader.consume(1);
-        }
-        Ok(byte)
+    fn source_error(&self, failure: PuzzleCsvImportSourceFailure) -> PuzzleCsvImportError {
+        let continuation = if failure.record_framed {
+            self.complete_record_continuation()
+        } else {
+            PuzzleCsvImportEnumContinuation::Terminated
+        };
+        self.error(Some(failure.column), continuation, failure.issue)
     }
 
     fn validate_row(
