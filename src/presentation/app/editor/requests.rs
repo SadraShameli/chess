@@ -17,7 +17,9 @@ use crate::presentation::app::editor::{
     PresentationAppEditor, PresentationAppEditorConnection, PresentationAppEditorEnumIntent,
     PresentationAppEditorEnumRefresh, PresentationAppEditorError,
 };
-use crate::presentation::app::library::PresentationAppLibraryEnumNavigation;
+use crate::presentation::app::library::{
+    PresentationAppLibraryEnumNavigation, PresentationAppLibraryError,
+};
 use crate::presentation::app::{
     PresentationApp, PresentationAppEnumWorkspace, PresentationAppError,
 };
@@ -464,6 +466,29 @@ impl PresentationApp {
             self.open_study(study, application)?;
         }
         Ok(())
+    }
+
+    pub fn open_saved_library_game<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        game: crate::game::enums::GameId,
+        storage_revision: crate::game::storage_repository::GameStorageRevision,
+        application: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        let Some(library) = &mut self.library else {
+            return Ok(());
+        };
+        let Some(intent) = library
+            .panel
+            .controller_mut()
+            .open_saved_revision(DesktopRequestId::new(), game, storage_revision)
+            .map_err(PresentationAppLibraryError::from)?
+        else {
+            return Ok(());
+        };
+        self.navigate(
+            PresentationAppLibraryEnumNavigation::OpenSaved(Box::new(intent)),
+            application,
+        )
     }
 
     fn open_study<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(

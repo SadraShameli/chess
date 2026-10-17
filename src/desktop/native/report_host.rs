@@ -4,6 +4,7 @@ use thiserror::Error;
 use tokio::sync::{Mutex, watch};
 
 use crate::board::position::BoardPosition;
+use crate::capacity::executor::CapacityExecutor;
 use crate::capacity::lease::CapacityLease;
 use crate::desktop::dataset_commands::{
     DesktopDatasetCommands, DesktopDatasetRow, DesktopDatasetStarter,
@@ -48,6 +49,8 @@ use crate::storage::dataset_registry::{
     StorageDatasetRepository,
 };
 use crate::storage::document_store::StorageDocumentClient;
+use crate::storage::library_repository::StorageLibraryRepository;
+use crate::storage::opening_repository::StorageOpeningLibraryGame;
 use crate::storage::opening_repository::StorageOpeningRepository;
 
 #[derive(Debug, Error)]
@@ -94,6 +97,8 @@ pub struct DesktopNativeStudyPending {
 pub struct DesktopNativeReportHost {
     reports: Mutex<DesktopReportCommands>,
     openings: StorageOpeningRepository,
+    library: StorageDocumentClient,
+    executor: std::sync::Weak<CapacityExecutor>,
     datasets: StorageDatasetRepository,
     failures: std::sync::Mutex<Vec<String>>,
     previews_ready: std::sync::Mutex<Vec<ReportJobId>>,
@@ -102,7 +107,7 @@ pub struct DesktopNativeReportHost {
 impl DesktopNativeReportHost {
     pub const QUEUE_LIMIT: NonZeroUsize = NonZeroUsize::MIN.saturating_add(31);
 
-    pub fn new(client: StorageDocumentClient) -> Self {
+    pub fn new(client: StorageDocumentClient, executor: std::sync::Weak<CapacityExecutor>) -> Self {
         let scheduler = ReportScheduler::new(
             Self::QUEUE_LIMIT,
             ReportSchedulerDemand::new(
@@ -115,6 +120,8 @@ impl DesktopNativeReportHost {
         Self {
             reports: Mutex::new(DesktopReportCommands::new(ReportService::new(scheduler))),
             openings: StorageOpeningRepository::new(client.clone()),
+            library: client.clone(),
+            executor,
             datasets: StorageDatasetRepository::new(client),
             failures: std::sync::Mutex::new(Vec::new()),
             previews_ready: std::sync::Mutex::new(Vec::new()),
@@ -167,6 +174,20 @@ impl DesktopNativeReportHost {
                 "explorer".to_owned(),
             )
             .await?;
+        if let Some(executor) = self.executor.upgrade() {
+            let library = StorageLibraryRepository::new(self.library.clone(), &executor);
+            if let Err(error) = DesktopOpeningCommands::sync_library(
+                &self.openings,
+                &library,
+                DesktopOpeningCommands::LIBRARY_SYNC_GAMES,
+            )
+            .await
+            {
+                self.record_failure(format!(
+                    "Library games could not be indexed for the explorer: {error}"
+                ));
+            }
+        }
         let outcome =
             DesktopOpeningCommands::explore_indexed(&self.openings, position, sample_offset).await;
         self.datasets.release(leases).await?;
@@ -343,6 +364,17 @@ impl DesktopNativeReportHost {
                     .push(format!("The reports could not be listed: {error}")),
             }
         }
+        if let Some(game) = input.open_sample {
+            match self.openings.library_game(game).await {
+                Ok(Some(library)) => output.open_library = Some(library),
+                Ok(None) => output
+                    .failures
+                    .push(format!("Sample game {game} is no longer in the library")),
+                Err(error) => output
+                    .failures
+                    .push(format!("Sample game {game} could not be resolved: {error}")),
+            }
+        }
         match self.explore(&input.position, input.sample_offset).await {
             Ok(view) => output.explorer = Some(view),
             Err(error) => output
@@ -382,6 +414,9 @@ impl DesktopNativeReportHost {
         if let Some(explorer) = output.explorer {
             study.opening_mut().observe_explorer(explorer);
         }
+        if let Some(game) = output.open_library {
+            study.request_library_open(game);
+        }
         if let Some(rows) = output.rows {
             study.set_datasets(output.starters, rows);
         }
@@ -406,6 +441,7 @@ impl DesktopNativeReportHost {
             current_report: study.report_mut().view().map(|view| view.id),
             position: position.clone(),
             sample_offset: 0,
+            open_sample: None,
             starters: starters.to_vec(),
             integrity: integrity.clone(),
         };
@@ -474,6 +510,7 @@ pub struct DesktopNativeStudyInput {
     pub current_report: Option<ReportJobId>,
     pub position: BoardPosition,
     pub sample_offset: usize,
+    pub open_sample: Option<u64>,
     pub starters: Vec<DesktopDatasetStarter>,
     pub integrity: StorageDatasetIntegrityReport,
 }
@@ -484,6 +521,7 @@ pub struct DesktopNativeStudyOutput {
     pub replacement_resolved: bool,
     pub previews_ready: Vec<ReportJobId>,
     pub explorer: Option<DesktopOpeningExplorerView>,
+    pub open_library: Option<StorageOpeningLibraryGame>,
     pub rows: Option<Vec<DesktopDatasetRow>>,
     pub starters: Vec<DesktopDatasetStarter>,
     pub reanalysis: Vec<ReportJobId>,

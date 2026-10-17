@@ -35,6 +35,7 @@ struct DesktopNativeStudyDriverState {
     last_board: Option<String>,
     explorer_position: Option<BoardPosition>,
     sample_offset: usize,
+    open_sample: Option<u64>,
     opening_queue: Vec<PresentationOpeningIntent>,
     dataset_queue: Vec<PresentationSettingsDatasetsIntent>,
     notices: Vec<String>,
@@ -79,6 +80,7 @@ impl DesktopNativeStudyDriver {
                 last_board: None,
                 explorer_position: None,
                 sample_offset: 0,
+                open_sample: None,
                 opening_queue: Vec::new(),
                 dataset_queue: Vec::new(),
                 notices: Vec::new(),
@@ -152,9 +154,10 @@ impl DesktopNativeStudyDriver {
                     state.sample_offset = offset;
                     moved = true;
                 }
-                PresentationOpeningIntent::OpenSample(game) => state.notices.push(format!(
-                    "Sample game {game} cannot be opened: the explorer index records positions, not the game's moves"
-                )),
+                PresentationOpeningIntent::OpenSample(game) => {
+                    state.open_sample = Some(game);
+                    moved = true;
+                }
             }
         }
         let now = Instant::now();
@@ -170,6 +173,7 @@ impl DesktopNativeStudyDriver {
             current_report: study.report_mut().view().map(|view| view.id),
             position,
             sample_offset: state.sample_offset,
+            open_sample: state.open_sample.take(),
             starters: self.starters.clone(),
             integrity: StorageDatasetIntegrityReport::default(),
         };

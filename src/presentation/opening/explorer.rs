@@ -103,7 +103,7 @@ impl PresentationOpeningExplorer {
                 if sample.partial_date {
                     ui.small("Partial date");
                 }
-                if ui.button(format!("Open Sample {}", sample.game)).clicked() {
+                if sample.library && ui.button(format!("Open Sample {}", sample.game)).clicked() {
                     intent = Some(PresentationOpeningIntent::OpenSample(sample.game));
                 }
             });

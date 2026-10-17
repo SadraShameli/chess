@@ -160,6 +160,14 @@ diesel::table! {
 }
 
 diesel::table! {
+    opening_library_games (game_id) {
+        game_id -> Integer,
+        library_id -> Text,
+        content_revision -> Text,
+    }
+}
+
+diesel::table! {
     opening_occurrences (source, game_id, position_id) {
         source -> Text,
         game_id -> Integer,
@@ -264,6 +272,7 @@ diesel::joinable!(library_entries -> documents (game_id));
 diesel::joinable!(library_entries -> library_folders (folder_id));
 diesel::joinable!(library_entry_tags -> library_entries (game_id));
 diesel::joinable!(library_entry_tags -> library_tags (tag_id));
+diesel::joinable!(opening_library_games -> library_entries (library_id));
 diesel::joinable!(opening_occurrences -> opening_positions (position_id));
 diesel::joinable!(puzzle_attempts -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_checkpoints -> puzzle_runs (run_id));
@@ -287,6 +296,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     library_tags,
     move_nodes,
     opening_games,
+    opening_library_games,
     opening_occurrences,
     opening_positions,
     preferences,

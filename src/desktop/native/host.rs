@@ -1098,6 +1098,21 @@ impl DesktopNativeHost {
             .board_snapshot()
             .map(|board| (board.fen().to_owned(), board.variant()));
         driver.drive(state.presentation.study_mut(), board);
+        for open in state.presentation.study_mut().take_library_opens() {
+            if let Err(error) = state.presentation.open_saved_library_game(
+                open.game,
+                open.content_revision,
+                &state.services.port,
+            ) {
+                state
+                    .presentation
+                    .study_mut()
+                    .report_mut()
+                    .observe_failures(vec![format!(
+                        "The sample game could not be opened: {error}"
+                    )]);
+            }
+        }
     }
 
     fn update_state(

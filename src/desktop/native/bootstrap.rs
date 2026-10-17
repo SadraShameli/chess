@@ -933,7 +933,7 @@ impl DesktopNativeBootstrapSupervisor {
         };
         let puzzle_owner = DesktopMessagesEntityId::new();
         self.lifecycle.services.lock().await.reports = Some(Arc::new(
-            DesktopNativeReportHost::new(storage_client.clone()),
+            DesktopNativeReportHost::new(storage_client.clone(), Arc::downgrade(&executor)),
         ));
         let games = DesktopNativeGameService::new(DesktopNativeGameServiceOptions {
             factory_provider: DesktopNativeGameFactories::new(

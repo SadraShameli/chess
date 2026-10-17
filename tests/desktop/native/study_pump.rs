@@ -19,6 +19,7 @@ fn input(intents: Vec<PresentationReportIntent>) -> DesktopNativeStudyInput {
         current_report: None,
         position: BoardPosition::standard(),
         sample_offset: 0,
+        open_sample: None,
         starters: Vec::new(),
         integrity: StorageDatasetIntegrityReport::default(),
     }
@@ -31,7 +32,7 @@ async fn failed_report_intents_become_visible_failures_while_the_other_panels_st
     let budget = CapacityBudget::new(NonZeroUsize::new(2).ok_or("empty budget")?)?;
     let store =
         StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget).await?;
-    let host = DesktopNativeReportHost::new(store.client());
+    let host = DesktopNativeReportHost::new(store.client(), std::sync::Weak::new());
     let id = ReportJobId::try_from(Uuid::from_u128(5))?;
 
     let output = host
@@ -84,7 +85,7 @@ async fn reanalysis_requests_are_returned_for_routing_and_host_failures_are_drai
     let budget = CapacityBudget::new(NonZeroUsize::new(2).ok_or("empty budget")?)?;
     let store =
         StorageDocumentStore::open(directory.path().join("library.sqlite3"), budget).await?;
-    let host = DesktopNativeReportHost::new(store.client());
+    let host = DesktopNativeReportHost::new(store.client(), std::sync::Weak::new());
     let id = ReportJobId::try_from(Uuid::from_u128(6))?;
     host.record_failure("The report engine stopped".to_owned());
     let output = host

@@ -2,10 +2,19 @@ use thiserror::Error;
 
 use crate::board::r#move::{BoardMove, BoardMoveError};
 use crate::board::position::BoardPosition;
+use crate::game::enums::GameMoveId;
+use crate::game::tree::{GameTree, GameTreeError};
 use crate::opening::book::{OpeningBook, OpeningBookError, OpeningBookStudy};
 use crate::opening::corpus::OpeningCorpusError;
-use crate::opening::index::{OpeningIndexError, OpeningIndexKey};
-use crate::storage::opening_repository::{StorageOpeningError, StorageOpeningRepository};
+use crate::opening::corpus::OpeningCorpusGameId;
+use crate::opening::index::{
+    OpeningIndexDepth, OpeningIndexError, OpeningIndexGameInput, OpeningIndexKey, OpeningIndexer,
+};
+use crate::storage::library_record::StorageLibraryEnumContent;
+use crate::storage::library_repository::{StorageLibraryError, StorageLibraryRepository};
+use crate::storage::opening_repository::{
+    StorageOpeningError, StorageOpeningRepository, StorageOpeningSource,
+};
 
 #[derive(Debug, Error)]
 pub enum DesktopOpeningCommandsError {
@@ -19,6 +28,10 @@ pub enum DesktopOpeningCommandsError {
     Storage(#[from] StorageOpeningError),
     #[error(transparent)]
     Move(#[from] BoardMoveError),
+    #[error(transparent)]
+    Library(#[from] StorageLibraryError),
+    #[error(transparent)]
+    Tree(#[from] GameTreeError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +68,7 @@ pub struct DesktopOpeningContinuation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopOpeningSample {
     pub game: u64,
+    pub library: bool,
     pub sources: usize,
     pub white: Option<String>,
     pub black: Option<String>,
@@ -82,6 +96,54 @@ pub struct DesktopOpeningCommands;
 
 impl DesktopOpeningCommands {
     pub const SAMPLE_PAGE: usize = 20;
+    pub const LIBRARY_SYNC_GAMES: usize = 32;
+
+    pub async fn sync_library(
+        openings: &StorageOpeningRepository,
+        library: &StorageLibraryRepository<'_>,
+        limit: usize,
+    ) -> Result<usize, DesktopOpeningCommandsError> {
+        let source = StorageOpeningSource::library();
+        let mut indexed = 0;
+        for pending in openings.pending_library_games(limit).await? {
+            let Some(recovered) = library.load(pending.game).await? else {
+                continue;
+            };
+            let (initial, mainline) = match recovered.record().content() {
+                StorageLibraryEnumContent::Played(session) => (
+                    session.start_position().position().clone(),
+                    Self::mainline(session.tree(), session.live())?,
+                ),
+                StorageLibraryEnumContent::Notation(game) => (
+                    game.start().position().clone(),
+                    Self::mainline(game.tree(), game.mainline_tip())?,
+                ),
+            };
+            let id = openings.assign_library_game(pending).await?;
+            let index = OpeningIndexer::index(
+                &OpeningIndexGameInput {
+                    source: &source,
+                    id: OpeningCorpusGameId::new(id)?,
+                    initial: &initial,
+                    mainline: &mainline,
+                    recorded: None,
+                },
+                OpeningIndexDepth::base(),
+                || false,
+            )?;
+            if let Some(index) = index {
+                indexed += openings.index(vec![index]).await?;
+            }
+        }
+        Ok(indexed)
+    }
+
+    fn mainline(tree: &GameTree, tip: GameMoveId) -> Result<Vec<BoardMove>, GameTreeError> {
+        tree.path_to(tip)?
+            .into_iter()
+            .filter_map(|id| tree.node(id).map(|node| node.movement()).transpose())
+            .collect()
+    }
 
     pub async fn explore_indexed(
         repository: &StorageOpeningRepository,
@@ -144,6 +206,7 @@ impl DesktopOpeningCommands {
             .iter()
             .map(|hit| DesktopOpeningSample {
                 game: hit.game(),
+                library: hit.source().is_library(),
                 sources: 1,
                 white: None,
                 black: None,

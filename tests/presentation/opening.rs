@@ -71,6 +71,7 @@ fn view() -> PresentationOpeningTestResult<DesktopOpeningExplorerView> {
         }],
         samples: vec![DesktopOpeningSample {
             game: 7,
+            library: false,
             sources: 1,
             white: Some("Alice".to_owned()),
             black: None,

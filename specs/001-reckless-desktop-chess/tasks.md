@@ -919,7 +919,7 @@ merely by this generation.
 ## Phase 18: Convergence
 
 - [X] T317 [US9] Implement separate paused-admission waits and running-turn capacity waits so no clock is charged before the first Start/Resume admission, in `src/desktop/native/game_resources.rs` (or a new `src/game/admission.rs` owner) with red-first cases in `tests/capacity/concurrent_games.rs`, per T202/FR-021 (missing)
-- [ ] T318 [US7] Implement explorer sample-game paging and opening a sample game from the explorer in `src/desktop/native/study_driver.rs` and `src/presentation/opening/`, removing the two "not available yet" notices, per US7 acceptance scenarios and T174 (partial)
+- [X] T318 [US7] Implement explorer sample-game paging and opening a sample game from the explorer in `src/desktop/native/study_driver.rs` and `src/presentation/opening/`, removing the two "not available yet" notices, per US7 acceptance scenarios and T174 (partial)
 - [X] T319 [US13] Implement the generated master-only Standard-position Polyglot book builder in `tools/data/book.rs` and have `tools/data/build.rs` consume it instead of copying a fixed `book.bin`, per T271 (missing)
 - [ ] T320 [US13] Produce `resources/datasets/manifest.json` from `tools/data/build.rs` with source hashes, counts and licenses for the starter databases, per T272/FR-026 (missing)
 - [X] T321 [US4] Move the ivory/ebony satin piece materials and scene lighting into a scene-owned `src/scene/materials.rs` used by the renderer, per T117 (partial)

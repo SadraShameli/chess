@@ -543,3 +543,45 @@ async fn played_source_is_refused_without_changing_its_identity_or_storage()
     );
     fixture.close().await
 }
+
+#[tokio::test]
+async fn saved_library_games_feed_openable_explorer_samples() -> StorageLibraryNotationTestResult {
+    use crate::board::position::BoardPosition;
+    use crate::desktop::opening_commands::DesktopOpeningCommands;
+    use crate::storage::opening_repository::StorageOpeningRepository;
+
+    let fixture = StorageLibraryNotationFixture::new().await?;
+    let game = StorageLibraryNotationFixture::game()?;
+    let id = StorageLibraryNotationFixture::id()?;
+    fixture
+        .save(
+            &game,
+            GameStorageRevision::INITIAL,
+            StorageLibraryNotationFixture::changed(1_000)?,
+        )
+        .await?;
+    let openings = StorageOpeningRepository::new(fixture.store.client());
+    let library = fixture.library();
+    assert_eq!(
+        DesktopOpeningCommands::sync_library(&openings, &library, 8).await?,
+        1
+    );
+    assert_eq!(
+        DesktopOpeningCommands::sync_library(&openings, &library, 8).await?,
+        0
+    );
+    let view =
+        DesktopOpeningCommands::explore_indexed(&openings, &BoardPosition::standard(), 0).await?;
+    let sample = view.samples.first().ok_or("missing library sample")?;
+    assert!(sample.library);
+    let resolved = openings
+        .library_game(sample.game)
+        .await?
+        .ok_or("the sample did not resolve")?;
+    assert_eq!(resolved.game, id);
+    assert_eq!(resolved.content_revision, GameStorageRevision::new(1));
+    assert_eq!(view.continuations.len(), 1);
+    assert_eq!(view.continuations[0].uci, "e2e4");
+    drop((library, openings));
+    fixture.close().await
+}

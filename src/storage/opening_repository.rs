@@ -8,9 +8,13 @@ use diesel::result::DatabaseErrorKind;
 use thiserror::Error;
 use tokio::sync::oneshot;
 
+use crate::game::enums::GameId;
+use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::dataset_package::StorageDatasetPackageSourceIdentity;
 use crate::storage::document_store::{StorageDocumentClient, StorageDocumentError};
-use crate::storage::schema::{opening_games, opening_occurrences, opening_positions};
+use crate::storage::schema::{
+    library_entries, opening_games, opening_library_games, opening_occurrences, opening_positions,
+};
 
 mod rows;
 
@@ -51,6 +55,8 @@ pub enum StorageOpeningError {
     RequestTooLarge { required: usize, limit: usize },
     #[error("The stored opening rows are inconsistent")]
     Corrupt,
+    #[error("A library game identifier in the opening index is invalid: {0}")]
+    LibraryGame(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -58,6 +64,15 @@ pub struct StorageOpeningSource(String);
 
 impl StorageOpeningSource {
     pub const MAX_BYTES: usize = 4096;
+    pub const LIBRARY: &str = "library";
+
+    pub fn library() -> Self {
+        Self(Self::LIBRARY.to_owned())
+    }
+
+    pub fn is_library(&self) -> bool {
+        self.0 == Self::LIBRARY
+    }
 
     pub fn new(value: String) -> Result<Self, StorageOpeningError> {
         if value.is_empty()
@@ -307,6 +322,27 @@ pub(crate) enum StorageOpeningEnumRequest {
     },
     Continuations(StorageOpeningPositionKey),
     Remove(StorageOpeningSource),
+    Library(StorageOpeningLibraryEnumRequest),
+}
+
+#[derive(Debug)]
+pub(crate) enum StorageOpeningLibraryEnumRequest {
+    Pending(i64),
+    Assign(StorageOpeningLibraryGame),
+    Resolve(u64),
+}
+
+#[derive(Debug)]
+pub(crate) enum StorageOpeningLibraryEnumResponse {
+    Pending(Vec<StorageOpeningLibraryGame>),
+    Assigned(u64),
+    Resolved(Option<StorageOpeningLibraryGame>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageOpeningLibraryGame {
+    pub game: GameId,
+    pub content_revision: GameStorageRevision,
 }
 
 #[derive(Debug)]
@@ -316,6 +352,7 @@ pub(crate) enum StorageOpeningEnumResponse {
     Hits(Vec<StorageOpeningHit>),
     Continuations(Vec<StorageOpeningContinuation>),
     Removed(usize),
+    Library(StorageOpeningLibraryEnumResponse),
 }
 
 pub(crate) struct StorageOpeningTransaction;
@@ -354,6 +391,84 @@ impl StorageOpeningTransaction {
                 connection.immediate_transaction(|connection| {
                     Self::remove(connection, &source).map(StorageOpeningEnumResponse::Removed)
                 })
+            }
+            StorageOpeningEnumRequest::Library(request) => connection
+                .immediate_transaction(|connection| Self::library(connection, request))
+                .map(StorageOpeningEnumResponse::Library),
+        }
+    }
+
+    fn library_game(
+        game: &str,
+        revision: &str,
+    ) -> Result<StorageOpeningLibraryGame, StorageOpeningError> {
+        Ok(StorageOpeningLibraryGame {
+            game: game
+                .parse()
+                .map_err(|_error| StorageOpeningError::LibraryGame(game.to_owned()))?,
+            content_revision: GameStorageRevision::new(
+                revision
+                    .parse()
+                    .map_err(|_error| StorageOpeningError::LibraryGame(revision.to_owned()))?,
+            ),
+        })
+    }
+
+    fn library(
+        connection: &mut SqliteConnection,
+        request: StorageOpeningLibraryEnumRequest,
+    ) -> Result<StorageOpeningLibraryEnumResponse, StorageOpeningError> {
+        match request {
+            StorageOpeningLibraryEnumRequest::Pending(limit) => {
+                let rows: Vec<(String, String)> = library_entries::table
+                    .left_join(opening_library_games::table)
+                    .filter(library_entries::trashed_ms.is_null())
+                    .filter(
+                        opening_library_games::content_revision
+                            .is_null()
+                            .or(opening_library_games::content_revision
+                                .ne(library_entries::content_revision)),
+                    )
+                    .order(library_entries::game_id.asc())
+                    .limit(limit)
+                    .select((library_entries::game_id, library_entries::content_revision))
+                    .load(connection)?;
+                rows.iter()
+                    .map(|(game, revision)| Self::library_game(game, revision))
+                    .collect::<Result<_, StorageOpeningError>>()
+                    .map(StorageOpeningLibraryEnumResponse::Pending)
+            }
+            StorageOpeningLibraryEnumRequest::Assign(library) => {
+                let id = library.game.as_uuid().to_string();
+                diesel::delete(
+                    opening_library_games::table.filter(opening_library_games::library_id.eq(&id)),
+                )
+                .execute(connection)?;
+                let game: i32 = diesel::insert_into(opening_library_games::table)
+                    .values((
+                        opening_library_games::library_id.eq(&id),
+                        opening_library_games::content_revision
+                            .eq(library.content_revision.value().to_string()),
+                    ))
+                    .returning(opening_library_games::game_id)
+                    .get_result(connection)?;
+                Ok(StorageOpeningLibraryEnumResponse::Assigned(u64::try_from(
+                    game,
+                )?))
+            }
+            StorageOpeningLibraryEnumRequest::Resolve(game) => {
+                let library: Option<(String, String)> = opening_library_games::table
+                    .filter(opening_library_games::game_id.eq(i32::try_from(game)?))
+                    .select((
+                        opening_library_games::library_id,
+                        opening_library_games::content_revision,
+                    ))
+                    .first(connection)
+                    .optional()?;
+                library
+                    .map(|(id, revision)| Self::library_game(&id, &revision))
+                    .transpose()
+                    .map(StorageOpeningLibraryEnumResponse::Resolved)
             }
         }
     }
@@ -608,7 +723,8 @@ impl StorageOpeningRepository {
             StorageOpeningEnumResponse::Depth(_)
             | StorageOpeningEnumResponse::Hits(_)
             | StorageOpeningEnumResponse::Continuations(_)
-            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
+            | StorageOpeningEnumResponse::Removed(_)
+            | StorageOpeningEnumResponse::Library(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -626,7 +742,8 @@ impl StorageOpeningRepository {
             StorageOpeningEnumResponse::Indexed(_)
             | StorageOpeningEnumResponse::Hits(_)
             | StorageOpeningEnumResponse::Continuations(_)
-            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
+            | StorageOpeningEnumResponse::Removed(_)
+            | StorageOpeningEnumResponse::Library(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -644,7 +761,8 @@ impl StorageOpeningRepository {
             StorageOpeningEnumResponse::Indexed(_)
             | StorageOpeningEnumResponse::Depth(_)
             | StorageOpeningEnumResponse::Continuations(_)
-            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
+            | StorageOpeningEnumResponse::Removed(_)
+            | StorageOpeningEnumResponse::Library(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -661,7 +779,70 @@ impl StorageOpeningRepository {
             StorageOpeningEnumResponse::Indexed(_)
             | StorageOpeningEnumResponse::Depth(_)
             | StorageOpeningEnumResponse::Hits(_)
+            | StorageOpeningEnumResponse::Removed(_)
+            | StorageOpeningEnumResponse::Library(_) => Err(StorageOpeningError::Corrupt),
+        }
+    }
+
+    async fn library(
+        &self,
+        request: StorageOpeningLibraryEnumRequest,
+    ) -> Result<StorageOpeningLibraryEnumResponse, StorageOpeningError> {
+        match self
+            .client
+            .opening(StorageOpeningEnumRequest::Library(request), 0)
+            .await?
+        {
+            StorageOpeningEnumResponse::Library(response) => Ok(response),
+            StorageOpeningEnumResponse::Indexed(_)
+            | StorageOpeningEnumResponse::Depth(_)
+            | StorageOpeningEnumResponse::Hits(_)
+            | StorageOpeningEnumResponse::Continuations(_)
             | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
+        }
+    }
+
+    pub async fn pending_library_games(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<StorageOpeningLibraryGame>, StorageOpeningError> {
+        match self
+            .library(StorageOpeningLibraryEnumRequest::Pending(i64::try_from(
+                limit,
+            )?))
+            .await?
+        {
+            StorageOpeningLibraryEnumResponse::Pending(games) => Ok(games),
+            StorageOpeningLibraryEnumResponse::Assigned(_)
+            | StorageOpeningLibraryEnumResponse::Resolved(_) => Err(StorageOpeningError::Corrupt),
+        }
+    }
+
+    pub async fn assign_library_game(
+        &self,
+        game: StorageOpeningLibraryGame,
+    ) -> Result<u64, StorageOpeningError> {
+        match self
+            .library(StorageOpeningLibraryEnumRequest::Assign(game))
+            .await?
+        {
+            StorageOpeningLibraryEnumResponse::Assigned(id) => Ok(id),
+            StorageOpeningLibraryEnumResponse::Pending(_)
+            | StorageOpeningLibraryEnumResponse::Resolved(_) => Err(StorageOpeningError::Corrupt),
+        }
+    }
+
+    pub async fn library_game(
+        &self,
+        game: u64,
+    ) -> Result<Option<StorageOpeningLibraryGame>, StorageOpeningError> {
+        match self
+            .library(StorageOpeningLibraryEnumRequest::Resolve(game))
+            .await?
+        {
+            StorageOpeningLibraryEnumResponse::Resolved(library) => Ok(library),
+            StorageOpeningLibraryEnumResponse::Pending(_)
+            | StorageOpeningLibraryEnumResponse::Assigned(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -678,7 +859,8 @@ impl StorageOpeningRepository {
             StorageOpeningEnumResponse::Indexed(_)
             | StorageOpeningEnumResponse::Depth(_)
             | StorageOpeningEnumResponse::Hits(_)
-            | StorageOpeningEnumResponse::Continuations(_) => Err(StorageOpeningError::Corrupt),
+            | StorageOpeningEnumResponse::Continuations(_)
+            | StorageOpeningEnumResponse::Library(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 }

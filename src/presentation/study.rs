@@ -13,6 +13,7 @@ use crate::presentation::report::view::PresentationReportView;
 use crate::presentation::settings::datasets::{
     PresentationSettingsDatasets, PresentationSettingsDatasetsIntent,
 };
+use crate::storage::opening_repository::StorageOpeningLibraryGame;
 
 #[derive(Default)]
 pub struct PresentationStudy {
@@ -25,6 +26,7 @@ pub struct PresentationStudy {
     report_intents: Vec<PresentationReportIntent>,
     opening_intents: Vec<PresentationOpeningIntent>,
     dataset_intents: Vec<PresentationSettingsDatasetsIntent>,
+    library_opens: Vec<StorageOpeningLibraryGame>,
 }
 
 impl PresentationStudy {
@@ -39,7 +41,16 @@ impl PresentationStudy {
             report_intents: Vec::new(),
             opening_intents: Vec::new(),
             dataset_intents: Vec::new(),
+            library_opens: Vec::new(),
         }
+    }
+
+    pub fn request_library_open(&mut self, game: StorageOpeningLibraryGame) {
+        self.library_opens.push(game);
+    }
+
+    pub fn take_library_opens(&mut self) -> Vec<StorageOpeningLibraryGame> {
+        std::mem::take(&mut self.library_opens)
     }
 
     pub const fn cursor(&self) -> PresentationStudyCursor {
