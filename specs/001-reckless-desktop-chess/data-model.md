@@ -42,9 +42,10 @@ open files, construct engine clients, await I/O or adjudicate chess.
   validated identifiers. Presentation shares their actual Rust types.
 - Revisions, nanosecond durations and cumulative counters use checked native
   integer/newtype values. In-process messages have no JavaScript precision limit.
-- Existing persisted canonical strings remain readable. External serialization
-  adapters own schema-specific encodings and migrations; the UI change alone
-  must not rewrite saved data or backups.
+- There is no backward compatibility for data written before the first
+  release (owner decision, 2026-10-17); old databases and formats may be
+  deleted. External serialization adapters own schema-specific encodings and
+  migrations from the first released version onward.
 - Concrete owners include `BoardPosition`, `BoardEnumColor`, `GameSession`,
   `ClockTimeControl`, `EngineSearchLimit`, `CapacityLease`, `StorageGameDocument`,
   `WorkbenchJob` and `DesktopCommand`. The canonical naming rule owns policy.
@@ -580,12 +581,11 @@ have an installed budget of up to 2 GB, excluding the application and engines;
 personal imports use the selected streaming/input budgets; the total user
 library has no fixed game-count cap.
 
-`StorageGameDocument` schema 3 distinguishes played sessions from clockless
+`StorageGameDocument` schema 1 distinguishes played sessions from clockless
 notation under one typed envelope and shared record codec. Played payloads retain
 runtime clocks and an explicit study leaf; notation retains its selected mainline
-tip and source clock annotations without inventing seats or runtime state. Actual
-legacy schema-1/2 envelopes remain readable without rewriting their stored body,
-identity or revision. Played duplicate identity follows actual live moves;
+tip and source clock annotations without inventing seats or runtime state. Former
+pre-release envelope versions are not readable. Played duplicate identity follows actual live moves;
 notation identity follows its explicit mainline. Codec acceptance evidence is
 [the library content foundation](evidence/library-content-codec.md).
 

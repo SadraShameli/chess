@@ -500,11 +500,11 @@ stay private to the storage component; repositories return validated domain
 values. Enum columns map through one derive per enum, preserving existing
 stored spellings. The generated `schema.rs` must match the embedded migrations.
 
-Pre-Diesel databases at `user_version` 1 through 4 are adopted inside that
-first transaction by recording the matching embedded versions as applied. A
-higher legacy value, or any applied Diesel version absent from the embedded set,
-is a future schema and is rejected unchanged. After adoption the Diesel
-migration table is the only schema-version authority. Exact verified behavior
+There is no pre-Diesel database support: the schema starts at the
+`0001_initial` baseline. A database with user tables but no Diesel migration
+table is refused unchanged as unsupported, and any applied Diesel version
+absent from the embedded set is a future schema, also refused unchanged. The
+Diesel migration table is the only schema-version authority. Exact verified behavior
 is in [persistence research](research.md#persistence-orm-and-library-replacement).
 Tables own games, move nodes, notes/marks, clock snapshots, folders, tags,
 reports/jobs/results, datasets/provenance, puzzle definitions/attempts/runs,

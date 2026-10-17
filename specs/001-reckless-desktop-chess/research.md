@@ -775,14 +775,12 @@ library's optional filters without string-built SQL.
 - Licenses: diesel, diesel_migrations, migrations_internals, diesel_derives,
   diesel-derive-enum and diesel_cli are MIT OR Apache-2.0.
 
-**Continuity**: Existing databases record their schema in `PRAGMA user_version`
-(v1 to v4). Adoption runs inside one immediate transaction: when the Diesel
-migration table is absent, read `user_version`, refuse a value above the
-highest embedded legacy version as a future schema, insert the matching
-embedded versions as applied, then run pending migrations as savepoints so the
-whole upgrade stays all-or-nothing as before. The legacy SQL files move
-byte-for-byte into `migrations/000N_name/up.sql`. After adoption the Diesel
-table is the sole version authority; `user_version` is no longer written.
+**Continuity**: Superseded by owner decision on 2026-10-17. Pre-Diesel
+databases are not supported; the former v1..v4 SQL is squashed into one
+`0001_initial` baseline with an identical final schema, and a database lacking
+the Diesel migration table is refused unchanged. Pending migrations still run
+as savepoints inside one immediate transaction, so each upgrade from the
+baseline onward stays all-or-nothing.
 
 **Backup**: Use `VACUUM INTO` through `sql_query` inside the read transaction
 that also reads the manifest revision. Under WAL this yields a consistent
