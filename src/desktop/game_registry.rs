@@ -40,7 +40,7 @@ use crate::game::engine_provider::GameEngineProvider;
 use crate::game::enums::{GameId, GameIdentityError, GameMoveId, GameRevisionError};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::{GameMetadata, GameSession, GameSessionError, GameSessionOptions};
-use crate::game::storage_repository::GameStorageRevision;
+use crate::game::storage_repository::{GameStorageRevision, GameStorageWallTimeProvider};
 use crate::game::takeback::GameTakebackEnumConsent;
 use crate::storage::document_store::StorageDocumentClient;
 
@@ -159,6 +159,7 @@ pub struct DesktopGameRegistryOptions<F, C, P, R> {
     pub storage: StorageDocumentClient,
     pub executor: Arc<CapacityExecutor>,
     pub clock: Arc<C>,
+    pub wall_time: Arc<dyn GameStorageWallTimeProvider>,
     pub proof: Arc<P>,
     pub random: R,
 }
@@ -454,6 +455,7 @@ pub struct DesktopGameRegistry<F: DesktopGameRegistryFactoryProvider, C, P, R> {
     storage: StorageDocumentClient,
     executor: Arc<CapacityExecutor>,
     clock: Arc<C>,
+    wall_time: Arc<dyn GameStorageWallTimeProvider>,
     proof: Arc<P>,
     random: Arc<Mutex<R>>,
     sessions: Arc<RwLock<HashMap<GameId, DesktopGameSupervisorPort>>>,
@@ -507,6 +509,7 @@ where
                 storage: options.storage,
                 executor: options.executor,
                 clock: options.clock,
+                wall_time: options.wall_time,
                 proof: options.proof,
                 random: Arc::new(Mutex::new(options.random)),
                 sessions,
@@ -550,6 +553,7 @@ where
             storage: self.storage.clone(),
             executor: Arc::clone(&self.executor),
             clock: Arc::clone(&self.clock),
+            wall_time: Arc::clone(&self.wall_time),
             proof: Arc::clone(&self.proof),
             factory,
             search_config,
@@ -659,6 +663,7 @@ where
         let executor = Arc::clone(&self.executor);
         let storage = self.storage.clone();
         let clock = Arc::clone(&self.clock);
+        let wall_time = Arc::clone(&self.wall_time);
         let proof = Arc::clone(&self.proof);
         Ok(Box::pin(async move {
             let session = executor
@@ -678,6 +683,7 @@ where
                 storage,
                 executor,
                 clock,
+                wall_time,
                 proof,
                 factory,
                 search_config,

@@ -55,6 +55,8 @@ use crate::game::takeback::{
 };
 use crate::game::tree::{GameTree, GameTreeCandidateClock, GameTreeError};
 
+pub mod lifecycle;
+
 #[derive(Debug, Error)]
 pub enum GameMetadataError {
     #[error("Game metadata text must not contain a NUL character")]
@@ -309,6 +311,7 @@ pub enum GameSessionEnumInterruption {
     Paused(GamePauseEnumCause),
     RecoveryRequired(GamePauseEnumFault),
     Recovered(GamePauseEnumFault),
+    PendingResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -571,6 +574,12 @@ pub enum GameSessionError {
     HumanClaimRequired,
     #[error("The annotation confirmation belongs to game {received:?}, expected {expected:?}")]
     ForeignAnnotationConfirmation { expected: GameId, received: GameId },
+    #[error("The lifecycle preparation belongs to game {received:?}, expected {expected:?}")]
+    ForeignLifecyclePreparation { expected: GameId, received: GameId },
+    #[error("Only a newly prepared terminal result can be deferred")]
+    LifecycleResultRequired,
+    #[error("Retry Save must accept the retained pending result before this operation")]
+    PendingResult,
     #[error("A study edit cannot delete the played live path")]
     ProtectedLivePath,
     #[error(transparent)]
@@ -681,6 +690,14 @@ impl GameSession {
         self.state
     }
 
+    fn validate_no_pending_result(&self) -> Result<(), GameSessionError> {
+        if self.interruption() == Some(GameSessionEnumInterruption::PendingResult) {
+            Err(GameSessionError::PendingResult)
+        } else {
+            Ok(())
+        }
+    }
+
     pub const fn engine_search_config(&self) -> GameEngineSearchConfig {
         self.engine_search_config
     }
@@ -696,6 +713,7 @@ impl GameSession {
         is_auto_flip_enabled: bool,
     ) -> Result<GameRevision, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Setup {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -732,6 +750,7 @@ impl GameSession {
         if receipt.game_revision() < self.revision {
             return Ok(GameSaveEnumAcknowledgment::Older);
         }
+        self.validate_no_pending_result()?;
         self.save_status = GameSaveEnumStatus::Current;
         Ok(GameSaveEnumAcknowledgment::Current)
     }
@@ -743,15 +762,17 @@ impl GameSession {
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(request.expected_revision)?;
         let transition = match self.state {
-            GameSessionEnumState::Active => self.pause(
-                GamePauseRequest {
-                    expected_revision: request.expected_revision,
-                    cause: GamePauseEnumCause::AutosaveFailure,
-                    received_at: request.received_at,
-                    engine: request.engine,
-                },
-                proof,
-            )?,
+            GameSessionEnumState::Active
+            | GameSessionEnumState::Interrupted(GameSessionEnumInterruption::PendingResult) => self
+                .pause(
+                    GamePauseRequest {
+                        expected_revision: request.expected_revision,
+                        cause: GamePauseEnumCause::AutosaveFailure,
+                        received_at: request.received_at,
+                        engine: request.engine,
+                    },
+                    proof,
+                )?,
             GameSessionEnumState::Setup
             | GameSessionEnumState::Interrupted(_)
             | GameSessionEnumState::Completed(_)
@@ -773,6 +794,7 @@ impl GameSession {
         &self,
         now: ClockInstant,
     ) -> Result<GameSessionRestoreOptions, GameSessionError> {
+        self.validate_no_pending_result()?;
         let clock = self.clock.snapshot(now)?;
         if self.phase() == GameEnumPhase::Active && clock.status() != ClockStateEnumStatus::Running
         {
@@ -825,6 +847,9 @@ impl GameSession {
     }
 
     pub fn restore(options: GameSessionRestoreOptions) -> Result<Self, GameSessionError> {
+        if options.state.interruption() == Some(GameSessionEnumInterruption::PendingResult) {
+            return Err(GameSessionError::PendingResult);
+        }
         let mut session = Self::new(options.session)?;
         if options.clock.control() != session.clock.control() {
             return Err(GameSessionRestoreError::ClockMismatch.into());
@@ -948,6 +973,9 @@ impl GameSession {
         clock: &ClockStateSnapshot,
     ) -> Result<(), GameSessionError> {
         let valid = match state {
+            GameSessionEnumState::Interrupted(GameSessionEnumInterruption::PendingResult) => {
+                return Err(GameSessionError::PendingResult);
+            }
             GameSessionEnumState::Setup => {
                 self.tree.len() == 1
                     && clock.status() == ClockStateEnumStatus::Paused
@@ -1115,6 +1143,7 @@ impl GameSession {
         enabled: bool,
     ) -> Result<GameRevision, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         let revision = self.revision.next()?;
         self.premove.set_enabled(enabled);
@@ -1141,6 +1170,7 @@ impl GameSession {
         intent: GamePremoveIntent,
     ) -> Result<Option<GamePremoveIntent>, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -1165,6 +1195,7 @@ impl GameSession {
         expected: GameRevision,
     ) -> Result<GamePremoveEnumResolution, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -1177,6 +1208,7 @@ impl GameSession {
         &self,
         config: GameEngineSearchConfig,
     ) -> Result<GameEngineRequest, GameSessionError> {
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -1202,6 +1234,7 @@ impl GameSession {
     }
 
     fn validate_result_phase(&self) -> Result<(), GameSessionError> {
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         match self.phase() {
             GameEnumPhase::Active | GameEnumPhase::Interrupted => Ok(()),
@@ -1320,6 +1353,7 @@ impl GameSession {
         consent: GameTakebackEnumConsent,
     ) -> Result<GameRevision, GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         match self.phase() {
             GameEnumPhase::Setup | GameEnumPhase::Active | GameEnumPhase::Interrupted => {}
@@ -1333,60 +1367,13 @@ impl GameSession {
         Ok(revision)
     }
 
-    pub fn pause<P: GameAdjudicationMateProofProvider + ?Sized>(
-        &mut self,
-        request: GamePauseRequest,
-        proof: &P,
-    ) -> Result<GameSessionTransition, GameSessionError> {
-        self.revision.check_expected(request.expected_revision)?;
-        if self.phase() != GameEnumPhase::Active {
-            return Err(GameSessionError::WrongPhase(self.phase()));
-        }
-        request.engine.validate(
-            self.id,
-            self.revision,
-            self.seats.mode(),
-            Some(request.cause),
-        )?;
-        let revision = self.revision.next()?;
-        let mut clock = self.clock.clone();
-        let update = clock.pause(request.received_at)?;
-        if let ClockStateEnumStatus::Flagged(flagged) = update.view().status() {
-            return self.finish_decision(GameSessionDecisionTransition {
-                revision,
-                kind: GameEnumTransitionKind::FlagFall,
-                clock,
-                decision: self.history.flag_fall(flagged, proof),
-                now: request.received_at,
-            });
-        }
-        let interruption = match request.cause {
-            GamePauseEnumCause::Fault(fault) => {
-                GameSessionEnumInterruption::RecoveryRequired(fault)
-            }
-            cause @ (GamePauseEnumCause::Manual
-            | GamePauseEnumCause::ComputerSleep
-            | GamePauseEnumCause::Relaunch
-            | GamePauseEnumCause::TabClosed
-            | GamePauseEnumCause::ApplicationQuit
-            | GamePauseEnumCause::UpdateInstall
-            | GamePauseEnumCause::AutosaveFailure) => GameSessionEnumInterruption::Paused(cause),
-        };
-        self.finish_state(GameSessionStateTransition {
-            revision,
-            kind: GameEnumTransitionKind::Interrupted,
-            clock,
-            state: GameSessionEnumState::Interrupted(interruption),
-            now: request.received_at,
-        })
-    }
-
     pub(crate) fn validate_recovery(
         &self,
         expected: GameRevision,
         fault: GamePauseEnumFault,
     ) -> Result<(), GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.interruption() != Some(GameSessionEnumInterruption::RecoveryRequired(fault)) {
             return Err(GamePauseError::WrongRecovery.into());
@@ -1413,6 +1400,7 @@ impl GameSession {
 
     pub(crate) fn validate_resume(&self, expected: GameRevision) -> Result<(), GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         let Some(interruption) = self.interruption() else {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -1457,6 +1445,7 @@ impl GameSession {
     }
 
     fn validate_takeback_phase(&self) -> Result<(), GameSessionError> {
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         match self.state {
             GameSessionEnumState::Active => Ok(()),
@@ -1467,6 +1456,7 @@ impl GameSession {
                 fault,
             )) => Err(GamePauseError::RecoveryRequired(fault).into()),
             GameSessionEnumState::Setup
+            | GameSessionEnumState::Interrupted(GameSessionEnumInterruption::PendingResult)
             | GameSessionEnumState::Interrupted(GameSessionEnumInterruption::Adjudication {
                 ..
             })
@@ -1768,6 +1758,7 @@ impl GameSession {
 
     fn validate_study_edit(&self, expected: GameRevision) -> Result<(), GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         match self.state {
             GameSessionEnumState::Completed(_) | GameSessionEnumState::Analysis(_) => Ok(()),
@@ -1809,6 +1800,7 @@ impl GameSession {
         proof: &P,
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(expected_revision)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Setup {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -1942,6 +1934,7 @@ impl GameSession {
         color: BoardEnumColor,
     ) -> Result<(), GameSessionError> {
         self.revision.check_expected(expected)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         if self.phase() != GameEnumPhase::Active {
             return Err(GameSessionError::WrongPhase(self.phase()));
@@ -2037,12 +2030,21 @@ impl GameSession {
         } = transition;
         let snapshot = clock.snapshot(now)?;
         let transition = self.transition(revision, kind, &state, snapshot);
+        Ok(self.accept_state(transition, clock, state))
+    }
+
+    fn accept_state(
+        &mut self,
+        transition: GameSessionTransition,
+        clock: ClockState,
+        state: GameSessionEnumState,
+    ) -> GameSessionTransition {
         self.clock = clock;
         self.state = state;
-        self.revision = revision;
+        self.revision = transition.revision;
         self.takeback.clear();
         self.premove.clear(GamePremoveEnumClearReason::Fault);
-        Ok(transition)
+        transition
     }
 
     fn transition(
@@ -2073,6 +2075,7 @@ impl GameSession {
         now: ClockInstant,
     ) -> Result<GameSessionTransition, GameSessionError> {
         self.revision.check_expected(expected_revision)?;
+        self.validate_no_pending_result()?;
         self.save_status.validate()?;
         match self.phase() {
             GameEnumPhase::Setup | GameEnumPhase::Completed | GameEnumPhase::Analysis => {}
@@ -2092,39 +2095,6 @@ impl GameSession {
         self.state = state;
         self.revision = revision;
         Ok(transition)
-    }
-
-    pub fn poll_deadline<P: GameAdjudicationMateProofProvider + ?Sized>(
-        &mut self,
-        expected_revision: GameRevision,
-        now: ClockInstant,
-        proof: &P,
-    ) -> Result<GameSessionClockPoll, GameSessionError> {
-        self.revision.check_expected(expected_revision)?;
-        if self.phase() != GameEnumPhase::Active {
-            return Err(GameSessionError::WrongPhase(self.phase()));
-        }
-        let mut clock = self.clock.clone();
-        let update = clock.poll(now)?;
-        let transition = match update.view().status() {
-            ClockStateEnumStatus::Flagged(flagged) => {
-                let revision = self.revision.next()?;
-                let decision = self.history.flag_fall(flagged, proof);
-                Some(self.finish_decision(GameSessionDecisionTransition {
-                    revision,
-                    kind: GameEnumTransitionKind::FlagFall,
-                    clock,
-                    decision,
-                    now,
-                })?)
-            }
-            ClockStateEnumStatus::Running => {
-                self.clock = clock;
-                None
-            }
-            ClockStateEnumStatus::Paused => return Err(GameSessionError::WrongPhase(self.phase())),
-        };
-        Ok(GameSessionClockPoll { update, transition })
     }
 }
 
@@ -2153,3 +2123,7 @@ impl GameSessionClockPoll {
         self.transition
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/game/session_lifecycle.rs"]
+mod lifecycle_tests;

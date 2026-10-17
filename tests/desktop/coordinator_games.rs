@@ -80,6 +80,7 @@ async fn quit_reaches_lifecycle_after_preparation_cancels_pending_engine_creatio
         storage: storage.store.client(),
         executor: Arc::clone(&storage.executor),
         clock: Arc::new(DesktopGameRegistryFixtureClock::default()),
+        wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
         proof: Arc::new(DesktopGameRegistryFixtureProof::default()),
         random: StdRng::seed_from_u64(81),
     });

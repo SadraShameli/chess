@@ -1,5 +1,8 @@
 use std::num::NonZeroUsize;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -13,9 +16,10 @@ use crate::clock::duration::{ClockDurationError, ClockInstant};
 use crate::clock::state::ClockState;
 use crate::clock::time_control::ClockTimeControl;
 use crate::clock::time_provider::ClockTimeProvider;
+use crate::desktop::game_supervisor::content::DesktopGameSupervisorContent;
 use crate::desktop::game_supervisor::{
-    DesktopGameSupervisor, DesktopGameSupervisorEngineFactory, DesktopGameSupervisorOptions,
-    DesktopGameSupervisorWrite,
+    DesktopGameSupervisor, DesktopGameSupervisorComputeContext, DesktopGameSupervisorEngineFactory,
+    DesktopGameSupervisorEnumComputation, DesktopGameSupervisorOptions, DesktopGameSupervisorWrite,
 };
 use crate::engine::live_game::EngineLiveGame;
 use crate::engine::process_provider::EngineNativeProcess;
@@ -23,16 +27,21 @@ use crate::game::adjudication::{
     GameAdjudicationEnumMateProof, GameAdjudicationEnumMateQuestion,
     GameAdjudicationMateProofProvider,
 };
-use crate::game::engine_provider::{GameEngineContext, GameEngineSearchConfig};
+use crate::game::engine_provider::{
+    GameEngineContext, GameEngineMove, GameEngineSearchConfig, GameEngineSearchIdentity,
+};
 use crate::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat};
+use crate::game::premove::GamePremoveIntent;
 use crate::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionMoveRequest, GameSessionOptions,
 };
 use crate::game::storage_repository::{
+    GameStorageContentEdit, GameStorageEnumContentChange, GameStorageEnumEditCause,
     GameStorageRepository, GameStorageRevision, GameStorageSaveRequest,
 };
 use crate::storage::document_store::StorageDocumentStore;
-use crate::storage::game_document::{StorageGameDocumentError, StorageGameDocumentRepository};
+use crate::storage::game_document::StorageGameDocumentRepository;
+use crate::storage::library_repository::StorageLibraryError;
 
 struct DesktopGameSaveCancellationClock;
 
@@ -56,6 +65,19 @@ impl GameAdjudicationMateProofProvider for DesktopGameSaveCancellationProof {
 
 struct DesktopGameSaveCancellationFactory;
 
+#[derive(Default)]
+struct DesktopGameSaveCancellationSecondReadFailureClock(AtomicUsize);
+
+impl ClockTimeProvider for DesktopGameSaveCancellationSecondReadFailureClock {
+    fn now(&self) -> Result<ClockInstant, ClockDurationError> {
+        if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            ClockInstant::from_millis(1)
+        } else {
+            Err(ClockDurationError::TimeOrder)
+        }
+    }
+}
+
 impl DesktopGameSupervisorEngineFactory for DesktopGameSaveCancellationFactory {
     type Engine = EngineLiveGame<EngineNativeProcess, DesktopGameSaveCancellationClock>;
     type Error = std::io::Error;
@@ -69,6 +91,108 @@ impl DesktopGameSupervisorEngineFactory for DesktopGameSaveCancellationFactory {
     async fn shutdown_retained(&mut self, _deadline: Instant) -> Result<(), Self::Error> {
         Ok(())
     }
+}
+
+#[test]
+fn accepted_engine_checkpoint_survives_later_premove_time_failure()
+-> Result<(), Box<dyn std::error::Error>> {
+    let proof = DesktopGameSaveCancellationProof;
+    let clock = DesktopGameSaveCancellationSecondReadFailureClock::default();
+    let mut session = GameSession::new(GameSessionOptions {
+        id: "a293ef55-164b-41d4-9b3e-0714c0f74aae".parse()?,
+        root: "82915224-3991-435b-b1da-10dd9d3fe774".parse()?,
+        start: BoardStart::standard(),
+        seats: GameSeats::new(
+            GameEnumMode::HumanVersusEngine,
+            GameEnumSeat::Reckless,
+            GameEnumSeat::Human,
+        )?,
+        clock: ClockState::new(ClockTimeControl::untimed(), BoardEnumColor::White),
+        metadata: GameMetadata::default(),
+    })?;
+    session.set_premoves_enabled(session.revision(), true)?;
+    session.start(
+        session.revision(),
+        ClockInstant::from_nanos(0),
+        GameEnumEngineReadiness::Ready,
+        &proof,
+    )?;
+    session.queue_premove(
+        session.revision(),
+        GamePremoveIntent::new("e7".parse()?, "e5".parse()?, None)?,
+    )?;
+    let expected = GameEngineContext::new(session.id(), session.revision());
+    let identity = GameEngineSearchIdentity::new(
+        expected,
+        "e5494a72-168d-4716-9d40-8c8e89596e91".parse()?,
+        "42d4c955-5dc3-430f-9581-0bb5434183eb".parse()?,
+    );
+    let movement = session
+        .tree()
+        .node(session.live())?
+        .position()
+        .parse_uci("e2e4")?;
+    let mut owned = DesktopGameSupervisorContent::new(session);
+    let wall_time = crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared();
+    let result = DesktopGameSupervisor::<
+        DesktopGameSaveCancellationFactory,
+        DesktopGameSaveCancellationSecondReadFailureClock,
+        DesktopGameSaveCancellationProof,
+    >::compute(
+        &mut owned,
+        DesktopGameSupervisorEnumComputation::EngineMove(GameEngineMove::new(
+            identity,
+            movement,
+            ClockInstant::from_millis(1)?,
+        )),
+        DesktopGameSupervisorComputeContext {
+            clock: &clock,
+            wall_time: wall_time.as_ref(),
+            proof: &proof,
+            config: GameEngineSearchConfig::initial_default(),
+            storage_revision: GameStorageRevision::INITIAL,
+        },
+    );
+    assert_eq!(owned.session.tree().len(), 2);
+    assert!(
+        result.is_ok(),
+        "accepted engine checkpoint was lost behind later premove time failure: {:?}",
+        result.as_ref().err()
+    );
+    let computed = result?;
+    let retained = computed.save.ok_or("engine save absent")?;
+    assert_eq!(retained.game_revision(), owned.session.revision());
+    assert_eq!(computed.snapshot.moves().len(), 1);
+    assert!(owned.session.premove().pending().is_some());
+    let pending = computed.premove.ok_or("premove continuation absent")?;
+    let revision = owned.session.revision();
+    let second = DesktopGameSupervisor::<
+        DesktopGameSaveCancellationFactory,
+        DesktopGameSaveCancellationSecondReadFailureClock,
+        DesktopGameSaveCancellationProof,
+    >::compute(
+        &mut owned,
+        DesktopGameSupervisorEnumComputation::Premove(pending),
+        DesktopGameSupervisorComputeContext {
+            clock: &clock,
+            wall_time: wall_time.as_ref(),
+            proof: &proof,
+            config: GameEngineSearchConfig::initial_default(),
+            storage_revision: GameStorageRevision::INITIAL,
+        },
+    );
+    assert!(matches!(
+        second,
+        Err(
+            crate::desktop::game_supervisor::DesktopGameSupervisorError::Time(
+                ClockDurationError::TimeOrder
+            )
+        )
+    ));
+    assert_eq!(owned.session.revision(), revision);
+    assert_eq!(retained.game_revision(), revision);
+    assert!(owned.session.premove().pending().is_some());
+    Ok(())
 }
 
 #[tokio::test]
@@ -116,10 +240,17 @@ async fn cancelled_intermediate_checkpoint_is_retried_before_the_final_move_snap
             &proof,
         )?;
         if intermediate.is_none() {
-            intermediate = Some(GameStorageSaveRequest::capture(
+            intermediate = Some(GameStorageSaveRequest::capture_with_change(
                 &session,
                 ClockInstant::from_millis(millis)?,
                 GameStorageRevision::INITIAL,
+                GameStorageEnumContentChange::Changed(GameStorageContentEdit::new(
+                    session.revision(),
+                    session.revision(),
+                    GameStorageEnumEditCause::Created,
+                    crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared()
+                        .now()?,
+                )?),
             )?);
         }
     }
@@ -133,6 +264,7 @@ async fn cancelled_intermediate_checkpoint_is_retried_before_the_final_move_snap
         storage: store.client(),
         executor: Arc::clone(&executor),
         clock: Arc::new(DesktopGameSaveCancellationClock),
+        wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
         proof: Arc::new(proof),
         factory: DesktopGameSaveCancellationFactory,
         search_config: GameEngineSearchConfig::initial_default(),
@@ -145,7 +277,7 @@ async fn cancelled_intermediate_checkpoint_is_retried_before_the_final_move_snap
     });
     supervisor.begin_save(false);
     drop(supervisor.saving.take());
-    supervisor.finish_save(Err(StorageGameDocumentError::Cancelled))?;
+    supervisor.finish_save(Err(StorageLibraryError::Cancelled))?;
     assert_eq!(
         supervisor
             .writes

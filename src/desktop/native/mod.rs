@@ -11,6 +11,7 @@ pub mod game_resources;
 pub mod game_runtime;
 pub mod game_service;
 pub mod host;
+pub mod library_startup;
 pub mod lifecycle;
 #[cfg(target_os = "macos")]
 pub mod menu;
@@ -21,3 +22,4 @@ pub mod recovery;
 pub mod resources;
 pub mod startup;
 pub mod task_pools;
+pub mod wall_time;

@@ -348,6 +348,7 @@ impl DesktopLocalPlayFixture {
             storage: runtime.store.client(),
             executor: Arc::clone(&runtime.executor),
             clock: Arc::clone(&runtime.clock),
+            wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
             proof: Arc::new(DesktopGameRegistryFixtureProof::default()),
             random: StdRng::seed_from_u64(96),
         });

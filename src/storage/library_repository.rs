@@ -251,6 +251,9 @@ impl StorageLibraryRecovered {
     pub fn record(&self) -> &StorageLibraryRecord {
         &self.record
     }
+    pub fn into_record(self) -> StorageLibraryRecord {
+        self.record
+    }
     pub const fn content_revision(&self) -> GameStorageRevision {
         self.content_revision
     }
@@ -586,7 +589,7 @@ impl<'a> StorageLibraryRepository<'a> {
             .join()
             .await?
     }
-    fn prepared_memory(
+    pub(crate) fn prepared_memory(
         &self,
         body_bytes: usize,
     ) -> Result<StorageLibraryPreparedMemory, StorageLibraryError> {

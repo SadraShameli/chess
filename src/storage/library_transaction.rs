@@ -13,6 +13,7 @@ use crate::game::library_organization::{
     GameLibraryOrganizationReceipt, GameLibraryOrganizationRequest,
 };
 use crate::storage::document_store::StorageDocumentClient;
+use crate::storage::library_inventory::StorageLibraryInventoryCursor;
 use crate::storage::library_prepared::{
     StorageLibraryPreparedAdoption, StorageLibraryPreparedWrite,
 };
@@ -40,6 +41,7 @@ pub(crate) enum StorageLibraryEnumTransactionRequest {
     ApplyDestruction(StorageTrashConfirmedRequest),
     Restore(StorageTrashRestoreRequest),
     AdoptionPage(StorageLibraryAdoptionCursor),
+    PlayedInventory(StorageLibraryInventoryCursor),
     Adopt(StorageLibraryPreparedAdoption),
 }
 
@@ -57,7 +59,8 @@ impl StorageLibraryEnumTransactionRequest {
             | Self::PreviewDestruction(_)
             | Self::ApplyDestruction(_)
             | Self::Restore(_)
-            | Self::AdoptionPage(_) => Ok(()),
+            | Self::AdoptionPage(_)
+            | Self::PlayedInventory(_) => Ok(()),
         }
     }
 
@@ -68,7 +71,8 @@ impl StorageLibraryEnumTransactionRequest {
             | Self::PreviewDestruction(_)
             | Self::ApplyDestruction(_)
             | Self::Restore(_)
-            | Self::AdoptionPage(_) => 0,
+            | Self::AdoptionPage(_)
+            | Self::PlayedInventory(_) => 0,
             Self::Query(query) => query.transport_bytes()?,
             Self::Organize(request) => request.transport_bytes(),
         };
@@ -100,7 +104,8 @@ impl StorageLibraryTransaction {
             StorageLibraryEnumTransactionRequest::Load(_)
             | StorageLibraryEnumTransactionRequest::Query(_)
             | StorageLibraryEnumTransactionRequest::PreviewDestruction(_)
-            | StorageLibraryEnumTransactionRequest::AdoptionPage(_) => {
+            | StorageLibraryEnumTransactionRequest::AdoptionPage(_)
+            | StorageLibraryEnumTransactionRequest::PlayedInventory(_) => {
                 TransactionBehavior::Deferred
             }
             StorageLibraryEnumTransactionRequest::Save(_)
@@ -158,6 +163,11 @@ impl StorageLibraryTransaction {
             StorageLibraryEnumTransactionRequest::Adopt(prepared) => {
                 StorageLibraryEnumTransactionResponse::Adopted(
                     StorageLibraryTransactionContent::adopt(&transaction, prepared)?,
+                )
+            }
+            StorageLibraryEnumTransactionRequest::PlayedInventory(cursor) => {
+                StorageLibraryEnumTransactionResponse::AdoptionPage(
+                    StorageLibraryTransactionRows::played_inventory(&transaction, *cursor, memory)?,
                 )
             }
         };

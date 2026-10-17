@@ -989,6 +989,7 @@ impl DesktopNativeGameEngineFixture {
             storage: storage.store.client(),
             executor: Arc::clone(&storage.executor),
             clock,
+            wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
             proof: Arc::new(DesktopNativeGameEngineFixtureProof),
             factory,
             search_config: GameEngineSearchConfig::initial_default(),

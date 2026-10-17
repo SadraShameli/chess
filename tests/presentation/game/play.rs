@@ -19,6 +19,9 @@ use chess::game::pause::{
     GamePauseEnumCause, GamePauseEnumEngineBarrier, GamePauseRequest, GameResumeRequest,
 };
 use chess::game::save::GameSaveFailureRequest;
+use chess::game::session::lifecycle::{
+    GameSessionLifecycleEnumCommit, GameSessionLifecycleEnumRequest,
+};
 use chess::game::session::{GameMetadata, GameSeats, GameSession, GameSessionOptions};
 use chess::game::takeback::{GameTakebackEnumResponse, GameTakebackRequest};
 use chess::presentation::game::play::{
@@ -660,6 +663,43 @@ fn pause_resume_and_busy_controls_submit_only_explicit_intentions() -> Presentat
         harness.state().submissions[1].operation(),
         PresentationGamePlayEnumOperation::Resume
     );
+    Ok(())
+}
+
+#[test]
+fn pending_result_offers_retry_save_without_resume_or_an_accepted_outcome()
+-> PresentationGamePlayTestResult {
+    let mut session = GameTransitionFixture::session(
+        ClockTimeControl::sudden_death(ClockDuration::from_millis(10_000)?)?,
+        None,
+    )?;
+    let prepared = session.prepare_lifecycle(
+        GameSessionLifecycleEnumRequest::PollDeadline {
+            expected_revision: session.revision(),
+            received_at: ClockInstant::from_millis(10_000)?,
+        },
+        &GameTransitionFixtureProof,
+    )?;
+    let committed =
+        session.commit_lifecycle(prepared, GameSessionLifecycleEnumCommit::DeferResult)?;
+    assert!(committed.pending_result().is_some());
+    let mut harness = PresentationGamePlayFixture::harness(&session, 10_000)?;
+    assert!(harness.state().snapshot.is_save_required());
+    assert!(harness.state().snapshot.outcome().is_none());
+    assert!(harness.state().snapshot.takeback_target().is_none());
+    assert!(harness.query_by_label("Resume Game").is_none());
+    harness.get_by_label("Result pending. Retry Save to accept and save the result.");
+    harness.get_by_label("Retry Save").click_accesskit();
+    harness
+        .run_ok()
+        .ok_or("Pending-result retry did not settle")?;
+    harness.run_steps(8);
+    assert_eq!(harness.state().submissions.len(), 1);
+    assert_eq!(
+        harness.state().submissions[0].operation(),
+        PresentationGamePlayEnumOperation::Retry
+    );
+    assert!(harness.state().failures.is_empty());
     Ok(())
 }
 

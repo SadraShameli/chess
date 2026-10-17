@@ -1048,7 +1048,10 @@ impl PresentationApp {
                         )) => DesktopGameCommandsEnumAction::RetryEngine,
                         Some(GameSessionEnumInterruption::RecoveryRequired(
                             GamePauseEnumFault::Save,
-                        )) => DesktopGameCommandsEnumAction::RetrySave,
+                        ))
+                        | Some(GameSessionEnumInterruption::PendingResult) => {
+                            DesktopGameCommandsEnumAction::RetrySave
+                        }
                         Some(GameSessionEnumInterruption::Adjudication { .. }) => {
                             DesktopGameCommandsEnumAction::Resume
                         }

@@ -12,7 +12,9 @@ use crate::game::session::{GameMetadataDate, GameMetadataOpeningCode, GameMetada
 use crate::game::storage_repository::GameStorageRevision;
 use crate::notation::game_identity::{NotationGameIdentity, NotationGameIdentityEnumResult};
 use crate::package::digest::PackageDigest;
-use crate::storage::document_store::StorageDocumentClient;
+use crate::storage::document_store::{
+    StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
+};
 use crate::storage::game_document::{StorageGameDocument, StorageGameDocumentEnumContentKind};
 use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRecord};
 use crate::storage::library_repository::StorageLibraryError;
@@ -321,6 +323,32 @@ impl StorageLibraryPreparedMemory {
         Ok(memory)
     }
 
+    pub(crate) fn grow(&mut self, required: usize) -> Result<(), StorageDocumentError> {
+        if required > StorageDocumentStore::MEMORY_BUDGET {
+            return Err(StorageDocumentError::DocumentTooLarge);
+        }
+        let additional = required.saturating_sub(self.reservation.num_permits());
+        if additional != 0 {
+            let reservation =
+                StorageDocumentClient::reserve_memory(self.reservation.semaphore(), additional)?;
+            self.reservation.merge(reservation);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retain_body(&mut self, body_bytes: usize) -> Result<(), StorageLibraryError> {
+        let required = Self::reservation_bytes(body_bytes)?;
+        self.grow(required)?;
+        let reserved = self.reservation.num_permits();
+        let excess = reserved - required;
+        let released = self
+            .reservation
+            .split(excess)
+            .ok_or(StorageLibraryError::PreparationMemory { required, reserved })?;
+        drop(released);
+        Ok(())
+    }
+
     fn check_body(&self, body_bytes: usize) -> Result<(), StorageLibraryError> {
         self.check_bytes(Self::reservation_bytes(body_bytes)?)
     }
@@ -371,28 +399,22 @@ impl StorageLibraryPreparedWrite {
         options: StorageLibraryPreparedWriteOptions,
         cancellation: &CapacityExecutorCancellation,
     ) -> Result<Self, StorageLibraryError> {
-        let StorageLibraryPreparedWriteOptions {
-            id,
-            expected,
-            body,
-            change,
-            memory,
-        } = options;
-        memory.check_body(body.capacity())?;
-        let record = StorageGameDocument::recover_record_cancellable(&body, cancellation)?;
-        if record.id() != id {
+        options.memory.check_body(options.body.capacity())?;
+        let record = StorageGameDocument::recover_record_cancellable(&options.body, cancellation)?;
+        if record.id() != options.id {
             return Err(StorageLibraryError::Identity);
         }
         let projection = StorageLibraryProjection::from_record(&record, cancellation)?;
-        let identity = StorageLibraryPreparedIdentity::new(&record, &body, cancellation)?;
+        let identity = StorageLibraryPreparedIdentity::new(&record, &options.body, cancellation)?;
+        drop(record);
         let prepared = Self {
-            id,
-            expected,
-            body,
-            change,
+            id: options.id,
+            expected: options.expected,
+            body: options.body,
+            change: options.change,
             projection: Box::new(projection),
             identity,
-            memory,
+            memory: options.memory,
         };
         prepared.memory.check_bytes(
             prepared.transport_bytes()

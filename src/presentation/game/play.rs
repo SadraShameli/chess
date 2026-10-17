@@ -297,10 +297,13 @@ impl PresentationGamePlay {
             ui.strong(result);
             ui.label(Self::outcome_reason(outcome.reason()));
         } else if snapshot.is_save_required() {
-            ui.colored_label(
-                ui.visuals().error_fg_color,
-                "This game is unsaved. Retry Save before continuing.",
-            );
+            let message =
+                if snapshot.interruption() == Some(GameSessionEnumInterruption::PendingResult) {
+                    Self::interruption_label(GameSessionEnumInterruption::PendingResult)
+                } else {
+                    "This game is unsaved. Retry Save before continuing."
+                };
+            ui.colored_label(ui.visuals().error_fg_color, message);
         } else if let Some(interruption) = snapshot.interruption() {
             ui.label(Self::interruption_label(interruption));
         } else {
@@ -339,45 +342,31 @@ impl PresentationGamePlay {
         is_busy: bool,
         operation: &mut Option<PresentationGamePlayEnumOperation>,
     ) {
-        if snapshot.is_save_required() {
-            Self::action(
-                ui,
-                "Retry Save",
-                !is_busy,
-                PresentationGamePlayEnumOperation::Retry,
-                operation,
-            );
-        } else if let Some(interruption) = snapshot.interruption() {
-            match interruption {
-                GameSessionEnumInterruption::RecoveryRequired(fault) => {
-                    Self::action(
-                        ui,
+        let recovery = if snapshot.is_save_required() {
+            Some(("Retry Save", PresentationGamePlayEnumOperation::Retry))
+        } else {
+            snapshot
+                .interruption()
+                .map(|interruption| match interruption {
+                    GameSessionEnumInterruption::RecoveryRequired(fault) => (
                         Self::retry_label(fault),
-                        !is_busy,
                         PresentationGamePlayEnumOperation::Retry,
-                        operation,
-                    );
-                }
-                GameSessionEnumInterruption::Adjudication { .. } => {
-                    Self::action(
-                        ui,
+                    ),
+                    GameSessionEnumInterruption::Adjudication { .. } => (
                         "Retry Adjudication",
-                        !is_busy,
                         PresentationGamePlayEnumOperation::Retry,
-                        operation,
-                    );
-                }
-                GameSessionEnumInterruption::Paused(_)
-                | GameSessionEnumInterruption::Recovered(_) => {
-                    Self::action(
-                        ui,
-                        "Resume Game",
-                        !is_busy,
-                        PresentationGamePlayEnumOperation::Resume,
-                        operation,
-                    );
-                }
-            }
+                    ),
+                    GameSessionEnumInterruption::Paused(_)
+                    | GameSessionEnumInterruption::Recovered(_) => {
+                        ("Resume Game", PresentationGamePlayEnumOperation::Resume)
+                    }
+                    GameSessionEnumInterruption::PendingResult => {
+                        ("Retry Save", PresentationGamePlayEnumOperation::Retry)
+                    }
+                })
+        };
+        if let Some((label, action)) = recovery {
+            Self::action(ui, label, !is_busy, action, operation);
         } else if snapshot.phase() == GameEnumPhase::Active {
             Self::action(
                 ui,
@@ -759,6 +748,9 @@ impl PresentationGamePlay {
 
     const fn interruption_label(interruption: GameSessionEnumInterruption) -> &'static str {
         match interruption {
+            GameSessionEnumInterruption::PendingResult => {
+                "Result pending. Retry Save to accept and save the result."
+            }
             GameSessionEnumInterruption::Adjudication { .. } => {
                 "Game paused: the mating proof is unresolved. Retry to run the bounded proof again."
             }

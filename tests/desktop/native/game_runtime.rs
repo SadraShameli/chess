@@ -83,6 +83,7 @@ async fn quit_save_failure_keeps_snapshot_forwarding_alive_until_explicit_recove
         storage: fixture.store.client(),
         executor: Arc::clone(&fixture.executor),
         clock: Arc::new(DesktopGameRegistryFixtureClock::default()),
+        wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
         proof: Arc::new(DesktopGameRegistryFixtureProof::default()),
         random: StdRng::seed_from_u64(81),
     });

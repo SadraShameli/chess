@@ -774,6 +774,7 @@ impl DesktopNativeBootstrapSupervisor {
             executor: Arc::clone(&executor),
             clock: Arc::clone(&clock),
             proof: Arc::new(DesktopNativeGameService::proof()),
+            wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
             random,
         });
         let game_port = {

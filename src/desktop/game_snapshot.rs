@@ -200,6 +200,7 @@ impl DesktopGameSnapshot {
             Err(
                 GameSessionError::Takeback(GameTakebackError::NoTarget)
                 | GameSessionError::WrongPhase(_)
+                | GameSessionError::PendingResult
                 | GameSessionError::Pause(GamePauseError::RecoveryRequired(_))
                 | GameSessionError::Save(GameSaveError::SaveRequired),
             ) => None,

@@ -11,3 +11,7 @@ pub mod puzzle;
 pub mod scene;
 pub mod storage;
 pub mod workbench;
+
+#[cfg(test)]
+#[path = "../tests/game/storage_wall_time_fixture.rs"]
+mod game_storage_wall_time_fixture;

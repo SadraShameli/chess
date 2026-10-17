@@ -24,6 +24,8 @@ mod storage_library;
 mod storage_library_actor;
 #[path = "storage/library_filters.rs"]
 mod storage_library_filters;
+#[path = "storage/library_inventory.rs"]
+mod storage_library_inventory;
 #[path = "storage/library_record.rs"]
 mod storage_library_record;
 #[path = "storage/puzzle_repository.rs"]

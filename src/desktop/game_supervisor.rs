@@ -16,6 +16,12 @@ use tokio::time::{Instant, timeout_at};
 #[path = "../../tests/desktop/game_save_cancellation.rs"]
 mod cancellation_tests;
 
+#[cfg(test)]
+#[path = "../../tests/desktop/game_content.rs"]
+mod content_tests;
+
+mod content;
+
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use crate::capacity::phase::CapacityPhaseGeneration;
 use crate::clock::duration::{ClockDurationError, ClockInstant};
@@ -24,9 +30,9 @@ use crate::desktop::game_commands::{DesktopGameCommandsEnumAction, DesktopGameCo
 use crate::desktop::game_snapshot::{
     DesktopGameSnapshot, DesktopGameSnapshotEnumNotice, DesktopGameSnapshotError,
 };
+use crate::desktop::game_supervisor::content::DesktopGameSupervisorContent;
 use crate::desktop::game_transition::{
-    DesktopGameTransition, DesktopGameTransitionEnumEffect, DesktopGameTransitionError,
-    DesktopGameTransitionOptions,
+    DesktopGameTransitionEnumEffect, DesktopGameTransitionError, DesktopGameTransitionOptions,
 };
 use crate::desktop::identity::DesktopRequestId;
 use crate::engine::live_game::{EngineLiveGame, EngineLiveGameError};
@@ -45,12 +51,17 @@ use crate::game::pause::{
 };
 use crate::game::premove::GamePremoveEnumResolution;
 use crate::game::save::{GameSaveEnumStatus, GameSaveFailureRequest};
+use crate::game::session::lifecycle::GameSessionLifecycleEnumRequest;
 use crate::game::session::{GameSession, GameSessionError, GameSessionMoveRequest};
 use crate::game::storage_repository::{
-    GameStorageReceipt, GameStorageRepository, GameStorageRevision, GameStorageSaveRequest,
+    GameStorageEnumEditCause, GameStorageReceipt, GameStorageRepository, GameStorageRevision,
+    GameStorageSaveRequest, GameStorageSaveRequestError, GameStorageWallTimeError,
+    GameStorageWallTimeProvider,
 };
 use crate::storage::document_store::StorageDocumentClient;
-use crate::storage::game_document::{StorageGameDocumentError, StorageGameDocumentRepository};
+use crate::storage::game_document::StorageGameDocumentError;
+use crate::storage::library_played::StorageLibraryPlayedRepository;
+use crate::storage::library_repository::StorageLibraryError;
 
 #[derive(Debug, Error)]
 pub enum DesktopGameSupervisorError {
@@ -66,6 +77,12 @@ pub enum DesktopGameSupervisorError {
     Poisoned,
     #[error("The game preparation generation is stale")]
     PreparationGeneration,
+    #[error("The queued premove at {context:?} could not complete: {source}")]
+    Premove {
+        context: GameEngineContext,
+        #[source]
+        source: Box<Self>,
+    },
     #[error("The game cannot complete shutdown before its pending save is retried")]
     SaveRequired,
     #[error("The game engine is unavailable until explicit Retry")]
@@ -95,7 +112,17 @@ pub enum DesktopGameSupervisorError {
     #[error(transparent)]
     Executor(#[from] CapacityExecutorError),
     #[error(transparent)]
-    Storage(#[from] StorageGameDocumentError),
+    Storage(#[from] StorageLibraryError),
+    #[error(transparent)]
+    WallTime(#[from] GameStorageWallTimeError),
+    #[error(transparent)]
+    Capture(#[from] GameStorageSaveRequestError),
+    #[error("The game retains a storage failure ({storage}) and wall-time failure ({wall_time})")]
+    ContentSave {
+        #[source]
+        storage: Arc<Self>,
+        wall_time: Arc<Self>,
+    },
     #[error(transparent)]
     Session(#[from] GameSessionError),
     #[error(transparent)]
@@ -329,22 +356,26 @@ pub struct DesktopGameSupervisorOptions<F, C, P> {
     pub storage: StorageDocumentClient,
     pub executor: Arc<CapacityExecutor>,
     pub clock: Arc<C>,
+    pub wall_time: Arc<dyn GameStorageWallTimeProvider>,
     pub proof: Arc<P>,
     pub factory: F,
     pub search_config: GameEngineSearchConfig,
 }
 
-struct DesktopGameSupervisorSession(Mutex<Option<GameSession>>);
+struct DesktopGameSupervisorSession(Mutex<Option<DesktopGameSupervisorContent>>);
 
 impl DesktopGameSupervisorSession {
-    fn take(&self) -> Result<GameSession, DesktopGameSupervisorError> {
+    fn take(&self) -> Result<DesktopGameSupervisorContent, DesktopGameSupervisorError> {
         self.0
             .lock()
             .map_err(|_poisoned| DesktopGameSupervisorError::Poisoned)?
             .take()
             .ok_or(DesktopGameSupervisorError::StateUnavailable)
     }
-    fn replace(&self, session: GameSession) -> Result<(), DesktopGameSupervisorError> {
+    fn replace(
+        &self,
+        session: DesktopGameSupervisorContent,
+    ) -> Result<(), DesktopGameSupervisorError> {
         let mut state = self
             .0
             .lock()
@@ -355,15 +386,20 @@ impl DesktopGameSupervisorSession {
         *state = Some(session);
         Ok(())
     }
+    fn is_current(&self) -> bool {
+        self.0.lock().is_ok_and(|owner| {
+            owner
+                .as_ref()
+                .is_some_and(DesktopGameSupervisorContent::is_current)
+        })
+    }
+
     fn acknowledge(
         &self,
         receipt: GameStorageReceipt,
     ) -> Result<GameSaveEnumStatus, DesktopGameSupervisorError> {
         let mut session = self.take()?;
-        let result = session
-            .acknowledge_save(receipt)
-            .map(|_| session.save_status())
-            .map_err(DesktopGameSupervisorError::Session);
+        let result = session.acknowledge(receipt);
         self.replace(session)?;
         result
     }
@@ -373,6 +409,7 @@ enum DesktopGameSupervisorEnumComputation {
     Initialize,
     Action(DesktopGameTransitionOptions),
     EngineMove(GameEngineMove),
+    Premove(DesktopGameSupervisorPremove),
     Clock,
     Search,
     EngineFailure,
@@ -383,6 +420,22 @@ enum DesktopGameSupervisorEnumComputation {
     Resave {
         quit: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+struct DesktopGameSupervisorPremove {
+    expected: GameEngineContext,
+    checkpoint_at: ClockInstant,
+}
+
+impl DesktopGameSupervisorPremove {
+    fn validate(&self, state: &GameSession) -> Result<(), DesktopGameSupervisorError> {
+        if self.expected.game() != state.id() {
+            return Err(DesktopGameSupervisorError::StateUnavailable);
+        }
+        state.revision().check_expected(self.expected.revision())?;
+        Ok(())
+    }
 }
 
 enum DesktopGameSupervisorEnumEngineOperation {
@@ -401,6 +454,7 @@ struct DesktopGameSupervisorComputeOptions<C, P> {
     session: Arc<DesktopGameSupervisorSession>,
     executor: Arc<CapacityExecutor>,
     clock: Arc<C>,
+    wall_time: Arc<dyn GameStorageWallTimeProvider>,
     proof: Arc<P>,
     config: GameEngineSearchConfig,
     storage_revision: GameStorageRevision,
@@ -408,6 +462,7 @@ struct DesktopGameSupervisorComputeOptions<C, P> {
 
 struct DesktopGameSupervisorComputeContext<'a, C, P> {
     clock: &'a C,
+    wall_time: &'a dyn GameStorageWallTimeProvider,
     proof: &'a P,
     config: GameEngineSearchConfig,
     storage_revision: GameStorageRevision,
@@ -415,10 +470,11 @@ struct DesktopGameSupervisorComputeContext<'a, C, P> {
 
 struct DesktopGameSupervisorComputed {
     snapshot: DesktopGameSnapshot,
-    checkpoint: Option<GameStorageSaveRequest>,
     save: Option<GameStorageSaveRequest>,
     search: Option<GameEngineRequest>,
+    premove: Option<DesktopGameSupervisorPremove>,
     quit: bool,
+    failure: Option<Arc<DesktopGameSupervisorError>>,
 }
 
 type DesktopGameSupervisorComputeFuture = Pin<
@@ -428,7 +484,7 @@ type DesktopGameSupervisorComputeFuture = Pin<
     >,
 >;
 type DesktopGameSupervisorSaveFuture =
-    Pin<Box<dyn Future<Output = Result<GameStorageReceipt, StorageGameDocumentError>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<GameStorageReceipt, StorageLibraryError>> + Send>>;
 
 struct DesktopGameSupervisorWrite {
     request: GameStorageSaveRequest,
@@ -448,6 +504,7 @@ pub struct DesktopGameSupervisor<F: DesktopGameSupervisorEngineFactory, C, P> {
     storage_revision: GameStorageRevision,
     executor: Arc<CapacityExecutor>,
     clock: Arc<C>,
+    wall_time: Arc<dyn GameStorageWallTimeProvider>,
     proof: Arc<P>,
     factory: F,
     factory_shutdown_complete: bool,
@@ -465,6 +522,7 @@ pub struct DesktopGameSupervisor<F: DesktopGameSupervisorEngineFactory, C, P> {
     computing_response: Option<DesktopGameSupervisorEnvelope>,
     factory_request: Option<DesktopGameSupervisorEnvelope>,
     pending_engine_move: Option<GameEngineMove>,
+    pending_premove: Option<DesktopGameSupervisorPremove>,
     pending_engine_failure: bool,
     controls_closed: bool,
     ordinary_closed: bool,
@@ -473,6 +531,7 @@ pub struct DesktopGameSupervisor<F: DesktopGameSupervisorEngineFactory, C, P> {
     saving_context: Option<DesktopGameSupervisorWriteContext>,
     save_failure: Option<Arc<DesktopGameSupervisorError>>,
     save_failure_at: Option<ClockInstant>,
+    content_failure: Option<Arc<DesktopGameSupervisorError>>,
     quit_ready: bool,
 }
 
@@ -487,13 +546,14 @@ where
         options: DesktopGameSupervisorOptions<F, C, P>,
     ) -> Result<(Self, DesktopGameSupervisorPort), DesktopGameSupervisorError> {
         let session = Arc::new(DesktopGameSupervisorSession(Mutex::new(Some(
-            options.session,
+            DesktopGameSupervisorContent::new(options.session),
         ))));
         let computed = Self::computation(
             DesktopGameSupervisorComputeOptions {
                 session: Arc::clone(&session),
                 executor: Arc::clone(&options.executor),
                 clock: Arc::clone(&options.clock),
+                wall_time: Arc::clone(&options.wall_time),
                 proof: Arc::clone(&options.proof),
                 config: options.search_config,
                 storage_revision: options.storage_revision,
@@ -540,6 +600,7 @@ where
                 storage_revision: options.storage_revision,
                 executor: options.executor,
                 clock: options.clock,
+                wall_time: options.wall_time,
                 proof: options.proof,
                 factory: options.factory,
                 factory_shutdown_complete: false,
@@ -559,6 +620,7 @@ where
                 computing_response: None,
                 factory_request: None,
                 pending_engine_move: None,
+                pending_premove: None,
                 pending_engine_failure: false,
                 controls_closed: false,
                 ordinary_closed: false,
@@ -567,6 +629,7 @@ where
                 saving_context: None,
                 save_failure: None,
                 save_failure_at: None,
+                content_failure: computed.failure,
                 quit_ready: false,
             },
             port,
@@ -582,18 +645,38 @@ where
                 .executor
                 .submit_waiting(move |_cancellation| {
                     let mut state = options.session.take()?;
+                    let continuation = match &operation {
+                        DesktopGameSupervisorEnumComputation::Premove(pending) => {
+                            Some(pending.expected)
+                        }
+                        DesktopGameSupervisorEnumComputation::Initialize
+                        | DesktopGameSupervisorEnumComputation::Action(_)
+                        | DesktopGameSupervisorEnumComputation::EngineMove(_)
+                        | DesktopGameSupervisorEnumComputation::Clock
+                        | DesktopGameSupervisorEnumComputation::Search
+                        | DesktopGameSupervisorEnumComputation::EngineFailure
+                        | DesktopGameSupervisorEnumComputation::SaveFailure { .. }
+                        | DesktopGameSupervisorEnumComputation::Resave { .. } => None,
+                    };
                     let result = Self::compute(
                         &mut state,
                         operation,
                         DesktopGameSupervisorComputeContext {
                             clock: &options.clock,
+                            wall_time: options.wall_time.as_ref(),
                             proof: &options.proof,
                             config: options.config,
                             storage_revision: options.storage_revision,
                         },
                     );
                     options.session.replace(state)?;
-                    result
+                    result.map_err(|source| match continuation {
+                        Some(context) => DesktopGameSupervisorError::Premove {
+                            context,
+                            source: Box::new(source),
+                        },
+                        None => source,
+                    })
                 })
                 .await?
                 .join()
@@ -602,19 +685,37 @@ where
     }
 
     fn compute(
-        state: &mut GameSession,
+        state: &mut DesktopGameSupervisorContent,
         operation: DesktopGameSupervisorEnumComputation,
         context: DesktopGameSupervisorComputeContext<'_, C, P>,
     ) -> Result<DesktopGameSupervisorComputed, DesktopGameSupervisorError> {
         let DesktopGameSupervisorComputeContext {
             clock,
+            wall_time,
             proof,
             config,
             storage_revision,
         } = context;
+        if let DesktopGameSupervisorEnumComputation::Premove(pending) = &operation {
+            pending.validate(&state.session)?;
+        } else if let DesktopGameSupervisorEnumComputation::Action(options) = &operation {
+            state
+                .session
+                .revision()
+                .check_expected(options.request.expected_revision)?;
+        } else if let DesktopGameSupervisorEnumComputation::EngineMove(result) = &operation {
+            let expected = result.identity().context();
+            if expected.game() != state.session.id() {
+                return Err(DesktopGameSupervisorError::StateUnavailable);
+            }
+            state
+                .session
+                .revision()
+                .check_expected(expected.revision())?;
+        }
         let mut now = clock.now()?;
         let mut notice = None;
-        let mut checkpoint = None;
+        let mut premove = None;
         let effect = match operation {
             DesktopGameSupervisorEnumComputation::Resave { quit } => {
                 if quit {
@@ -625,31 +726,31 @@ where
             }
             DesktopGameSupervisorEnumComputation::Initialize => {
                 if storage_revision == GameStorageRevision::INITIAL {
+                    let timestamp = wall_time.now()?;
+                    state.record(GameStorageEnumEditCause::Created, timestamp);
                     DesktopGameTransitionEnumEffect::Autosave
                 } else {
                     DesktopGameTransitionEnumEffect::SnapshotOnly
                 }
             }
             DesktopGameSupervisorEnumComputation::Action(options) => {
-                now = options.request.ordered_received_at(state.clock());
-                DesktopGameTransition::apply(state, options, proof)?
+                now = options.request.ordered_received_at(state.session.clock());
+                state.apply(options, proof, wall_time)?
             }
             DesktopGameSupervisorEnumComputation::EngineMove(result) => {
-                let expected = result.identity().context();
-                if expected.game() != state.id() {
-                    return Err(DesktopGameSupervisorError::StateUnavailable);
-                }
-                state.revision().check_expected(expected.revision())?;
                 now = result.received_at();
                 let color = state
+                    .session
                     .tree()
-                    .node(state.live())
+                    .node(state.session.live())
                     .map_err(GameSessionError::from)?
                     .position()
                     .turn();
-                state.accept_move(
+                let timestamp = wall_time.now()?;
+                let before = state.observe();
+                state.session.accept_move(
                     GameSessionMoveRequest {
-                        expected_revision: state.revision(),
+                        expected_revision: state.session.revision(),
                         seat: GameEnumSeat::Reckless,
                         color,
                         node: uuid::Uuid::new_v4().to_string().parse()?,
@@ -658,48 +759,91 @@ where
                     },
                     proof,
                 )?;
-                if state.phase() == GameEnumPhase::Active {
-                    match state.resolve_premove(state.revision()) {
-                        Ok(GamePremoveEnumResolution::Execute(movement)) => {
-                            checkpoint = Some(GameStorageSaveRequest::capture(
-                                state,
-                                now,
-                                storage_revision,
-                            )?);
-                            now = clock.now()?;
-                            let color = state
-                                .tree()
-                                .node(state.live())
-                                .map_err(GameSessionError::from)?
-                                .position()
-                                .turn();
-                            state.accept_move(
-                                GameSessionMoveRequest {
-                                    expected_revision: state.revision(),
-                                    seat: GameEnumSeat::Human,
-                                    color,
-                                    node: uuid::Uuid::new_v4().to_string().parse()?,
-                                    movement,
-                                    received_at: now,
-                                },
-                                proof,
-                            )?;
-                        }
-                        Ok(GamePremoveEnumResolution::Empty) => {}
-                        Ok(GamePremoveEnumResolution::ClearedIllegal { intent, .. }) => {
-                            notice = Some(DesktopGameSnapshotEnumNotice::IllegalPremove {
-                                revision: state.revision(),
-                                intent,
-                            });
-                        }
-                        Err(error) => return Err(error.into()),
-                    }
+                state.record_effect(before, GameStorageEnumEditCause::AcceptedMove, timestamp);
+                if state.session.phase() == GameEnumPhase::Active
+                    && state.session.premove().pending().is_some()
+                {
+                    premove = Some(DesktopGameSupervisorPremove {
+                        expected: GameEngineContext::new(
+                            state.session.id(),
+                            state.session.revision(),
+                        ),
+                        checkpoint_at: now,
+                    });
                 }
                 DesktopGameTransitionEnumEffect::Autosave
             }
+            DesktopGameSupervisorEnumComputation::Premove(pending) => {
+                let position = state
+                    .session
+                    .tree()
+                    .node(state.session.live())
+                    .map_err(GameSessionError::from)?
+                    .position();
+                let timestamp = state
+                    .session
+                    .premove()
+                    .pending()
+                    .filter(|intent| {
+                        position
+                            .move_intent(intent.origin(), intent.destination(), intent.promotion())
+                            .is_ok()
+                    })
+                    .map(|_intent| wall_time.now())
+                    .transpose()?;
+                match state.session.resolve_premove(state.session.revision())? {
+                    GamePremoveEnumResolution::Execute(movement) => {
+                        let color = state
+                            .session
+                            .tree()
+                            .node(state.session.live())
+                            .map_err(GameSessionError::from)?
+                            .position()
+                            .turn();
+                        let timestamp =
+                            timestamp.ok_or(DesktopGameSupervisorError::StateUnavailable)?;
+                        let before = state.observe();
+                        state.session.accept_move(
+                            GameSessionMoveRequest {
+                                expected_revision: state.session.revision(),
+                                seat: GameEnumSeat::Human,
+                                color,
+                                node: uuid::Uuid::new_v4().to_string().parse()?,
+                                movement,
+                                received_at: now,
+                            },
+                            proof,
+                        )?;
+                        state.record_effect(
+                            before,
+                            GameStorageEnumEditCause::AcceptedMove,
+                            timestamp,
+                        );
+                        DesktopGameTransitionEnumEffect::Autosave
+                    }
+                    GamePremoveEnumResolution::Empty => {
+                        now = pending.checkpoint_at;
+                        DesktopGameTransitionEnumEffect::SnapshotOnly
+                    }
+                    GamePremoveEnumResolution::ClearedIllegal { intent, .. } => {
+                        now = pending.checkpoint_at;
+                        notice = Some(DesktopGameSnapshotEnumNotice::IllegalPremove {
+                            revision: state.session.revision(),
+                            intent,
+                        });
+                        DesktopGameTransitionEnumEffect::SnapshotOnly
+                    }
+                }
+            }
             DesktopGameSupervisorEnumComputation::Clock => {
-                let update = state.poll_deadline(state.revision(), now, proof)?;
-                if update.transition().is_some() {
+                if state.lifecycle(
+                    GameSessionLifecycleEnumRequest::PollDeadline {
+                        expected_revision: state.session.revision(),
+                        received_at: now,
+                    },
+                    proof,
+                    wall_time,
+                )? {
                     DesktopGameTransitionEnumEffect::Autosave
                 } else {
                     DesktopGameTransitionEnumEffect::SnapshotOnly
@@ -709,15 +853,31 @@ where
                 DesktopGameTransitionEnumEffect::SnapshotOnly
             }
             DesktopGameSupervisorEnumComputation::EngineFailure => {
-                if state.phase() == GameEnumPhase::Active {
-                    state.pause(
-                        GamePauseRequest {
-                            expected_revision: state.revision(),
-                            cause: GamePauseEnumCause::Fault(GamePauseEnumFault::Engine),
+                if state.pending_result.is_some() {
+                    state.lifecycle(
+                        GameSessionLifecycleEnumRequest::PollDeadline {
+                            expected_revision: state.session.revision(),
                             received_at: now,
-                            engine: GamePauseEnumEngineBarrier::FailedEngine,
                         },
                         proof,
+                        wall_time,
+                    )?;
+                    DesktopGameTransitionEnumEffect::SnapshotOnly
+                } else if state.session.phase() == GameEnumPhase::Active {
+                    let engine = if state.session.seats().mode() == GameEnumMode::LocalTwoPlayer {
+                        GamePauseEnumEngineBarrier::NoEngine
+                    } else {
+                        GamePauseEnumEngineBarrier::FailedEngine
+                    };
+                    state.lifecycle(
+                        GameSessionLifecycleEnumRequest::Pause(GamePauseRequest {
+                            expected_revision: state.session.revision(),
+                            cause: GamePauseEnumCause::Fault(GamePauseEnumFault::Engine),
+                            received_at: now,
+                            engine,
+                        }),
+                        proof,
+                        wall_time,
                     )?;
                     DesktopGameTransitionEnumEffect::Autosave
                 } else {
@@ -729,55 +889,66 @@ where
                 received_at,
             } => {
                 now = received_at;
-                if state.phase() == GameEnumPhase::Active
-                    && matches!(engine, GamePauseEnumEngineBarrier::FailedEngine)
-                {
-                    state.pause(
-                        GamePauseRequest {
-                            expected_revision: state.revision(),
-                            cause: GamePauseEnumCause::Fault(GamePauseEnumFault::Engine),
+                if state.session.phase() == GameEnumPhase::Active {
+                    state.lifecycle(
+                        GameSessionLifecycleEnumRequest::Pause(GamePauseRequest {
+                            expected_revision: state.session.revision(),
+                            cause: if matches!(engine, GamePauseEnumEngineBarrier::FailedEngine) {
+                                GamePauseEnumCause::Fault(GamePauseEnumFault::Engine)
+                            } else {
+                                GamePauseEnumCause::AutosaveFailure
+                            },
                             received_at: now,
-                            engine: GamePauseEnumEngineBarrier::FailedEngine,
+                            engine,
+                        }),
+                        proof,
+                        wall_time,
+                    )?;
+                }
+                if state.pending_result.is_none() {
+                    state.session.interrupt_for_save_failure(
+                        GameSaveFailureRequest {
+                            expected_revision: state.session.revision(),
+                            received_at: now,
+                            engine: GamePauseEnumEngineBarrier::NoEngine,
                         },
                         proof,
                     )?;
                 }
-                state.interrupt_for_save_failure(
-                    GameSaveFailureRequest {
-                        expected_revision: state.revision(),
-                        received_at: now,
-                        engine,
-                    },
-                    proof,
-                )?;
                 DesktopGameTransitionEnumEffect::SnapshotOnly
             }
         };
-        let mut snapshot = DesktopGameSnapshot::capture(state, now)?;
+        let mut snapshot = DesktopGameSnapshot::capture(&state.session, now)?;
         snapshot.retain_notice(notice);
-        let save = match effect {
-            DesktopGameTransitionEnumEffect::Autosave | DesktopGameTransitionEnumEffect::Quit => {
-                Some(GameStorageSaveRequest::capture(
-                    state,
-                    now,
-                    storage_revision,
-                )?)
-            }
-            DesktopGameTransitionEnumEffect::SnapshotOnly => None,
+        let save = if state.pending_result.is_none()
+            && matches!(
+                effect,
+                DesktopGameTransitionEnumEffect::Autosave | DesktopGameTransitionEnumEffect::Quit
+            ) {
+            Some(GameStorageSaveRequest::capture_with_change(
+                &state.session,
+                now,
+                storage_revision,
+                state.change(),
+            )?)
+        } else {
+            None
         };
-        let search = if state.phase() == GameEnumPhase::Active
-            && state.seats().seat(snapshot.live_turn()) == GameEnumSeat::Reckless
+        let search = if state.session.phase() == GameEnumPhase::Active
+            && state.session.seats().seat(snapshot.live_turn()) == GameEnumSeat::Reckless
         {
-            Some(state.engine_request(config)?)
+            Some(state.session.engine_request(config)?)
         } else {
             None
         };
         Ok(DesktopGameSupervisorComputed {
             snapshot,
-            checkpoint,
             save,
             search,
-            quit: matches!(effect, DesktopGameTransitionEnumEffect::Quit),
+            premove,
+            quit: state.pending_result.is_none()
+                && matches!(effect, DesktopGameTransitionEnumEffect::Quit),
+            failure: state.failure(),
         })
     }
 
@@ -791,6 +962,7 @@ where
                 session: Arc::clone(&self.session),
                 executor: Arc::clone(&self.executor),
                 clock: Arc::clone(&self.clock),
+                wall_time: Arc::clone(&self.wall_time),
                 proof: Arc::clone(&self.proof),
                 config: self.search_config,
                 storage_revision: self.storage_revision,
@@ -823,7 +995,18 @@ where
                 return Ok(());
             }
             if self.computing.is_none() {
-                if let Some(control) = self.deferred_controls.pop_front() {
+                let control = match self.deferred_controls.pop_front() {
+                    Some(control) => Some(control),
+                    None => match self.controls.try_recv() {
+                        Ok(control) => Some(control),
+                        Err(mpsc::error::TryRecvError::Empty) => None,
+                        Err(mpsc::error::TryRecvError::Disconnected) => {
+                            self.controls_closed = true;
+                            None
+                        }
+                    },
+                };
+                if let Some(control) = control {
                     self.handle(control).await?;
                 } else if self.save_failure.is_some()
                     && !self.events.borrow().snapshot.is_save_required()
@@ -854,6 +1037,11 @@ where
                         DesktopGameSupervisorEnumComputation::EngineMove(movement),
                         None,
                     );
+                } else if let Some(pending) = self.pending_premove.take()
+                    && self.context() == pending.expected
+                    && self.events.borrow().snapshot.phase() == GameEnumPhase::Active
+                {
+                    self.schedule(DesktopGameSupervisorEnumComputation::Premove(pending), None);
                 }
             }
             if self.controls_closed
@@ -863,6 +1051,9 @@ where
                 && self.writes.is_empty()
                 && !self.quit_ready
             {
+                if self.content_failure.is_some() {
+                    return Err(DesktopGameSupervisorError::SaveRequired);
+                }
                 let (response, receiver) = oneshot::channel();
                 drop(receiver);
                 self.handle(DesktopGameSupervisorEnvelope {
@@ -1034,12 +1225,14 @@ where
                 response.request.action,
                 DesktopGameCommandsEnumAction::RetryEngine
             ) {
-                state.validate_recovery(
+                state.session.validate_recovery(
                     response.request.expected_revision,
                     GamePauseEnumFault::Engine,
                 )
             } else {
-                state.validate_resume(response.request.expected_revision)
+                state
+                    .session
+                    .validate_resume(response.request.expected_revision)
             };
             self.session.replace(state)?;
             if let Err(error) = validation {
@@ -1153,23 +1346,23 @@ where
                 if let Some(response) = response {
                     response.complete(Err(Arc::new(error)));
                     Ok(())
+                } else if matches!(error, DesktopGameSupervisorError::Premove { .. }) {
+                    self.publish_notice(Arc::new(error));
+                    Ok(())
                 } else {
                     Err(error)
                 }
             }
             Ok(computed) => {
+                self.content_failure = computed.failure;
                 self.search_request = computed.search;
+                if let Some(expected) = computed.premove {
+                    self.pending_premove = Some(expected);
+                }
                 let mut event = self.events.borrow().clone();
                 let notice = event.snapshot.notice();
                 event.snapshot = computed.snapshot;
                 event.snapshot.retain_notice(notice);
-                if let Some(request) = computed.checkpoint {
-                    self.writes.push_back(DesktopGameSupervisorWrite {
-                        request,
-                        response: None,
-                        quit: false,
-                    });
-                }
                 if let Some(request) = computed.save {
                     self.writes.push_back(DesktopGameSupervisorWrite {
                         request,
@@ -1177,7 +1370,18 @@ where
                         quit: computed.quit,
                     });
                 } else if let Some(response) = response {
-                    response.complete(Ok(event.snapshot.clone()));
+                    let result =
+                        if matches!(response.request.action, DesktopGameCommandsEnumAction::Quit)
+                            && event.snapshot.is_save_required()
+                        {
+                            Err(Arc::new(DesktopGameSupervisorError::SaveRequired))
+                        } else {
+                            Ok(event.snapshot.clone())
+                        };
+                    response.complete(result);
+                }
+                if let Some(failure) = &self.content_failure {
+                    event.notice = Some(Arc::clone(failure));
                 }
                 event.persistence = self.persistence();
                 self.events.send_replace(event);
@@ -1214,7 +1418,7 @@ where
             quit: write.quit,
         });
         self.saving = Some(Box::pin(async move {
-            StorageGameDocumentRepository::new(client, &executor)
+            StorageLibraryPlayedRepository::new(client, &executor)
                 .save(request)
                 .await
         }));
@@ -1222,7 +1426,7 @@ where
 
     fn finish_save(
         &mut self,
-        result: Result<GameStorageReceipt, StorageGameDocumentError>,
+        result: Result<GameStorageReceipt, StorageLibraryError>,
     ) -> Result<(), DesktopGameSupervisorError> {
         let context = self
             .saving_context
@@ -1239,9 +1443,10 @@ where
                 let mut event = self.events.borrow().clone();
                 event.storage_revision = self.storage_revision;
                 event.snapshot.refresh_save_status(status);
-                if self.save_failure.is_none() {
-                    event.notice = None;
-                }
+                let owner = self.session.take()?;
+                self.content_failure = owner.failure();
+                self.session.replace(owner)?;
+                event.notice = self.content_failure.as_ref().map(Arc::clone);
                 event.persistence = self.persistence();
                 self.quit_ready |= context.quit;
                 self.events.send_replace(event);
@@ -1252,7 +1457,10 @@ where
                     response.complete(Ok(snapshot));
                 }
             }
-            Err(StorageGameDocumentError::Cancelled) => {
+            Err(
+                StorageLibraryError::Cancelled
+                | StorageLibraryError::Codec(StorageGameDocumentError::Cancelled),
+            ) => {
                 self.writes.push_front(DesktopGameSupervisorWrite {
                     request: context.request,
                     response: context.response,
@@ -1273,7 +1481,11 @@ where
                 self.pending_engine_move = None;
                 self.save_failure_at = Some(self.clock.now()?);
                 self.save_failure = Some(Arc::clone(&failure));
-                self.publish_notice(failure);
+                let mut owner = self.session.take()?;
+                owner.storage_failure = Some(Arc::clone(&failure));
+                self.content_failure = owner.failure();
+                self.session.replace(owner)?;
+                self.publish_notice(self.content_failure.as_ref().map_or(failure, Arc::clone));
             }
         }
         Ok(())
@@ -1319,7 +1531,7 @@ where
     }
 
     fn persistence(&self) -> DesktopGameSupervisorEnumPersistence {
-        match &self.save_failure {
+        match self.content_failure.as_ref().or(self.save_failure.as_ref()) {
             Some(failure) => DesktopGameSupervisorEnumPersistence::Failed(Arc::clone(failure)),
             None if self.saving.is_some() || !self.writes.is_empty() => {
                 DesktopGameSupervisorEnumPersistence::Pending
@@ -1392,6 +1604,8 @@ where
             && self.factory_request.is_none()
             && self.factory_shutdown_complete
             && self.save_failure.is_none()
+            && self.content_failure.is_none()
+            && self.session.is_current()
             && self
                 .engine
                 .as_ref()
@@ -1407,6 +1621,7 @@ where
         self.controls.close();
         self.search_request = None;
         self.active_search = None;
+        self.pending_premove = None;
         while let Ok(response) = self.ordinary.try_recv() {
             response.complete(Err(Arc::new(DesktopGameSupervisorError::Closed)));
         }
@@ -1419,13 +1634,56 @@ where
         if let Some(response) = self.factory_request.take() {
             response.complete(Err(Arc::new(DesktopGameSupervisorError::Closed)));
         }
+        let preparation = self.prepare_shutdown(deadline).await;
         let engine = Self::shutdown_engine(&mut self.engine, deadline);
         let factory = Self::shutdown_factory(&mut self.factory, deadline);
         let (engine, factory) = tokio::join!(engine, factory);
         self.factory_shutdown_complete = factory.is_ok();
         let resources = DesktopGameSupervisorError::combine(engine, factory);
         let work = self.observe_work(deadline).await;
-        DesktopGameSupervisorError::combine(resources, work)
+        DesktopGameSupervisorError::combine(
+            DesktopGameSupervisorError::combine(preparation, resources),
+            work,
+        )
+    }
+
+    async fn prepare_shutdown(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<(), DesktopGameSupervisorError> {
+        self.observe_computation(deadline).await?;
+        if self.events.borrow().snapshot.phase() != GameEnumPhase::Active {
+            return Ok(());
+        }
+        let received_at = self.clock.now()?;
+        let barrier = timeout_at(deadline, self.barrier(Instant::now().into_std()))
+            .await
+            .map_err(DesktopGameSupervisorError::Deadline)?;
+        match barrier {
+            Ok(engine) => {
+                self.schedule(
+                    DesktopGameSupervisorEnumComputation::Action(DesktopGameTransitionOptions {
+                        request: DesktopGameCommandsRequest {
+                            request_id: DesktopRequestId::new(),
+                            expected_revision: self.context().revision(),
+                            received_at,
+                            action: DesktopGameCommandsEnumAction::Quit,
+                        },
+                        engine,
+                        readiness: GameEnumEngineReadiness::Unavailable,
+                    }),
+                    None,
+                );
+                self.observe_computation(deadline).await
+            }
+            Err(error) => {
+                self.schedule(DesktopGameSupervisorEnumComputation::EngineFailure, None);
+                DesktopGameSupervisorError::combine(
+                    Err(error),
+                    self.observe_computation(deadline).await,
+                )
+            }
+        }
     }
 
     async fn shutdown_factory(
@@ -1499,7 +1757,10 @@ where
             }
             self.begin_save(retry_failure);
             if self.saving.is_none() {
-                return if self.writes.is_empty() && self.save_failure.is_none() {
+                return if self.writes.is_empty()
+                    && self.save_failure.is_none()
+                    && self.session.is_current()
+                {
                     Ok(())
                 } else {
                     Err(DesktopGameSupervisorError::SaveRequired)
@@ -1532,7 +1793,7 @@ where
     }
     async fn save_ready(
         waiting: &mut Option<DesktopGameSupervisorSaveFuture>,
-    ) -> Result<GameStorageReceipt, StorageGameDocumentError> {
+    ) -> Result<GameStorageReceipt, StorageLibraryError> {
         match waiting {
             Some(future) => future.await,
             None => pending().await,

@@ -1,3 +1,8 @@
+use chess::game;
+
+#[path = "game/storage_wall_time_fixture.rs"]
+mod game_storage_wall_time_fixture;
+
 #[path = "desktop/native/game_engine.rs"]
 mod desktop_native_game_engine;
 #[path = "engine/analysis.rs"]

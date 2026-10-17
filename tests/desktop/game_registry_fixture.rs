@@ -229,6 +229,7 @@ impl DesktopGameRegistryFixtureRuntime {
             storage: self.store.client(),
             executor: Arc::clone(&self.executor),
             clock: Arc::clone(&self.clock),
+            wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
             proof: Arc::clone(&self.proof),
             random: StdRng::seed_from_u64(81),
         }

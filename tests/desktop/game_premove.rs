@@ -412,6 +412,7 @@ impl DesktopGamePremoveFixture {
             storage: fixture.store.client(),
             executor: Arc::clone(&fixture.executor),
             clock: Arc::clone(&fixture.clock),
+            wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
             proof: Arc::new(DesktopGamePremoveProof),
             random: StdRng::seed_from_u64(81),
         });

@@ -1,3 +1,8 @@
+use chess::game;
+
+#[path = "game/storage_wall_time_fixture.rs"]
+mod game_storage_wall_time_fixture;
+
 #[path = "desktop/activation.rs"]
 mod desktop_activation;
 #[cfg(unix)]
@@ -58,6 +63,8 @@ mod desktop_native_game_resources;
 mod desktop_native_game_runtime;
 #[path = "desktop/native/game_service.rs"]
 mod desktop_native_game_service;
+#[path = "desktop/native/library_startup.rs"]
+mod desktop_native_library_startup;
 #[path = "desktop/request_cache.rs"]
 mod desktop_request_cache;
 #[path = "desktop/stream.rs"]

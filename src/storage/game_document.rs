@@ -1,3 +1,4 @@
+use std::collections::TryReserveError;
 use std::io::{Error as IoError, Write};
 use std::num::NonZeroU32;
 
@@ -7,6 +8,7 @@ use thiserror::Error;
 
 use crate::board::enums::BoardEnumColor;
 use crate::board::r#move::BoardMoveError;
+use crate::board::square::BoardSquare;
 use crate::board::start::BoardStart;
 use crate::capacity::executor::{
     CapacityExecutor, CapacityExecutorCancellation, CapacityExecutorError,
@@ -24,10 +26,10 @@ use crate::game::adjudication::{
 use crate::game::configuration::GameConfigurationOptions;
 use crate::game::engine_provider::{GameEngineRequestError, GameEngineSearchConfig};
 use crate::game::enums::{
-    GameEnumMode, GameEnumOutcomeReason, GameEnumResult, GameEnumSeat, GameId, GameMoveId,
-    GameRevision,
+    GameEnumMarkingColor, GameEnumMode, GameEnumOutcomeReason, GameEnumResult, GameEnumSeat,
+    GameId, GameMoveId, GameRevision,
 };
-use crate::game::move_node::GameMoveNodeAnnotationError;
+use crate::game::move_node::{GameMoveNodeAnnotationError, GameMoveNodeAnnotations};
 use crate::game::outcome::{GameOutcome, GameOutcomeError};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::{
@@ -94,6 +96,8 @@ pub enum StorageGameDocumentError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Utf8(#[from] std::string::FromUtf8Error),
+    #[error(transparent)]
+    Allocation(#[from] TryReserveError),
     #[error(transparent)]
     Store(#[from] StorageDocumentError),
     #[error(transparent)]
@@ -213,7 +217,7 @@ impl StorageGameDocument {
         Self::from_snapshot(&session.restoration(now)?, None)
     }
 
-    fn from_snapshot(
+    pub(crate) fn from_snapshot(
         snapshot: &GameSessionRestoreOptions,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<Self, StorageGameDocumentError> {
@@ -223,6 +227,13 @@ impl StorageGameDocument {
                 StorageGameDocumentPlayed::from_snapshot(snapshot, cancellation)?,
             )),
         })
+    }
+
+    pub(crate) fn snapshot_memory_bytes(
+        snapshot: &GameSessionRestoreOptions,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<usize, StorageGameDocumentError> {
+        StorageGameDocumentSnapshotMemory::measure(snapshot, cancellation)
     }
 
     pub fn capture_notation(
@@ -268,10 +279,30 @@ impl StorageGameDocument {
         &self,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<String, StorageGameDocumentError> {
+        self.encode_with_memory(cancellation, 0, |_required| Ok(()))
+    }
+
+    pub(crate) fn json_with_memory(
+        &self,
+        cancellation: &CapacityExecutorCancellation,
+        retained_bytes: usize,
+        reserve: impl FnMut(usize) -> Result<(), StorageDocumentError>,
+    ) -> Result<String, StorageGameDocumentError> {
+        self.encode_with_memory(Some(cancellation), retained_bytes, reserve)
+    }
+
+    fn encode_with_memory(
+        &self,
+        cancellation: Option<&CapacityExecutorCancellation>,
+        retained_bytes: usize,
+        reserve: impl FnMut(usize) -> Result<(), StorageDocumentError>,
+    ) -> Result<String, StorageGameDocumentError> {
         let mut writer = StorageGameDocumentWriter {
             bytes: Vec::new(),
             failure: None,
             cancellation,
+            retained_bytes,
+            reserve,
         };
         let result = serde_json::to_writer(
             &mut writer,
@@ -380,9 +411,109 @@ impl StorageGameDocument {
     }
 }
 
+struct StorageGameDocumentSnapshotMemory {
+    bytes: usize,
+}
+
+impl StorageGameDocumentSnapshotMemory {
+    const UCI_CAPACITY: usize = 8;
+    const MIN_EXTENSION_CAPACITY: usize = 4;
+
+    fn measure(
+        snapshot: &GameSessionRestoreOptions,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<usize, StorageGameDocumentError> {
+        StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+        if snapshot.moves.len() > StorageGameDocument::MAX_MOVES {
+            return Err(StorageGameDocumentError::TooManyMoves);
+        }
+        let mut memory = Self {
+            bytes: std::mem::size_of::<StorageGameDocumentPlayed>(),
+        };
+        memory.add_items::<u8>(uuid::fmt::Hyphenated::LENGTH)?;
+        memory.add_items::<[u8; 2]>(snapshot.session.start.initial_fen().len())?;
+        memory.add_items::<StorageGameDocumentMove>(snapshot.moves.len())?;
+        memory.add_items::<[u8; Self::UCI_CAPACITY]>(snapshot.moves.len())?;
+        memory.add_items::<StorageGameDocumentStage>(snapshot.clock.control().stages().len())?;
+        memory.add_items::<ClockStage>(snapshot.clock.control().stages().len())?;
+        memory.annotations(&snapshot.root_annotations)?;
+        for movement in &snapshot.moves {
+            StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+            memory.annotations(&movement.annotations)?;
+        }
+        let metadata = &snapshot.session.metadata;
+        let known = metadata.known();
+        for text in [
+            &known.event,
+            &known.site,
+            &known.round,
+            &known.white,
+            &known.black,
+            &known.opening,
+            &known.variation,
+            &known.annotator,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            memory.text(text.as_str())?;
+        }
+        if let Some(code) = &known.eco {
+            memory.text(code.as_str())?;
+        }
+        let extensions = metadata.extensions();
+        if !extensions.is_empty() {
+            let capacity = extensions
+                .len()
+                .checked_next_power_of_two()
+                .ok_or(StorageGameDocumentError::TooLarge)?
+                .max(Self::MIN_EXTENSION_CAPACITY);
+            let peak = capacity
+                .checked_add(capacity / 2)
+                .ok_or(StorageGameDocumentError::TooLarge)?;
+            memory.add_items::<(String, String)>(peak)?;
+        }
+        for extension in extensions {
+            StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+            memory.text(extension.name())?;
+            memory.text(extension.value().as_str())?;
+        }
+        StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+        Ok(memory.bytes)
+    }
+
+    fn add_items<T>(&mut self, count: usize) -> Result<(), StorageGameDocumentError> {
+        self.bytes = count
+            .checked_mul(std::mem::size_of::<T>())
+            .and_then(|bytes| self.bytes.checked_add(bytes))
+            .ok_or(StorageGameDocumentError::TooLarge)?;
+        Ok(())
+    }
+
+    fn text(&mut self, text: &str) -> Result<(), StorageGameDocumentError> {
+        if text.len() > StorageGameDocument::MAX_TEXT_BYTES {
+            return Err(StorageGameDocumentError::TextTooLarge);
+        }
+        self.add_items::<u8>(text.len())
+    }
+
+    fn annotations(
+        &mut self,
+        annotations: &GameMoveNodeAnnotations,
+    ) -> Result<(), StorageGameDocumentError> {
+        self.text(annotations.notes())?;
+        self.add_items::<u8>(annotations.nags().len())?;
+        self.add_items::<(GameEnumMarkingColor, BoardSquare, Option<BoardSquare>)>(
+            annotations.markings().len(),
+        )
+    }
+}
+
 enum StorageGameDocumentEnumWriteFailure {
     Size,
     Cancelled,
+    Memory(StorageDocumentError),
+    Allocation(TryReserveError),
 }
 
 impl StorageGameDocumentEnumWriteFailure {
@@ -390,28 +521,68 @@ impl StorageGameDocumentEnumWriteFailure {
         match self {
             Self::Size => StorageGameDocumentError::TooLarge,
             Self::Cancelled => StorageGameDocumentError::Cancelled,
+            Self::Memory(error) => error.into(),
+            Self::Allocation(error) => error.into(),
         }
     }
 }
 
-struct StorageGameDocumentWriter<'a> {
+struct StorageGameDocumentWriter<'a, F> {
     bytes: Vec<u8>,
     failure: Option<StorageGameDocumentEnumWriteFailure>,
     cancellation: Option<&'a CapacityExecutorCancellation>,
+    retained_bytes: usize,
+    reserve: F,
 }
 
-impl Write for StorageGameDocumentWriter<'_> {
+impl<F> StorageGameDocumentWriter<'_, F>
+where
+    F: FnMut(usize) -> Result<(), StorageDocumentError>,
+{
+    const MIN_CAPACITY: usize = 8;
+
+    fn reserve(&mut self, additional: usize) -> Result<(), StorageGameDocumentEnumWriteFailure> {
+        let required = self
+            .bytes
+            .len()
+            .checked_add(additional)
+            .filter(|required| *required <= StorageDocumentStore::MEMORY_BUDGET)
+            .ok_or(StorageGameDocumentEnumWriteFailure::Size)?;
+        if required <= self.bytes.capacity() {
+            return Ok(());
+        }
+        let capacity = self
+            .bytes
+            .capacity()
+            .checked_mul(2)
+            .ok_or(StorageGameDocumentEnumWriteFailure::Size)?
+            .max(required)
+            .clamp(Self::MIN_CAPACITY, StorageDocumentStore::MEMORY_BUDGET);
+        let peak = self
+            .retained_bytes
+            .checked_add(self.bytes.capacity())
+            .and_then(|bytes| bytes.checked_add(capacity))
+            .ok_or(StorageGameDocumentEnumWriteFailure::Size)?;
+        (self.reserve)(peak).map_err(StorageGameDocumentEnumWriteFailure::Memory)?;
+        self.bytes
+            .try_reserve_exact(capacity - self.bytes.len())
+            .map_err(StorageGameDocumentEnumWriteFailure::Allocation)?;
+        Ok(())
+    }
+}
+
+impl<F> Write for StorageGameDocumentWriter<'_, F>
+where
+    F: FnMut(usize) -> Result<(), StorageDocumentError>,
+{
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         let failure = if self
             .cancellation
             .is_some_and(CapacityExecutorCancellation::is_cancelled)
         {
             Some(StorageGameDocumentEnumWriteFailure::Cancelled)
-        } else if bytes.len() > StorageDocumentStore::MEMORY_BUDGET.saturating_sub(self.bytes.len())
-        {
-            Some(StorageGameDocumentEnumWriteFailure::Size)
         } else {
-            None
+            self.reserve(bytes.len()).err()
         };
         if let Some(failure) = failure {
             self.failure = Some(failure);
@@ -492,6 +663,8 @@ enum StorageGameDocumentEnumInterruption {
     Paused(#[serde(with = "StorageGameDocumentEnumPauseCause")] GamePauseEnumCause),
     RecoveryRequired(#[serde(with = "StorageGameDocumentEnumFault")] GamePauseEnumFault),
     Recovered(#[serde(with = "StorageGameDocumentEnumFault")] GamePauseEnumFault),
+    #[serde(skip)]
+    PendingResult,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -976,5 +1149,70 @@ impl GameStorageRepository for StorageGameDocumentRepository<'_> {
             return Err(StorageGameDocumentError::Identity);
         }
         Ok(Some(GameStorageRecovered::new(session, storage_revision)))
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use std::io::Write;
+
+    use crate::storage::document_store::StorageDocumentError;
+    use crate::storage::game_document::{
+        StorageGameDocumentEnumWriteFailure, StorageGameDocumentWriter,
+    };
+
+    #[test]
+    fn refused_growth_preserves_existing_encoded_bytes() -> Result<(), std::io::Error> {
+        let mut requests = Vec::new();
+        let mut writer = StorageGameDocumentWriter {
+            bytes: Vec::new(),
+            failure: None,
+            cancellation: None,
+            retained_bytes: 128,
+            reserve: |required| {
+                requests.push(required);
+                if requests.len() == 1 {
+                    Ok(())
+                } else {
+                    Err(StorageDocumentError::Saturated)
+                }
+            },
+        };
+        writer.write_all(b"abc")?;
+        let capacity = writer.bytes.capacity();
+        assert!(writer.write_all(b"defghijkl").is_err());
+        assert_eq!(writer.bytes, b"abc");
+        assert_eq!(writer.bytes.capacity(), capacity);
+        assert!(matches!(
+            writer.failure,
+            Some(StorageGameDocumentEnumWriteFailure::Memory(
+                StorageDocumentError::Saturated
+            ))
+        ));
+        drop(writer);
+        assert_eq!(requests, [136, 152]);
+        Ok(())
+    }
+
+    #[test]
+    fn overflowing_growth_refuses_before_requesting_memory() {
+        let mut requested = false;
+        let mut writer = StorageGameDocumentWriter {
+            bytes: vec![b'a'],
+            failure: None,
+            cancellation: None,
+            retained_bytes: 0,
+            reserve: |_required| {
+                requested = true;
+                Ok(())
+            },
+        };
+        assert!(matches!(
+            writer.reserve(usize::MAX),
+            Err(StorageGameDocumentEnumWriteFailure::Size)
+        ));
+        assert_eq!(writer.bytes, b"a");
+        drop(writer);
+        assert!(!requested);
     }
 }

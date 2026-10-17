@@ -44,6 +44,7 @@ async fn failed_quit_retains_explicit_save_and_quit_recovery_without_losing_the_
             storage: fixture.store.client(),
             executor: Arc::clone(&fixture.executor),
             clock: Arc::new(DesktopGameRegistryFixtureClock::default()),
+            wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
             proof: Arc::new(DesktopGameRegistryFixtureProof::default()),
             random: StdRng::seed_from_u64(81),
         });
@@ -141,6 +142,7 @@ async fn independent_local_games_route_moves_publish_snapshots_and_shutdown_dura
         storage: store.client(),
         executor: Arc::clone(&executor),
         clock: Arc::new(DesktopGameRegistryFixtureClock::default()),
+        wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
         proof: Arc::new(DesktopGameRegistryFixtureProof::default()),
         random: StdRng::seed_from_u64(81),
     });

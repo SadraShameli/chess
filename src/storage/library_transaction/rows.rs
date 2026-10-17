@@ -11,6 +11,9 @@ use crate::game::library_organization::{
 use crate::game::session::{GameMetadataDate, GameMetadataOpeningCode, GameMetadataText};
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::game_document::StorageGameDocumentEnumContentKind;
+use crate::storage::library_inventory::{
+    StorageLibraryInventoryCursor, StorageLibraryInventoryEntry, StorageLibraryInventoryPage,
+};
 use crate::storage::library_prepared::{
     StorageLibraryEnumStartKind, StorageLibraryProjection, StorageLibraryProjectionOptions,
 };
@@ -367,6 +370,55 @@ impl StorageLibraryTransactionRows {
                 row.get::<_, String>(0)?.parse()?,
                 StorageLibraryError::content_revision(&row.get::<_, String>(1)?)?,
                 row.get(2)?,
+            ));
+        }
+        let next = if has_more {
+            candidates
+                .last()
+                .map(|candidate| StorageLibraryAdoptionCursor::after(candidate.id()))
+        } else {
+            None
+        };
+        Ok(StorageLibraryAdoptionPage::new(
+            candidates,
+            next,
+            StorageLibraryTransaction::catalog(transaction)?,
+            reservation,
+        ))
+    }
+
+    pub(super) fn played_inventory(
+        transaction: &Transaction<'_>,
+        cursor: StorageLibraryInventoryCursor,
+        memory: &Arc<Semaphore>,
+    ) -> Result<StorageLibraryAdoptionPage, StorageLibraryError> {
+        let reservation = StorageLibraryMemory::new(
+            memory,
+            StorageLibraryInventoryPage::PAGE_SIZE
+                * (std::mem::size_of::<StorageLibraryAdoptionCandidate>()
+                    + std::mem::size_of::<StorageLibraryInventoryEntry>()),
+        )?;
+        let mut statement = transaction.prepare(
+            "SELECT e.game_id, e.content_revision FROM library_entries e JOIN documents d ON d.id = e.game_id WHERE e.content_revision = d.revision AND e.content_kind = ?1 AND e.location = ?2 AND e.trashed_ms IS NULL AND (?3 IS NULL OR e.game_id > ?3) ORDER BY e.game_id LIMIT ?4",
+        )?;
+        let mut rows = statement.query(params![
+            StorageLibraryProjection::kind_sql(StorageGameDocumentEnumContentKind::Played),
+            StorageTrashEnumLocation::Library.sql(),
+            cursor.boundary().map(|id| id.as_uuid().to_string()),
+            i64::try_from(StorageLibraryInventoryPage::PAGE_SIZE + 1)?,
+        ])?;
+        let mut candidates = Vec::with_capacity(StorageLibraryInventoryPage::PAGE_SIZE);
+        let mut has_more = false;
+        while let Some(row) = rows.next()? {
+            if candidates.len() == StorageLibraryInventoryPage::PAGE_SIZE {
+                has_more = true;
+                break;
+            }
+            let id = row.get::<_, String>(0)?.parse()?;
+            candidates.push(StorageLibraryAdoptionCandidate::new(
+                id,
+                StorageLibraryError::content_revision(&row.get::<_, String>(1)?)?,
+                true,
             ));
         }
         let next = if has_more {

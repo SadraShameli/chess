@@ -6,9 +6,9 @@ use std::time::{Duration, Instant as StandardInstant};
 
 use rand::{Rng, rngs::StdRng};
 use thiserror::Error;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout_at};
-use uuid::Uuid;
 
 use crate::capacity::executor::CapacityExecutor;
 use crate::clock::time_provider::{ClockTimeProvider, ClockTimeProviderMonotonic};
@@ -24,15 +24,22 @@ use crate::desktop::native::game_resources::{
 use crate::desktop::native::game_runtime::{
     DesktopNativeGameRuntime, DesktopNativeGameRuntimeError, DesktopNativeGameRuntimePort,
 };
+use crate::desktop::native::library_startup::{
+    DesktopNativeLibraryStartup, DesktopNativeLibraryStartupEnumIssueCause,
+    DesktopNativeLibraryStartupEnumReadiness, DesktopNativeLibraryStartupError,
+};
 use crate::game::adjudication::GameAdjudicationMateProofProvider;
 use crate::game::engine_provider::GameEngineProvider;
-use crate::game::enums::{GameEnumPhase, GameIdentityError};
+use crate::game::enums::{GameEnumPhase, GameId, GameIdentityError};
 use crate::game::mate_proof::{GameMateProof, GameMateProofBudget, GameMateProofControl};
-use crate::game::storage_repository::GameStorageRepository;
-use crate::storage::document_store::{
-    StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
+use crate::storage::document_store::{StorageDocumentClient, StorageDocumentError};
+use crate::storage::game_document::StorageGameDocumentError;
+use crate::storage::library_inventory::{
+    StorageLibraryInventoryCursor, StorageLibraryInventoryRepository,
 };
-use crate::storage::game_document::{StorageGameDocumentError, StorageGameDocumentRepository};
+use crate::storage::library_record::StorageLibraryEnumContent;
+use crate::storage::library_repository::{StorageLibraryError, StorageLibraryRepository};
+use crate::storage::trash::StorageTrashEnumLocation;
 
 #[derive(Debug, Error)]
 pub enum DesktopNativeGameServiceError {
@@ -66,6 +73,10 @@ pub enum DesktopNativeGameServiceError {
     GameDocument(#[from] StorageGameDocumentError),
     #[error(transparent)]
     Identity(#[from] GameIdentityError),
+    #[error(transparent)]
+    Library(#[from] StorageLibraryError),
+    #[error(transparent)]
+    LibraryStartup(#[from] DesktopNativeLibraryStartupError),
 }
 
 impl DesktopNativeGameServiceError {
@@ -116,7 +127,8 @@ type DesktopNativeGameServiceOutcome<F, C, P, R> = (
 );
 type DesktopNativeGameServiceRestoreOutcome<F, C, P, R> = (
     DesktopGameRegistry<F, C, P, R>,
-    Option<Uuid>,
+    DesktopNativeLibraryStartup,
+    Option<GameId>,
     Result<(), DesktopNativeGameServiceError>,
 );
 type DesktopNativeGameServiceRestoreFuture<F, C, P, R> =
@@ -137,7 +149,9 @@ pub struct DesktopNativeGameService<
     startup: Option<DesktopGameRegistry<F, C, P, R>>,
     restoring: Option<DesktopNativeGameServiceRestoreFuture<F, C, P, R>>,
     storage: Option<DesktopNativeGameServiceStorage>,
-    restored_after: Option<Uuid>,
+    library: Option<DesktopNativeLibraryStartup>,
+    library_readiness: watch::Receiver<DesktopNativeLibraryStartupEnumReadiness>,
+    restored_after: Option<GameId>,
     restoration_failure: Option<Arc<DesktopNativeGameServiceError>>,
     registry_port: DesktopGameRegistryPort,
     port: Option<DesktopNativeGameRuntimePort>,
@@ -167,16 +181,26 @@ where
     P: GameAdjudicationMateProofProvider + Send + Sync + RefUnwindSafe + 'static,
     R: Rng + Send + UnwindSafe + 'static,
 {
+    const LIBRARY_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+
     pub fn new(options: DesktopNativeGameServiceOptions<F, C, P, R>) -> Self {
         let storage = DesktopNativeGameServiceStorage {
             client: options.storage.clone(),
             executor: Arc::clone(&options.executor),
         };
         let (registry, registry_port) = DesktopGameRegistry::new(options);
+        let library = DesktopNativeLibraryStartup::new(
+            storage.client.clone(),
+            Arc::clone(&storage.executor),
+            Instant::now() + Self::LIBRARY_STARTUP_TIMEOUT,
+        );
+        let library_readiness = library.subscribe();
         Self {
             startup: Some(registry),
             restoring: None,
             storage: Some(storage),
+            library: Some(library),
+            library_readiness,
             restored_after: None,
             restoration_failure: None,
             registry_port,
@@ -208,9 +232,14 @@ where
                 .take()
                 .ok_or(DesktopNativeGameServiceError::Started)?;
             let mut after = self.restored_after;
+            let mut library = self
+                .library
+                .take()
+                .ok_or(DesktopNativeGameServiceError::Started)?;
             self.restoring = Some(Box::pin(async move {
-                let result = Self::restore_registry(&mut registry, storage, &mut after).await;
-                (registry, after, result)
+                let result =
+                    Self::restore_registry(&mut registry, storage, &mut library, &mut after).await;
+                (registry, library, after, result)
             }));
         }
         self.observe_restore().await
@@ -219,33 +248,74 @@ where
     async fn restore_registry(
         registry: &mut DesktopGameRegistry<F, C, P, R>,
         storage: DesktopNativeGameServiceStorage,
-        after: &mut Option<Uuid>,
+        library: &mut DesktopNativeLibraryStartup,
+        after: &mut Option<GameId>,
     ) -> Result<(), DesktopNativeGameServiceError> {
-        let repository =
-            StorageGameDocumentRepository::new(storage.client.clone(), &storage.executor);
+        library.run().await?;
+        let repository = StorageLibraryRepository::new(storage.client.clone(), &storage.executor);
+        let inventory = StorageLibraryInventoryRepository::new(storage.client);
         loop {
-            let page = storage.client.inventory(*after).await?;
-            for document in &page {
-                let game = document.id().to_string().parse()?;
-                let restored = repository
-                    .load(game)
-                    .await?
-                    .ok_or(DesktopNativeGameServiceError::MissingSavedGame)?;
-                if matches!(
-                    restored.session().phase(),
-                    GameEnumPhase::Setup | GameEnumPhase::Active | GameEnumPhase::Interrupted
-                ) {
-                    let storage_revision = restored.storage_revision();
-                    registry
-                        .restore(DesktopGameRegistryRestored {
-                            session: restored.into_session(),
-                            storage_revision,
-                        })
-                        .await?;
+            let cursor = after.map_or_else(
+                StorageLibraryInventoryCursor::start,
+                StorageLibraryInventoryCursor::after,
+            );
+            let page = inventory.page(cursor).await?;
+            library.observe_recovery_catalog(page.catalog_revision());
+            for document in page.entries() {
+                let loaded = repository.load(document.id()).await;
+                match loaded {
+                    Ok(Some(restored))
+                        if restored.content_revision() != document.content_revision()
+                            || restored.location() != StorageTrashEnumLocation::Library =>
+                    {
+                        library.record_recovery_issue(
+                            document.id().as_uuid(),
+                            document.content_revision(),
+                            DesktopNativeLibraryStartupEnumIssueCause::Changed(Some(
+                                restored.content_revision(),
+                            )),
+                        );
+                    }
+                    Ok(Some(restored)) => {
+                        let storage_revision = restored.content_revision();
+                        match restored.into_record().into_content() {
+                            StorageLibraryEnumContent::Played(session) => {
+                                if matches!(
+                                    session.phase(),
+                                    GameEnumPhase::Setup
+                                        | GameEnumPhase::Active
+                                        | GameEnumPhase::Interrupted
+                                ) {
+                                    registry
+                                        .restore(DesktopGameRegistryRestored {
+                                            session: *session,
+                                            storage_revision,
+                                        })
+                                        .await?;
+                                }
+                            }
+                            StorageLibraryEnumContent::Notation(_) => library
+                                .record_recovery_issue(
+                                    document.id().as_uuid(),
+                                    document.content_revision(),
+                                    DesktopNativeLibraryStartupEnumIssueCause::ContentKind,
+                                ),
+                        }
+                    }
+                    Ok(None) => library.record_recovery_issue(
+                        document.id().as_uuid(),
+                        document.content_revision(),
+                        DesktopNativeLibraryStartupEnumIssueCause::Missing,
+                    ),
+                    Err(error) => library.record_recovery_issue(
+                        document.id().as_uuid(),
+                        document.content_revision(),
+                        DesktopNativeLibraryStartupEnumIssueCause::Storage(Arc::new(error)),
+                    ),
                 }
                 *after = Some(document.id());
             }
-            if page.len() < StorageDocumentStore::INVENTORY_PAGE_SIZE {
+            if page.entries().is_empty() {
                 return Ok(());
             }
         }
@@ -255,9 +325,10 @@ where
         let Some(restoring) = &mut self.restoring else {
             return Ok(());
         };
-        let (registry, after, result) = restoring.await;
+        let (registry, library, after, result) = restoring.await;
         self.restoring = None;
         self.startup = Some(registry);
+        self.library = Some(library);
         self.restored_after = after;
         if let Err(error) = result {
             let error = Arc::new(error);
@@ -294,6 +365,10 @@ where
         Ok(port)
     }
 
+    pub fn library_readiness(&self) -> DesktopNativeLibraryStartupEnumReadiness {
+        self.library_readiness.borrow().clone()
+    }
+
     pub fn is_shutdown_complete(&self) -> bool {
         self.is_closing
             && self.startup.is_none()
@@ -301,6 +376,10 @@ where
             && self.retained.is_none()
             && self.worker.is_none()
             && self.worker_failure.is_none()
+            && self
+                .library
+                .as_ref()
+                .is_none_or(|library| !library.has_pending())
             && self
                 .port
                 .as_ref()
@@ -329,6 +408,11 @@ where
             if registry.is_shutdown_complete() {
                 self.startup = None;
             }
+        }
+        if let Some(library) = &mut self.library
+            && let Err(error) = library.drain_retained(deadline).await
+        {
+            DesktopNativeGameServiceError::record(&mut failure, error.into());
         }
         if self
             .worker
@@ -370,6 +454,7 @@ where
         }
         if self.is_shutdown_complete() {
             self.storage = None;
+            self.library = None;
         }
         failure.map_or(Ok(()), Err)
     }
