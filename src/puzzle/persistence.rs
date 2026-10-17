@@ -123,11 +123,8 @@ impl PuzzlePersistenceIdentity {
     }
 
     fn validate(&self) -> Result<PuzzleDefinitionIdentity, PuzzlePersistenceError> {
-        for value in [&self.source, &self.version, &self.puzzle] {
-            if value.len() > PuzzlePersistenceCodec::MAX_TOKEN_BYTES {
-                return Err(PuzzlePersistenceError::Budget);
-            }
-        }
+        PuzzleDefinitionIdentity::validate_token_lengths(&self.source, &self.version, &self.puzzle)
+            .map_err(|_limit| PuzzlePersistenceError::Budget)?;
         Ok(PuzzleDefinitionIdentity::new(
             self.source.clone(),
             self.version.clone(),
@@ -207,14 +204,8 @@ impl PuzzlePersistenceDefinition {
     }
 
     fn validate(&self) -> Result<PuzzleDefinition, PuzzlePersistenceError> {
-        if self.lines.len() > PuzzlePersistenceCodec::MAX_LINES
-            || self
-                .lines
-                .iter()
-                .any(|line| line.len() > PuzzlePersistenceCodec::MAX_LINE_PLIES)
-        {
-            return Err(PuzzlePersistenceError::Budget);
-        }
+        PuzzleDefinition::validate_solution_lengths(self.lines.iter().map(Vec::len))
+            .map_err(|_limit| PuzzlePersistenceError::Budget)?;
         let initial = BoardPosition::from_fen(&self.fen, self.variant.domain())?;
         let lines = self
             .lines
@@ -1142,10 +1133,7 @@ impl PuzzlePersistenceCodec {
     pub const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
     pub const MAX_DEFINITIONS: usize = 200_000;
     pub const MAX_EVENTS: usize = 100_000;
-    const MAX_TOKEN_BYTES: usize = 1_024;
     const MAX_EVENT_BYTES: usize = 64 * 1_024;
-    const MAX_LINES: usize = 1_024;
-    const MAX_LINE_PLIES: usize = 4_096;
 
     fn bounded_json<T: Serialize>(value: &T) -> Result<String, PuzzlePersistenceError> {
         let encoded = serde_json::to_string(value)?;

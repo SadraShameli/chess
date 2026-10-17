@@ -152,3 +152,12 @@ unstaged binary patches, original HEADs and verified content manifests remain in
 Verification covered 507 and 506 worktree file/link entries and six metadata
 files per checkout. The service, admission, workspace and native-window review
 worktrees remain retained while their current integration is under validation.
+
+After saved-workspace checkpoint `8c53e89` was pushed and remote-verified, its nine
+completed component/review worktrees and local branches were removed. Their full
+worktree/Git metadata archives, binary patches, HEAD records and verified content
+manifests remain in
+`.git/parallel-patches/completed-saved-workspace-worktrees-20261017/`.
+All 4,747 file/link entries and 54 metadata files were checked against the live
+snapshots again before removal. Active CSV and subsequent implementation
+worktrees were excluded.

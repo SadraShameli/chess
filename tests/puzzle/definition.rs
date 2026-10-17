@@ -12,6 +12,23 @@ use crate::puzzle_fixture::PuzzleFixture;
 
 struct PuzzleDefinitionFixture;
 
+#[test]
+fn identity_limit_refuses_every_oversized_identity_component()
+-> Result<(), Box<dyn std::error::Error>> {
+    let long = "x".repeat(1_025);
+    for (source, version, puzzle) in [
+        (long.clone(), "v1".into(), "puzzle".into()),
+        ("source".into(), long.clone(), "puzzle".into()),
+        ("source".into(), "v1".into(), long),
+    ] {
+        assert!(
+            PuzzleDefinitionIdentity::new(source, version, puzzle).is_err(),
+            "an identity component exceeds the persisted token boundary"
+        );
+    }
+    Ok(())
+}
+
 impl PuzzleDefinitionFixture {
     fn assert_paths(tree: &PuzzleDefinitionTree) -> Result<(), Box<dyn std::error::Error>> {
         for line in tree.lines() {

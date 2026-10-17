@@ -37,6 +37,8 @@ mod game_tree;
 
 #[path = "puzzle/checkpoint.rs"]
 mod puzzle_checkpoint;
+#[path = "puzzle/csv_import.rs"]
+mod puzzle_csv_import;
 #[path = "puzzle/definition.rs"]
 mod puzzle_definition;
 #[path = "puzzle/fixture.rs"]

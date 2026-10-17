@@ -1,5 +1,6 @@
 pub mod attempt;
 pub mod checkpoint;
+pub mod csv_import;
 pub mod definition;
 pub mod enums;
 pub mod identity;

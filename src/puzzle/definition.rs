@@ -13,17 +13,42 @@ pub struct PuzzleDefinition {
 }
 
 impl PuzzleDefinition {
+    pub const MAX_SOLUTION_LINES: usize = 1_024;
+    pub const MAX_SOLUTION_LINE_PLIES: usize = 4_096;
+
     pub fn new(
         identity: PuzzleDefinitionIdentity,
         starting_position: BoardPosition,
         lines: Vec<Vec<BoardMove>>,
         metadata: PuzzleDefinitionMetadata,
     ) -> Result<Self, PuzzleDefinitionTreeError> {
+        Self::validate_solution_lengths(lines.iter().map(Vec::len))?;
         Ok(Self {
             identity,
             solution: PuzzleDefinitionTree::new(starting_position, lines)?,
             metadata,
         })
+    }
+
+    pub(crate) fn validate_solution_lengths(
+        lengths: impl ExactSizeIterator<Item = usize>,
+    ) -> Result<(), PuzzleDefinitionTreeError> {
+        if lengths.len() > Self::MAX_SOLUTION_LINES {
+            return Err(PuzzleDefinitionTreeError::TooManyLines {
+                actual: lengths.len(),
+                limit: Self::MAX_SOLUTION_LINES,
+            });
+        }
+        for (line, actual) in lengths.enumerate() {
+            if actual > Self::MAX_SOLUTION_LINE_PLIES {
+                return Err(PuzzleDefinitionTreeError::LineTooLong {
+                    line,
+                    actual,
+                    limit: Self::MAX_SOLUTION_LINE_PLIES,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn identity(&self) -> &PuzzleDefinitionIdentity {

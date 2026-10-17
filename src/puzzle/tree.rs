@@ -13,6 +13,14 @@ pub struct PuzzleDefinitionLineId(usize);
 pub enum PuzzleDefinitionTreeError {
     #[error("A puzzle must contain at least one accepted solution line")]
     EmptySolutions,
+    #[error("A puzzle has {actual} solution lines, exceeding the limit {limit}")]
+    TooManyLines { actual: usize, limit: usize },
+    #[error("Puzzle solution line {line} has {actual} plies, exceeding the limit {limit}")]
+    LineTooLong {
+        line: usize,
+        actual: usize,
+        limit: usize,
+    },
     #[error("Puzzle solution line {line} contains no moves")]
     EmptyLine { line: usize },
     #[error("Puzzle solution line {line} duplicates line {previous:?}")]
