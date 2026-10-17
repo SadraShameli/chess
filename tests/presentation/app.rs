@@ -15,7 +15,7 @@ use chess::desktop::dto::{
 };
 use chess::desktop::error::{DesktopEnumFailureCode, DesktopFailure};
 use chess::desktop::messages::DesktopEnumCommand;
-use chess::desktop::preferences::DesktopPreferencesEnumTheme;
+use chess::desktop::preferences::{DesktopPreferencesEnumMotion, DesktopPreferencesEnumTheme};
 use chess::presentation::action::registry::PresentationActionEnumId;
 use chess::presentation::app::{PresentationApp, PresentationAppError};
 use chess::presentation::board::scene::PresentationBoardScene;
@@ -612,6 +612,17 @@ fn settings_appearance_changes_are_immediate_and_truthfully_session_scoped()
                 .is_some_and(|value| value.contains("for this session")
                     && value.contains("not available yet")))
     );
+    assert_eq!(
+        fixture.presentation.preferences().motion(),
+        DesktopPreferencesEnumMotion::Full
+    );
+    fixture.click(&output, "Reduced motion")?;
+    fixture.frame(None, Vec::new())?;
+    assert_eq!(
+        fixture.presentation.preferences().motion(),
+        DesktopPreferencesEnumMotion::Reduced
+    );
+    let (output, _) = fixture.frame(None, Vec::new())?;
     fixture.click(&output, "Light")?;
     fixture.frame(None, Vec::new())?;
     assert_eq!(

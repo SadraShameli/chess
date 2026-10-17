@@ -26,6 +26,12 @@ impl PresentationApp {
         if let Some(fen) = editor.copied_fen.take() {
             ui.ctx().copy_text(fen);
         }
+        if let Some(study) = editor.created_study {
+            ui.label(format!(
+                "Study {} was saved separately from this draft. Open it from the Library.",
+                study.game().as_uuid()
+            ));
+        }
         if let Some(error) = &editor.failure {
             ui.colored_label(ui.visuals().error_fg_color, error.to_string());
         }

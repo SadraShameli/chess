@@ -3,7 +3,7 @@ use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::dto::DesktopEnumValue;
 use crate::desktop::editor_commands::{
     DesktopEditorCommandsContext, DesktopEditorCommandsEnumOperation,
-    DesktopEditorCommandsEnumResult, DesktopEditorCommandsPage,
+    DesktopEditorCommandsEnumResult, DesktopEditorCommandsPage, DesktopEditorCommandsStudy,
 };
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::messages::{DesktopMessagesEnumResult, DesktopRequest};
@@ -37,6 +37,10 @@ pub enum PresentationEditorControllerEnumEffect {
         fen: String,
     },
     List(DesktopEditorCommandsPage),
+    OpenStudy {
+        context: DesktopEditorCommandsContext,
+        study: DesktopEditorCommandsStudy,
+    },
 }
 
 impl PresentationEditorController {
@@ -124,6 +128,10 @@ impl PresentationEditorController {
             DesktopEditorCommandsEnumResult::Play { context, start } => {
                 self.check_effect_context(context)?;
                 PresentationEditorControllerEnumEffect::NewGame { context, start }
+            }
+            DesktopEditorCommandsEnumResult::Study { context, study } => {
+                self.check_effect_context(context)?;
+                PresentationEditorControllerEnumEffect::OpenStudy { context, study }
             }
             DesktopEditorCommandsEnumResult::List(page) => {
                 PresentationEditorControllerEnumEffect::List(page)

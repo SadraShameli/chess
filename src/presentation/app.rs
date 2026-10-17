@@ -1296,6 +1296,11 @@ impl PresentationApp {
                         PresentationThemeTokens::apply(ui.ctx(), theme);
                         ui.ctx().request_discard("apply appearance before layout");
                     }
+                    let mut motion = self.preferences.motion();
+                    for &choice in DesktopPreferences::motions() {
+                        ui.radio_value(&mut motion, choice, choice.label());
+                    }
+                    self.preferences.set_motion(motion);
                 }
             }
         }

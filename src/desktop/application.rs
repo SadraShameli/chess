@@ -926,7 +926,8 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
                 .map(|snapshot| DesktopRevision::for_editor(snapshot.context().revision())),
             Ok(
                 DesktopEditorCommandsEnumResult::Fen { context, .. }
-                | DesktopEditorCommandsEnumResult::Play { context, .. },
+                | DesktopEditorCommandsEnumResult::Play { context, .. }
+                | DesktopEditorCommandsEnumResult::Study { context, .. },
             ) => Some(DesktopRevision::for_editor(context.revision())),
             Ok(DesktopEditorCommandsEnumResult::List(_)) | Err(_) => None,
             Ok(DesktopEditorCommandsEnumResult::WritePending(_)) => {

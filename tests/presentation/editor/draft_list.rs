@@ -180,10 +180,7 @@ async fn refresh_starts_from_the_first_page_and_lists_stay_distinct_from_games()
     for is_library in [false, true] {
         let mut harness = PresentationEditorDraftListFixture::harness(page.clone(), is_library)?;
         assert!(harness.query_by_label("Saved position drafts").is_some());
-        assert_eq!(
-            harness.query_by_label("Positions").is_some(),
-            is_library
-        );
+        assert_eq!(harness.query_by_label("Positions").is_some(), is_library);
         harness
             .get_by_label("Refresh Position Drafts")
             .click_accesskit();

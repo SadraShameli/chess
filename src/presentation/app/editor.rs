@@ -107,6 +107,7 @@ pub(super) struct PresentationAppEditor {
     pub(super) source_workspace: crate::presentation::app::PresentationAppEnumWorkspace,
     palette_binding: Option<SceneEditorBinding>,
     queued_opening: Option<PresentationAppEditorEnumIntent>,
+    created_study: Option<crate::desktop::editor_commands::DesktopEditorCommandsStudy>,
 }
 
 impl PresentationAppEditor {
@@ -130,6 +131,7 @@ impl PresentationAppEditor {
             source_workspace: crate::presentation::app::PresentationAppEnumWorkspace::Games,
             palette_binding: None,
             queued_opening: None,
+            created_study: None,
         }
     }
 

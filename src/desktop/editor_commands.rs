@@ -1,6 +1,7 @@
 mod context;
 mod operation;
 mod snapshot;
+mod study;
 mod write;
 
 use crate::desktop::application::DesktopApplicationReceipt;
@@ -30,6 +31,11 @@ pub use operation::{
 pub use snapshot::{
     DesktopEditorCommandsEnumResult, DesktopEditorCommandsEnumWriteStatus,
     DesktopEditorCommandsPage, DesktopEditorCommandsSnapshot,
+};
+pub use study::{
+    DesktopEditorCommandsStudy, DesktopEditorCommandsStudyError,
+    DesktopEditorCommandsStudyIdentities, DesktopEditorCommandsStudyResources,
+    DesktopEditorCommandsStudyUuidIdentities,
 };
 
 #[derive(Debug, Error)]
@@ -74,6 +80,8 @@ pub enum DesktopEditorCommandsError {
     Fen(#[from] BoardPositionError),
     #[error(transparent)]
     Storage(#[from] StorageEditorRepositoryError),
+    #[error(transparent)]
+    Study(#[from] DesktopEditorCommandsStudyError),
 }
 
 struct DesktopEditorCommandsSession {
@@ -119,6 +127,7 @@ pub struct DesktopEditorCommands {
     pending: Option<DesktopEditorCommandsWrite>,
     destination: Option<DesktopEditorCommandsEnumDestination>,
     last_receipt: Option<StorageEditorRepositoryReceipt>,
+    study: Option<DesktopEditorCommandsStudyResources>,
 }
 
 impl DesktopEditorCommands {
@@ -129,7 +138,13 @@ impl DesktopEditorCommands {
             pending: None,
             destination: None,
             last_receipt: None,
+            study: None,
         }
+    }
+
+    pub fn with_study(mut self, study: DesktopEditorCommandsStudyResources) -> Self {
+        self.study = Some(study);
+        self
     }
 
     pub fn snapshot(&self) -> Option<DesktopEditorCommandsSnapshot> {
@@ -290,6 +305,23 @@ impl DesktopEditorCommands {
                 Ok(DesktopEditorCommandsEnumResult::Play {
                     context: expected,
                     start: self.current(expected)?.session.draft().play_prefill()?,
+                })
+            }
+            DesktopEditorCommandsEnumOperation::OpenStudy { expected } => {
+                let start = self.current(expected)?.session.draft().play_prefill()?;
+                if self.destination.is_some() {
+                    return Err(DesktopEditorCommandsError::PromptPending);
+                }
+                let study = self
+                    .study
+                    .clone()
+                    .ok_or(DesktopEditorCommandsStudyError::Unavailable)?;
+                let created = study
+                    .create(start, || Self::check_cancellation(receipt))
+                    .await?;
+                Ok(DesktopEditorCommandsEnumResult::Study {
+                    context: expected,
+                    study: created,
                 })
             }
             DesktopEditorCommandsEnumOperation::List { after } => {
@@ -586,3 +618,7 @@ impl DesktopEditorCommands {
 #[cfg(test)]
 #[path = "../../tests/desktop/editor_commands.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/desktop/editor_study.rs"]
+mod study_tests;

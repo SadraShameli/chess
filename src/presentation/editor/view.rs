@@ -269,6 +269,14 @@ impl PresentationEditorView {
                         DesktopEditorCommandsEnumOperation::Play { expected: context },
                     ));
                 }
+                if ui
+                    .add_enabled(valid, egui::Button::new("Open as Study"))
+                    .clicked()
+                {
+                    action = Some(PresentationEditorViewEnumAction::Command(
+                        DesktopEditorCommandsEnumOperation::OpenStudy { expected: context },
+                    ));
+                }
             });
             self.show_fen(
                 ui,

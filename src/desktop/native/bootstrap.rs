@@ -37,7 +37,10 @@ use crate::desktop::coordinator::{
 use crate::desktop::dto::{
     DesktopBootstrapSnapshot, DesktopEngineIdentity, DesktopEnumEngineSnapshot,
 };
-use crate::desktop::editor_commands::DesktopEditorCommands;
+use crate::desktop::editor_commands::{
+    DesktopEditorCommands, DesktopEditorCommandsStudyResources,
+    DesktopEditorCommandsStudyUuidIdentities,
+};
 use crate::desktop::game_bridge::DesktopGameBridgeProvider;
 use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryReceipt};
 use crate::desktop::identity::DesktopRequestId;
@@ -823,7 +826,13 @@ impl DesktopNativeBootstrapSupervisor {
         let library_workspace = DesktopMessagesEntityId::new();
         let editor_owner = DesktopMessagesEntityId::new();
         let editor_commands =
-            DesktopEditorCommands::new(StorageEditorRepository::new(storage_client.clone()));
+            DesktopEditorCommands::new(StorageEditorRepository::new(storage_client.clone()))
+                .with_study(DesktopEditorCommandsStudyResources {
+                    client: storage_client.clone(),
+                    executor: Arc::clone(&executor),
+                    wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
+                    identities: Arc::new(DesktopEditorCommandsStudyUuidIdentities),
+                });
         let library = DesktopNativeLibraryService::new(
             DesktopLibraryServiceOptions {
                 workspace: library_workspace,

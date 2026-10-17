@@ -63,6 +63,9 @@ pub enum DesktopEditorCommandsEnumOperation {
     Play {
         expected: DesktopEditorCommandsContext,
     },
+    OpenStudy {
+        expected: DesktopEditorCommandsContext,
+    },
     List {
         after: Option<StorageEditorRepositoryCursor>,
     },
@@ -95,6 +98,7 @@ impl DesktopEditorCommandsEnumOperation {
             | Self::Save { .. }
             | Self::ExportFen { .. }
             | Self::Play { .. }
+            | Self::OpenStudy { .. }
             | Self::List { .. }
             | Self::Delete { .. }
             | Self::Snapshot => Ok(()),
@@ -113,7 +117,8 @@ impl DesktopEditorCommandsEnumOperation {
             | Self::Validate { expected }
             | Self::Save { expected }
             | Self::ExportFen { expected }
-            | Self::Play { expected } => Some(*expected),
+            | Self::Play { expected }
+            | Self::OpenStudy { expected } => Some(*expected),
             Self::List { .. } | Self::Snapshot => None,
         }
     }
@@ -131,6 +136,7 @@ impl DesktopEditorCommandsEnumOperation {
             Self::Validate { .. }
             | Self::ExportFen { .. }
             | Self::Play { .. }
+            | Self::OpenStudy { .. }
             | Self::List { .. }
             | Self::Snapshot => false,
         }

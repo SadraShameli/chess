@@ -7,7 +7,7 @@ use crate::board::editor::{
 };
 use crate::board::start::BoardStart;
 use crate::desktop::editor_commands::{
-    DesktopEditorCommandsContext, DesktopEditorCommandsEnumPrompt,
+    DesktopEditorCommandsContext, DesktopEditorCommandsEnumPrompt, DesktopEditorCommandsStudy,
 };
 use crate::storage::editor_repository::{
     StorageEditorRepositoryPage, StorageEditorRepositoryReceipt, StorageEditorRepositoryRevision,
@@ -113,6 +113,10 @@ pub enum DesktopEditorCommandsEnumResult {
     Play {
         context: DesktopEditorCommandsContext,
         start: BoardStart,
+    },
+    Study {
+        context: DesktopEditorCommandsContext,
+        study: DesktopEditorCommandsStudy,
     },
     List(DesktopEditorCommandsPage),
 }

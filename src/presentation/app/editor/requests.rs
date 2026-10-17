@@ -419,6 +419,10 @@ impl PresentationApp {
             PresentationEditorControllerEnumEffect::CopyFen { fen, .. } => {
                 editor.copied_fen = Some(fen)
             }
+            PresentationEditorControllerEnumEffect::OpenStudy { study, .. } => {
+                editor.created_study = Some(study);
+                editor.list_requested = true;
+            }
             PresentationEditorControllerEnumEffect::NewGame { start, .. } => {
                 self.new_game = Some(PresentationGameNewGame::from_position(
                     start.position().clone(),
