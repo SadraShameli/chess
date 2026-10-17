@@ -1,4 +1,3 @@
-use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -109,27 +108,24 @@ impl ToolsBenchmarkRun {
         failures: &mut String,
     ) {
         if runs.len() != Self::RUNS {
-            let _ = writeln!(failures, "{name}: {} runs supplied, {} required", runs.len(), Self::RUNS);
+            failures.push_str(&format!("{name}: {} runs supplied, {} required\n", runs.len(), Self::RUNS));
         }
         for (index, samples) in runs.iter().enumerate() {
             let run = index + 1;
             if samples.len() < minimum {
-                let _ = writeln!(
-                    failures,
-                    "{name} run {run}: {} samples, at least {minimum} required",
-                    samples.len()
-                );
+                failures.push_str(&format!("{name} run {run}: {} samples, at least {minimum} required\n",
+                    samples.len()));
                 continue;
             }
             match Self::nearest_rank(samples, 95) {
                 Some(p95) if p95 <= limit => {
-                    let _ = writeln!(report, "{name} run {run}: p95 {p95:.3} ms <= {limit} ms");
+                    report.push_str(&format!("{name} run {run}: p95 {p95:.3} ms <= {limit} ms\n"));
                 }
                 Some(p95) => {
-                    let _ = writeln!(failures, "{name} run {run}: p95 {p95:.3} ms exceeds {limit} ms");
+                    failures.push_str(&format!("{name} run {run}: p95 {p95:.3} ms exceeds {limit} ms\n"));
                 }
                 None => {
-                    let _ = writeln!(failures, "{name} run {run}: no samples");
+                    failures.push_str(&format!("{name} run {run}: no samples\n"));
                 }
             }
         }
@@ -144,14 +140,14 @@ impl ToolsBenchmarkRun {
         failures: &mut String,
     ) {
         if values.len() != Self::RUNS {
-            let _ = writeln!(failures, "{name}: {} values supplied, {} required", values.len(), Self::RUNS);
+            failures.push_str(&format!("{name}: {} values supplied, {} required\n", values.len(), Self::RUNS));
         }
         for (index, value) in values.iter().enumerate() {
             let run = index + 1;
             let passed = if inclusive { *value <= limit } else { *value < limit };
             let line = format!("{name} run {run}: {value:.3} against {limit}");
             let target = if passed { &mut *report } else { &mut *failures };
-            let _ = writeln!(target, "{line}");
+            target.push_str(&format!("{line}\n"));
         }
     }
 }

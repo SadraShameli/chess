@@ -132,10 +132,10 @@ fn empty_viewport_is_rejected() {
 #[test]
 fn every_framing_corner_stays_inside_the_frustum_with_margin() -> Result<(), SceneCameraError> {
     for orientation in [BoardEnumColor::White, BoardEnumColor::Black] {
-        for yaw in (0..360).step_by(15) {
+        for yaw in (0_u16..360).step_by(15) {
             for tilt in [0.0, 5.0, 20.0, 45.0] {
                 for zoom in [1.0, 1.1, 1.6] {
-                    let camera = SceneCamera::new(yaw as f32, tilt, zoom, orientation)?;
+                    let camera = SceneCamera::new(f32::from(yaw), tilt, zoom, orientation)?;
                     for size in ASPECT_SIZES {
                         let frame = camera.fit(size)?;
                         let size_float = size.as_vec2();

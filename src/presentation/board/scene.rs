@@ -59,7 +59,8 @@ impl PresentationBoardScene {
 
     pub fn fit(&self, rect: egui::Rect) -> egui::Rect {
         let physical = self.viewport.physical_size();
-        let aspect = physical.x as f32 / physical.y.max(1) as f32;
+        let aspect = f32::from(u16::try_from(physical.x).unwrap_or(u16::MAX))
+            / f32::from(u16::try_from(physical.y.max(1)).unwrap_or(u16::MAX));
         let size = if rect.width() / rect.height().max(f32::EPSILON) > aspect {
             egui::vec2(rect.height() * aspect, rect.height())
         } else {

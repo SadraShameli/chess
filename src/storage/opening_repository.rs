@@ -167,7 +167,7 @@ pub struct StorageOpeningGameIndex {
 impl StorageOpeningGameIndex {
     pub const MIN_PLIES: u16 = 40;
     pub const MAX_PLIES: u16 = 120;
-    pub const MAX_GAME_ID: u64 = i32::MAX as u64;
+    pub const MAX_GAME_ID: u64 = 0x7fff_ffff;
 
     pub fn new(
         source: StorageOpeningSource,

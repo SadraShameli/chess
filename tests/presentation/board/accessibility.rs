@@ -344,11 +344,11 @@ fn nodes_report_logical_bounds_that_match_the_projected_rectangles_at_every_scal
                 .bounds()
                 .ok_or("missing node bounds")?;
             assert!(
-                (bounds.x0 as f32 - rect.min.x).abs() < 1.0,
+                (bounds.x0 - f64::from(rect.min.x)).abs() < 1.0,
                 "{square} x{scale}"
             );
             assert!(
-                (bounds.y1 as f32 - rect.max.y).abs() < 1.0,
+                (bounds.y1 - f64::from(rect.max.y)).abs() < 1.0,
                 "{square} x{scale}"
             );
         }

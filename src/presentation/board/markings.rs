@@ -221,7 +221,7 @@ impl PresentationBoardMarkings {
         BoardEnumPieceKind::Pawn,
         BoardEnumPieceKind::King,
     ];
-    const DASH_SEGMENTS: usize = 48;
+    const DASH_SEGMENTS: u16 = 48;
     const COLORS: [BoardEnumColor; 2] = [BoardEnumColor::White, BoardEnumColor::Black];
 
     pub fn marks(&self) -> &[PresentationBoardMark] {
@@ -577,8 +577,8 @@ impl PresentationBoardMarkings {
                     if saved {
                         let points: Vec<Pos2> = (0..=Self::DASH_SEGMENTS)
                             .map(|step| {
-                                let angle = std::f32::consts::TAU * step as f32
-                                    / Self::DASH_SEGMENTS as f32;
+                                let angle = std::f32::consts::TAU * f32::from(step)
+                                    / f32::from(Self::DASH_SEGMENTS);
                                 rect.center() + egui::vec2(angle.cos(), angle.sin()) * radius
                             })
                             .collect();

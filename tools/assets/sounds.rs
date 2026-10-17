@@ -185,10 +185,11 @@ impl ToolsAssetsSounds {
                 let Some(target) = samples.get_mut(start + index) else {
                     continue;
                 };
-                let position = index as f64 / length as f64;
-                let attack = (index as f64 / 64.0).min(1.0);
+                let ordinal = f64::from(u32::try_from(index).unwrap_or(u32::MAX));
+                let position = ordinal / f64::from(u32::try_from(length).unwrap_or(u32::MAX));
+                let attack = (ordinal / 64.0).min(1.0);
                 let release = (1.0 - position).powi(3);
-                *target += tone.amplitude * attack * release * Self::sine(step * index as f64);
+                *target += tone.amplitude * attack * release * Self::sine(step * ordinal);
             }
         }
         let data_bytes = u32::try_from(total * 2).unwrap_or(0);
@@ -205,9 +206,12 @@ impl ToolsAssetsSounds {
         bytes.extend_from_slice(&16_u16.to_le_bytes());
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&data_bytes.to_le_bytes());
+        let magnitudes: Vec<i16> = (0..=32_000).collect();
         for sample in samples {
             let scaled = (sample.clamp(-1.0, 1.0) * 32_000.0).round();
-            let value = scaled as i16;
+            let index = magnitudes.partition_point(|candidate| f64::from(*candidate) < scaled.abs());
+            let magnitude = magnitudes.get(index).copied().unwrap_or(0);
+            let value = if scaled < 0.0 { -magnitude } else { magnitude };
             bytes.extend_from_slice(&value.to_le_bytes());
         }
         bytes

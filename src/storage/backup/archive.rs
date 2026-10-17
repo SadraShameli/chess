@@ -23,7 +23,15 @@ impl BackupArchiveFormat {
         writer.write_all(&Self::MAGIC)?;
         writer.write_all(&length.to_le_bytes())?;
         writer.write_all(&encoded)?;
-        Ok(Self::MAGIC.len() as u64 + 4 + u64::from(length))
+        Self::header_bytes(length)
+    }
+
+    fn header_bytes(length: u32) -> Result<u64, BackupError> {
+        u64::try_from(Self::MAGIC.len())
+            .ok()
+            .and_then(|magic| magic.checked_add(4))
+            .and_then(|prefix| prefix.checked_add(u64::from(length)))
+            .ok_or(BackupError::InvalidArchive("header size"))
     }
 
     pub fn read_header(reader: &mut impl Read) -> Result<(BackupManifest, u64), BackupError> {
@@ -50,6 +58,6 @@ impl BackupArchiveFormat {
             .map_err(|_error| BackupError::InvalidArchive("truncated manifest"))?;
         let manifest: BackupManifest = serde_json::from_slice(&encoded)?;
         manifest.validate()?;
-        Ok((manifest, Self::MAGIC.len() as u64 + 4 + u64::from(length)))
+        Ok((manifest, Self::header_bytes(length)?))
     }
 }

@@ -246,7 +246,7 @@ async fn archive_validation_rejects_corruption_truncation_signature_and_newer_sc
         platform: BackupEnumPlatform::current(),
         schema_versions: vec!["99990101000000".to_owned()],
         catalog_revision: "0".to_owned(),
-        payload_bytes: payload.len() as u64,
+        payload_bytes: u64::try_from(payload.len())?,
         payload_sha256: PackageDigest::hash_slice(&payload),
         dependencies: Vec::new(),
         portable_paths: Vec::new(),
