@@ -1,3 +1,5 @@
+use diesel::connection::SimpleConnection;
+use diesel::{Connection, SqliteConnection};
 use std::future::pending;
 use std::num::NonZeroUsize;
 use std::sync::{
@@ -272,9 +274,12 @@ impl DesktopGameSupervisorFixtureStorage {
             }
         }).join("\n");
         self.executor
-            .submit_waiting(move |_cancellation| {
-                let connection = rusqlite::Connection::open(path)?;
-                connection.execute_batch(&sql)
+            .submit_waiting(move |_cancellation| -> Result<(), String> {
+                let mut connection = SqliteConnection::establish(&path.to_string_lossy())
+                    .map_err(|error| error.to_string())?;
+                connection
+                    .batch_execute(&sql)
+                    .map_err(|error| error.to_string())
             })
             .await?
             .join()

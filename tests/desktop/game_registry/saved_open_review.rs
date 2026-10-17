@@ -1,9 +1,9 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use rand::{SeedableRng, rngs::StdRng};
-use rusqlite::{Connection, OpenFlags};
 use tokio::time::Instant;
 
 use crate::clock::duration::{ClockDurationError, ClockInstant};
@@ -99,24 +99,37 @@ impl DesktopGameRegistrySavedOpenReviewStoredEntry {
         Ok(fixture
             .executor
             .submit_waiting(move |_cancellation| {
-                let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-                let mut statement = connection.prepare(
-                    "SELECT d.id, d.revision, d.body, e.content_revision, e.modified_ms, e.location, hex(e.content_sha256), s.revision FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id",
-                )?;
-                statement
-                    .query_map([], |row| {
-                        Ok(Self {
-                            id: row.get(0)?,
-                            document_revision: row.get(1)?,
-                            body: row.get(2)?,
-                            content_revision: row.get(3)?,
-                            modified: row.get(4)?,
-                            location: row.get(5)?,
-                            digest: row.get(6)?,
-                            catalog: row.get(7)?,
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, rusqlite::Error>>()
+                let mut connection = StorageSqliteInspector::open(path)?;
+                let id = connection.texts("SELECT d.id AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let document_revision = connection.texts("SELECT d.revision AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let body = connection.texts("SELECT d.body AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let content_revision = connection.texts("SELECT e.content_revision AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let location = connection.texts("SELECT e.location AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let digest = connection.texts("SELECT hex(e.content_sha256) AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let catalog = connection.texts("SELECT s.revision AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                let modified = connection.texts("SELECT coalesce(CAST(e.modified_ms AS TEXT), '') AS value FROM documents d JOIN library_entries e ON e.game_id = d.id CROSS JOIN library_state s ORDER BY d.id")?;
+                Ok::<_, crate::storage_sqlite_inspector::StorageSqliteInspectorError>(id
+                    .into_iter()
+                    .zip(document_revision)
+                    .zip(body)
+                    .zip(content_revision)
+                    .zip(modified.into_iter().map(|text| text.parse::<i64>().ok()))
+                    .zip(location)
+                    .zip(digest)
+                    .zip(catalog)
+                    .map(
+                        |(((((((id, document_revision), body), content_revision), modified), location), digest), catalog)| Self {
+                            id,
+                            document_revision,
+                            body,
+                            content_revision,
+                            modified,
+                            location,
+                            digest,
+                            catalog,
+                        },
+                    )
+                    .collect::<Vec<_>>())
             })
             .await?
             .join()

@@ -1,3 +1,5 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
+use crate::storage_sqlite_literals::StorageSqliteLiterals;
 use std::future::{Future, poll_fn};
 use std::num::NonZeroUsize;
 use std::task::Poll;
@@ -14,7 +16,6 @@ use chess::storage::editor_repository::{
     StorageEditorRepository, StorageEditorRepositoryEnumMutation, StorageEditorRepositoryError,
     StorageEditorRepositoryRevision,
 };
-use rusqlite::{Connection, params};
 use uuid::Uuid;
 
 struct StorageEditorRepositoryFixture;
@@ -115,11 +116,8 @@ async fn valid_and_invalid_drafts_reopen_exact_fields_with_empty_history_and_sel
         assert_eq!(session.draft().validate().is_ok(), draft.validate().is_ok());
     }
     reopened.close().await?;
-    let connection = Connection::open(path)?;
-    let bodies = connection
-        .prepare("SELECT body FROM editor_drafts")?
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let bodies = connection.texts("SELECT body AS value FROM editor_drafts")?;
     for body in bodies {
         assert!(!body.contains("undo"));
         assert!(!body.contains("redo"));
@@ -457,9 +455,8 @@ async fn malformed_status_unknown_fields_and_future_draft_versions_preserve_rows
         .wait()
         .await?;
     store.close().await?;
-    let connection = Connection::open(&path)?;
-    let original: String =
-        connection.query_row("SELECT body FROM editor_drafts", [], |row| row.get(0))?;
+    let mut connection = StorageSqliteInspector::open(&path)?;
+    let original = connection.text("SELECT body AS value FROM editor_drafts")?;
     drop(connection);
     let wrong_id = original.replace(
         &draft.id().to_string(),
@@ -480,12 +477,12 @@ async fn malformed_status_unknown_fields_and_future_draft_versions_preserve_rows
         (1, oversized),
         (2, original),
     ] {
-        let connection = Connection::open(&path)?;
-        connection.pragma_update(None, "ignore_check_constraints", true)?;
-        connection.execute(
-            "UPDATE editor_drafts SET schema_version = ?1, body = ?2",
-            params![version, body],
-        )?;
+        let mut connection = StorageSqliteInspector::open(&path)?;
+        connection.batch("PRAGMA ignore_check_constraints = ON")?;
+        connection.execute(&format!(
+            "UPDATE editor_drafts SET schema_version = {version}, body = {}",
+            StorageSqliteLiterals::text(&body)
+        ))?;
         drop(connection);
         let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
         let repository = StorageEditorRepository::new(store.client());
@@ -500,12 +497,14 @@ async fn malformed_status_unknown_fields_and_future_draft_versions_preserve_rows
             .wait()
             .await;
         store.close().await?;
-        let connection = Connection::open(&path)?;
-        let after: (u32, String, String) = connection.query_row(
-            "SELECT schema_version, body, storage_revision FROM editor_drafts",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
+        let mut connection = StorageSqliteInspector::open(&path)?;
+        let after: (u32, String, String) = (
+            u32::try_from(
+                connection.integer("SELECT schema_version AS value FROM editor_drafts")?,
+            )?,
+            connection.text("SELECT body AS value FROM editor_drafts")?,
+            connection.text("SELECT storage_revision AS value FROM editor_drafts")?,
+        );
         drop(connection);
         assert!(read.is_err());
         assert!(list.is_err());
@@ -544,8 +543,8 @@ async fn failed_save_and_delete_transactions_leave_original_row_and_revision()
         .wait()
         .await?;
     store.close().await?;
-    let connection = Connection::open(&path)?;
-    connection.execute_batch("CREATE TABLE editor_commit_guard (document_id TEXT NOT NULL REFERENCES documents(id) DEFERRABLE INITIALLY DEFERRED) STRICT; CREATE TRIGGER reject_editor_write AFTER UPDATE ON editor_drafts BEGIN INSERT INTO editor_commit_guard VALUES ('missing-document'); END;")?;
+    let mut connection = StorageSqliteInspector::open(&path)?;
+    connection.batch("CREATE TABLE editor_commit_guard (document_id TEXT NOT NULL REFERENCES documents(id) DEFERRABLE INITIALLY DEFERRED) STRICT; CREATE TRIGGER reject_editor_write AFTER UPDATE ON editor_drafts BEGIN INSERT INTO editor_commit_guard VALUES ('missing-document'); END;")?;
     drop(connection);
     let store = StorageDocumentStore::open(path, CapacityBudget::discover()?).await?;
     let repository = StorageEditorRepository::new(store.client());
@@ -585,18 +584,13 @@ async fn future_migration_rejects_reopen_and_preserves_saved_draft()
         .wait()
         .await?;
     store.close().await?;
-    let connection = Connection::open(&path)?;
-    let body: String =
-        connection.query_row("SELECT body FROM editor_drafts", [], |row| row.get(0))?;
-    connection.execute(
-        "INSERT INTO __diesel_schema_migrations (version) VALUES ('0099')",
-        [],
-    )?;
+    let mut connection = StorageSqliteInspector::open(&path)?;
+    let body = connection.text("SELECT body AS value FROM editor_drafts")?;
+    connection.execute("INSERT INTO __diesel_schema_migrations (version) VALUES ('0099')")?;
     drop(connection);
     let future = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await;
-    let connection = Connection::open(path)?;
-    let after: String =
-        connection.query_row("SELECT body FROM editor_drafts", [], |row| row.get(0))?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let after = connection.text("SELECT body AS value FROM editor_drafts")?;
     assert!(matches!(
         future,
         Err(StorageDocumentError::FutureMigration { .. })
@@ -700,10 +694,11 @@ async fn malformed_and_exhausted_storage_revisions_cannot_overwrite_rows()
     store.close().await?;
     let exhausted = u64::MAX.to_string();
     for revision in ["0", "01", "+1", "18446744073709551616", exhausted.as_str()] {
-        let connection = Connection::open(&path)?;
-        connection.execute("UPDATE editor_drafts SET storage_revision = ?1", [revision])?;
-        let original: String =
-            connection.query_row("SELECT body FROM editor_drafts", [], |row| row.get(0))?;
+        let mut connection = StorageSqliteInspector::open(&path)?;
+        connection.execute(&format!(
+            "UPDATE editor_drafts SET storage_revision = '{revision}'"
+        ))?;
+        let original = connection.text("SELECT body AS value FROM editor_drafts")?;
         drop(connection);
         let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
         let repository = StorageEditorRepository::new(store.client());
@@ -711,12 +706,11 @@ async fn malformed_and_exhausted_storage_revisions_cannot_overwrite_rows()
         let save = repository.save(&draft, expected)?.wait().await;
         let delete = repository.delete(draft.id(), expected)?.wait().await;
         store.close().await?;
-        let connection = Connection::open(&path)?;
-        let after: (String, String) = connection.query_row(
-            "SELECT storage_revision, body FROM editor_drafts",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+        let mut connection = StorageSqliteInspector::open(&path)?;
+        let after: (String, String) = (
+            connection.text("SELECT storage_revision AS value FROM editor_drafts")?,
+            connection.text("SELECT body AS value FROM editor_drafts")?,
+        );
         drop(connection);
         assert!(save.is_err());
         assert!(delete.is_err());

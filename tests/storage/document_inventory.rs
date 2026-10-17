@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use chess::capacity::budget::CapacityBudget;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use uuid::Uuid;
@@ -50,11 +51,11 @@ async fn inventory_refuses_corrupt_stored_revisions_without_returning_partial_su
     let client = store.client();
     client.save(Uuid::from_u128(1), 0, "{}".to_owned()).await?;
     client.save(Uuid::from_u128(2), 0, "{}".to_owned()).await?;
-    let connection = rusqlite::Connection::open(path)?;
-    connection.execute(
-        "UPDATE documents SET revision = ?1 WHERE id = ?2",
-        ["corrupt".to_owned(), Uuid::from_u128(2).to_string()],
-    )?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.execute(&format!(
+        "UPDATE documents SET revision = 'corrupt' WHERE id = '{}'",
+        Uuid::from_u128(2)
+    ))?;
     assert!(matches!(
         client.inventory(None).await,
         Err(StorageDocumentError::StoredRevision(_))

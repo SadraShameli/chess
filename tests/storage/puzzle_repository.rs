@@ -1,3 +1,5 @@
+use crate::storage_sqlite_inspector::{StorageSqliteInspector, StorageSqliteInspectorError};
+use crate::storage_sqlite_literals::StorageSqliteLiterals;
 use std::future::{Future, poll_fn};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::pin::Pin;
@@ -182,12 +184,9 @@ async fn transactional_receipt_survives_reopen_and_puzzle_rows_do_not_enter_game
         PuzzleRunEnumContent::Hidden
     );
     reopened.close().await?;
-    let connection = rusqlite::Connection::open(path)?;
-    let mut statement =
-        connection.prepare("SELECT version FROM __diesel_schema_migrations ORDER BY version")?;
-    let versions = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let versions = connection
+        .texts("SELECT version AS value FROM __diesel_schema_migrations ORDER BY version")?;
     assert_eq!(versions, ["0001"]);
     Ok(())
 }
@@ -233,8 +232,8 @@ async fn failed_transaction_rolls_back_collection_run_events_attempts_and_checkp
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("puzzles.sqlite3");
     let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
-    let connection = rusqlite::Connection::open(&path)?;
-    connection.execute_batch("CREATE TRIGGER reject_puzzle_checkpoint BEFORE INSERT ON puzzle_checkpoints BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
+    let mut connection = StorageSqliteInspector::open(&path)?;
+    connection.batch("CREATE TRIGGER reject_puzzle_checkpoint BEFORE INSERT ON puzzle_checkpoints BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
     let mut owner = StoragePuzzleFixture::owner()?;
     let mut write =
         StoragePuzzleRepository::new(store.client()).begin_save(StoragePuzzleFixture::request(
@@ -245,13 +244,13 @@ async fn failed_transaction_rolls_back_collection_run_events_attempts_and_checkp
         )?)?;
     assert!(write.wait().await.is_err());
     for query in [
-        "SELECT count(*) FROM puzzle_collections",
-        "SELECT count(*) FROM puzzle_runs",
-        "SELECT count(*) FROM puzzle_events",
-        "SELECT count(*) FROM puzzle_attempts",
-        "SELECT count(*) FROM puzzle_checkpoints",
+        "SELECT count(*) AS value FROM puzzle_collections",
+        "SELECT count(*) AS value FROM puzzle_runs",
+        "SELECT count(*) AS value FROM puzzle_events",
+        "SELECT count(*) AS value FROM puzzle_attempts",
+        "SELECT count(*) AS value FROM puzzle_checkpoints",
     ] {
-        let count: i64 = connection.query_row(query, [], |row| row.get(0))?;
+        let count = connection.integer(query)?;
         assert_eq!(count, 0);
     }
     store.close().await?;
@@ -343,8 +342,8 @@ async fn retry_keeps_failed_snapshot_and_original_revision_then_requires_explici
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("puzzles.sqlite3");
     let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
-    let connection = rusqlite::Connection::open(path)?;
-    connection.execute_batch("CREATE TRIGGER reject_puzzle_checkpoint BEFORE INSERT ON puzzle_checkpoints BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.batch("CREATE TRIGGER reject_puzzle_checkpoint BEFORE INSERT ON puzzle_checkpoints BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")?;
     let mut owner = StoragePuzzleFixture::owner()?;
     let mut driver = PuzzleStorageDriver::new(
         StoragePuzzleRepository::new(store.client()),
@@ -372,7 +371,7 @@ async fn retry_keeps_failed_snapshot_and_original_revision_then_requires_explici
         StoragePuzzleFixture::snapshot(&mut owner, ClockInstant::from_nanos(100), 0)?,
         PuzzleCheckpointEnumTrigger::AcceptedTransition,
     )?;
-    connection.execute_batch("DROP TRIGGER reject_puzzle_checkpoint")?;
+    connection.batch("DROP TRIGGER reject_puzzle_checkpoint")?;
     driver.retry_save(ClockInstant::from_nanos(100))?;
     let request = driver.pending_request().ok_or("missing original request")?;
     assert_eq!(request.expected_storage_revision().value(), 0);
@@ -423,11 +422,8 @@ async fn committed_receipt_is_retained_when_checkpoint_acknowledgement_rejects_t
     driver.settle(ClockInstant::from_nanos(100))?;
     assert_eq!(driver.storage_revision().value(), 1);
     store.close().await?;
-    let connection = rusqlite::Connection::open(path)?;
-    let revision: String =
-        connection.query_row("SELECT storage_revision FROM puzzle_runs", [], |row| {
-            row.get(0)
-        })?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let revision = connection.text("SELECT storage_revision AS value FROM puzzle_runs")?;
     assert_eq!(revision, "1");
     Ok(())
 }
@@ -449,18 +445,20 @@ async fn corrupted_checkpoint_and_attempt_rows_are_refused_on_read()
         )?)?
         .wait()
         .await?;
-    let connection = rusqlite::Connection::open(path)?;
-    let checkpoint: String =
-        connection.query_row("SELECT body FROM puzzle_checkpoints", [], |row| row.get(0))?;
-    connection.execute("UPDATE puzzle_checkpoints SET body = '{}'", [])?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let checkpoint = connection.text("SELECT body AS value FROM puzzle_checkpoints")?;
+    connection.execute("UPDATE puzzle_checkpoints SET body = '{}'")?;
     assert!(
         repository
             .load(owner.run().context().session_id())
             .await
             .is_err()
     );
-    connection.execute("UPDATE puzzle_checkpoints SET body = ?1", [&checkpoint])?;
-    connection.execute("UPDATE puzzle_attempts SET body = '{}'", [])?;
+    connection.execute(&format!(
+        "UPDATE puzzle_checkpoints SET body = {}",
+        StorageSqliteLiterals::text(&checkpoint)
+    ))?;
+    connection.execute("UPDATE puzzle_attempts SET body = '{}'")?;
     assert!(matches!(
         repository.load(owner.run().context().session_id()).await,
         Err(StoragePuzzleError::Corrupt)
@@ -762,22 +760,22 @@ async fn invalid_journal_proof_metadata_is_rejected_on_read_and_write()
         receipt.storage_revision(),
         receipt.event_count(),
     )?;
-    let connection = rusqlite::Connection::open(path)?;
-    let original: Vec<u8> =
-        connection.query_row("SELECT journal_digest FROM puzzle_runs", [], |row| {
-            row.get(0)
-        })?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let original = StorageSqliteLiterals::decode_hex(
+        &connection.text("SELECT hex(journal_digest) AS value FROM puzzle_runs")?,
+    )?;
     for update in [
         "UPDATE puzzle_runs SET journal_version = 999",
         "UPDATE puzzle_runs SET journal_digest = x'00'",
     ] {
         assert!(matches!(
-            connection.execute(update, []),
-            Err(rusqlite::Error::SqliteFailure(error, _))
-                if error.code == rusqlite::ErrorCode::ConstraintViolation
+            connection.execute(update),
+            Err(StorageSqliteInspectorError::Query(
+                diesel::result::Error::DatabaseError(_, _)
+            ))
         ));
     }
-    connection.execute("UPDATE puzzle_runs SET journal_digest = zeroblob(32)", [])?;
+    connection.execute("UPDATE puzzle_runs SET journal_digest = zeroblob(32)")?;
     assert!(matches!(
         repository.load(owner.run().context().session_id()).await,
         Err(StoragePuzzleError::Corrupt)
@@ -786,7 +784,10 @@ async fn invalid_journal_proof_metadata_is_rejected_on_read_and_write()
         repository.begin_save(request)?.wait().await,
         Err(StoragePuzzleError::Corrupt)
     ));
-    connection.execute("UPDATE puzzle_runs SET journal_digest = ?1", [&original])?;
+    connection.execute(&format!(
+        "UPDATE puzzle_runs SET journal_digest = {}",
+        StorageSqliteLiterals::blob(&original)
+    ))?;
     assert!(
         repository
             .load(owner.run().context().session_id())
@@ -816,7 +817,7 @@ async fn invalid_journal_proof_metadata_is_rejected_on_read_and_write()
         receipt.storage_revision(),
         receipt.event_count(),
     )?;
-    connection.execute("UPDATE puzzle_runs SET journal_digest = zeroblob(32)", [])?;
+    connection.execute("UPDATE puzzle_runs SET journal_digest = zeroblob(32)")?;
     assert!(matches!(
         repository.load(owner.run().context().session_id()).await,
         Err(StoragePuzzleError::Corrupt)
@@ -854,8 +855,8 @@ async fn saved_run_inventory_is_durable_and_isolated_from_game_documents_and_det
         )?)?
         .wait()
         .await?;
-    let connection = rusqlite::Connection::open(&path)?;
-    connection.execute("INSERT INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT 'detached', schema_version, digest, body FROM puzzle_collections WHERE collection_id = '1'", [])?;
+    let mut connection = StorageSqliteInspector::open(&path)?;
+    connection.execute("INSERT INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT 'detached', schema_version, digest, body FROM puzzle_collections WHERE collection_id = '1'")?;
     let page = repository.inventory(None).await?;
     assert_eq!(page.entries().len(), 1);
     let entry = page.entries()[0];
@@ -983,11 +984,11 @@ async fn saved_run_inventory_orders_unsigned_identities_and_preserves_maximum_re
     for value in ids.into_iter().rev() {
         StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(value)?).await?;
     }
-    let connection = rusqlite::Connection::open(path)?;
-    connection.execute(
-        "UPDATE puzzle_runs SET storage_revision = ?1 WHERE run_id = ?1",
-        [u64::MAX.to_string()],
-    )?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.execute(&format!(
+        "UPDATE puzzle_runs SET storage_revision = '{0}' WHERE run_id = '{0}'",
+        u64::MAX
+    ))?;
     let page = repository.inventory(None).await?;
     let actual: Vec<u64> = page
         .entries()
@@ -1033,10 +1034,11 @@ async fn saved_run_inventory_refuses_noncanonical_identities()
     let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
     let repository = StoragePuzzleRepository::new(store.client());
     StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(1)?).await?;
-    let connection = rusqlite::Connection::open(path)?;
+    let mut connection = StorageSqliteInspector::open(path)?;
     for invalid in StoragePuzzleFixture::INVALID_DECIMALS {
-        connection.execute("INSERT INTO puzzle_runs (run_id, collection_id, storage_revision, event_count, journal_version, journal_digest) SELECT ?1, collection_id, storage_revision, event_count, journal_version, journal_digest FROM puzzle_runs WHERE run_id = '1'", [invalid])?;
-        connection.execute("INSERT INTO puzzle_checkpoints (run_id, body) SELECT ?1, body FROM puzzle_checkpoints WHERE run_id = '1'", [invalid])?;
+        let literal = StorageSqliteLiterals::text(invalid);
+        connection.execute(&format!("INSERT INTO puzzle_runs (run_id, collection_id, storage_revision, event_count, journal_version, journal_digest) SELECT {literal}, collection_id, storage_revision, event_count, journal_version, journal_digest FROM puzzle_runs WHERE run_id = '1'"))?;
+        connection.execute(&format!("INSERT INTO puzzle_checkpoints (run_id, body) SELECT {literal}, body FROM puzzle_checkpoints WHERE run_id = '1'"))?;
         assert!(
             matches!(
                 repository.inventory(None).await,
@@ -1044,11 +1046,10 @@ async fn saved_run_inventory_refuses_noncanonical_identities()
             ),
             "accepted identity {invalid:?}"
         );
-        connection.execute(
-            "DELETE FROM puzzle_checkpoints WHERE run_id = ?1",
-            [invalid],
-        )?;
-        connection.execute("DELETE FROM puzzle_runs WHERE run_id = ?1", [invalid])?;
+        connection.execute(&format!(
+            "DELETE FROM puzzle_checkpoints WHERE run_id = {literal}"
+        ))?;
+        connection.execute(&format!("DELETE FROM puzzle_runs WHERE run_id = {literal}"))?;
     }
     assert_eq!(repository.inventory(None).await?.entries().len(), 1);
     store.close().await?;
@@ -1065,12 +1066,12 @@ async fn saved_run_inventory_refuses_malformed_revisions_without_partial_success
     for value in [1, 2] {
         StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(value)?).await?;
     }
-    let connection = rusqlite::Connection::open(path)?;
+    let mut connection = StorageSqliteInspector::open(path)?;
     for invalid in StoragePuzzleFixture::INVALID_DECIMALS {
-        connection.execute(
-            "UPDATE puzzle_runs SET storage_revision = ?1 WHERE run_id = '2'",
-            [invalid],
-        )?;
+        connection.execute(&format!(
+            "UPDATE puzzle_runs SET storage_revision = {} WHERE run_id = '2'",
+            StorageSqliteLiterals::text(invalid)
+        ))?;
         assert!(
             matches!(
                 repository.inventory(None).await,
@@ -1079,10 +1080,7 @@ async fn saved_run_inventory_refuses_malformed_revisions_without_partial_success
             "accepted revision {invalid:?}"
         );
     }
-    connection.execute(
-        "UPDATE puzzle_runs SET storage_revision = '1' WHERE run_id = '2'",
-        [],
-    )?;
+    connection.execute("UPDATE puzzle_runs SET storage_revision = '1' WHERE run_id = '2'")?;
     assert_eq!(repository.inventory(None).await?.entries().len(), 2);
     store.close().await?;
     Ok(())
@@ -1097,18 +1095,19 @@ async fn saved_run_inventory_exposes_bounded_event_metadata_without_proving_reco
     let repository = StoragePuzzleRepository::new(store.client());
     let id = StoragePuzzleFixture::id(1)?;
     StoragePuzzleFixture::save_initial(&repository, id).await?;
-    let connection = rusqlite::Connection::open(path)?;
+    let mut connection = StorageSqliteInspector::open(path)?;
     for count in [-1, i64::try_from(PuzzlePersistenceCodec::MAX_EVENTS)? + 1] {
         assert!(matches!(
-            connection.execute("UPDATE puzzle_runs SET event_count = ?1", [count]),
-            Err(rusqlite::Error::SqliteFailure(error, _))
-                if error.code == rusqlite::ErrorCode::ConstraintViolation
+            connection.execute(&format!("UPDATE puzzle_runs SET event_count = {count}")),
+            Err(StorageSqliteInspectorError::Query(
+                diesel::result::Error::DatabaseError(_, _)
+            ))
         ));
     }
-    connection.execute(
-        "UPDATE puzzle_runs SET event_count = ?1",
-        [i64::try_from(PuzzlePersistenceCodec::MAX_EVENTS)?],
-    )?;
+    connection.execute(&format!(
+        "UPDATE puzzle_runs SET event_count = {}",
+        PuzzlePersistenceCodec::MAX_EVENTS
+    ))?;
     assert_eq!(
         repository.inventory(None).await?.entries()[0].persisted_event_count(),
         PuzzlePersistenceCodec::MAX_EVENTS
@@ -1129,18 +1128,21 @@ async fn saved_run_inventory_refuses_missing_collection_and_checkpoint_rows()
     let store = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await?;
     let repository = StoragePuzzleRepository::new(store.client());
     StoragePuzzleFixture::save_initial(&repository, StoragePuzzleFixture::id(1)?).await?;
-    let connection = rusqlite::Connection::open(path)?;
-    connection.pragma_update(None, "foreign_keys", "OFF")?;
-    connection.execute("UPDATE puzzle_runs SET collection_id = 'missing'", [])?;
-    connection.pragma_update(None, "foreign_keys", "ON")?;
-    assert!(connection.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))?);
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.batch("PRAGMA foreign_keys = OFF")?;
+    connection.execute("UPDATE puzzle_runs SET collection_id = 'missing'")?;
+    connection.batch("PRAGMA foreign_keys = ON")?;
+    assert_eq!(
+        connection.integer("SELECT foreign_keys AS value FROM pragma_foreign_keys")?,
+        1
+    );
     assert!(matches!(
         repository.inventory(None).await,
         Err(StoragePuzzleError::Corrupt)
     ));
-    connection.execute("UPDATE puzzle_runs SET collection_id = '1'", [])?;
+    connection.execute("UPDATE puzzle_runs SET collection_id = '1'")?;
     assert_eq!(repository.inventory(None).await?.entries().len(), 1);
-    connection.execute("DELETE FROM puzzle_checkpoints", [])?;
+    connection.execute("DELETE FROM puzzle_checkpoints")?;
     assert!(matches!(
         repository.inventory(None).await,
         Err(StoragePuzzleError::Corrupt)
@@ -1176,37 +1178,46 @@ async fn saved_run_inventory_does_not_decode_collection_checkpoint_or_journal_bo
     assert!(repository.load(id).await?.is_some());
     let original = repository.inventory(None).await?;
     assert_eq!(original.entries()[0].persisted_event_count(), 1);
-    let connection = rusqlite::Connection::open(path)?;
-    let journal: String =
-        connection.query_row("SELECT body FROM puzzle_events", [], |row| row.get(0))?;
-    let checkpoint: String =
-        connection.query_row("SELECT body FROM puzzle_checkpoints", [], |row| row.get(0))?;
-    let collection: String =
-        connection.query_row("SELECT body FROM puzzle_collections", [], |row| row.get(0))?;
-    for (damage, restore, body) in [
+    let mut connection = StorageSqliteInspector::open(path)?;
+    let journal = connection.text("SELECT body AS value FROM puzzle_events")?;
+    let checkpoint = connection.text("SELECT body AS value FROM puzzle_checkpoints")?;
+    let collection = connection.text("SELECT body AS value FROM puzzle_collections")?;
+    let restores: [(&str, Box<dyn Fn(&str) -> String>, String); 3] = [
         (
             "INSERT OR REPLACE INTO puzzle_events (run_id, ordinal, body) SELECT run_id, ordinal, '{}' FROM puzzle_events",
-            "INSERT OR REPLACE INTO puzzle_events (run_id, ordinal, body) SELECT run_id, ordinal, ?1 FROM puzzle_events",
+            Box::new(|body| {
+                format!(
+                    "INSERT OR REPLACE INTO puzzle_events (run_id, ordinal, body) SELECT run_id, ordinal, {body} FROM puzzle_events"
+                )
+            }),
             journal,
         ),
         (
             "UPDATE puzzle_checkpoints SET body = '{}'",
-            "UPDATE puzzle_checkpoints SET body = ?1",
+            Box::new(|body| format!("UPDATE puzzle_checkpoints SET body = {body}")),
             checkpoint,
         ),
         (
             "INSERT OR REPLACE INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT collection_id, schema_version, digest, '{}' FROM puzzle_collections",
-            "INSERT OR REPLACE INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT collection_id, schema_version, digest, ?1 FROM puzzle_collections",
+            Box::new(|body| {
+                format!(
+                    "INSERT OR REPLACE INTO puzzle_collections (collection_id, schema_version, digest, body) SELECT collection_id, schema_version, digest, {body} FROM puzzle_collections"
+                )
+            }),
             collection,
         ),
-    ] {
-        assert_eq!(connection.execute(damage, [])?, 1);
+    ];
+    for (damage, restore, body) in restores {
+        assert_eq!(connection.execute(damage)?, 1);
         assert_eq!(
             repository.inventory(None).await?.entries(),
             original.entries()
         );
         assert!(repository.load(id).await.is_err());
-        assert_eq!(connection.execute(restore, [&body])?, 1);
+        assert_eq!(
+            connection.execute(&restore(&StorageSqliteLiterals::text(&body)))?,
+            1
+        );
         assert!(repository.load(id).await?.is_some());
     }
     store.close().await?;

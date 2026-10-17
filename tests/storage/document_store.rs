@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use chess::capacity::budget::CapacityBudget;
 use chess::storage::document_store::StorageDocumentStore;
 use uuid::Uuid;
@@ -73,11 +74,8 @@ async fn invalid_documents_and_future_schemas_are_refused() -> Result<(), Box<dy
     assert!(store.client().save(id, 0, "not json".into()).await.is_err());
     assert!(store.client().read(id).await?.is_none());
     store.close().await?;
-    let connection = rusqlite::Connection::open(&path)?;
-    connection.execute(
-        "INSERT INTO __diesel_schema_migrations (version) VALUES ('1000000')",
-        [],
-    )?;
+    let mut connection = StorageSqliteInspector::open(&path)?;
+    connection.execute("INSERT INTO __diesel_schema_migrations (version) VALUES ('1000000')")?;
     drop(connection);
     assert!(
         StorageDocumentStore::open(path, CapacityBudget::discover()?)
@@ -137,8 +135,8 @@ async fn queued_database_operations_reserve_only_the_running_worker()
     let workers = 4;
     let budget = CapacityBudget::new(NonZeroUsize::new(workers).ok_or("invalid capacity")?)?;
     let store = StorageDocumentStore::open(path.clone(), budget.clone()).await?;
-    let connection = rusqlite::Connection::open(path)?;
-    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.batch("BEGIN IMMEDIATE")?;
     let client = store.client();
     let mut saving = Vec::new();
     for _ in 0..workers {
@@ -157,7 +155,7 @@ async fn queued_database_operations_reserve_only_the_running_worker()
     })
     .await?;
     assert_eq!(budget.available(), workers - 1);
-    connection.execute_batch("ROLLBACK")?;
+    connection.batch("ROLLBACK")?;
     for pending in saving {
         assert_eq!(pending.await?.revision(), 1);
     }

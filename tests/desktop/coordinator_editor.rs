@@ -1,6 +1,8 @@
 #[path = "coordinator_editor/fixture.rs"]
 mod fixture;
 
+use diesel::connection::SimpleConnection;
+use diesel::{Connection, SqliteConnection};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -213,8 +215,8 @@ impl DesktopCoordinatorEditorFixture {
         };
         let prompt = self.submit(DesktopCommand::editor(self.owner, destination))?;
         driver.response(self, &prompt).await?;
-        let connection = rusqlite::Connection::open(&self.path)?;
-        connection.execute_batch("CREATE TRIGGER fail_editor_transition AFTER UPDATE ON editor_drafts BEGIN SELECT RAISE(ROLLBACK, 'editor transition rollback'); END")?;
+        let mut connection = SqliteConnection::establish(&self.path.to_string_lossy())?;
+        connection.batch_execute("CREATE TRIGGER fail_editor_transition AFTER UPDATE ON editor_drafts BEGIN SELECT RAISE(ROLLBACK, 'editor transition rollback'); END")?;
         let application = self.submit(DesktopCommand::editor(
             self.owner,
             DesktopEditorCommandsEnumOperation::Resolve {
@@ -223,7 +225,7 @@ impl DesktopCoordinatorEditorFixture {
             },
         ))?;
         let result = driver.response(self, &application).await?;
-        connection.execute_batch("DROP TRIGGER fail_editor_transition")?;
+        connection.batch_execute("DROP TRIGGER fail_editor_transition")?;
         drop(connection);
         let DesktopMessagesEnumResult::EditorFailure(failure) = result else {
             return Err("the original transition save did not fail".into());
@@ -246,8 +248,8 @@ async fn canceled_fresh_retry_observes_save_without_executing_the_original_leave
             DesktopCoordinatorEditorRecoveryEnumDestination::Leave,
         )
         .await?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = SqliteConnection::establish(&fixture.path.to_string_lossy())?;
+    blocker.batch_execute("BEGIN IMMEDIATE")?;
     let retry = fixture.submit(DesktopCommand::editor(
         fixture.owner,
         DesktopEditorCommandsEnumOperation::Save {
@@ -264,7 +266,7 @@ async fn canceled_fresh_retry_observes_save_without_executing_the_original_leave
     driver.poll_pending().await?;
     let canceled = retry.is_cancellation_requested();
     let original_canceled = original.application.is_cancellation_requested();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch_execute("ROLLBACK")?;
     drop(blocker);
     let response = driver.response(&fixture, &retry).await?;
     let stopped = driver.response(&fixture, &stop).await?;
@@ -369,8 +371,8 @@ async fn retry_quit_recovers_canceled_editor_write_after_confirmed_rollback()
     ))?;
     let submitted =
         DesktopCoordinatorEditorFixture::snapshot(driver.response(&fixture, &changed).await?)?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch(
+    let mut blocker = SqliteConnection::establish(&fixture.path.to_string_lossy())?;
+    blocker.batch_execute(
         "CREATE TRIGGER fail_editor_update AFTER UPDATE ON editor_drafts BEGIN SELECT RAISE(ROLLBACK, 'editor quit rollback'); END; BEGIN IMMEDIATE",
     )?;
     let save = fixture.submit(DesktopCommand::editor(
@@ -384,9 +386,9 @@ async fn retry_quit_recovers_canceled_editor_write_after_confirmed_rollback()
     driver.poll_pending().await?;
     let canceled = save.is_cancellation_requested();
     let shutdown_before_failure = fixture.shutdown.load(Ordering::Acquire);
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch_execute("ROLLBACK")?;
     let failure = driver.response(&fixture, &save).await?;
-    blocker.execute_batch("DROP TRIGGER fail_editor_update")?;
+    blocker.batch_execute("DROP TRIGGER fail_editor_update")?;
     drop(blocker);
     let before_retry = fixture
         .repository
@@ -622,8 +624,8 @@ async fn save_waits_for_sqlite_ack_once_while_bootstrap_remains_responsive()
 -> DesktopCoordinatorEditorTestResult {
     let (fixture, mut driver) = DesktopCoordinatorEditorFixture::new().await?;
     let initial = fixture.create(&mut driver).await?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = SqliteConnection::establish(&fixture.path.to_string_lossy())?;
+    blocker.batch_execute("BEGIN IMMEDIATE")?;
     let request = fixture.request(DesktopEditorCommandsEnumOperation::Save {
         expected: initial.context(),
     })?;
@@ -642,7 +644,7 @@ async fn save_waits_for_sqlite_ack_once_while_bootstrap_remains_responsive()
     driver.poll_pending().await?;
     let bootstrap = bootstrap.response();
     let still_pending = save.response().is_none();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch_execute("ROLLBACK")?;
     drop(blocker);
     let result = driver.response(&fixture, &save).await?;
     let repeated = fixture.port.try_submit(&request)?;
@@ -681,8 +683,8 @@ async fn canceled_accepted_save_is_observed_with_its_original_acknowledgement()
 -> DesktopCoordinatorEditorTestResult {
     let (fixture, mut driver) = DesktopCoordinatorEditorFixture::new().await?;
     let initial = fixture.create(&mut driver).await?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = SqliteConnection::establish(&fixture.path.to_string_lossy())?;
+    blocker.batch_execute("BEGIN IMMEDIATE")?;
     let request = fixture.request(DesktopEditorCommandsEnumOperation::Save {
         expected: initial.context(),
     })?;
@@ -697,7 +699,7 @@ async fn canceled_accepted_save_is_observed_with_its_original_acknowledgement()
     driver.poll_pending().await?;
     let canceled = save.is_cancellation_requested();
     let waiting = save.response().is_none() && stop.response().is_none();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch_execute("ROLLBACK")?;
     drop(blocker);
     let saved = driver.response(&fixture, &save).await?;
     let stopped = driver.response(&fixture, &stop).await?;
@@ -735,8 +737,8 @@ async fn pending_save_prevents_quit_cleanup_until_the_actual_write_is_observed()
 -> DesktopCoordinatorEditorTestResult {
     let (fixture, mut driver) = DesktopCoordinatorEditorFixture::new().await?;
     let initial = fixture.create(&mut driver).await?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = SqliteConnection::establish(&fixture.path.to_string_lossy())?;
+    blocker.batch_execute("BEGIN IMMEDIATE")?;
     let save = fixture.submit(DesktopCommand::editor(
         fixture.owner,
         DesktopEditorCommandsEnumOperation::Save {
@@ -749,7 +751,7 @@ async fn pending_save_prevents_quit_cleanup_until_the_actual_write_is_observed()
     let waiting = quit.response().is_none() && save.response().is_none();
     let shutdown_before_ack = fixture.shutdown.load(Ordering::Acquire);
     let shutdown = Arc::clone(&fixture.shutdown);
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch_execute("ROLLBACK")?;
     drop(blocker);
     let quit_result = fixture.close(driver, Some(quit)).await?;
     let saved = save.response().cloned();
@@ -768,8 +770,8 @@ async fn cancellation_after_storage_wait(
 ) -> DesktopCoordinatorEditorTestResult {
     let (fixture, mut driver) = DesktopCoordinatorEditorFixture::new().await?;
     let draft = BoardEditorDraft::new(DesktopCoordinatorEditorFixture::id(1)?, None);
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = SqliteConnection::establish(&fixture.path.to_string_lossy())?;
+    blocker.batch_execute("BEGIN IMMEDIATE")?;
     let mut external_write = fixture
         .repository
         .save(&draft, StorageEditorRepositoryRevision::ABSENT)?;
@@ -781,7 +783,7 @@ async fn cancellation_after_storage_wait(
     driver.poll_pending().await?;
     let canceled = awaited.is_cancellation_requested();
     let before_result = awaited.response();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch_execute("ROLLBACK")?;
     drop(blocker);
     external_write.wait().await?;
     fixture.close(driver, Some(quit)).await?;

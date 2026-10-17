@@ -1,3 +1,9 @@
+#[path = "storage/sqlite_inspector.rs"]
+mod storage_sqlite_inspector;
+
+#[path = "storage/sqlite_literals.rs"]
+mod storage_sqlite_literals;
+
 #[path = "storage/document_store.rs"]
 mod storage_document_store;
 

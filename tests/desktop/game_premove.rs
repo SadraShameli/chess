@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::{StorageSqliteInspector, StorageSqliteInspectorError};
 use std::future::pending;
 use std::num::NonZeroUsize;
 use std::sync::{
@@ -262,12 +263,12 @@ impl DesktopGamePremoveFixture {
             store,
             clock: Arc::new(DesktopGamePremoveClock::default()),
         };
-        fixture.sql(|connection| connection.execute_batch("CREATE TABLE premove_audit (ordinal INTEGER PRIMARY KEY, storage_revision TEXT NOT NULL, body TEXT NOT NULL); CREATE TRIGGER premove_insert AFTER INSERT ON documents BEGIN INSERT INTO premove_audit(storage_revision, body) VALUES (NEW.revision, NEW.body); END; CREATE TRIGGER premove_update AFTER UPDATE ON documents BEGIN INSERT INTO premove_audit(storage_revision, body) VALUES (NEW.revision, NEW.body); END;")).await?;
+        fixture.sql(|connection| connection.batch("CREATE TABLE premove_audit (ordinal INTEGER PRIMARY KEY, storage_revision TEXT NOT NULL, body TEXT NOT NULL); CREATE TRIGGER premove_insert AFTER INSERT ON documents BEGIN INSERT INTO premove_audit(storage_revision, body) VALUES (NEW.revision, NEW.body); END; CREATE TRIGGER premove_update AFTER UPDATE ON documents BEGIN INSERT INTO premove_audit(storage_revision, body) VALUES (NEW.revision, NEW.body); END;")).await?;
         Ok(fixture)
     }
     async fn sql<T: Send + 'static>(
         &self,
-        action: impl FnOnce(rusqlite::Connection) -> Result<T, rusqlite::Error>
+        action: impl FnOnce(&mut StorageSqliteInspector) -> Result<T, StorageSqliteInspectorError>
         + Send
         + std::panic::UnwindSafe
         + 'static,
@@ -275,7 +276,7 @@ impl DesktopGamePremoveFixture {
         let path = self.directory.path().join("library.sqlite3");
         Ok(self
             .executor
-            .submit_waiting(move |_cancellation| action(rusqlite::Connection::open(path)?))
+            .submit_waiting(move |_cancellation| action(&mut StorageSqliteInspector::open(path)?))
             .await?
             .join()
             .await??)
@@ -283,12 +284,12 @@ impl DesktopGamePremoveFixture {
     async fn checkpoints(&self) -> DesktopGamePremoveTestResult<Vec<(u64, GameSession)>> {
         let rows = self
             .sql(|connection| {
-                connection
-                    .prepare("SELECT storage_revision, body FROM premove_audit ORDER BY ordinal")?
-                    .query_map([], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()
+                let revisions = connection.texts(
+                    "SELECT storage_revision AS value FROM premove_audit ORDER BY ordinal",
+                )?;
+                let bodies =
+                    connection.texts("SELECT body AS value FROM premove_audit ORDER BY ordinal")?;
+                Ok(revisions.into_iter().zip(bodies).collect::<Vec<_>>())
             })
             .await?;
         rows.into_iter()
@@ -469,11 +470,11 @@ impl DesktopGamePremoveFixture {
                 let entered = Arc::clone(&ready);
                 let (release, released) = std::sync::mpsc::sync_channel(1);
                 let task = fixture.executor.submit_waiting(move |_cancellation| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                    let connection = rusqlite::Connection::open(path)?;
-                    connection.execute_batch("BEGIN IMMEDIATE")?;
+                    let mut connection = StorageSqliteInspector::open(path)?;
+                    connection.batch("BEGIN IMMEDIATE")?;
                     entered.notify_one();
                     released.recv()?;
-                    connection.execute_batch("ROLLBACK")?;
+                    connection.batch("ROLLBACK")?;
                     Ok(())
                 }).await?;
                 ready.notified().await;
@@ -487,16 +488,14 @@ impl DesktopGamePremoveFixture {
                 }
                 fixture
                     .sql(move |connection| {
-                        connection.execute_batch(
-                            "CREATE TABLE premove_failure (revision TEXT NOT NULL)",
-                        )?;
+                        connection
+                            .batch("CREATE TABLE premove_failure (revision TEXT NOT NULL)")?;
                         for operation in StorageDocumentWriteFixtureEnumOperation::ALL {
-                            connection.execute_batch(&Self::failure_trigger(operation))?;
+                            connection.batch(&Self::failure_trigger(operation))?;
                         }
-                        connection.execute(
-                            "INSERT INTO premove_failure(revision) VALUES (?1)",
-                            [revision.to_string()],
-                        )?;
+                        connection.execute(&format!(
+                            "INSERT INTO premove_failure(revision) VALUES ('{revision}')"
+                        ))?;
                         Ok(())
                     })
                     .await?;
@@ -568,7 +567,7 @@ impl DesktopGamePremoveFixture {
                 assert!(result.is_err());
                 assert!(!registry.is_shutdown_complete());
                 fixture
-                    .sql(|connection| connection.execute_batch("DELETE FROM premove_failure"))
+                    .sql(|connection| connection.batch("DELETE FROM premove_failure"))
                     .await?;
                 let saved = Self::action(
                     &port,

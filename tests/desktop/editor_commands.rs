@@ -1,6 +1,7 @@
 #[path = "editor_commands/fixture.rs"]
 pub(crate) mod fixture;
 
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use std::future::{Future, poll_fn};
 use std::task::Poll;
 
@@ -163,8 +164,8 @@ async fn cancelled_save_wait_keeps_the_exact_write_and_original_draft()
 -> DesktopEditorCommandsTestResult {
     let mut fixture = DesktopEditorCommandsFixture::new().await?;
     fixture.create(1, None).await?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = StorageSqliteInspector::open(&fixture.path)?;
+    blocker.batch("BEGIN IMMEDIATE")?;
     fixture.save().await?;
     let original = fixture
         .owner
@@ -177,7 +178,7 @@ async fn cancelled_save_wait_keeps_the_exact_write_and_original_draft()
     drop(waiting);
     let retained = fixture.owner.pending_draft().cloned();
     let dirty = fixture.snapshot()?.is_dirty();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch("ROLLBACK")?;
     drop(blocker);
     fixture.owner.finish_write().await?;
     let saved = fixture.snapshot()?;
@@ -347,8 +348,8 @@ async fn cancellation_after_staged_read_preserves_the_original_editor_session()
         .save(&target, StorageEditorRepositoryRevision::ABSENT)?
         .wait()
         .await?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = StorageSqliteInspector::open(&fixture.path)?;
+    blocker.batch("BEGIN IMMEDIATE")?;
     let mut blocking_write = fixture
         .repository
         .save(&target, StorageEditorRepositoryRevision::new(1))?;
@@ -365,7 +366,7 @@ async fn cancellation_after_staged_read_preserves_the_original_editor_session()
     let was_pending =
         poll_fn(|context| Poll::Ready(reading.as_mut().poll(context).is_pending())).await;
     work.receipt().cancellation().request();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch("ROLLBACK")?;
     drop(blocker);
     blocking_write.wait().await?;
     let result = reading.await;
@@ -458,8 +459,8 @@ async fn cancellation_after_awaited_list_does_not_publish_the_staged_page()
     let mut fixture = DesktopEditorCommandsFixture::new().await?;
     fixture.create(1, None).await?;
     let original = fixture.snapshot()?;
-    let blocker = rusqlite::Connection::open(&fixture.path)?;
-    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    let mut blocker = StorageSqliteInspector::open(&fixture.path)?;
+    blocker.batch("BEGIN IMMEDIATE")?;
     let other =
         crate::board::editor::BoardEditorDraft::new(DesktopEditorCommandsFixture::id(2)?, None);
     let mut blocking_write = fixture
@@ -471,7 +472,7 @@ async fn cancellation_after_awaited_list_does_not_publish_the_staged_page()
     let was_pending =
         poll_fn(|context| Poll::Ready(listing.as_mut().poll(context).is_pending())).await;
     work.receipt().cancellation().request();
-    blocker.execute_batch("ROLLBACK")?;
+    blocker.batch("ROLLBACK")?;
     drop(blocker);
     blocking_write.wait().await?;
     let result = listing.await;

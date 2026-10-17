@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use std::future::{Future, poll_fn};
 use std::io::Cursor;
 use std::num::NonZeroUsize;
@@ -1589,8 +1590,8 @@ async fn sql_refusal_retains_accepted_source_and_explicit_retry_saves_newest_ori
     let fixture = DesktopAnnotationOwnerFixture::new().await?;
     let mut owner = fixture.open(100).await?;
     let database = fixture._directory.path().join("annotation.sqlite");
-    let connection = rusqlite::Connection::open(database)?;
-    connection.execute_batch("CREATE TRIGGER refuse_annotation BEFORE UPDATE ON documents BEGIN SELECT RAISE(ABORT, 'controlled refusal'); END;")?;
+    let mut connection = StorageSqliteInspector::open(database)?;
+    connection.batch("CREATE TRIGGER refuse_annotation BEFORE UPDATE ON documents BEGIN SELECT RAISE(ABORT, 'controlled refusal'); END;")?;
     fixture
         .notes(&mut owner, "accepted despite SQL refusal")
         .await?;
@@ -1609,7 +1610,7 @@ async fn sql_refusal_retains_accepted_source_and_explicit_retry_saves_newest_ori
         .status()
         .accepted_edit()
         .ok_or("missing newest edit")?;
-    connection.execute_batch("DROP TRIGGER refuse_annotation;")?;
+    connection.batch("DROP TRIGGER refuse_annotation;")?;
     fixture.wall.unavailable.store(true, Ordering::SeqCst);
     fixture.save(&mut owner, true).await?;
     assert!(owner.status().failure().is_none());
@@ -1651,9 +1652,9 @@ async fn cancelled_commit_wait_retains_real_mutation_until_sql_completion_is_obs
     let fixture = DesktopAnnotationOwnerFixture::new().await?;
     let mut owner = fixture.open(100).await?;
     fixture.notes(&mut owner, "commit retained").await?;
-    let connection =
-        rusqlite::Connection::open(fixture._directory.path().join("annotation.sqlite"))?;
-    connection.execute_batch("BEGIN IMMEDIATE;")?;
+    let mut connection =
+        StorageSqliteInspector::open(fixture._directory.path().join("annotation.sqlite"))?;
+    connection.batch("BEGIN IMMEDIATE;")?;
     let receipt = fixture.checkpoint(&mut owner, false)?;
     owner.observe_save(&receipt).await?;
     let mut waiting = Box::pin(owner.observe_save(&receipt));
@@ -1668,7 +1669,7 @@ async fn cancelled_commit_wait_retains_real_mutation_until_sql_completion_is_obs
         owner.observe_save(&fixture.receipt()?).await,
         Err(DesktopAnnotationOwnerError::ForeignReceipt)
     ));
-    connection.execute_batch("ROLLBACK;")?;
+    connection.batch("ROLLBACK;")?;
     owner.observe_save(&receipt).await?;
     assert!(!owner.status().has_save());
     assert!(!owner.status().is_dirty());

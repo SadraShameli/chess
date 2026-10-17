@@ -21,3 +21,7 @@ mod game_storage_wall_time_fixture;
 #[cfg(test)]
 #[path = "../tests/storage/document_write_fixture.rs"]
 mod storage_document_write_fixture;
+
+#[cfg(test)]
+#[path = "../tests/storage/sqlite_inspector.rs"]
+mod storage_sqlite_inspector;

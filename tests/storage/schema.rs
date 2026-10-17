@@ -1,6 +1,6 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use chess::capacity::budget::CapacityBudget;
 use chess::storage::document_store::StorageDocumentStore;
-use rusqlite::{Connection, params};
 
 #[tokio::test]
 async fn position_lookup_never_merges_equal_hashes_with_different_full_identities()
@@ -11,25 +11,19 @@ async fn position_lookup_never_merges_equal_hashes_with_different_full_identitie
         .await?
         .close()
         .await?;
-    let connection = Connection::open(path)?;
-    connection.pragma_update(None, "foreign_keys", "ON")?;
-    connection.execute("INSERT INTO documents VALUES ('game', '1', '{}')", [])?;
-    connection.execute("INSERT INTO games VALUES ('game', 'standard', 'fen', 'local_two_player', 'setup', NULL, NULL, '{}')", [])?;
-    let hash = [0_u8; 8];
-    connection.execute("INSERT INTO move_nodes VALUES ('root', 'game', NULL, 0, NULL, NULL, 'fen', ?1, 'position-a', '{}')", [hash])?;
-    connection.execute("INSERT INTO move_nodes VALUES ('child', 'game', 'root', 0, 'e2e4', 'e4', 'fen', ?1, 'position-b', '{}')", [hash])?;
-    let selected: String = connection.query_row(
-        "SELECT node_id FROM move_nodes WHERE position_hash = ?1 AND position_identity = ?2",
-        params![hash, "position-b"],
-        |row| row.get(0),
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.batch("PRAGMA foreign_keys = ON")?;
+    connection.execute("INSERT INTO documents VALUES ('game', '1', '{}')")?;
+    connection.execute("INSERT INTO games VALUES ('game', 'standard', 'fen', 'local_two_player', 'setup', NULL, NULL, '{}')")?;
+    connection.execute("INSERT INTO move_nodes VALUES ('root', 'game', NULL, 0, NULL, NULL, 'fen', X'0000000000000000', 'position-a', '{}')")?;
+    connection.execute("INSERT INTO move_nodes VALUES ('child', 'game', 'root', 0, 'e2e4', 'e4', 'fen', X'0000000000000000', 'position-b', '{}')")?;
+    let selected = connection.text(
+        "SELECT node_id AS value FROM move_nodes WHERE position_hash = X'0000000000000000' AND position_identity = 'position-b'",
     )?;
     assert_eq!(selected, "child");
     assert!(
         connection
-            .execute(
-                "UPDATE move_nodes SET parent_id = 'child' WHERE node_id = 'root'",
-                []
-            )
+            .execute("UPDATE move_nodes SET parent_id = 'child' WHERE node_id = 'root'")
             .is_err()
     );
     Ok(())
@@ -44,26 +38,24 @@ async fn foreign_keys_refuse_cross_game_parents_and_orphan_clocks()
         .await?
         .close()
         .await?;
-    let connection = Connection::open(path)?;
-    connection.pragma_update(None, "foreign_keys", "ON")?;
+    let mut connection = StorageSqliteInspector::open(path)?;
+    connection.batch("PRAGMA foreign_keys = ON")?;
     for id in ["first", "second"] {
-        connection.execute("INSERT INTO documents VALUES (?1, '1', '{}')", [id])?;
-        connection.execute("INSERT INTO games VALUES (?1, 'standard', 'fen', 'local_two_player', 'setup', NULL, NULL, '{}')", [id])?;
+        connection.execute(&format!(
+            "INSERT INTO documents VALUES ('{id}', '1', '{{}}')"
+        ))?;
+        connection.execute(&format!("INSERT INTO games VALUES ('{id}', 'standard', 'fen', 'local_two_player', 'setup', NULL, NULL, '{{}}')"))?;
     }
-    let hash = [0_u8; 8];
-    connection.execute("INSERT INTO move_nodes VALUES ('root', 'first', NULL, 0, NULL, NULL, 'fen', ?1, 'position', '{}')", [hash])?;
-    assert!(connection.execute("INSERT INTO move_nodes VALUES ('cross', 'second', 'root', 0, 'e2e4', 'e4', 'fen', ?1, 'position', '{}')", [hash]).is_err());
+    connection.execute("INSERT INTO move_nodes VALUES ('root', 'first', NULL, 0, NULL, NULL, 'fen', X'0000000000000000', 'position', '{}')")?;
+    assert!(connection.execute("INSERT INTO move_nodes VALUES ('cross', 'second', 'root', 0, 'e2e4', 'e4', 'fen', X'0000000000000000', 'position', '{}')").is_err());
     assert!(
         connection
-            .execute(
-                "INSERT INTO clock_snapshots VALUES ('second', 'root', '{}')",
-                []
-            )
+            .execute("INSERT INTO clock_snapshots VALUES ('second', 'root', '{}')")
             .is_err()
     );
     assert!(
         connection
-            .execute("INSERT INTO preferences VALUES (2, 1, '1', '{}')", [])
+            .execute("INSERT INTO preferences VALUES (2, 1, '1', '{}')")
             .is_err()
     );
     Ok(())

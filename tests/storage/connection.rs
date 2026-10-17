@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::storage_sqlite_inspector::{StorageSqliteInspector, StorageSqliteInspectorError};
 use chess::capacity::budget::CapacityBudget;
 use chess::storage::connection::StorageConnection;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
@@ -51,17 +52,10 @@ impl StorageConnectionFixture {
             .map(|row| row.value)
     }
 
-    fn revision(path: &Path, id: Uuid) -> Result<Option<String>, rusqlite::Error> {
-        let connection = rusqlite::Connection::open(path)?;
-        match connection.query_row(
-            "SELECT revision FROM documents WHERE id = ?1",
-            [id.to_string()],
-            |row| row.get(0),
-        ) {
-            Ok(revision) => Ok(Some(revision)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(error) => Err(error),
-        }
+    fn revision(path: &Path, id: Uuid) -> Result<Option<String>, StorageSqliteInspectorError> {
+        StorageSqliteInspector::open(path)?.optional_text(&format!(
+            "SELECT revision AS value FROM documents WHERE id = '{id}'"
+        ))
     }
 }
 
@@ -92,22 +86,6 @@ fn diesel_connections_apply_the_storage_policy() -> StorageConnectionTestResult 
     Ok(())
 }
 
-#[test]
-fn repository_connections_apply_the_same_storage_policy() -> StorageConnectionTestResult {
-    let directory = tempfile::tempdir()?;
-    let connection = StorageConnection::open_legacy(&StorageConnectionFixture::path(&directory))?;
-    let journal: String = connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-    let foreign_keys: i32 =
-        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-    let synchronous: i32 = connection.pragma_query_value(None, "synchronous", |row| row.get(0))?;
-    let busy: i32 = connection.pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
-    assert_eq!(journal, StorageConnectionFixture::JOURNAL_MODE);
-    assert_eq!(foreign_keys, 1);
-    assert_eq!(synchronous, StorageConnectionFixture::SYNCHRONOUS_FULL);
-    assert_eq!(busy, StorageConnectionFixture::BUSY_TIMEOUT_MILLISECONDS);
-    Ok(())
-}
-
 #[tokio::test]
 async fn the_storage_actor_leaves_a_write_ahead_log_database() -> StorageConnectionTestResult {
     let directory = tempfile::tempdir()?;
@@ -116,8 +94,8 @@ async fn the_storage_actor_leaves_a_write_ahead_log_database() -> StorageConnect
         .await?
         .close()
         .await?;
-    let connection = rusqlite::Connection::open(path)?;
-    let journal: String = connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+    let journal = StorageSqliteInspector::open(path)?
+        .text("SELECT journal_mode AS value FROM pragma_journal_mode")?;
     assert_eq!(journal, StorageConnectionFixture::JOURNAL_MODE);
     Ok(())
 }
@@ -157,9 +135,8 @@ fn a_diesel_transaction_is_invisible_to_readers_until_it_commits() -> StorageCon
     let path = StorageConnectionFixture::path(&directory);
     let mut writer = StorageConnection::open(&path)?;
     diesel::sql_query("CREATE TABLE receipts (id INTEGER PRIMARY KEY)").execute(writer.diesel())?;
-    let count = |path: &Path| -> Result<i64, rusqlite::Error> {
-        rusqlite::Connection::open(path)?
-            .query_row("SELECT count(*) FROM receipts", [], |row| row.get(0))
+    let count = |path: &Path| -> Result<i64, StorageSqliteInspectorError> {
+        StorageSqliteInspector::open(path)?.integer("SELECT count(*) AS value FROM receipts")
     };
     let during = diesel::Connection::transaction::<i64, diesel::result::Error, _>(
         writer.diesel(),

@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::{StorageSqliteInspector, StorageSqliteInspectorError};
 use std::future::{Future, poll_fn};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -6,7 +7,6 @@ use std::task::Poll;
 use std::time::Duration;
 
 use rand::{SeedableRng, rngs::StdRng};
-use rusqlite::Connection;
 use tokio::time::Instant;
 
 use crate::board::enums::BoardEnumColor;
@@ -364,7 +364,7 @@ impl DesktopGameEditorRuntimeFixture {
 
     async fn sql<T: Send + 'static>(
         &self,
-        operation: impl FnOnce(&Connection) -> Result<T, rusqlite::Error>
+        operation: impl FnOnce(&mut StorageSqliteInspector) -> Result<T, StorageSqliteInspectorError>
         + Send
         + std::panic::UnwindSafe
         + 'static,
@@ -372,7 +372,7 @@ impl DesktopGameEditorRuntimeFixture {
         let path = self.directory.path().join("editor.sqlite");
         Ok(self
             .executor
-            .submit_waiting(move |_cancellation| operation(&Connection::open(path)?))
+            .submit_waiting(move |_cancellation| operation(&mut StorageSqliteInspector::open(path)?))
             .await?
             .join()
             .await??)
@@ -380,15 +380,13 @@ impl DesktopGameEditorRuntimeFixture {
 
     async fn modified(&self) -> DesktopGameEditorRuntimeTestResult<Option<i64>> {
         self.sql(|connection| {
-            connection.query_row("SELECT modified_ms FROM library_entries", [], |row| {
-                row.get(0)
-            })
+            connection.optional_integer("SELECT modified_ms AS value FROM library_entries")
         })
         .await
     }
 
     async fn fail_storage(&self, enabled: bool) -> DesktopGameEditorRuntimeTestResult {
-        self.sql(move |connection| connection.execute_batch(if enabled {
+        self.sql(move |connection| connection.batch(if enabled {
             "CREATE TRIGGER editor_failure BEFORE UPDATE ON library_entries BEGIN SELECT RAISE(ABORT, 'controlled editor failure'); END;"
         } else { "DROP TRIGGER editor_failure;" })).await
     }
@@ -1236,8 +1234,9 @@ async fn cancelled_commit_wait_retains_the_real_sql_mutation_and_receipt()
             },
         ))?;
     fixture.compute_queued_editor().await?;
-    let connection = Connection::open(fixture.directory.path().join("editor.sqlite"))?;
-    connection.execute_batch("BEGIN IMMEDIATE;")?;
+    let mut connection =
+        StorageSqliteInspector::open(fixture.directory.path().join("editor.sqlite"))?;
+    connection.batch("BEGIN IMMEDIATE;")?;
     fixture.actor.begin_save(false);
     {
         let mut observing = Box::pin(DesktopGameEditorRuntimeActor::save_ready(
@@ -1266,7 +1265,7 @@ async fn cancelled_commit_wait_retains_the_real_sql_mutation_and_receipt()
         .await;
     }
     assert!(fixture.actor.saving_context.is_some());
-    connection.execute_batch("ROLLBACK;")?;
+    connection.batch("ROLLBACK;")?;
     fixture.finish_one_save().await?;
     fixture
         .actor

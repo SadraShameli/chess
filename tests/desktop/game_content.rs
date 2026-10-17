@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::{StorageSqliteInspector, StorageSqliteInspectorError};
 use std::future::{Future, pending, poll_fn};
 use std::num::NonZeroUsize;
 use std::panic::UnwindSafe;
@@ -8,7 +9,6 @@ use std::sync::{
 use std::task::Poll;
 use std::time::{Duration, Instant as StandardInstant};
 
-use rusqlite::{Connection, params};
 use tokio::time::Instant;
 
 use crate::board::enums::BoardEnumColor;
@@ -362,12 +362,15 @@ impl DesktopGameContentFixture {
     async fn inspect<T, F>(&self, operation: F) -> DesktopGameContentTestResult<T>
     where
         T: Send + 'static,
-        F: FnOnce(&Connection) -> Result<T, rusqlite::Error> + Send + UnwindSafe + 'static,
+        F: FnOnce(&mut StorageSqliteInspector) -> Result<T, StorageSqliteInspectorError>
+            + Send
+            + UnwindSafe
+            + 'static,
     {
         let path = self.directory.path().join("library.sqlite");
         Ok(self
             .executor
-            .submit_waiting(move |_cancellation| operation(&Connection::open(path)?))
+            .submit_waiting(move |_cancellation| operation(&mut StorageSqliteInspector::open(path)?))
             .await?
             .join()
             .await??)
@@ -375,14 +378,24 @@ impl DesktopGameContentFixture {
 
     async fn durable(&self) -> DesktopGameContentTestResult<(String, String, Option<i64>)> {
         let game = self.port.snapshot().snapshot.id().as_uuid().to_string();
-        self.inspect(move |connection| connection.query_row(
-            "SELECT d.revision, e.content_revision, e.modified_ms FROM documents d JOIN library_entries e ON e.game_id = d.id WHERE d.id = ?1",
-            params![game], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )).await
+        self.inspect(move |connection| {
+            Ok((
+                connection.text(&format!(
+                    "SELECT revision AS value FROM documents WHERE id = '{game}'"
+                ))?,
+                connection.text(&format!(
+                    "SELECT content_revision AS value FROM library_entries WHERE game_id = '{game}'"
+                ))?,
+                connection.optional_integer(&format!(
+                    "SELECT modified_ms AS value FROM library_entries WHERE game_id = '{game}'"
+                ))?,
+            ))
+        })
+        .await
     }
 
     async fn trigger(&self, enabled: bool) -> DesktopGameContentTestResult {
-        self.inspect(move |connection| connection.execute_batch(if enabled {
+        self.inspect(move |connection| connection.batch(if enabled {
             "CREATE TRIGGER content_save_failure BEFORE UPDATE ON library_entries BEGIN SELECT RAISE(ABORT, 'controlled projection failure'); END;"
         } else { "DROP TRIGGER content_save_failure;" })).await
     }
@@ -807,7 +820,7 @@ async fn checkpoint_reopen_navigation_preserve_known_and_unknown_modified_time()
             fixture
                 .inspect(|connection| {
                     connection
-                        .execute("UPDATE library_entries SET modified_ms = NULL", [])
+                        .execute("UPDATE library_entries SET modified_ms = NULL")
                         .map(|_| ())
                 })
                 .await?;
@@ -1247,11 +1260,10 @@ async fn fresh_wall_failure_refuses_owner_exposure_without_durable_content()
     ));
     let counts: (i64, i64) = fixture
         .inspect(|connection| {
-            connection.query_row(
-                "SELECT (SELECT COUNT(*) FROM documents), (SELECT COUNT(*) FROM library_entries)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            Ok((
+                connection.integer("SELECT COUNT(*) AS value FROM documents")?,
+                connection.integer("SELECT COUNT(*) AS value FROM library_entries")?,
+            ))
         })
         .await?;
     assert_eq!(counts, (0, 0));

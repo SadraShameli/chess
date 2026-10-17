@@ -1,10 +1,10 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use std::future::{Future, poll_fn};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
 use rand::{SeedableRng, rngs::StdRng};
-use rusqlite::{Connection, OpenFlags};
 use tokio::sync::{Notify, Semaphore};
 use tokio::time::Instant;
 
@@ -145,11 +145,10 @@ impl DesktopGameRegistryClosingFixture {
         Ok(fixture
             .executor
             .submit_waiting(move |_cancellation| {
-                Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?.query_row(
-                    "SELECT body FROM documents WHERE id = ?1",
-                    [String::from(game)],
-                    |row| row.get(0),
-                )
+                StorageSqliteInspector::open(path)?.text(&format!(
+                    "SELECT body AS value FROM documents WHERE id = '{}'",
+                    String::from(game)
+                ))
             })
             .await?
             .join()

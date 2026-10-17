@@ -1,3 +1,5 @@
+use diesel::connection::SimpleConnection;
+use diesel::{Connection, SqliteConnection};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -243,9 +245,12 @@ impl DesktopEditorCommandsWriteRecoveryFixture {
         let path = self.directory.path().join(Self::DATABASE);
         timeout(
             Self::WAIT,
-            tokio::task::spawn_blocking(move || {
-                let connection = rusqlite::Connection::open(path)?;
-                connection.execute_batch(sql)
+            tokio::task::spawn_blocking(move || -> Result<(), String> {
+                let mut connection = SqliteConnection::establish(&path.to_string_lossy())
+                    .map_err(|error| error.to_string())?;
+                connection
+                    .batch_execute(sql)
+                    .map_err(|error| error.to_string())
             }),
         )
         .await???;

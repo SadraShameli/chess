@@ -1,3 +1,4 @@
+use crate::storage_sqlite_inspector::StorageSqliteInspector;
 use std::future::{Future, poll_fn};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::pin::Pin;
@@ -424,11 +425,9 @@ async fn corrupt_checkpoint_is_refused_even_when_metadata_inventory_succeeds()
     let fixture = DesktopNativePuzzleServiceFixture::new().await?;
     let id = DesktopNativePuzzleServiceFixture::id(1)?;
     fixture.seed(id, false).await?;
-    let connection = rusqlite::Connection::open(fixture.directory.path().join("puzzles.sqlite3"))?;
-    connection.execute(
-        "UPDATE puzzle_checkpoints SET body = '{}' WHERE run_id = '1'",
-        [],
-    )?;
+    let mut connection =
+        StorageSqliteInspector::open(fixture.directory.path().join("puzzles.sqlite3"))?;
+    connection.execute("UPDATE puzzle_checkpoints SET body = '{}' WHERE run_id = '1'")?;
     assert_eq!(fixture.repository.inventory(None).await?.entries().len(), 1);
     assert!(fixture.open(id).await.is_err());
     assert_eq!(fixture.port.state().borrow().selected(), None);
@@ -586,8 +585,9 @@ async fn failed_initial_save_retains_owner_and_cancellation_never_discards_admit
     let replacement = DesktopNativePuzzleServiceFixture::id(2)?;
     fixture.seed(id, false).await?;
     fixture.seed(replacement, false).await?;
-    let connection = rusqlite::Connection::open(fixture.directory.path().join("puzzles.sqlite3"))?;
-    connection.execute_batch("CREATE TRIGGER reject_recovery BEFORE UPDATE ON puzzle_checkpoints BEGIN SELECT RAISE(ABORT, 'controlled recovery failure'); END;")?;
+    let mut connection =
+        StorageSqliteInspector::open(fixture.directory.path().join("puzzles.sqlite3"))?;
+    connection.batch("CREATE TRIGGER reject_recovery BEFORE UPDATE ON puzzle_checkpoints BEGIN SELECT RAISE(ABORT, 'controlled recovery failure'); END;")?;
     let application = fixture.receipt()?;
     let mut opened = fixture.port.submit(DesktopPuzzleServiceRequest {
         receipt: application.clone(),
@@ -629,7 +629,7 @@ async fn failed_initial_save_retains_owner_and_cancellation_never_discards_admit
     assert_eq!(fixture.port.state().borrow().selected(), Some(id));
     assert!(fixture.open(replacement).await.is_err());
     assert_eq!(fixture.port.state().borrow().selected(), Some(id));
-    connection.execute_batch("DROP TRIGGER reject_recovery;")?;
+    connection.batch("DROP TRIGGER reject_recovery;")?;
     fixture
         .session(
             blocked.context().clone(),
