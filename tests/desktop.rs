@@ -69,3 +69,5 @@ mod game_transition_fixture;
 
 #[path = "desktop/game_supervisor_storage.rs"]
 mod desktop_game_supervisor_storage;
+#[path = "desktop/local_play.rs"]
+mod desktop_local_play;
