@@ -21,6 +21,8 @@ mod engine_options;
 mod engine_package_manifest;
 #[path = "engine/package_selection.rs"]
 mod engine_package_selection;
+#[path = "engine/protocol.rs"]
+mod engine_protocol;
 #[path = "engine/resource_config.rs"]
 mod engine_resource_config;
 #[path = "engine/retained_shutdown.rs"]
