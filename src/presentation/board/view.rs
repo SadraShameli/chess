@@ -230,6 +230,18 @@ impl PresentationBoardView {
         Ok(())
     }
 
+    pub fn rest_panel(&mut self, visible: bool) {
+        if let Some(animation) = &mut self.animation {
+            animation.rest_panel(visible);
+        }
+    }
+
+    pub fn request_repaint(&self, context: &egui::Context) {
+        if let Some(animation) = &self.animation {
+            animation.request_repaint(context);
+        }
+    }
+
     pub fn panel_progress(&mut self) -> Result<f32, PresentationBoardViewError> {
         Ok(match &mut self.animation {
             Some(animation) => animation.frame()?.panel_progress(),

@@ -12,6 +12,7 @@ use chess::board::position::BoardPosition;
 use chess::clock::duration::{ClockDuration, ClockInstant};
 use chess::clock::state::ClockStateEnumStatus;
 use chess::clock::time_provider::ClockTimeProvider;
+use chess::clock::time_provider::ClockTimeProviderMonotonic;
 use chess::desktop::application::{
     DesktopApplication, DesktopApplicationPort, DesktopApplicationReceipt,
     DesktopApplicationWakeError, DesktopApplicationWakeProvider,
@@ -382,7 +383,7 @@ impl DesktopLocalPlayFixture {
         Ok(Self {
             runtime,
             context,
-            presentation: PresentationApp::new(),
+            presentation: PresentationApp::new(Arc::new(ClockTimeProviderMonotonic::new())),
             scene: None,
             port,
             wake,

@@ -906,11 +906,12 @@ impl DesktopNativeBootstrapSupervisor {
             executor,
             self.lifecycle.clone(),
         );
-        let mut coordinator = DesktopCoordinator::new(application, clock, snapshot, services)
-            .with_games(Arc::new(game_port.clone()))
-            .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()))
-            .with_library(library_workspace, Arc::new(library_port))
-            .with_editor(editor_owner, editor_commands);
+        let mut coordinator =
+            DesktopCoordinator::new(application, Arc::clone(&clock), snapshot, services)
+                .with_games(Arc::new(game_port.clone()))
+                .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()))
+                .with_library(library_workspace, Arc::new(library_port))
+                .with_editor(editor_owner, editor_commands);
         if let Some(engine_port) = &engine_port {
             coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
         }
@@ -923,6 +924,7 @@ impl DesktopNativeBootstrapSupervisor {
         }
         let (events, receiver) = DesktopNativeHost::event_channel();
         let host = DesktopNativeHostServices {
+            clock: Arc::clone(&clock),
             engine_panels,
             library_workspace: Some(library_workspace),
             editor: Some(PresentationAppEditorConnection::new(

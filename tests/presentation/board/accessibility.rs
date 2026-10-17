@@ -428,11 +428,12 @@ impl PresentationBoardAccessibilityApp {
     fn new() -> Self {
         let context = Context::default();
         context.enable_accesskit();
+        let clock = Arc::new(PresentationBoardAccessibilityClock::default());
         Self {
             context,
-            presentation: PresentationApp::new(),
+            presentation: PresentationApp::new(clock.clone()),
             application: DesktopApplication::new(
-                Arc::new(PresentationBoardAccessibilityClock::default()),
+                clock,
                 Arc::new(PresentationBoardAccessibilityWake),
             ),
             tree: HashMap::new(),

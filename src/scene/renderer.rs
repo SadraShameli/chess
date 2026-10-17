@@ -290,6 +290,29 @@ impl SceneRenderer {
         Ok(true)
     }
 
+    pub fn animate_view(
+        &mut self,
+        world: &mut World,
+        camera: SceneCamera,
+    ) -> Result<bool, SceneRendererError> {
+        self.require_renderable()?;
+        if camera == self.camera {
+            return Ok(false);
+        }
+        let frame = camera.fit(self.viewport.physical_size())?;
+        let mut entity = world
+            .get_entity_mut(self.camera_entity)
+            .map_err(|_error| SceneRendererError::MissingEntity(self.camera_entity))?;
+        entity.insert((
+            frame.transform(),
+            Projection::Perspective(frame.projection()),
+        ));
+        self.frame = frame;
+        self.camera = camera;
+        self.request_frame(world)?;
+        Ok(true)
+    }
+
     pub fn animate_piece(
         &mut self,
         world: &mut World,

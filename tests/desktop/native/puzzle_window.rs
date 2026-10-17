@@ -16,6 +16,7 @@ use crate::board::position::BoardPosition;
 use crate::capacity::budget::CapacityBudget;
 use crate::clock::duration::{ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProvider;
+use crate::clock::time_provider::ClockTimeProviderMonotonic;
 use crate::desktop::application::{
     DesktopApplication, DesktopApplicationError, DesktopApplicationWakeError,
     DesktopApplicationWakeProvider,
@@ -265,7 +266,7 @@ impl DesktopNativePuzzleWindowFixture {
                 Arc::clone(&wake),
             ),
             wake,
-            presentation: PresentationApp::new(),
+            presentation: PresentationApp::new(Arc::new(ClockTimeProviderMonotonic::new())),
             run: Self::run(1)?,
         })
     }

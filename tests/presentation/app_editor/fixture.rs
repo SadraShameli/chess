@@ -114,7 +114,7 @@ impl PresentationAppEditorFixture {
         let application = DesktopApplication::new(Arc::clone(&clock), Arc::clone(&wake));
         let port = application.port();
         let owner = DesktopMessagesEntityId::new();
-        let mut app = PresentationApp::new();
+        let mut app = PresentationApp::new(clock.clone());
         app.mount_editor(PresentationAppEditorConnection::new(
             owner,
             Arc::new(PresentationAppEditorFixtureIds(AtomicU64::new(1))),

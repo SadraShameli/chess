@@ -60,7 +60,7 @@ fn empty_puzzle_workspace_never_falls_back_to_the_bootstrap_position()
         Arc::new(DesktopNativeEventLoopWake::new()),
     );
     let port = application.port();
-    let mut app = PresentationApp::new();
+    let mut app = PresentationApp::new(Arc::new(ClockTimeProviderMonotonic::new()));
     app.accept_snapshot(DesktopBootstrapSnapshot::new(
         &BoardPosition::standard(),
         NonZeroU32::MIN,
@@ -347,7 +347,7 @@ impl PresentationAppPuzzleFixture {
         &self,
         panel: PresentationPuzzlePanel,
     ) -> PresentationAppPuzzleTestResult<PresentationApp> {
-        let mut app = PresentationApp::new();
+        let mut app = PresentationApp::new(Arc::new(ClockTimeProviderMonotonic::new()));
         app.puzzle_panel = Some(panel);
         app.select_workspace(
             PresentationAppEnumWorkspace::Puzzles,

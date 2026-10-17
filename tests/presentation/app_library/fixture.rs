@@ -35,11 +35,12 @@ pub(super) struct PresentationAppLibraryFixture {
 impl PresentationAppLibraryFixture {
     pub(super) async fn new() -> DesktopLibraryServiceTestResult<Self> {
         let source = DesktopLibraryServiceFixture::new().await?;
+        let clock = Arc::new(DesktopLibraryServiceTestClock);
         let application = DesktopApplication::new(
-            Arc::new(DesktopLibraryServiceTestClock),
+            Arc::clone(&clock),
             Arc::new(DesktopNativeEventLoopWake::new()),
         );
-        let mut app = PresentationApp::new();
+        let mut app = PresentationApp::new(clock);
         app.mount_library(source.workspace);
         app.select_workspace(PresentationAppEnumWorkspace::Library, &application.port())?;
         Ok(Self {

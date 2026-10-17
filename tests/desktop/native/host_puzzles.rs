@@ -308,8 +308,10 @@ impl DesktopNativeHostPuzzleFixture {
                 events,
                 budget,
                 dialog_ready,
+                clock: Arc::clone(&clock),
             },
-            presentation: PresentationApp::new(),
+            presentation: PresentationApp::new(Arc::clone(&clock) as Arc<dyn ClockTimeProvider>),
+            animation: None,
             puzzle_window: None,
             asset: Handle::default(),
             asset_reload: None,
@@ -489,10 +491,10 @@ impl DesktopNativeHostPuzzleFixture {
             renderer.update_view(&mut self.world, viewport, self.state.camera)?;
             renderer.mark_ready(renderer.generation())?;
             self.world.insert_resource(renderer);
-            self.state.pending_camera = Some(DesktopNativeHost::camera_action(
+            self.state.pending_camera = Some(self.state.presentation.apply_camera_action(
                 self.state.camera,
                 PresentationBoardEnumCameraAction::RotateLeft,
-            ));
+            )?);
         }
         let awaiting_readiness = self
             .state

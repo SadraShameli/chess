@@ -149,7 +149,7 @@ impl PresentationAppFixture {
         let clock = Arc::new(PresentationAppFixtureClock::default());
         Self {
             context,
-            presentation: PresentationApp::new(),
+            presentation: PresentationApp::new(clock.clone()),
             application: DesktopApplication::new(
                 Arc::clone(&clock),
                 Arc::new(PresentationAppFixtureWake),
@@ -656,7 +656,9 @@ fn settings_appearance_changes_are_immediate_and_truthfully_session_scoped()
     );
     assert!(fixture.application.try_next()?.is_none());
     assert_eq!(
-        PresentationApp::new().preferences().theme(),
+        PresentationApp::new(Arc::new(PresentationAppFixtureClock::default()))
+            .preferences()
+            .theme(),
         DesktopPreferencesEnumTheme::Dark
     );
     Ok(())

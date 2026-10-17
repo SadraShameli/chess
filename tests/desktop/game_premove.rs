@@ -1,3 +1,4 @@
+use crate::clock::time_provider::ClockTimeProviderMonotonic;
 use crate::storage_sqlite_inspector::{StorageSqliteInspector, StorageSqliteInspectorError};
 use std::future::pending;
 use std::num::NonZeroUsize;
@@ -731,7 +732,7 @@ async fn illegal_premove_notice_survives_durable_save_and_registry_forwarding()
             let [snapshot] = snapshots.as_slice() else {
                 return Err("coalesced game snapshot missing".into());
             };
-            let mut app = PresentationApp::new();
+            let mut app = PresentationApp::new(Arc::new(ClockTimeProviderMonotonic::new()));
             app.accept_game_snapshot(DesktopGameSnapshot::capture(&checkpoints[0].1, now)?);
             assert!(!app.status().contains("premove"));
             assert!(app.accept_game_snapshot(snapshot.clone()));

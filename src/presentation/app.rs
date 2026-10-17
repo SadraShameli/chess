@@ -44,12 +44,13 @@ use crate::presentation::app::editor::{
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumNavigation,
 };
+use crate::presentation::board::animation::PresentationBoardAnimationFrame;
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::view::{
     PresentationBoardAction, PresentationBoardPickingProvider, PresentationBoardView,
-    PresentationBoardViewError, PresentationBoardViewInput,
+    PresentationBoardViewError, PresentationBoardViewFrame, PresentationBoardViewInput,
 };
 use crate::presentation::engine_panels::{
     PresentationEnginePanels, PresentationEnginePanelsConnection, PresentationEnginePanelsError,
@@ -68,6 +69,7 @@ use crate::presentation::puzzle::panel::{
 };
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
+use crate::scene::camera::SceneCamera;
 use crate::scene::picking::ScenePickingViewport;
 
 #[derive(Debug, Error)]
@@ -215,9 +217,14 @@ pub struct PresentationAppFrame {
     viewport: Option<ScenePickingViewport>,
     board_actions: Vec<PresentationBoardAction>,
     camera_action: Option<PresentationBoardEnumCameraAction>,
+    animation: Option<PresentationBoardAnimationFrame>,
 }
 
 impl PresentationAppFrame {
+    pub const fn animation(&self) -> Option<PresentationBoardAnimationFrame> {
+        self.animation
+    }
+
     pub const fn viewport(&self) -> Option<ScenePickingViewport> {
         self.viewport
     }
@@ -267,22 +274,21 @@ pub struct PresentationApp {
     preferences: DesktopPreferences,
     settings_open: bool,
     settings_toggle_frame: Option<u64>,
+    library_panel_open: bool,
     navigation_frame: Option<u64>,
-}
-
-impl Default for PresentationApp {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl PresentationApp {
     const MAX_GAME_REQUESTS: usize = 128;
 
-    pub fn new() -> Self {
+    pub fn new(clock: Arc<dyn ClockTimeProvider>) -> Self {
+        let preferences = DesktopPreferences::default();
+        let mut board =
+            PresentationBoardView::with_animation(clock, preferences.motion().is_reduced());
+        board.rest_panel(false);
         Self {
             snapshot: None,
-            board: PresentationBoardView::new(),
+            board,
             games: Vec::new(),
             selected_game: None,
             engine_panels: None,
@@ -313,9 +319,10 @@ impl PresentationApp {
             quit_ready: false,
             quit_retry_frame: None,
             theme_initialized: false,
-            preferences: DesktopPreferences::default(),
+            preferences,
             settings_open: false,
             settings_toggle_frame: None,
+            library_panel_open: false,
             navigation_frame: None,
         }
     }
@@ -1301,7 +1308,9 @@ impl PresentationApp {
                     for &choice in DesktopPreferences::motions() {
                         ui.radio_value(&mut motion, choice, choice.label());
                     }
-                    self.preferences.set_motion(motion);
+                    if self.preferences.set_motion(motion) {
+                        self.board.set_reduced_motion(motion.is_reduced());
+                    }
                 }
             }
         }
@@ -1547,9 +1556,24 @@ impl PresentationApp {
                         DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. })
                     )
             });
-        if self.workspace == PresentationAppEnumWorkspace::Library {
+        let library_open = self.workspace == PresentationAppEnumWorkspace::Library;
+        if library_open != self.library_panel_open {
+            self.library_panel_open = library_open;
+            if let Err(error) = self.board.set_panel_visible(library_open) {
+                self.failure = Some(error.to_string());
+            }
+        }
+        let panel_progress = match self.board.panel_progress() {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.failure = Some(error.to_string());
+                f32::from(u8::from(library_open))
+            }
+        };
+        self.board.request_repaint(ui.ctx());
+        if panel_progress > 0.0 {
             egui::Panel::left("chess.library.query")
-                .default_size(PresentationThemeTokens::PANEL_WIDTH)
+                .exact_size(PresentationThemeTokens::PANEL_WIDTH * panel_progress)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         let positions = if let Some(editor) = &mut self.editor {
@@ -2006,11 +2030,23 @@ impl PresentationApp {
         {
             game.controller.restore_board_focus(ui.ctx(), scene);
         }
+        let animation = board_frame
+            .as_ref()
+            .and_then(PresentationBoardViewFrame::animation);
         Ok(PresentationAppFrame {
             viewport: editor_viewport
                 .or_else(|| board_frame.as_ref().map(|frame| frame.viewport())),
             board_actions: board_frame.map_or_else(Vec::new, |frame| frame.actions().to_vec()),
             camera_action,
+            animation,
         })
+    }
+
+    pub fn apply_camera_action(
+        &mut self,
+        camera: SceneCamera,
+        action: PresentationBoardEnumCameraAction,
+    ) -> Result<SceneCamera, PresentationAppError> {
+        Ok(self.board.camera_action(camera, action)?)
     }
 }

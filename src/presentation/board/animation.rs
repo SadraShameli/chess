@@ -263,6 +263,11 @@ impl PresentationBoardAnimation {
         Ok((target, PresentationBoardAnimationEnumOutcome::Animating))
     }
 
+    pub fn rest_panel(&mut self, visible: bool) {
+        self.panel_visible = visible;
+        self.panel = None;
+    }
+
     pub fn set_panel_visible(
         &mut self,
         visible: bool,

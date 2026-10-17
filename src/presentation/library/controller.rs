@@ -10,8 +10,8 @@ use crate::desktop::library_service::{
 };
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
 use crate::game::enums::GameId;
-use crate::game::storage_repository::GameStorageRevision;
 use crate::game::library_organization::GameLibraryOrganizationFolderId;
+use crate::game::storage_repository::GameStorageRevision;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
 use crate::presentation::library::intent::{PresentationLibraryIntent, PresentationLibraryPending};

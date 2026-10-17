@@ -356,6 +356,28 @@ fn viewport_dpi_clip_and_camera_changes_invalidate_geometry_and_recreate_sized_t
 }
 
 #[test]
+fn animated_view_moves_the_camera_without_a_new_generation_or_target()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = SceneRendererFixture::new()?;
+    let mut renderer = fixture.spawn()?;
+    let camera = SceneCamera::initial(BoardEnumColor::White);
+    let generation = renderer.generation();
+    let image = renderer.image().id();
+    assert!(!renderer.animate_view(&mut fixture.world, camera)?);
+    renderer.finish_frame(&mut fixture.world)?;
+    assert!(renderer.animate_view(&mut fixture.world, camera.rotate_right())?);
+    assert_eq!(renderer.generation(), generation);
+    assert_eq!(renderer.image().id(), image);
+    assert!(
+        fixture
+            .world
+            .get::<Camera>(renderer.camera_entity())
+            .is_some_and(|camera| camera.is_active)
+    );
+    Ok(())
+}
+
+#[test]
 fn lifecycle_failure_invalidates_old_generation_and_rendering_requires_explicit_readiness()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut fixture = SceneRendererFixture::new()?;

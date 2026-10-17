@@ -131,10 +131,10 @@ strip = "none"
 
 [profile.test]
 opt-level = 1
-debug = true
+debug = false
 debug-assertions = true
 overflow-checks = true
-strip = "none"
+strip = "debuginfo"
 incremental = true
 
 [profile.test.package."*"]

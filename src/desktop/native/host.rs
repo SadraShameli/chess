@@ -83,7 +83,7 @@ use crate::desktop::native::resources::DesktopNativeResources;
 use crate::desktop::native::task_pools::{DesktopNativeTaskPools, DesktopNativeTaskPoolsError};
 use crate::presentation::action::registry::PresentationActionEnumId;
 use crate::presentation::app::{PresentationApp, PresentationAppError};
-use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
+use crate::presentation::board::animation::PresentationBoardAnimationFrame;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::engine_panels::PresentationEnginePanelsConnection;
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
@@ -122,6 +122,7 @@ pub struct DesktopNativeHostServices {
     pub editor: Option<crate::presentation::app::editor::PresentationAppEditorConnection>,
     pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
+    pub clock: Arc<ClockTimeProviderMonotonic>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
     pub resources: DesktopNativeResources,
     pub capacity: Arc<Mutex<CapacityPhase>>,
@@ -242,6 +243,7 @@ struct DesktopNativeHostState {
     validated_surface: Option<Entity>,
     pending_view: Option<ScenePickingViewport>,
     pending_camera: Option<SceneCamera>,
+    animation: Option<PresentationBoardAnimationFrame>,
     dialog_ready: bool,
     dialog_admission_closed: bool,
     exit_authorized: bool,
@@ -604,7 +606,7 @@ impl DesktopNativeHost {
             .world()
             .resource::<AssetServer>()
             .load(DesktopNativeResources::PIECES_ASSET);
-        let mut presentation = PresentationApp::new();
+        let mut presentation = PresentationApp::new(services.clock.clone());
         if let Some(connection) = services.engine_panels.take() {
             presentation.mount_engine(connection);
         }
@@ -640,6 +642,7 @@ impl DesktopNativeHost {
             validated_surface: None,
             pending_view: None,
             pending_camera: None,
+            animation: None,
             dialog_ready: false,
             dialog_admission_closed: false,
             exit_authorized: false,
@@ -1062,6 +1065,7 @@ impl DesktopNativeHost {
             state.expected_device = None;
             state.pending_view = None;
             state.pending_camera = None;
+            state.animation = None;
             state.recovery = None;
             state.graphics_drain = None;
             state.asset_reload = None;
@@ -1364,6 +1368,10 @@ impl DesktopNativeHost {
         }
         Self::synchronize_board_scene(world, state, renderer)?;
         if state.ready {
+            if let Some(animation) = state.animation {
+                animation.apply_piece(renderer, world)?;
+            }
+            renderer.animate_view(world, Self::display_camera(state))?;
             return Ok(());
         }
         let camera_changed = state.pending_camera.is_some();
@@ -1466,7 +1474,11 @@ impl DesktopNativeHost {
         let scene = renderer
             .map(|renderer| {
                 let mut textures = world.resource_mut::<EguiUserTextures>();
-                PresentationBoardScene::from_renderer(renderer, &mut textures, state.camera)
+                PresentationBoardScene::from_renderer(
+                    renderer,
+                    &mut textures,
+                    Self::display_camera(state),
+                )
             })
             .transpose()?;
         state
@@ -1503,8 +1515,16 @@ impl DesktopNativeHost {
         {
             state.pending_view = Some(viewport);
         }
+        state.animation = frame.animation();
         if let Some(action) = frame.camera_action() {
-            state.pending_camera = Some(Self::camera_action(state.camera, action));
+            let camera = state
+                .presentation
+                .apply_camera_action(state.camera, action)?;
+            if state.ready {
+                state.camera = camera;
+            } else {
+                state.pending_camera = Some(camera);
+            }
             context.request_repaint();
         }
         if state.ready && (state.pending_view.is_some() || state.pending_camera.is_some()) {
@@ -1523,6 +1543,12 @@ impl DesktopNativeHost {
             context.request_repaint();
         }
         Ok(())
+    }
+
+    fn display_camera(state: &DesktopNativeHostState) -> SceneCamera {
+        state.animation.map_or(state.camera, |animation| {
+            animation.display_camera(state.camera)
+        })
     }
 
     fn request_geometry_preparation(
@@ -1546,27 +1572,6 @@ impl DesktopNativeHost {
         };
         Ok(phase.state() == CapacityPhaseEnumState::Preparing
             && phase.generation() == Some(state.generation))
-    }
-
-    fn camera_action(
-        camera: SceneCamera,
-        action: PresentationBoardEnumCameraAction,
-    ) -> SceneCamera {
-        match action {
-            PresentationBoardEnumCameraAction::RotateLeft => camera.rotate_left(),
-            PresentationBoardEnumCameraAction::RotateRight => camera.rotate_right(),
-            PresentationBoardEnumCameraAction::TiltUp => camera.tilt_up(),
-            PresentationBoardEnumCameraAction::TiltDown => camera.tilt_down(),
-            PresentationBoardEnumCameraAction::ZoomIn => camera.zoom_in(),
-            PresentationBoardEnumCameraAction::ZoomOut => camera.zoom_out(),
-            PresentationBoardEnumCameraAction::Reset => camera.reset(),
-            PresentationBoardEnumCameraAction::Flip => {
-                camera.with_orientation(match camera.orientation() {
-                    BoardEnumColor::White => BoardEnumColor::Black,
-                    BoardEnumColor::Black => BoardEnumColor::White,
-                })
-            }
-        }
     }
 
     fn validate_surface(main: &mut World, render: &mut World) {
