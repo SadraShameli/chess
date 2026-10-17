@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::capacity::lease::CapacityLease;
@@ -31,8 +31,10 @@ impl DesktopNativeReportWorker {
         mut games: watch::Receiver<Vec<DesktopGameSnapshot>>,
         capacity: Arc<Mutex<CapacityPhase>>,
         mut done: watch::Receiver<bool>,
+        mut reanalysis: mpsc::UnboundedReceiver<ReportJobId>,
     ) {
         let mut reported: HashSet<GameId> = HashSet::new();
+        let mut reanalysis_open = true;
         loop {
             if *done.borrow() {
                 break;
@@ -45,12 +47,30 @@ impl DesktopNativeReportWorker {
                     }
                     continue;
                 }
+                request = reanalysis.recv(), if reanalysis_open => {
+                    match request {
+                        Some(id) => {
+                            let snapshots = games.borrow().clone();
+                            if let Err(error) = host
+                                .preview_reanalysis(id, session.engine(), &snapshots)
+                                .await
+                            {
+                                host.record_failure(format!(
+                                    "Reanalysis could not be prepared: {error}"
+                                ));
+                            }
+                        }
+                        None => reanalysis_open = false,
+                    }
+                    continue;
+                }
                 outcome = games.changed() => outcome.is_ok(),
                 () = tokio::time::sleep(Self::TICK) => false,
             };
             if changed {
                 let snapshots = games.borrow_and_update().clone();
-                if let Err(error) = Self::observe(&host, &session, &snapshots, &mut reported).await {
+                if let Err(error) = Self::observe(&host, &session, &snapshots, &mut reported).await
+                {
                     host.record_failure(error.to_string());
                 }
             }

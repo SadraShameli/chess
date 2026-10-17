@@ -66,6 +66,13 @@ pub enum DesktopGameRegistryCloseEnumProof {
 }
 
 impl DesktopGameRegistryCloseEnumProof {
+    pub fn closed_snapshot(&self) -> Option<&DesktopGameSnapshot> {
+        match self {
+            Self::Closed { snapshot, .. } => Some(snapshot),
+            Self::NotOpen { .. } => None,
+        }
+    }
+
     const fn game(&self) -> GameId {
         match self {
             Self::Closed { acknowledgment, .. } => acknowledgment.game(),
@@ -225,6 +232,7 @@ impl DesktopLibraryCommandsLifecycleProvider for DesktopGameRegistryCloseCertifi
 }
 
 pub enum DesktopGameRegistryCloseEnumObservation<'a> {
+    TabClosed,
     TrashCommitted(&'a StorageTrashReceipt),
     RollbackObserved,
     CancelConfirmed,

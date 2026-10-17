@@ -140,6 +140,7 @@ pub struct DesktopNativeHostServices {
     pub games: Option<DesktopGameRegistryPort>,
     pub layout: DesktopLayout,
     pub layout_store: Option<Arc<DesktopNativeLayoutStore>>,
+    pub study: Option<Arc<crate::desktop::native::study_driver::DesktopNativeStudyDriver>>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
     pub resources: DesktopNativeResources,
     pub capacity: Arc<Mutex<CapacityPhase>>,
@@ -1076,11 +1077,23 @@ impl DesktopNativeHost {
         }
     }
 
+    fn drive_study(state: &mut DesktopNativeHostState) {
+        let Some(driver) = state.services.study.clone() else {
+            return;
+        };
+        let board = state
+            .presentation
+            .board_snapshot()
+            .map(|board| (board.fen().to_owned(), board.variant()));
+        driver.drive(state.presentation.study_mut(), board);
+    }
+
     fn update_state(
         world: &mut World,
         state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
         state.presentation.poll();
+        Self::drive_study(state);
         Self::observe_sleep(world, state);
         Self::route_audio(world, state);
         Self::update_puzzles(world, state)?;

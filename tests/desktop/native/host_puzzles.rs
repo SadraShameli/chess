@@ -313,6 +313,7 @@ impl DesktopNativeHostPuzzleFixture {
                 games: None,
                 layout: crate::desktop::layout::DesktopLayout::default(),
                 layout_store: None,
+                study: None,
             },
             presentation: PresentationApp::new(Arc::clone(&clock) as Arc<dyn ClockTimeProvider>),
             animation: None,

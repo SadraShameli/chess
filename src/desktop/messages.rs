@@ -165,7 +165,10 @@ impl DesktopEnumCommand {
                     None
                 }
             }
-            Self::Game(DesktopGameBridgeEnumOperation::Create { .. }) => None,
+            Self::Game(
+                DesktopGameBridgeEnumOperation::Create { .. }
+                | DesktopGameBridgeEnumOperation::Close { .. },
+            ) => None,
             Self::Stop { owner } => Some(DesktopMessagesEnumControlKey::Stop(*owner)),
             Self::Pause { owner } => Some(DesktopMessagesEnumControlKey::Pause(*owner)),
             Self::Quit => Some(DesktopMessagesEnumControlKey::Quit),

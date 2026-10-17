@@ -56,9 +56,7 @@ use crate::desktop::identity::DesktopRequestId;
 use crate::game::adjudication::GameAdjudicationMateProofProvider;
 use crate::game::configuration::GameConfiguration;
 use crate::game::engine_provider::GameEngineProvider;
-use crate::game::enums::{
-    GameEnumPhase, GameId, GameIdentityError, GameMoveId, GameRevisionError,
-};
+use crate::game::enums::{GameEnumPhase, GameId, GameIdentityError, GameMoveId, GameRevisionError};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::{GameMetadata, GameSession, GameSessionError, GameSessionOptions};
 use crate::game::storage_repository::{GameStorageRevision, GameStorageWallTimeProvider};
@@ -501,6 +499,33 @@ impl DesktopGameBridgeProvider for DesktopGameRegistryPort {
                         .await
                         .map_err(|error| DesktopGameRegistryError::Supervisor(error).failure())
                 }
+                DesktopGameBridgeEnumOperation::Close { game, revision } => {
+                    let storage_revision = port
+                        .sessions
+                        .read()
+                        .await
+                        .get(&game)
+                        .map(|owner| owner.snapshot().storage_revision)
+                        .ok_or_else(|| DesktopGameRegistryError::UnknownGame.failure())?;
+                    let target = port
+                        .try_close_target(game, revision, storage_revision)
+                        .map_err(|error| error.failure())?;
+                    let mut closing = port
+                        .try_close_game(target)
+                        .map_err(|error| error.failure())?;
+                    let certificate = closing.wait().await.map_err(|error| error.failure())?;
+                    let snapshot = certificate
+                        .proof()
+                        .closed_snapshot()
+                        .cloned()
+                        .ok_or_else(|| DesktopGameRegistryError::CloseConflict.failure())?;
+                    port.try_finish_close(
+                        &certificate,
+                        DesktopGameRegistryCloseEnumObservation::TabClosed,
+                    )
+                    .map_err(|error| error.failure())?;
+                    Ok(snapshot)
+                }
                 DesktopGameBridgeEnumOperation::Create {
                     owner,
                     configuration,
@@ -818,7 +843,8 @@ where
                 configuration,
                 owner: _,
             } => configuration,
-            DesktopGameBridgeEnumOperation::Session { .. } => {
+            DesktopGameBridgeEnumOperation::Session { .. }
+            | DesktopGameBridgeEnumOperation::Close { .. } => {
                 return Err(DesktopGameRegistryError::InvalidCreate);
             }
         };
@@ -1155,9 +1181,7 @@ where
                     .read()
                     .await
                     .values()
-                    .filter(|port| {
-                        port.snapshot().snapshot.phase() == GameEnumPhase::Interrupted
-                    })
+                    .filter(|port| port.snapshot().snapshot.phase() == GameEnumPhase::Interrupted)
                     .cloned()
                     .collect();
                 let received_at = self.clock.now()?;

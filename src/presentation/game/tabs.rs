@@ -7,22 +7,33 @@ use crate::presentation::game::overview::{
 
 pub struct PresentationGameTabs;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PresentationGameTabsAction {
+    pub selected: Option<GameId>,
+    pub close: Option<GameId>,
+}
+
 impl PresentationGameTabs {
+    pub const CLOSE_LABEL: &'static str = "Close tab";
+
     pub fn show(
         ui: &mut Ui,
         rows: &[PresentationGameOverviewRow],
         selected: Option<GameId>,
-    ) -> Option<GameId> {
-        let mut chosen = None;
+    ) -> PresentationGameTabsAction {
+        let mut action = PresentationGameTabsAction::default();
         for row in rows {
             let response = ui
                 .selectable_label(selected == Some(row.id()), row.tab_label())
                 .on_hover_text(row.summary());
             if response.clicked() {
-                chosen = Some(row.id());
+                action.selected = Some(row.id());
+            }
+            if selected == Some(row.id()) && ui.small_button(Self::CLOSE_LABEL).clicked() {
+                action.close = Some(row.id());
             }
         }
-        chosen
+        action
     }
 
     pub fn show_overview(ui: &mut Ui, rows: &[PresentationGameOverviewRow]) {

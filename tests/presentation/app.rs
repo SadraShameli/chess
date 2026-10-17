@@ -2021,3 +2021,109 @@ fn report_demand_counts_only_active_games() -> PresentationAppTestResult {
     );
     Ok(())
 }
+
+fn paused_tab_session(
+    id: &str,
+    root: u128,
+) -> PresentationAppTestResult<chess::game::session::GameSession> {
+    use chess::game::pause::{GamePauseEnumCause, GamePauseEnumEngineBarrier, GamePauseRequest};
+    let mut session = tab_session(id, root)?;
+    session.pause(
+        GamePauseRequest {
+            expected_revision: session.revision(),
+            cause: GamePauseEnumCause::Manual,
+            received_at: ClockInstant::from_nanos(0),
+            engine: GamePauseEnumEngineBarrier::NoEngine,
+        },
+        &crate::game_transition_fixture::GameTransitionFixtureProof,
+    )?;
+    Ok(session)
+}
+
+#[test]
+fn closing_a_game_tab_confirms_unsaved_moves_then_requests_the_registry_close_and_drops_the_tab()
+-> PresentationAppTestResult {
+    use chess::desktop::game_bridge::DesktopGameBridgeEnumOperation;
+
+    let first = paused_tab_session("123e4567-e89b-42d3-a456-426614174096", 904)?;
+    let second = tab_session("123e4567-e89b-42d3-a456-426614174095", 905)?;
+    let mut fixture = PresentationAppFixture::new();
+    let scene = fixture.mount(&first)?;
+    fixture.update_game(&second)?;
+    assert!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing selected game")?
+            .is_save_required()
+    );
+
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    fixture.frame(
+        Some(&scene),
+        vec![PresentationAppFixture::control_event(&output, "Close tab")?],
+    )?;
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    fixture.frame(
+        Some(&scene),
+        vec![PresentationAppFixture::control_event(
+            &output,
+            "Keep game open",
+        )?],
+    )?;
+    assert!(fixture.application.try_next()?.is_none());
+    assert_eq!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing game after keeping it open")?
+            .id(),
+        first.id()
+    );
+
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    fixture.frame(
+        Some(&scene),
+        vec![PresentationAppFixture::control_event(&output, "Close tab")?],
+    )?;
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    fixture.frame(
+        Some(&scene),
+        vec![PresentationAppFixture::control_event(
+            &output,
+            "Save and close",
+        )?],
+    )?;
+    let work = fixture
+        .application
+        .try_next()?
+        .ok_or("missing close request")?;
+    assert!(matches!(work.request().command().operation(),
+        DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Close { game, revision })
+            if *game == first.id() && *revision == first.revision()
+    ));
+    fixture.application.begin_commit(&work)?;
+    fixture.application.complete_value(
+        &work,
+        DesktopEnumValue::Game(Box::new(
+            chess::desktop::game_snapshot::DesktopGameSnapshot::capture(
+                &first,
+                ClockInstant::from_nanos(0),
+            )?,
+        )),
+        None,
+    )?;
+    fixture.frame(Some(&scene), Vec::new())?;
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    assert_eq!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing remaining game")?
+            .id(),
+        second.id()
+    );
+    assert!(tab_event(&output, "Game 2").is_err());
+    assert!(fixture.application.try_next()?.is_none());
+    Ok(())
+}

@@ -5,12 +5,17 @@ use tokio::sync::{Mutex, watch};
 
 use crate::board::position::BoardPosition;
 use crate::capacity::lease::CapacityLease;
-use crate::desktop::dataset_commands::{DesktopDatasetCommands, DesktopDatasetStarter};
+use crate::desktop::dataset_commands::{
+    DesktopDatasetCommands, DesktopDatasetRow, DesktopDatasetStarter,
+};
+use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::opening_commands::{
     DesktopOpeningCommands, DesktopOpeningCommandsError, DesktopOpeningExplorerView,
 };
 use crate::desktop::report_commands::DesktopReportEnumConfirmation;
-use crate::desktop::report_commands::{DesktopReportCommands, DesktopReportCommandsError};
+use crate::desktop::report_commands::{
+    DesktopReportCommands, DesktopReportCommandsError, DesktopReportView,
+};
 use crate::engine::process_provider::EngineProcess;
 use crate::engine::search::identity::EngineSearchTag;
 use crate::engine::search::session::{
@@ -48,6 +53,8 @@ use crate::storage::opening_repository::StorageOpeningRepository;
 
 #[derive(Debug, Error)]
 pub enum DesktopNativeReportHostError {
+    #[error("Reanalysis needs the finished game to still be open")]
+    ReanalysisUnavailable,
     #[error(transparent)]
     Reports(#[from] DesktopReportCommandsError),
     #[error(transparent)]
@@ -90,6 +97,7 @@ pub struct DesktopNativeReportHost {
     openings: StorageOpeningRepository,
     datasets: StorageDatasetRepository,
     failures: std::sync::Mutex<Vec<String>>,
+    previews_ready: std::sync::Mutex<Vec<ReportJobId>>,
 }
 
 impl DesktopNativeReportHost {
@@ -110,6 +118,7 @@ impl DesktopNativeReportHost {
             openings: StorageOpeningRepository::new(client.clone()),
             datasets: StorageDatasetRepository::new(client),
             failures: std::sync::Mutex::new(Vec::new()),
+            previews_ready: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -277,75 +286,200 @@ impl DesktopNativeReportHost {
         Ok(completed)
     }
 
+    pub async fn process(&self, input: DesktopNativeStudyInput) -> DesktopNativeStudyOutput {
+        let mut output = DesktopNativeStudyOutput {
+            starters: input.starters.clone(),
+            ..DesktopNativeStudyOutput::default()
+        };
+        {
+            let mut reports = self.reports.lock().await;
+            for intent in input.report_intents {
+                match intent {
+                    PresentationReportIntent::Cancel(id) => {
+                        if let Err(error) = reports.cancel(id) {
+                            output
+                                .failures
+                                .push(format!("The report could not be cancelled: {error}"));
+                        }
+                    }
+                    PresentationReportIntent::PreviewReanalysis(id) => output.reanalysis.push(id),
+                    PresentationReportIntent::ConfirmReplacement(id) => {
+                        match reports
+                            .confirm_replacement(id, DesktopReportEnumConfirmation::Confirmed)
+                        {
+                            Ok(_) => output.replacement_resolved = true,
+                            Err(error) => output
+                                .failures
+                                .push(format!("The report could not be replaced: {error}")),
+                        }
+                    }
+                    PresentationReportIntent::DiscardReplacement(id) => {
+                        reports.discard_replacement(id);
+                        output.replacement_resolved = true;
+                    }
+                }
+            }
+            match reports.list() {
+                Ok(listed) => {
+                    let target = input
+                        .current_report
+                        .filter(|id| listed.iter().any(|entry| entry.id == *id))
+                        .or_else(|| listed.first().map(|entry| entry.id));
+                    if let Some(id) = target {
+                        match reports.read(id) {
+                            Ok(view) => output.report = Some(view),
+                            Err(error) => output
+                                .failures
+                                .push(format!("The report could not be read: {error}")),
+                        }
+                    }
+                }
+                Err(error) => output
+                    .failures
+                    .push(format!("The reports could not be listed: {error}")),
+            }
+        }
+        match self.explore(&input.position).await {
+            Ok(view) => output.explorer = Some(view),
+            Err(error) => output
+                .failures
+                .push(format!("The opening explorer is unavailable: {error}")),
+        }
+        match self.datasets.list().await {
+            Ok(entries) => {
+                output.rows = Some(DesktopDatasetCommands::rows_from_entries(
+                    entries,
+                    &input.integrity,
+                ));
+            }
+            Err(error) => output
+                .failures
+                .push(format!("The data list is unavailable: {error}")),
+        }
+        output.previews_ready = self.take_previews_ready();
+        output.failures.extend(self.take_failures());
+        output
+    }
+
+    pub fn apply(
+        output: DesktopNativeStudyOutput,
+        study: &mut PresentationStudy,
+    ) -> DesktopNativeStudyPending {
+        if let Some(view) = output.report {
+            study.report_mut().observe(view);
+        }
+        if output.replacement_resolved {
+            study.report_mut().set_replacement_preview(false);
+        }
+        let current = study.report_mut().view().map(|view| view.id);
+        if current.is_some_and(|id| output.previews_ready.contains(&id)) {
+            study.report_mut().set_replacement_preview(true);
+        }
+        if let Some(explorer) = output.explorer {
+            study.opening_mut().observe_explorer(explorer);
+        }
+        if let Some(rows) = output.rows {
+            study.set_datasets(output.starters, rows);
+        }
+        study.report_mut().observe_failures(output.failures.clone());
+        DesktopNativeStudyPending {
+            opening: study.take_opening_intents(),
+            datasets: study.take_dataset_intents(),
+            reanalysis: output.reanalysis,
+            failures: output.failures,
+        }
+    }
+
     pub async fn pump(
         &self,
         study: &mut PresentationStudy,
         position: &BoardPosition,
         starters: &[DesktopDatasetStarter],
         integrity: &StorageDatasetIntegrityReport,
-    ) -> Result<DesktopNativeStudyPending, DesktopNativeReportHostError> {
-        let mut reanalysis = Vec::new();
-        let mut failures = Vec::new();
-        {
-            let mut reports = self.reports.lock().await;
-            for intent in study.take_report_intents() {
-                match intent {
-                    PresentationReportIntent::Cancel(id) => {
-                        if let Err(error) = reports.cancel(id) {
-                            failures.push(format!("The report could not be cancelled: {error}"));
-                        }
-                    }
-                    PresentationReportIntent::PreviewReanalysis(id) => reanalysis.push(id),
-                    PresentationReportIntent::ConfirmReplacement(id) => {
-                        match reports
-                            .confirm_replacement(id, DesktopReportEnumConfirmation::Confirmed)
-                        {
-                            Ok(_) => study.report_mut().set_replacement_preview(false),
-                            Err(error) => {
-                                failures.push(format!("The report could not be replaced: {error}"))
-                            }
-                        }
-                    }
-                    PresentationReportIntent::DiscardReplacement(id) => {
-                        reports.discard_replacement(id);
-                        study.report_mut().set_replacement_preview(false);
-                    }
-                }
-            }
-            let current = study.report_mut().view().map(|view| view.id);
-            match reports.list() {
-                Ok(listed) => {
-                    let target = current
-                        .filter(|id| listed.iter().any(|entry| entry.id == *id))
-                        .or_else(|| listed.first().map(|entry| entry.id));
-                    if let Some(id) = target {
-                        match reports.read(id) {
-                            Ok(view) => study.report_mut().observe(view),
-                            Err(error) => {
-                                failures.push(format!("The report could not be read: {error}"))
-                            }
-                        }
-                    }
-                }
-                Err(error) => failures.push(format!("The reports could not be listed: {error}")),
-            }
-        }
-        study.report_mut().observe_failures(failures.clone());
-        study
-            .opening_mut()
-            .observe_explorer(self.explore(position).await?);
-        let rows =
-            DesktopDatasetCommands::rows_from_entries(self.datasets.list().await?, integrity);
-        study.set_datasets(starters.to_vec(), rows);
-        Ok(DesktopNativeStudyPending {
-            opening: study.take_opening_intents(),
-            datasets: study.take_dataset_intents(),
-            reanalysis,
-            failures: {
-                let mut all = self.take_failures();
-                all.extend(failures);
-                all
-            },
-        })
+    ) -> DesktopNativeStudyPending {
+        let input = DesktopNativeStudyInput {
+            report_intents: study.take_report_intents(),
+            current_report: study.report_mut().view().map(|view| view.id),
+            position: position.clone(),
+            starters: starters.to_vec(),
+            integrity: integrity.clone(),
+        };
+        Self::apply(self.process(input).await, study)
     }
+
+    pub async fn preview_reanalysis<P: EngineProcess>(
+        &self,
+        previous: ReportJobId,
+        engine: &EngineSession<P>,
+        snapshots: &[DesktopGameSnapshot],
+    ) -> Result<(), DesktopNativeReportHostError> {
+        let game = {
+            let mut reports = self.reports.lock().await;
+            reports
+                .list()?
+                .into_iter()
+                .find(|entry| entry.id == previous)
+                .map(|entry| entry.game)
+                .ok_or(DesktopNativeReportHostError::ReanalysisUnavailable)?
+        };
+        let snapshot = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id() == game && snapshot.completed_tree().is_some())
+            .ok_or(DesktopNativeReportHostError::ReanalysisUnavailable)?;
+        let tree = snapshot
+            .completed_tree()
+            .ok_or(DesktopNativeReportHostError::ReanalysisUnavailable)?;
+        let source = ReportJobSource::capture(
+            game,
+            snapshot.revision(),
+            tree,
+            snapshot.live(),
+            ReportJobSourceLimits::new(10_000, 256 * 1024 * 1024)?,
+        )?;
+        let configuration = ReportJobConfiguration::capture(
+            engine,
+            ReportJobBudget::default_per_position()?,
+            ReportScoringEnumPolicyVersion::ExpectedScoreV1,
+        )?;
+        let job = ReportJob::new(
+            ReportJobId::try_from(uuid::Uuid::new_v4())?,
+            source,
+            configuration,
+        )?;
+        self.reports
+            .lock()
+            .await
+            .preview_replacement(previous, job)?;
+        if let Ok(mut ready) = self.previews_ready.lock() {
+            ready.push(previous);
+        }
+        Ok(())
+    }
+
+    fn take_previews_ready(&self) -> Vec<ReportJobId> {
+        self.previews_ready
+            .lock()
+            .map(|mut ready| std::mem::take(&mut *ready))
+            .unwrap_or_default()
+    }
+}
+
+pub struct DesktopNativeStudyInput {
+    pub report_intents: Vec<PresentationReportIntent>,
+    pub current_report: Option<ReportJobId>,
+    pub position: BoardPosition,
+    pub starters: Vec<DesktopDatasetStarter>,
+    pub integrity: StorageDatasetIntegrityReport,
+}
+
+#[derive(Default)]
+pub struct DesktopNativeStudyOutput {
+    pub report: Option<DesktopReportView>,
+    pub replacement_resolved: bool,
+    pub previews_ready: Vec<ReportJobId>,
+    pub explorer: Option<DesktopOpeningExplorerView>,
+    pub rows: Option<Vec<DesktopDatasetRow>>,
+    pub starters: Vec<DesktopDatasetStarter>,
+    pub reanalysis: Vec<ReportJobId>,
+    pub failures: Vec<String>,
 }

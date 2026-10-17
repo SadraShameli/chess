@@ -75,6 +75,8 @@ use crate::desktop::native::library_service::{
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
 use crate::desktop::native::report_host::DesktopNativeReportHost;
 use crate::desktop::native::report_worker::DesktopNativeReportWorker;
+use crate::desktop::native::study_driver::DesktopNativeStudyDriver;
+use crate::report::job::ReportJobId;
 use crate::engine::resource_config::EngineResourceConfig;
 use crate::engine::search::session::EngineSearchSession;
 use crate::desktop::native::puzzle_service::{
@@ -1005,7 +1007,7 @@ impl DesktopNativeBootstrapSupervisor {
         let port = application.port();
         let (dialog_ready, dialogs) = watch::channel(None);
         let services = DesktopCoordinatorServices::new(
-            Arc::new(DesktopNativeDialogsProxy::new(dialogs)),
+            Arc::new(DesktopNativeDialogsProxy::new(dialogs.clone())),
             executor,
             self.lifecycle.clone(),
         );
@@ -1066,8 +1068,32 @@ impl DesktopNativeBootstrapSupervisor {
         if !Self::prepare(&capacity, generation).await? {
             return Err(DesktopNativeBootstrapError::HostServices);
         }
-        let report_worker = self.start_report_worker(report_package, &game_port, &capacity).await;
+        let (reanalysis_sender, reanalysis_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let report_worker = self
+            .start_report_worker(report_package, &game_port, &capacity, reanalysis_receiver)
+            .await;
         self.lifecycle.services.lock().await.report_worker = report_worker;
+        let study = self
+            .lifecycle
+            .services
+            .lock()
+            .await
+            .reports
+            .clone()
+            .map(|host| {
+                Arc::new(DesktopNativeStudyDriver::new(
+                    host,
+                    tokio::runtime::Handle::current(),
+                    Arc::clone(&self.wake),
+                    Arc::new(DesktopNativeDialogsProxy::new(dialogs.clone())),
+                    reanalysis_sender,
+                    self.lease
+                        .identity()
+                        .data_directory()
+                        .join("library.sqlite3"),
+                    Vec::new(),
+                ))
+            });
         let (events, receiver) = DesktopNativeHost::event_channel();
         let layout_store = Arc::new(DesktopNativeLayoutStore::new(
             StoragePreferencesRepository::new(layout_client),
@@ -1079,6 +1105,7 @@ impl DesktopNativeBootstrapSupervisor {
         let host = DesktopNativeHostServices {
             games: Some(game_port.registry_port().clone()),
             layout,
+            study,
             layout_store: Some(layout_store),
             clock: Arc::clone(&clock),
             engine_panels,
@@ -1130,6 +1157,7 @@ impl DesktopNativeBootstrapSupervisor {
         package: Option<EnginePackageSelected>,
         games: &DesktopNativeGameRuntimePort,
         capacity: &Arc<Mutex<CapacityPhase>>,
+        reanalysis: tokio::sync::mpsc::UnboundedReceiver<ReportJobId>,
     ) -> Option<JoinHandle<()>> {
         let host = self.lifecycle.services.lock().await.reports.clone()?;
         let package = package?;
@@ -1140,6 +1168,7 @@ impl DesktopNativeBootstrapSupervisor {
                 games.snapshots(),
                 Arc::clone(capacity),
                 self.host_done.clone(),
+                reanalysis,
             ))),
             Err(message) => {
                 host.record_failure(message);

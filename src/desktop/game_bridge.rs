@@ -24,6 +24,10 @@ pub enum DesktopGameBridgeEnumOperation {
         revision: GameRevision,
         action: DesktopGameCommandsEnumAction,
     },
+    Close {
+        game: GameId,
+        revision: GameRevision,
+    },
 }
 
 impl DesktopGameBridgeEnumOperation {
@@ -46,14 +50,18 @@ impl DesktopGameBridgeEnumOperation {
     pub fn owner(&self) -> DesktopMessagesEntityId {
         match self {
             Self::Create { owner, .. } => *owner,
-            Self::Session { game, .. } => DesktopMessagesEntityId::for_game(*game),
+            Self::Session { game, .. } | Self::Close { game, .. } => {
+                DesktopMessagesEntityId::for_game(*game)
+            }
         }
     }
 
     pub const fn revision(&self) -> DesktopRevision {
         match self {
             Self::Create { .. } => DesktopRevision::ZERO,
-            Self::Session { revision, .. } => DesktopRevision::for_game(*revision),
+            Self::Session { revision, .. } | Self::Close { revision, .. } => {
+                DesktopRevision::for_game(*revision)
+            }
         }
     }
 }

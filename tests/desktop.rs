@@ -76,6 +76,8 @@ mod desktop_native_analysis_resources;
 mod desktop_native_game_resources;
 #[path = "desktop/native/game_runtime.rs"]
 mod desktop_native_game_runtime;
+#[path = "desktop/native/study_pump.rs"]
+mod desktop_native_study_pump;
 #[path = "desktop/native/game_service.rs"]
 mod desktop_native_game_service;
 #[path = "desktop/request_cache.rs"]

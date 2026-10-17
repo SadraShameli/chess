@@ -18,6 +18,7 @@ use crate::desktop::application::{
     DesktopApplicationError, DesktopApplicationPort, DesktopApplicationReceipt,
     DesktopApplicationWakeProvider,
 };
+use crate::desktop::backup_commands::DesktopBackupCommandsPrerequisites;
 use crate::desktop::dto::{
     DesktopBoardSnapshot, DesktopBootstrapSnapshot, DesktopEnumEngineSnapshot, DesktopEnumEvent,
     DesktopEnumValue,
@@ -27,16 +28,20 @@ use crate::desktop::game_bridge::DesktopGameBridgeEnumOperation;
 use crate::desktop::game_commands::DesktopGameCommandsEnumAction;
 use crate::desktop::game_snapshot::{DesktopGameSnapshot, DesktopGameSnapshotEnumNotice};
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
+use crate::desktop::layout::DesktopLayout;
 use crate::desktop::messages::{
     DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
     DesktopRequest,
 };
 use crate::desktop::preferences::DesktopPreferences;
 use crate::desktop::puzzle_service::DesktopPuzzleServiceError;
+use crate::desktop::renderer_commands::DesktopRendererCommands;
 use crate::desktop::stream::DesktopStream;
-use crate::desktop::backup_commands::DesktopBackupCommandsPrerequisites;
 use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
+use crate::game::save_coordinator::{
+    GameSaveCoordinator, GameSaveCoordinatorEnumBarrier, GameSaveCoordinatorError,
+};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
 use crate::presentation::analysis::annotations::PresentationAnalysisAnnotationsEnumMarkingInput;
@@ -49,25 +54,16 @@ use crate::presentation::app::library::{
 };
 use crate::presentation::audio::observer::PresentationAudioObserver;
 use crate::presentation::audio::router::PresentationAudioEvent;
-use crate::presentation::settings::controller::{
-    PresentationSettingsConnection, PresentationSettingsController, PresentationSettingsOutcome,
-};
-use crate::presentation::settings::view::PresentationSettingsView;
 use crate::presentation::board::animation::PresentationBoardAnimationFrame;
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
-use crate::presentation::board::markings::{PresentationBoardMark, PresentationBoardMarkRequest};
-use crate::presentation::board::scene::PresentationBoardScene;
-use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::figurines::PresentationBoardFigurines;
+use crate::presentation::board::markings::{PresentationBoardMark, PresentationBoardMarkRequest};
 use crate::presentation::board::recovery::{
     PresentationBoardRecovery, PresentationBoardRecoveryEnumIntent,
 };
+use crate::presentation::board::scene::PresentationBoardScene;
+use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::toolbar::PresentationBoardToolbar;
-use crate::desktop::layout::DesktopLayout;
-use crate::desktop::renderer_commands::DesktopRendererCommands;
-use crate::game::save_coordinator::{
-    GameSaveCoordinator, GameSaveCoordinatorEnumBarrier, GameSaveCoordinatorError,
-};
 use crate::presentation::board::view::{
     PresentationBoardAction, PresentationBoardPickingProvider, PresentationBoardView,
     PresentationBoardViewError, PresentationBoardViewFrame, PresentationBoardViewInput,
@@ -80,21 +76,25 @@ use crate::presentation::game::controller::{
 };
 use crate::presentation::game::new_game::PresentationGameNewGame;
 use crate::presentation::game::overview::PresentationGameOverview;
-use crate::presentation::game::tabs::PresentationGameTabs;
 use crate::presentation::game::play::{
     PresentationGamePlay, PresentationGamePlayClock, PresentationGamePlayEnumOperation,
     PresentationGamePlayError, PresentationGamePlayIntent,
 };
+use crate::presentation::game::tabs::PresentationGameTabs;
 use crate::presentation::puzzle::controller::PresentationPuzzleController;
-use crate::presentation::study::PresentationStudy;
 use crate::presentation::puzzle::panel::{
     PresentationPuzzlePanel, PresentationPuzzlePanelConnection, PresentationPuzzlePanelError,
 };
+use crate::presentation::settings::controller::{
+    PresentationSettingsConnection, PresentationSettingsController, PresentationSettingsOutcome,
+};
+use crate::presentation::settings::view::PresentationSettingsView;
+use crate::presentation::study::PresentationStudy;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
 use crate::scene::camera::SceneCamera;
-use crate::scene::quality::{SceneQualityEnumMode, SceneQualityEnumTier};
 use crate::scene::picking::ScenePickingViewport;
+use crate::scene::quality::{SceneQualityEnumMode, SceneQualityEnumTier};
 
 #[derive(Debug, Error)]
 pub enum PresentationAppError {
@@ -212,6 +212,7 @@ enum PresentationAppEnumInput {
     Create,
     Play(GameId),
     Cancel(GameId),
+    Close(GameId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,6 +282,8 @@ pub struct PresentationApp {
     workspace: PresentationAppEnumWorkspace,
     new_game: Option<PresentationGameNewGame>,
     game_retained: HashMap<DesktopRequestId, PresentationAppGameRetained>,
+    close_confirmation: Option<GameId>,
+    closing_games: std::collections::HashSet<GameId>,
     game_pending: Vec<PresentationAppGamePending>,
     input_frame: Option<u64>,
     promotion_frame: Option<u64>,
@@ -345,6 +348,8 @@ impl PresentationApp {
             workspace: PresentationAppEnumWorkspace::Games,
             new_game: None,
             game_retained: HashMap::new(),
+            close_confirmation: None,
+            closing_games: std::collections::HashSet::new(),
             game_pending: Vec::new(),
             input_frame: None,
             promotion_frame: None,
@@ -640,9 +645,10 @@ impl PresentationApp {
 
     pub fn has_pending_work(&self) -> bool {
         self.backup.is_busy()
-            || self.editor
-            .as_ref()
-            .is_some_and(PresentationAppEditor::has_pending_work)
+            || self
+                .editor
+                .as_ref()
+                .is_some_and(PresentationAppEditor::has_pending_work)
             || self
                 .library
                 .as_ref()
@@ -711,6 +717,37 @@ impl PresentationApp {
                 library.and_then(PresentationAppLibrary::board)
             }
         }
+    }
+
+    fn dispatch_close<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        game: GameId,
+        frame: u64,
+        port: &DesktopApplicationPort<C, W>,
+    ) {
+        let Some(revision) = self
+            .games
+            .iter()
+            .find(|current| current.snapshot.id() == game)
+            .map(|current| current.snapshot.revision())
+        else {
+            return;
+        };
+        let input = self.input_identity(frame, PresentationAppEnumInput::Close(game));
+        let operation = DesktopGameBridgeEnumOperation::Close { game, revision };
+        if let Err(error) = self.activate_game(operation, input, port) {
+            self.failure = Some(error.to_string());
+        }
+    }
+
+    fn remove_game(&mut self, id: GameId) {
+        self.games.retain(|game| game.snapshot.id() != id);
+        self.closing_games.insert(id);
+        if self.selected_game == Some(id) {
+            self.selected_game = self.games.first().map(|game| game.snapshot.id());
+            self.board.cancel_gesture();
+        }
+        self.status = "The game was saved and closed".to_owned();
     }
 
     pub fn accept_game_snapshot(&mut self, snapshot: DesktopGameSnapshot) -> bool {
@@ -829,7 +866,8 @@ impl PresentationApp {
     ) -> Result<DesktopRequestId, PresentationAppError> {
         let game = match &operation {
             DesktopGameBridgeEnumOperation::Create { .. } => None,
-            DesktopGameBridgeEnumOperation::Session { game, .. } => Some(*game),
+            DesktopGameBridgeEnumOperation::Session { game, .. }
+            | DesktopGameBridgeEnumOperation::Close { game, .. } => Some(*game),
         };
         let revision = operation.revision();
         let command = DesktopCommand::new(DesktopEnumCommand::Game(operation), Some(revision));
@@ -931,7 +969,11 @@ impl PresentationApp {
         self.theme_initialized = false;
     }
 
-    fn apply_settings_outcome(&mut self, ctx: &egui::Context, outcome: PresentationSettingsOutcome) {
+    fn apply_settings_outcome(
+        &mut self,
+        ctx: &egui::Context,
+        outcome: PresentationSettingsOutcome,
+    ) {
         if outcome.appearance_changed {
             PresentationThemeTokens::apply(ctx, self.settings.effective().theme());
             self.board
@@ -997,15 +1039,11 @@ impl PresentationApp {
     }
 
     fn request_quit_unguarded(&mut self) {
-        if let Some(error) = self
-            .games
-            .iter()
-            .find_map(|game| {
-                game.save
-                    .require_saved(GameSaveCoordinatorEnumBarrier::QuitApplication)
-                    .err()
-            })
-        {
+        if let Some(error) = self.games.iter().find_map(|game| {
+            game.save
+                .require_saved(GameSaveCoordinatorEnumBarrier::QuitApplication)
+                .err()
+        }) {
             self.failure = Some(format!(
                 "{error}. Use Retry Save on the unsaved game, then quit again."
             ));
@@ -1100,8 +1138,27 @@ impl PresentationApp {
             }
         });
         for (input, game_id, board_input, response) in completed {
+            let is_close = self.game_retained.get(&input).is_some_and(|retained| {
+                matches!(
+                    retained.request.command().operation(),
+                    DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Close { .. })
+                )
+            });
             if let Some(retained) = self.game_retained.get_mut(&input) {
                 retained.completed = true;
+            }
+            if is_close
+                && let Some(closed) = game_id
+                && matches!(
+                    &response,
+                    DesktopMessagesEnumResult::Value {
+                        value: DesktopEnumValue::Game(_),
+                        ..
+                    }
+                )
+            {
+                self.remove_game(closed);
+                continue;
             }
             if board_input
                 && let Some(game) = self
@@ -1162,7 +1219,10 @@ impl PresentationApp {
                 }) => self.games.iter().any(|current| {
                     current.snapshot.id() == *game && current.snapshot.revision() == *revision
                 }),
-                DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. }) => false,
+                DesktopEnumCommand::Game(
+                    DesktopGameBridgeEnumOperation::Create { .. }
+                    | DesktopGameBridgeEnumOperation::Close { .. },
+                ) => false,
                 DesktopEnumCommand::Engine(_)
                 | DesktopEnumCommand::Backup(_)
                 | DesktopEnumCommand::Library(_)
@@ -1349,8 +1409,13 @@ impl PresentationApp {
             match event.payload() {
                 DesktopEnumEvent::Games(snapshots) => {
                     for snapshot in snapshots {
+                        if self.closing_games.contains(&snapshot.id()) {
+                            continue;
+                        }
                         self.accept_game_snapshot(snapshot.clone());
                     }
+                    self.closing_games
+                        .retain(|id| snapshots.iter().any(|snapshot| snapshot.id() == *id));
                 }
                 DesktopEnumEvent::Snapshot(snapshot) => self.accept_snapshot(snapshot.clone()),
                 DesktopEnumEvent::Failure(failure) => {
@@ -1541,9 +1606,18 @@ impl PresentationApp {
         let mut quality = self.quality_mode;
         for (label, mode) in [
             ("Automatic", SceneQualityEnumMode::Automatic),
-            ("Low", SceneQualityEnumMode::Manual(SceneQualityEnumTier::Low)),
-            ("Medium", SceneQualityEnumMode::Manual(SceneQualityEnumTier::Medium)),
-            ("High", SceneQualityEnumMode::Manual(SceneQualityEnumTier::High)),
+            (
+                "Low",
+                SceneQualityEnumMode::Manual(SceneQualityEnumTier::Low),
+            ),
+            (
+                "Medium",
+                SceneQualityEnumMode::Manual(SceneQualityEnumTier::Medium),
+            ),
+            (
+                "High",
+                SceneQualityEnumMode::Manual(SceneQualityEnumTier::High),
+            ),
         ] {
             ui.radio_value(&mut quality, mode, label);
         }
@@ -1557,7 +1631,9 @@ impl PresentationApp {
         self.apply_settings_outcome(&ui.ctx().clone(), outcome);
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
+            .map_or(0, |elapsed| {
+                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+            });
         let prerequisites = DesktopBackupCommandsPrerequisites {
             games_paused_and_saved: self.games.iter().all(|game| {
                 game.snapshot.phase() != GameEnumPhase::Active && !game.snapshot.is_save_required()
@@ -1643,6 +1719,7 @@ impl PresentationApp {
         let mut workspace = None;
         let mut navigation = None;
         let mut overview_rows = Vec::new();
+        let mut close_click = None;
         egui::Panel::top("chess.header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(
@@ -1748,11 +1825,11 @@ impl PresentationApp {
                     now,
                 ) {
                     Ok(rows) => {
-                        if let Some(chosen) =
-                            PresentationGameTabs::show(ui, &rows, self.selected_game)
-                        {
+                        let action = PresentationGameTabs::show(ui, &rows, self.selected_game);
+                        if let Some(chosen) = action.selected {
                             navigation = Some(PresentationAppLibraryEnumNavigation::Game(chosen));
                         }
+                        close_click = action.close;
                         overview_rows = rows;
                     }
                     Err(error) => self.failure = Some(error.to_string()),
@@ -2020,9 +2097,7 @@ impl PresentationApp {
         let mut editor_viewport = None;
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
-                if let Some(intent) =
-                    PresentationBoardRecovery::show(ui, &self.renderer_commands)
-                {
+                if let Some(intent) = PresentationBoardRecovery::show(ui, &self.renderer_commands) {
                     self.recovery_intent = Some(intent);
                 }
                 if let Some(action) =
@@ -2110,6 +2185,39 @@ impl PresentationApp {
                 result.map_err(PresentationAppError::from)
             })
             .inner?;
+        if let Some(game) = close_click
+            && self.close_confirmation.is_none()
+            && !self.is_game_busy(game)
+        {
+            let unsaved = self
+                .games
+                .iter()
+                .find(|current| current.snapshot.id() == game)
+                .map(|current| current.snapshot.is_save_required());
+            match unsaved {
+                Some(true) => self.close_confirmation = Some(game),
+                Some(false) => self.dispatch_close(game, frame, port),
+                None => {}
+            }
+        }
+        if let Some(game) = self.close_confirmation {
+            let mut keep = false;
+            let mut confirm = false;
+            let modal = egui::Modal::new(Id::new("chess.game.close")).show(ui.ctx(), |ui| {
+                ui.heading("Close this game?");
+                ui.label("Its unsaved moves are saved before the game closes.");
+                ui.horizontal(|ui| {
+                    keep = ui.button("Keep game open").clicked();
+                    confirm = ui.button("Save and close").clicked();
+                });
+            });
+            if confirm {
+                self.dispatch_close(game, frame, port);
+            }
+            if keep || confirm || modal.should_close() {
+                self.close_confirmation = None;
+            }
+        }
         if self.quit_confirmation {
             let mut cancel = false;
             let mut confirm = false;
