@@ -118,6 +118,138 @@ fn complete_tree_roundtrip_preserves_ids_sibling_order_annotations_and_selection
 }
 
 #[test]
+fn a_new_session_study_tip_is_root_and_failed_study_edits_preserve_all_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = GameTransitionFixture::session(ClockTimeControl::untimed(), None)?;
+    assert_eq!(session.study_mainline_tip(), session.tree().root());
+    let revision = session.revision();
+    let clock = session.clock().snapshot(ClockInstant::from_nanos(0))?;
+    let movement = session.start_position().position().parse_uci("e2e4")?;
+    assert!(
+        session
+            .append_study_variation(revision, GameTransitionFixture::id(2)?, movement)
+            .is_err()
+    );
+    assert_eq!(session.revision(), revision);
+    assert_eq!(session.tree().len(), 1);
+    assert_eq!(session.study_mainline_tip(), session.tree().root());
+    assert_eq!(
+        session.clock().snapshot(ClockInstant::from_nanos(0))?,
+        clock
+    );
+    assert!(session.live_moves()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn study_tip_tracks_actual_alternate_play_without_changing_retained_sibling_order()
+-> Result<(), Box<dyn std::error::Error>> {
+    let session = GameRestorationFixture::variation()?;
+    assert_eq!(session.study_mainline_tip(), GameTransitionFixture::id(4)?);
+    let restored = GameSession::restore(session.restoration(ClockInstant::from_millis(5_000)?)?)?;
+    assert_eq!(restored.study_mainline_tip(), session.study_mainline_tip());
+    assert_eq!(restored.live_moves()?, session.live_moves()?);
+    assert_eq!(restored.view(), session.tree().root());
+    Ok(())
+}
+
+#[test]
+fn takeback_preserves_the_study_leaf_and_replaying_an_existing_node_selects_its_ordered_leaf()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = GameTransitionFixture::session(ClockTimeControl::untimed(), None)?;
+    session.configure_takeback_consent(session.revision(), GameTakebackEnumConsent::NotRequired)?;
+    GameTransitionFixture::play(&mut session, 2, "e2e4", 1_000)?;
+    GameTransitionFixture::play(&mut session, 3, "e7e5", 2_000)?;
+    for (time, color) in [
+        (3_000, BoardEnumColor::Black),
+        (4_000, BoardEnumColor::White),
+    ] {
+        session.request_takeback(
+            GameTakebackRequest {
+                expected_revision: session.revision(),
+                requester: color,
+                received_at: ClockInstant::from_millis(time)?,
+                engine: GamePauseEnumEngineBarrier::NoEngine,
+            },
+            &GameTransitionFixtureProof,
+        )?;
+        assert_eq!(session.study_mainline_tip(), GameTransitionFixture::id(3)?);
+    }
+    assert!(session.live_moves()?.is_empty());
+    GameTransitionFixture::play(&mut session, 20, "e2e4", 5_000)?;
+    assert_eq!(session.live(), GameTransitionFixture::id(2)?);
+    assert_eq!(session.live_moves()?.len(), 1);
+    assert_eq!(session.study_mainline_tip(), GameTransitionFixture::id(3)?);
+    Ok(())
+}
+
+#[test]
+fn study_extension_advances_only_the_current_study_leaf_and_preserves_live_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = GameTransitionFixture::session(ClockTimeControl::untimed(), None)?;
+    for (id, uci) in [(2, "f2f3"), (3, "e7e5"), (4, "g2g4"), (5, "d8h4")] {
+        GameTransitionFixture::play(&mut session, id, uci, 1_000)?;
+    }
+    let live = session.live();
+    let history = session.live_moves()?;
+    let outcome = session.outcome();
+    let clock = session
+        .clock()
+        .snapshot(ClockInstant::from_millis(2_000)?)?;
+    session.select_view(session.tree().root())?;
+    let e4 = session
+        .tree()
+        .node(session.view())?
+        .position()
+        .parse_uci("e2e4")?;
+    let alternative =
+        session.append_study_variation(session.revision(), GameTransitionFixture::id(10)?, e4)?;
+    assert_eq!(session.study_mainline_tip(), live);
+    let mut saved = session.restoration(ClockInstant::from_millis(2_000)?)?;
+    saved.study_mainline_tip = alternative;
+    let mut restored = GameSession::restore(saved)?;
+    let e5 = restored
+        .tree()
+        .node(restored.view())?
+        .position()
+        .parse_uci("e7e5")?;
+    let extended =
+        restored.append_study_variation(restored.revision(), GameTransitionFixture::id(11)?, e5)?;
+    assert_eq!(restored.study_mainline_tip(), extended);
+    assert_eq!(restored.live(), live);
+    assert_eq!(restored.live_moves()?, history);
+    assert_eq!(restored.outcome(), outcome);
+    assert_eq!(
+        restored
+            .clock()
+            .snapshot(ClockInstant::from_millis(2_000)?)?,
+        clock
+    );
+    Ok(())
+}
+
+#[test]
+fn restored_study_tip_must_exist_and_be_a_leaf_independent_of_live_and_view()
+-> Result<(), Box<dyn std::error::Error>> {
+    let session = GameRestorationFixture::variation()?;
+    let saved = session.restoration(ClockInstant::from_millis(5_000)?)?;
+    let mut missing = saved.clone();
+    missing.study_mainline_tip = GameTransitionFixture::id(99)?;
+    assert!(GameSession::restore(missing).is_err());
+    let mut interior = saved.clone();
+    interior.study_mainline_tip = GameTransitionFixture::id(2)?;
+    assert!(GameSession::restore(interior).is_err());
+    let mut independent = saved;
+    independent.study_mainline_tip = GameTransitionFixture::id(3)?;
+    let restored = GameSession::restore(independent)?;
+    assert_eq!(restored.study_mainline_tip(), GameTransitionFixture::id(3)?);
+    assert_eq!(restored.live(), GameTransitionFixture::id(4)?);
+    assert_eq!(restored.view(), restored.tree().root());
+    assert_eq!(restored.live_moves()?, session.live_moves()?);
+    Ok(())
+}
+
+#[test]
 fn pending_local_consent_is_not_replayed_after_restoration()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut session = GameTransitionFixture::session(ClockTimeControl::untimed(), None)?;

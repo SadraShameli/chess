@@ -157,6 +157,7 @@ generated initial FEN and both indexes so random starts are reproducible.
 | Move tree | Root and nodes identified by `GameMoveId` |
 | Live cursor | Node whose position is authoritative for an active game |
 | View cursor | Independently selected historical/variation node |
+| Study mainline tip | Persisted export/study leaf, independent of live history and view |
 | Clock | `ClockState` owned by the live line |
 | Phase | Setup, active, interrupted, completed, or analysis |
 | Outcome | Optional typed result plus reason and originating move |
@@ -575,8 +576,18 @@ have an installed budget of up to 2 GB, excluding the application and engines;
 personal imports use the selected streaming/input budgets; the total user
 library has no fixed game-count cap.
 
+`StorageGameDocument` schema 3 distinguishes played sessions from clockless
+notation under one typed envelope and shared record codec. Played payloads retain
+runtime clocks and an explicit study leaf; notation retains its selected mainline
+tip and source clock annotations without inventing seats or runtime state. Actual
+legacy schema-1/2 envelopes remain readable without rewriting their stored body,
+identity or revision. Played duplicate identity follows actual live moves;
+notation identity follows its explicit mainline. Codec acceptance evidence is
+[the library content foundation](evidence/library-content-codec.md).
+
 Game records contain schema version, game identity, initial FEN/variant,
-validated move tree, result, clock snapshots, and metadata. Library state includes
+validated move tree, result, metadata, and the content kind's available clock data.
+Library state includes
 favorites, tags, folders, and Trash status. Search/filter covers players, date,
 result, variant, opponent mode, favorites, tags, folders, opening name/code, and
 game length; annotation-text search is excluded from the first release. Nested

@@ -1,21 +1,17 @@
-use std::collections::HashMap;
-use std::fmt::{Formatter, Result as FormatResult};
 use std::io::{Error as IoError, Write};
 use std::num::NonZeroU32;
 
-use serde::de::{Error as DeserializeError, IgnoredAny, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 use thiserror::Error;
 
 use crate::board::enums::BoardEnumColor;
 use crate::board::r#move::BoardMoveError;
-use crate::board::square::BoardSquare;
 use crate::board::start::BoardStart;
 use crate::capacity::executor::{
     CapacityExecutor, CapacityExecutorCancellation, CapacityExecutorError,
 };
-use crate::clock::duration::{ClockDuration, ClockInstant};
+use crate::clock::duration::ClockInstant;
 use crate::clock::stage::{ClockStage, ClockStageEnumBonus, ClockStageEnumQuota};
 use crate::clock::state::{
     ClockState, ClockStateEnumStatus, ClockStateError, ClockStateSideOptions, ClockStateSnapshot,
@@ -31,26 +27,34 @@ use crate::game::enums::{
     GameEnumMode, GameEnumOutcomeReason, GameEnumResult, GameEnumSeat, GameId, GameMoveId,
     GameRevision,
 };
-use crate::game::move_node::{
-    GameMoveNodeAnnotationError, GameMoveNodeAnnotations, GameMoveNodeMarking, GameMoveNodeNag,
-};
+use crate::game::move_node::GameMoveNodeAnnotationError;
 use crate::game::outcome::{GameOutcome, GameOutcomeError};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::{
-    GameMetadata, GameMetadataDate, GameMetadataError, GameMetadataExtension,
-    GameMetadataKnownTags, GameMetadataOpeningCode, GameMetadataText, GameSeats, GameSession,
-    GameSessionEnumInterruption, GameSessionEnumState, GameSessionError, GameSessionOptions,
-    GameSessionRestoreOptions, GameSessionRestoredMove,
+    GameMetadataError, GameSeats, GameSession, GameSessionEnumInterruption, GameSessionEnumState,
+    GameSessionError, GameSessionOptions, GameSessionRestoreOptions, GameSessionRestoredMove,
 };
 use crate::game::storage_repository::{
     GameStorageReceipt, GameStorageRecovered, GameStorageRepository, GameStorageRevision,
     GameStorageSaveRequest,
 };
 use crate::game::takeback::GameTakebackEnumConsent;
-use crate::game::tree::GameTreeError;
+use crate::game::tree::{GameTree, GameTreeError};
+use crate::notation::game::{NotationGame, NotationGameError};
 use crate::storage::document_store::{
     StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
 };
+use crate::storage::game_document::notation::StorageGameDocumentNotation;
+use crate::storage::game_document::records::{
+    StorageGameDocumentAnnotations, StorageGameDocumentDuration, StorageGameDocumentMetadata,
+    StorageGameDocumentMove, StorageGameDocumentMoveSource, StorageGameDocumentMoves,
+};
+use crate::storage::library_record::{
+    StorageLibraryEnumContent, StorageLibraryRecord, StorageLibraryRecordError,
+};
+
+mod notation;
+mod records;
 
 #[derive(Debug, Error)]
 pub enum StorageGameDocumentError {
@@ -66,6 +70,22 @@ pub enum StorageGameDocumentError {
     TextTooLarge,
     #[error("The saved game identity does not match its database key")]
     Identity,
+    #[error("Schema {schema_version} cannot use content kind {kind:?}")]
+    SchemaKind {
+        schema_version: u32,
+        kind: Option<StorageGameDocumentEnumContentKind>,
+    },
+    #[error("Expected {expected:?} content, found {found:?}")]
+    ContentKind {
+        expected: StorageGameDocumentEnumContentKind,
+        found: StorageGameDocumentEnumContentKind,
+    },
+    #[error("The saved played game has no explicit study mainline tip")]
+    MissingStudyTip,
+    #[error("Legacy played documents cannot contain a study mainline tip")]
+    LegacyStudyTip,
+    #[error("Clockless notation cannot contain runtime clock snapshots")]
+    NotationRuntimeClock,
     #[error("The saved game has no required per-game play options")]
     MissingPlayOptions,
     #[error("Game serialization or recovery was cancelled")]
@@ -98,6 +118,10 @@ pub enum StorageGameDocumentError {
     Metadata(#[from] GameMetadataError),
     #[error(transparent)]
     Outcome(#[from] GameOutcomeError),
+    #[error(transparent)]
+    Notation(#[from] NotationGameError),
+    #[error(transparent)]
+    Record(#[from] StorageLibraryRecordError),
 }
 
 impl StorageGameDocumentError {
@@ -110,10 +134,49 @@ impl StorageGameDocumentError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageGameDocumentEnumContentKind {
+    Played,
+    Notation,
+}
+
+enum StorageGameDocumentEnumField<T> {
+    Absent,
+    Present(T),
+}
+
+impl<T> StorageGameDocumentEnumField<T> {
+    fn absent() -> Self {
+        Self::Absent
+    }
+
+    fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for StorageGameDocumentEnumField<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        T::deserialize(deserializer).map(Self::Present)
+    }
+}
+
+impl<T: Serialize> Serialize for StorageGameDocumentEnumField<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Absent => serializer.serialize_none(),
+            Self::Present(value) => value.serialize(serializer),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StorageGameDocumentEnvelope<'a> {
     schema_version: u32,
+    #[serde(default = "StorageGameDocumentEnumField::absent", borrow)]
+    kind: StorageGameDocumentEnumField<&'a RawValue>,
     #[serde(borrow)]
     game: &'a RawValue,
 }
@@ -121,16 +184,25 @@ struct StorageGameDocumentEnvelope<'a> {
 #[derive(Serialize)]
 struct StorageGameDocumentEncoded<'a> {
     schema_version: u32,
-    game: &'a StorageGameDocumentRecord,
+    #[serde(flatten)]
+    content: &'a StorageGameDocumentEnumContent,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", content = "game", rename_all = "snake_case")]
+enum StorageGameDocumentEnumContent {
+    Played(Box<StorageGameDocumentPlayed>),
+    Notation(Box<StorageGameDocumentNotation>),
 }
 
 pub struct StorageGameDocument {
-    game: StorageGameDocumentRecord,
+    content: StorageGameDocumentEnumContent,
 }
 
 impl StorageGameDocument {
-    pub const SCHEMA_VERSION: u32 = 2;
+    pub const SCHEMA_VERSION: u32 = 3;
     const LEGACY_SCHEMA_VERSION: u32 = 1;
+    const PLAY_OPTIONS_SCHEMA_VERSION: u32 = 2;
     pub const MAX_MOVES: usize = 100_000;
     const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
@@ -147,12 +219,49 @@ impl StorageGameDocument {
     ) -> Result<Self, StorageGameDocumentError> {
         StorageGameDocumentError::check_cancellation(cancellation)?;
         Ok(Self {
-            game: StorageGameDocumentRecord::from_snapshot(snapshot, cancellation)?,
+            content: StorageGameDocumentEnumContent::Played(Box::new(
+                StorageGameDocumentPlayed::from_snapshot(snapshot, cancellation)?,
+            )),
+        })
+    }
+
+    pub fn capture_notation(
+        id: GameId,
+        game: &NotationGame,
+    ) -> Result<Self, StorageGameDocumentError> {
+        Self::from_notation(id, game, None)
+    }
+
+    pub fn capture_notation_cancellable(
+        id: GameId,
+        game: &NotationGame,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<Self, StorageGameDocumentError> {
+        Self::from_notation(id, game, Some(cancellation))
+    }
+
+    fn from_notation(
+        id: GameId,
+        game: &NotationGame,
+        cancellation: Option<&CapacityExecutorCancellation>,
+    ) -> Result<Self, StorageGameDocumentError> {
+        StorageGameDocumentError::check_cancellation(cancellation)?;
+        Ok(Self {
+            content: StorageGameDocumentEnumContent::Notation(Box::new(
+                StorageGameDocumentNotation::capture(id, game, cancellation)?,
+            )),
         })
     }
 
     pub fn json(&self) -> Result<String, StorageGameDocumentError> {
         self.encode(None)
+    }
+
+    pub fn json_cancellable(
+        &self,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<String, StorageGameDocumentError> {
+        self.encode(Some(cancellation))
     }
 
     fn encode(
@@ -168,7 +277,7 @@ impl StorageGameDocument {
             &mut writer,
             &StorageGameDocumentEncoded {
                 schema_version: Self::SCHEMA_VERSION,
-                game: &self.game,
+                content: &self.content,
             },
         );
         if let Some(failure) = writer.failure {
@@ -186,6 +295,30 @@ impl StorageGameDocument {
         json: &str,
         cancellation: Option<&CapacityExecutorCancellation>,
     ) -> Result<GameSession, StorageGameDocumentError> {
+        match Self::decode(json, cancellation)?.into_content() {
+            StorageLibraryEnumContent::Played(session) => Ok(*session),
+            StorageLibraryEnumContent::Notation(_) => Err(StorageGameDocumentError::ContentKind {
+                expected: StorageGameDocumentEnumContentKind::Played,
+                found: StorageGameDocumentEnumContentKind::Notation,
+            }),
+        }
+    }
+
+    pub fn recover_record(json: &str) -> Result<StorageLibraryRecord, StorageGameDocumentError> {
+        Self::decode(json, None)
+    }
+
+    pub fn recover_record_cancellable(
+        json: &str,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<StorageLibraryRecord, StorageGameDocumentError> {
+        Self::decode(json, Some(cancellation))
+    }
+
+    fn decode(
+        json: &str,
+        cancellation: Option<&CapacityExecutorCancellation>,
+    ) -> Result<StorageLibraryRecord, StorageGameDocumentError> {
         if json.len() > StorageDocumentStore::MEMORY_BUDGET {
             return Err(StorageGameDocumentError::TooLarge);
         }
@@ -199,13 +332,51 @@ impl StorageGameDocument {
         }
         if envelope.schema_version != Self::SCHEMA_VERSION
             && envelope.schema_version != Self::LEGACY_SCHEMA_VERSION
+            && envelope.schema_version != Self::PLAY_OPTIONS_SCHEMA_VERSION
         {
             return Err(StorageGameDocumentError::UnsupportedSchema(
                 envelope.schema_version,
             ));
         }
-        let record: StorageGameDocumentRecord = serde_json::from_str(envelope.game.get())?;
-        record.restore(envelope.schema_version, cancellation)
+        let kind = match (envelope.schema_version, envelope.kind) {
+            (
+                Self::LEGACY_SCHEMA_VERSION | Self::PLAY_OPTIONS_SCHEMA_VERSION,
+                StorageGameDocumentEnumField::Absent,
+            ) => StorageGameDocumentEnumContentKind::Played,
+            (Self::SCHEMA_VERSION, StorageGameDocumentEnumField::Present(kind)) => {
+                serde_json::from_str(kind.get())?
+            }
+            (schema_version, kind) => {
+                return Err(StorageGameDocumentError::SchemaKind {
+                    schema_version,
+                    kind: match kind {
+                        StorageGameDocumentEnumField::Absent => None,
+                        StorageGameDocumentEnumField::Present(raw) => {
+                            Some(serde_json::from_str(raw.get())?)
+                        }
+                    },
+                });
+            }
+        };
+        let record = match kind {
+            StorageGameDocumentEnumContentKind::Played => {
+                let record: StorageGameDocumentPlayed = serde_json::from_str(envelope.game.get())?;
+                let id = record.id;
+                StorageLibraryRecord::new(
+                    id,
+                    StorageLibraryEnumContent::Played(Box::new(
+                        record.restore(envelope.schema_version, cancellation)?,
+                    )),
+                )?
+            }
+            StorageGameDocumentEnumContentKind::Notation => {
+                let record: StorageGameDocumentNotation =
+                    serde_json::from_str(envelope.game.get())?;
+                record.restore(cancellation)?
+            }
+        };
+        StorageGameDocumentError::check_cancellation(cancellation)?;
+        Ok(record)
     }
 }
 
@@ -334,20 +505,18 @@ enum StorageGameDocumentEnumConsent {
 #[serde(rename_all = "snake_case")]
 enum StorageGameDocumentEnumBonus {
     None,
-    Fischer(u64),
-    SimpleDelay(u64),
-    BronsteinDelay(u64),
+    Fischer(StorageGameDocumentDuration),
+    SimpleDelay(StorageGameDocumentDuration),
+    BronsteinDelay(StorageGameDocumentDuration),
 }
 
 impl From<ClockStageEnumBonus> for StorageGameDocumentEnumBonus {
     fn from(bonus: ClockStageEnumBonus) -> Self {
         match bonus {
             ClockStageEnumBonus::None => Self::None,
-            ClockStageEnumBonus::Fischer(duration) => Self::Fischer(duration.as_nanos()),
-            ClockStageEnumBonus::SimpleDelay(duration) => Self::SimpleDelay(duration.as_nanos()),
-            ClockStageEnumBonus::BronsteinDelay(duration) => {
-                Self::BronsteinDelay(duration.as_nanos())
-            }
+            ClockStageEnumBonus::Fischer(duration) => Self::Fischer(duration.into()),
+            ClockStageEnumBonus::SimpleDelay(duration) => Self::SimpleDelay(duration.into()),
+            ClockStageEnumBonus::BronsteinDelay(duration) => Self::BronsteinDelay(duration.into()),
         }
     }
 }
@@ -356,14 +525,10 @@ impl From<StorageGameDocumentEnumBonus> for ClockStageEnumBonus {
     fn from(bonus: StorageGameDocumentEnumBonus) -> Self {
         match bonus {
             StorageGameDocumentEnumBonus::None => Self::None,
-            StorageGameDocumentEnumBonus::Fischer(nanos) => {
-                Self::Fischer(ClockDuration::from_nanos(nanos))
-            }
-            StorageGameDocumentEnumBonus::SimpleDelay(nanos) => {
-                Self::SimpleDelay(ClockDuration::from_nanos(nanos))
-            }
+            StorageGameDocumentEnumBonus::Fischer(nanos) => Self::Fischer(nanos.into()),
+            StorageGameDocumentEnumBonus::SimpleDelay(nanos) => Self::SimpleDelay(nanos.into()),
             StorageGameDocumentEnumBonus::BronsteinDelay(nanos) => {
-                Self::BronsteinDelay(ClockDuration::from_nanos(nanos))
+                Self::BronsteinDelay(nanos.into())
             }
         }
     }
@@ -374,7 +539,7 @@ impl From<StorageGameDocumentEnumBonus> for ClockStageEnumBonus {
 struct StorageGameDocumentStage {
     #[serde(with = "StorageGameDocumentEnumQuota")]
     quota: ClockStageEnumQuota,
-    base_nanos: u64,
+    base_nanos: StorageGameDocumentDuration,
     bonus: StorageGameDocumentEnumBonus,
 }
 
@@ -382,7 +547,7 @@ impl From<ClockStage> for StorageGameDocumentStage {
     fn from(stage: ClockStage) -> Self {
         Self {
             quota: stage.quota(),
-            base_nanos: stage.base_time().as_nanos(),
+            base_nanos: stage.base_time().into(),
             bonus: stage.bonus().into(),
         }
     }
@@ -392,7 +557,7 @@ impl StorageGameDocumentStage {
     fn into_stage(self) -> Result<ClockStage, StorageGameDocumentError> {
         Ok(ClockStage::new(
             self.quota,
-            ClockDuration::from_nanos(self.base_nanos),
+            self.base_nanos.into(),
             self.bonus.into(),
         )?)
     }
@@ -401,7 +566,7 @@ impl StorageGameDocumentStage {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StorageGameDocumentClockSide {
-    remaining_nanos: u64,
+    remaining_nanos: StorageGameDocumentDuration,
     completed_moves: u64,
     stage_index: usize,
     stage_moves: u64,
@@ -410,7 +575,7 @@ struct StorageGameDocumentClockSide {
 impl From<ClockStateSideOptions> for StorageGameDocumentClockSide {
     fn from(side: ClockStateSideOptions) -> Self {
         Self {
-            remaining_nanos: side.remaining.as_nanos(),
+            remaining_nanos: side.remaining.into(),
             completed_moves: side.completed_moves,
             stage_index: side.stage_index,
             stage_moves: side.stage_moves,
@@ -421,7 +586,7 @@ impl From<ClockStateSideOptions> for StorageGameDocumentClockSide {
 impl From<StorageGameDocumentClockSide> for ClockStateSideOptions {
     fn from(side: StorageGameDocumentClockSide) -> Self {
         Self {
-            remaining: ClockDuration::from_nanos(side.remaining_nanos),
+            remaining: side.remaining_nanos.into(),
             completed_moves: side.completed_moves,
             stage_index: side.stage_index,
             stage_moves: side.stage_moves,
@@ -434,7 +599,7 @@ impl From<StorageGameDocumentClockSide> for ClockStateSideOptions {
 struct StorageGameDocumentClock {
     sides: [StorageGameDocumentClockSide; 2],
     active: BoardEnumColor,
-    elapsed_nanos: u64,
+    elapsed_nanos: StorageGameDocumentDuration,
     #[serde(with = "StorageGameDocumentEnumClockStatus")]
     status: ClockStateEnumStatus,
 }
@@ -451,7 +616,7 @@ impl StorageGameDocumentClock {
         Ok(Self {
             sides: clock.sides.map(StorageGameDocumentClockSide::from),
             active: clock.active,
-            elapsed_nanos: clock.elapsed.as_nanos(),
+            elapsed_nanos: clock.elapsed.into(),
             status: clock.status,
         })
     }
@@ -465,280 +630,10 @@ impl StorageGameDocumentClock {
                 control: control.clone(),
                 sides: self.sides.map(ClockStateSideOptions::from),
                 active: self.active,
-                elapsed: ClockDuration::from_nanos(self.elapsed_nanos),
+                elapsed: self.elapsed_nanos.into(),
                 status: self.status,
             },
         )?)
-    }
-}
-
-#[derive(Serialize)]
-#[serde(transparent)]
-struct StorageGameDocumentText(String);
-
-impl StorageGameDocumentText {
-    fn copy(value: &str) -> Result<Self, StorageGameDocumentError> {
-        if value.len() > StorageGameDocument::MAX_TEXT_BYTES {
-            return Err(StorageGameDocumentError::TextTooLarge);
-        }
-        Ok(Self(value.to_owned()))
-    }
-}
-
-impl<'de> Deserialize<'de> for StorageGameDocumentText {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::try_from(String::deserialize(deserializer)?).map_err(D::Error::custom)
-    }
-}
-
-impl TryFrom<String> for StorageGameDocumentText {
-    type Error = StorageGameDocumentError;
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.len() > StorageGameDocument::MAX_TEXT_BYTES {
-            return Err(StorageGameDocumentError::TextTooLarge);
-        }
-        Ok(Self(value))
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StorageGameDocumentMarking {
-    color: crate::game::enums::GameEnumMarkingColor,
-    origin: BoardSquare,
-    destination: Option<BoardSquare>,
-}
-
-impl From<GameMoveNodeMarking> for StorageGameDocumentMarking {
-    fn from(marking: GameMoveNodeMarking) -> Self {
-        Self {
-            color: marking.color(),
-            origin: marking.origin(),
-            destination: marking.destination(),
-        }
-    }
-}
-
-impl StorageGameDocumentMarking {
-    fn into_marking(self) -> Result<GameMoveNodeMarking, StorageGameDocumentError> {
-        Ok(match self.destination {
-            Some(destination) => GameMoveNodeMarking::arrow(self.color, self.origin, destination)?,
-            None => GameMoveNodeMarking::circle(self.color, self.origin),
-        })
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StorageGameDocumentAnnotations {
-    notes: StorageGameDocumentText,
-    nags: Vec<u8>,
-    markings: Vec<StorageGameDocumentMarking>,
-}
-
-impl StorageGameDocumentAnnotations {
-    fn capture(annotations: &GameMoveNodeAnnotations) -> Result<Self, StorageGameDocumentError> {
-        Ok(Self {
-            notes: StorageGameDocumentText::copy(annotations.notes())?,
-            nags: annotations.nags().iter().map(|nag| nag.value()).collect(),
-            markings: annotations
-                .markings()
-                .iter()
-                .copied()
-                .map(StorageGameDocumentMarking::from)
-                .collect(),
-        })
-    }
-
-    fn restore(self) -> Result<GameMoveNodeAnnotations, StorageGameDocumentError> {
-        Ok(GameMoveNodeAnnotations::new(
-            self.notes.0,
-            self.nags.into_iter().map(GameMoveNodeNag::new).collect(),
-            self.markings
-                .into_iter()
-                .map(StorageGameDocumentMarking::into_marking)
-                .collect::<Result<_, _>>()?,
-        )?)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StorageGameDocumentMove {
-    id: GameMoveId,
-    parent: GameMoveId,
-    uci: String,
-    annotations: StorageGameDocumentAnnotations,
-    before_clock: Option<StorageGameDocumentClock>,
-    clock: Option<StorageGameDocumentClock>,
-}
-
-#[derive(Serialize)]
-#[serde(transparent)]
-struct StorageGameDocumentMoves(Vec<StorageGameDocumentMove>);
-
-struct StorageGameDocumentMovesVisitor;
-
-impl<'de> Visitor<'de> for StorageGameDocumentMovesVisitor {
-    type Value = StorageGameDocumentMoves;
-    fn expecting(&self, formatter: &mut Formatter<'_>) -> FormatResult {
-        formatter.write_str("a bounded game move-node sequence")
-    }
-    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
-        if sequence
-            .size_hint()
-            .is_some_and(|length| length > StorageGameDocument::MAX_MOVES)
-        {
-            return Err(A::Error::custom(StorageGameDocumentError::TooManyMoves));
-        }
-        let mut moves = Vec::new();
-        while moves.len() < StorageGameDocument::MAX_MOVES {
-            match sequence.next_element()? {
-                Some(movement) => moves.push(movement),
-                None => return Ok(StorageGameDocumentMoves(moves)),
-            }
-        }
-        if sequence.next_element::<IgnoredAny>()?.is_some() {
-            return Err(A::Error::custom(StorageGameDocumentError::TooManyMoves));
-        }
-        Ok(StorageGameDocumentMoves(moves))
-    }
-}
-
-impl<'de> Deserialize<'de> for StorageGameDocumentMoves {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_seq(StorageGameDocumentMovesVisitor)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StorageGameDocumentDate {
-    year: Option<u16>,
-    month: Option<u8>,
-    day: Option<u8>,
-}
-
-impl From<GameMetadataDate> for StorageGameDocumentDate {
-    fn from(date: GameMetadataDate) -> Self {
-        Self {
-            year: date.year(),
-            month: date.month(),
-            day: date.day(),
-        }
-    }
-}
-
-impl StorageGameDocumentDate {
-    fn restore(self) -> Result<GameMetadataDate, StorageGameDocumentError> {
-        Ok(GameMetadataDate::new(self.year, self.month, self.day)?)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StorageGameDocumentExtension {
-    name: StorageGameDocumentText,
-    value: StorageGameDocumentText,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StorageGameDocumentMetadata {
-    event: Option<StorageGameDocumentText>,
-    site: Option<StorageGameDocumentText>,
-    date: Option<StorageGameDocumentDate>,
-    round: Option<StorageGameDocumentText>,
-    white: Option<StorageGameDocumentText>,
-    black: Option<StorageGameDocumentText>,
-    white_elo: Option<u32>,
-    black_elo: Option<u32>,
-    opening: Option<StorageGameDocumentText>,
-    variation: Option<StorageGameDocumentText>,
-    eco: Option<StorageGameDocumentText>,
-    annotator: Option<StorageGameDocumentText>,
-    extensions: Vec<StorageGameDocumentExtension>,
-}
-
-impl StorageGameDocumentMetadata {
-    fn text(
-        value: &Option<GameMetadataText>,
-    ) -> Result<Option<StorageGameDocumentText>, StorageGameDocumentError> {
-        value
-            .as_ref()
-            .map(|text| StorageGameDocumentText::copy(text.as_str()))
-            .transpose()
-    }
-    fn restored_text(
-        value: Option<StorageGameDocumentText>,
-    ) -> Result<Option<GameMetadataText>, StorageGameDocumentError> {
-        value
-            .map(|text| GameMetadataText::new(text.0).map_err(StorageGameDocumentError::Metadata))
-            .transpose()
-    }
-    fn capture(metadata: &GameMetadata) -> Result<Self, StorageGameDocumentError> {
-        let known = metadata.known();
-        Ok(Self {
-            event: Self::text(&known.event)?,
-            site: Self::text(&known.site)?,
-            date: known.date.map(StorageGameDocumentDate::from),
-            round: Self::text(&known.round)?,
-            white: Self::text(&known.white)?,
-            black: Self::text(&known.black)?,
-            white_elo: known.white_elo,
-            black_elo: known.black_elo,
-            opening: Self::text(&known.opening)?,
-            variation: Self::text(&known.variation)?,
-            eco: known
-                .eco
-                .as_ref()
-                .map(|code| StorageGameDocumentText::copy(code.as_str()))
-                .transpose()?,
-            annotator: Self::text(&known.annotator)?,
-            extensions: metadata
-                .extensions()
-                .iter()
-                .map(|extension| {
-                    Ok(StorageGameDocumentExtension {
-                        name: StorageGameDocumentText::copy(extension.name())?,
-                        value: StorageGameDocumentText::copy(extension.value().as_str())?,
-                    })
-                })
-                .collect::<Result<_, StorageGameDocumentError>>()?,
-        })
-    }
-    fn restore(self) -> Result<GameMetadata, StorageGameDocumentError> {
-        let known = GameMetadataKnownTags {
-            event: Self::restored_text(self.event)?,
-            site: Self::restored_text(self.site)?,
-            date: self
-                .date
-                .map(StorageGameDocumentDate::restore)
-                .transpose()?,
-            round: Self::restored_text(self.round)?,
-            white: Self::restored_text(self.white)?,
-            black: Self::restored_text(self.black)?,
-            white_elo: self.white_elo,
-            black_elo: self.black_elo,
-            opening: Self::restored_text(self.opening)?,
-            variation: Self::restored_text(self.variation)?,
-            eco: self
-                .eco
-                .map(|code| GameMetadataOpeningCode::new(code.0))
-                .transpose()?,
-            annotator: Self::restored_text(self.annotator)?,
-        };
-        let extensions = self
-            .extensions
-            .into_iter()
-            .map(|extension| {
-                GameMetadataExtension::new(
-                    extension.name.0,
-                    GameMetadataText::new(extension.value.0)?,
-                )
-            })
-            .collect::<Result<_, GameMetadataError>>()?;
-        Ok(GameMetadata::new(known, extensions)?)
     }
 }
 
@@ -809,16 +704,16 @@ impl StorageGameDocumentEnumState {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StorageGameDocumentPlayOptions {
-    untimed_move_time_nanos: u64,
-    move_overhead_nanos: u64,
+    untimed_move_time_nanos: StorageGameDocumentDuration,
+    move_overhead_nanos: StorageGameDocumentDuration,
     is_auto_flip_enabled: bool,
 }
 
 impl StorageGameDocumentPlayOptions {
     fn capture(engine_search: GameEngineSearchConfig, is_auto_flip_enabled: bool) -> Self {
         Self {
-            untimed_move_time_nanos: engine_search.untimed_move_time().as_nanos(),
-            move_overhead_nanos: engine_search.move_overhead().as_nanos(),
+            untimed_move_time_nanos: engine_search.untimed_move_time().into(),
+            move_overhead_nanos: engine_search.move_overhead().into(),
             is_auto_flip_enabled,
         }
     }
@@ -830,15 +725,15 @@ impl StorageGameDocumentPlayOptions {
 
     fn engine_search_config(&self) -> Result<GameEngineSearchConfig, GameEngineRequestError> {
         GameEngineSearchConfig::new(
-            ClockDuration::from_nanos(self.untimed_move_time_nanos),
-            ClockDuration::from_nanos(self.move_overhead_nanos),
+            self.untimed_move_time_nanos.into(),
+            self.move_overhead_nanos.into(),
         )
     }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StorageGameDocumentRecord {
+struct StorageGameDocumentPlayed {
     id: GameId,
     revision: GameRevision,
     root: GameMoveId,
@@ -852,6 +747,11 @@ struct StorageGameDocumentRecord {
     moves: StorageGameDocumentMoves,
     live: GameMoveId,
     view: GameMoveId,
+    #[serde(
+        default = "StorageGameDocumentEnumField::absent",
+        skip_serializing_if = "StorageGameDocumentEnumField::is_absent"
+    )]
+    study_mainline_tip: StorageGameDocumentEnumField<GameMoveId>,
     clock: StorageGameDocumentClock,
     warnings_used: [bool; 2],
     state: StorageGameDocumentEnumState,
@@ -863,7 +763,7 @@ struct StorageGameDocumentRecord {
     play_options: Option<StorageGameDocumentPlayOptions>,
 }
 
-impl StorageGameDocumentRecord {
+impl StorageGameDocumentPlayed {
     fn from_snapshot(
         snapshot: &GameSessionRestoreOptions,
         cancellation: Option<&CapacityExecutorCancellation>,
@@ -875,24 +775,18 @@ impl StorageGameDocumentRecord {
         let mut moves = Vec::with_capacity(snapshot.moves.len());
         for movement in &snapshot.moves {
             StorageGameDocumentError::check_cancellation(cancellation)?;
-            moves.push(StorageGameDocumentMove {
-                id: movement.id,
-                parent: movement.parent,
-                uci: movement
-                    .movement
-                    .uci(snapshot.session.start.position().variant()),
-                annotations: StorageGameDocumentAnnotations::capture(&movement.annotations)?,
-                before_clock: movement
-                    .before_clock
-                    .as_ref()
-                    .map(|clock| StorageGameDocumentClock::capture(clock, control))
-                    .transpose()?,
-                clock: movement
-                    .clock
-                    .as_ref()
-                    .map(|clock| StorageGameDocumentClock::capture(clock, control))
-                    .transpose()?,
-            });
+            moves.push(StorageGameDocumentMove::capture(
+                StorageGameDocumentMoveSource {
+                    id: movement.id,
+                    parent: movement.parent,
+                    movement: movement.movement,
+                    annotations: &movement.annotations,
+                    before_clock: movement.before_clock.as_ref(),
+                    clock: movement.clock.as_ref(),
+                },
+                snapshot.session.start.position(),
+                Some(control),
+            )?);
         }
         Ok(Self {
             id: snapshot.session.id,
@@ -917,6 +811,7 @@ impl StorageGameDocumentRecord {
             moves: StorageGameDocumentMoves(moves),
             live: snapshot.live,
             view: snapshot.view,
+            study_mainline_tip: StorageGameDocumentEnumField::Present(snapshot.study_mainline_tip),
             clock: StorageGameDocumentClock::capture(&snapshot.clock, control)?,
             warnings_used: snapshot.warnings_used,
             state: snapshot.state.into(),
@@ -953,34 +848,46 @@ impl StorageGameDocumentRecord {
                     .collect::<Result<_, _>>()?,
             )?
         };
-        let mut positions = HashMap::with_capacity(self.moves.0.len().saturating_add(1));
-        positions.insert(self.root, self.start.position().clone());
-        let mut moves = Vec::with_capacity(self.moves.0.len());
-        for record in self.moves.0 {
-            StorageGameDocumentError::check_cancellation(cancellation)?;
-            let parent = positions
-                .get(&record.parent)
-                .ok_or(GameTreeError::BrokenRelationship)?;
-            let movement = parent.parse_uci(&record.uci)?;
-            let position = parent.play(movement)?;
-            if positions.insert(record.id, position).is_some() {
-                return Err(GameTreeError::DuplicateIdentity.into());
+        let mut tree = GameTree::new(
+            self.root,
+            self.start.position().clone(),
+            self.root_clock
+                .map(|clock| clock.restore(&control))
+                .transpose()?,
+        );
+        tree.set_annotations(self.root, self.root_annotations.restore()?)?;
+        let tree = self.moves.restore(tree, Some(&control), cancellation)?;
+        let study_mainline_tip = match (schema_version, self.study_mainline_tip) {
+            (StorageGameDocument::SCHEMA_VERSION, StorageGameDocumentEnumField::Present(tip)) => {
+                tree.validate_study_tip(tip)?;
+                tip
             }
-            moves.push(GameSessionRestoredMove {
-                id: record.id,
-                parent: record.parent,
-                movement,
-                annotations: record.annotations.restore()?,
-                before_clock: record
-                    .before_clock
-                    .map(|clock| clock.restore(&control))
-                    .transpose()?,
-                clock: record
-                    .clock
-                    .map(|clock| clock.restore(&control))
-                    .transpose()?,
-            });
+            (StorageGameDocument::SCHEMA_VERSION, StorageGameDocumentEnumField::Absent) => {
+                return Err(StorageGameDocumentError::MissingStudyTip);
+            }
+            (_, StorageGameDocumentEnumField::Absent) => tree.ordered_leaf(self.live)?,
+            (_, StorageGameDocumentEnumField::Present(_)) => {
+                return Err(StorageGameDocumentError::LegacyStudyTip);
+            }
+        };
+        let mut moves = Vec::with_capacity(tree.len().saturating_sub(1));
+        for node in tree.nodes() {
+            StorageGameDocumentError::check_cancellation(cancellation)?;
+            if let (Some(parent), Some(movement)) = (node.parent(), node.movement()) {
+                moves.push(GameSessionRestoredMove {
+                    id: node.id(),
+                    parent,
+                    movement,
+                    annotations: node.annotations().clone(),
+                    before_clock: node.before_clock().cloned(),
+                    clock: node.clock().cloned(),
+                });
+            }
         }
+        let root = tree.node(self.root)?;
+        let root_annotations = root.annotations().clone();
+        let root_clock = root.clock().cloned();
+        drop(tree);
         let initial_side = self.start.position().turn();
         let snapshot = GameSessionRestoreOptions {
             session: GameSessionOptions {
@@ -994,12 +901,10 @@ impl StorageGameDocumentRecord {
             revision: self.revision,
             live: self.live,
             view: self.view,
+            study_mainline_tip,
             moves,
-            root_annotations: self.root_annotations.restore()?,
-            root_clock: self
-                .root_clock
-                .map(|clock| clock.restore(&control))
-                .transpose()?,
+            root_annotations,
+            root_clock,
             clock: self.clock.restore(&control)?,
             warnings_used: self.warnings_used,
             state: self.state.restore()?,

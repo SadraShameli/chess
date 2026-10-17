@@ -23,6 +23,8 @@ pub enum GameTreeError {
     WrongParent,
     #[error("The move tree contains a broken parent or child relationship")]
     BrokenRelationship,
+    #[error("The study mainline tip must identify a leaf of the game tree")]
+    InteriorStudyTip,
     #[error(transparent)]
     Move(#[from] BoardMoveError),
 }
@@ -34,6 +36,33 @@ pub struct GameTree {
     indices: HashMap<GameMoveId, usize>,
 }
 
+struct GameTreeAncestors<'a> {
+    tree: &'a GameTree,
+    next: Option<GameMoveId>,
+    remaining: usize,
+}
+
+impl<'a> Iterator for GameTreeAncestors<'a> {
+    type Item = Result<&'a GameMoveNode, GameTreeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let id = self.next.take()?;
+        if self.remaining == 0 {
+            return Some(Err(GameTreeError::BrokenRelationship));
+        }
+        self.remaining -= 1;
+        let node = match self.tree.node(id) {
+            Ok(node) => node,
+            Err(error) => return Some(Err(error)),
+        };
+        if node.parent().is_none() && node.id() != self.tree.root {
+            return Some(Err(GameTreeError::BrokenRelationship));
+        }
+        self.next = node.parent();
+        Some(Ok(node))
+    }
+}
+
 struct GameTreeResolvedMove {
     parent: GameMoveId,
     id: GameMoveId,
@@ -43,7 +72,7 @@ struct GameTreeResolvedMove {
     before_clock: Option<ClockStateSnapshot>,
 }
 
-pub(super) struct GameTreeCandidateClock {
+pub(crate) struct GameTreeCandidateClock {
     pub before: ClockStateSnapshot,
     pub after: ClockStateSnapshot,
 }
@@ -62,6 +91,13 @@ pub(crate) struct GameTreePreparedMove<'a> {
 impl GameTreePreparedMove<'_> {
     pub(crate) fn id(&self) -> GameMoveId {
         self.node.id()
+    }
+
+    pub(crate) fn ordered_leaf(&self) -> Result<GameMoveId, GameTreeError> {
+        match self.insertion {
+            GameTreeEnumInsertion::Insert { .. } => Ok(self.node.id()),
+            GameTreeEnumInsertion::Reuse { .. } => self.tree.ordered_leaf(self.node.id()),
+        }
     }
 
     pub(crate) fn commit(self) -> GameMoveNode {
@@ -111,11 +147,15 @@ impl GameTree {
         self.nodes.is_empty()
     }
 
+    pub(crate) fn contains(&self, id: GameMoveId) -> bool {
+        self.indices.contains_key(&id)
+    }
+
     pub fn nodes(&self) -> impl ExactSizeIterator<Item = &GameMoveNode> {
         self.nodes.iter()
     }
 
-    pub(super) fn restore_move(
+    pub(crate) fn restore_move(
         &mut self,
         parent: GameMoveId,
         id: GameMoveId,
@@ -167,12 +207,12 @@ impl GameTree {
         .map(|prepared| prepared.commit().id())
     }
 
-    pub(super) fn append_study(
+    pub(super) fn prepare_study(
         &mut self,
         parent: GameMoveId,
         id: GameMoveId,
         movement: BoardMove,
-    ) -> Result<GameMoveId, GameTreeError> {
+    ) -> Result<GameTreePreparedMove<'_>, GameTreeError> {
         let matching = self.continuation_index(parent, movement)?;
         let (before_clock, clock) = match matching {
             Some(index) => (
@@ -190,7 +230,6 @@ impl GameTree {
             clock,
             before_clock,
         })
-        .map(|prepared| prepared.commit().id())
     }
 
     fn continuation_index(
@@ -294,21 +333,49 @@ impl GameTree {
     }
 
     pub fn path_to(&self, id: GameMoveId) -> Result<Vec<GameMoveId>, GameTreeError> {
-        let mut path = Vec::new();
-        let mut current = Some(id);
-        while let Some(id) = current {
-            if path.len() >= self.nodes.len() {
+        let mut path = self
+            .ancestors(id)
+            .map(|node| node.map(GameMoveNode::id))
+            .collect::<Result<Vec<_>, _>>()?;
+        path.reverse();
+        Ok(path)
+    }
+
+    fn ancestors(&self, id: GameMoveId) -> GameTreeAncestors<'_> {
+        GameTreeAncestors {
+            tree: self,
+            next: Some(id),
+            remaining: self.nodes.len(),
+        }
+    }
+
+    pub(crate) fn line_len(&self, id: GameMoveId) -> Result<usize, GameTreeError> {
+        self.ancestors(id).try_fold(0, |length, node| {
+            Ok(length + usize::from(node?.parent().is_some()))
+        })
+    }
+
+    pub(crate) fn validate_study_tip(&self, id: GameMoveId) -> Result<(), GameTreeError> {
+        if !self.node(id)?.children().is_empty() {
+            return Err(GameTreeError::InteriorStudyTip);
+        }
+        self.line_len(id)?;
+        Ok(())
+    }
+
+    pub(crate) fn ordered_leaf(&self, id: GameMoveId) -> Result<GameMoveId, GameTreeError> {
+        let mut current = id;
+        for _ in 0..self.nodes.len() {
+            let node = self.node(current)?;
+            let Some(&child) = node.children().first() else {
+                return Ok(current);
+            };
+            if self.node(child)?.parent() != Some(current) {
                 return Err(GameTreeError::BrokenRelationship);
             }
-            let node = self.node(id)?;
-            path.push(id);
-            current = node.parent();
+            current = child;
         }
-        path.reverse();
-        if path.first() != Some(&self.root) {
-            return Err(GameTreeError::BrokenRelationship);
-        }
-        Ok(path)
+        Err(GameTreeError::BrokenRelationship)
     }
 
     pub fn delete_branch(&mut self, id: GameMoveId) -> Result<usize, GameTreeError> {

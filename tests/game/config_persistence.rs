@@ -15,7 +15,7 @@ use chess::game::configuration::{
     GameConfigurationOptions,
 };
 use chess::game::engine_provider::{GameEngineRequestError, GameEngineSearchConfig};
-use chess::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat};
+use chess::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat, GameMoveId};
 use chess::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionError, GameSessionOptions,
 };
@@ -41,6 +41,7 @@ struct GameConfigPersistenceEnvelope {
 #[derive(Deserialize)]
 struct GameConfigPersistenceRecord {
     play_options: GameConfigPersistenceOptions,
+    study_mainline_tip: GameMoveId,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -95,6 +96,26 @@ impl GameConfigPersistenceFixture {
             return Err("the fixture has no complete serialized play options".into());
         }
         Ok(json.replacen(&field, "", 1))
+    }
+
+    fn legacy_json(json: &str) -> GameConfigPersistenceTestResult<String> {
+        let envelope: GameConfigPersistenceEnvelope = serde_json::from_str(json)?;
+        let study_tip = format!(
+            ",\"study_mainline_tip\":{}",
+            serde_json::to_string(&envelope.game.study_mainline_tip)?
+        );
+        let kind = ",\"kind\":\"played\"";
+        if !json.contains(&study_tip) || !json.contains(kind) {
+            return Err("the fixture has no current content-kind or study-tip field".into());
+        }
+        Ok(Self::without_play_options(json)?
+            .replacen(kind, "", 1)
+            .replacen(&study_tip, "", 1)
+            .replacen(
+                &format!("\"schema_version\":{}", envelope.schema_version),
+                "\"schema_version\":1",
+                1,
+            ))
     }
 }
 
@@ -204,11 +225,7 @@ fn session_restoration_keeps_selected_play_options() -> GameConfigPersistenceTes
 fn legacy_game_schema_migrates_absent_play_options_to_approved_defaults()
 -> GameConfigPersistenceTestResult {
     let json = GameConfigPersistenceFixture::default_json()?;
-    let legacy = GameConfigPersistenceFixture::without_play_options(&json)?.replacen(
-        &format!("\"schema_version\":{}", StorageGameDocument::SCHEMA_VERSION),
-        "\"schema_version\":1",
-        1,
-    );
+    let legacy = GameConfigPersistenceFixture::legacy_json(&json)?;
     let recovered = StorageGameDocument::restore(&legacy)?;
     let defaults = GameConfigurationOptions::initial_default();
     assert_eq!(recovered.engine_search_config(), defaults.engine_search());

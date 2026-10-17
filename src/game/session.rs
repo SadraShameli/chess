@@ -382,6 +382,7 @@ pub struct GameSessionRestoreOptions {
     pub revision: GameRevision,
     pub live: GameMoveId,
     pub view: GameMoveId,
+    pub study_mainline_tip: GameMoveId,
     pub moves: Vec<GameSessionRestoredMove>,
     pub clock: ClockStateSnapshot,
     pub warnings_used: [bool; 2],
@@ -613,6 +614,7 @@ pub struct GameSession {
     tree: GameTree,
     live: GameMoveId,
     view: GameMoveId,
+    study_mainline_tip: GameMoveId,
     clock: ClockState,
     state: GameSessionEnumState,
     metadata: GameMetadata,
@@ -646,6 +648,7 @@ impl GameSession {
             ),
             live: options.root,
             view: options.root,
+            study_mainline_tip: options.root,
             start: options.start,
             seats: options.seats,
             clock: options.clock,
@@ -795,6 +798,7 @@ impl GameSession {
             revision: self.revision,
             live: self.live,
             view: self.view,
+            study_mainline_tip: self.study_mainline_tip,
             moves,
             clock,
             warnings_used: [
@@ -866,8 +870,12 @@ impl GameSession {
             .get(&options.live)
             .ok_or(GameTreeError::UnknownNode)?;
         session.tree.node(options.view)?;
+        session
+            .tree
+            .validate_study_tip(options.study_mainline_tip)?;
         session.live = options.live;
         session.view = options.view;
+        session.study_mainline_tip = options.study_mainline_tip;
         session.history = session.restored_live_history()?;
         if options.clock.active() != session.history.position().turn()
             || !live_counts.matches(&options.clock)
@@ -1066,6 +1074,9 @@ impl GameSession {
     }
     pub fn view(&self) -> GameMoveId {
         self.view
+    }
+    pub const fn study_mainline_tip(&self) -> GameMoveId {
+        self.study_mainline_tip
     }
     pub fn clock(&self) -> &ClockState {
         &self.clock
@@ -1665,8 +1676,16 @@ impl GameSession {
             }
         }
         let revision = self.revision.next()?;
-        let inserted = self.tree.append_study(self.view, node, movement)?;
+        let advances_study = self.view == self.study_mainline_tip;
+        let insertion = self.tree.prepare_study(self.view, node, movement)?;
+        let study_mainline_tip = if advances_study {
+            insertion.ordered_leaf()?
+        } else {
+            self.study_mainline_tip
+        };
+        let inserted = insertion.commit().id();
         self.view = inserted;
+        self.study_mainline_tip = study_mainline_tip;
         self.revision = revision;
         Ok(inserted)
     }
@@ -1771,11 +1790,13 @@ impl GameSession {
         if accepted_id != origin {
             state = GameSessionEnumState::from_decision(decision, accepted_id)?;
         }
+        let study_mainline_tip = insertion.ordered_leaf()?;
         self.history.commit(candidate)?;
         let node = insertion.commit();
         let follow_live = self.view == self.live;
         let previous_revision = self.revision;
         self.live = node.id();
+        self.study_mainline_tip = study_mainline_tip;
         if follow_live {
             self.view = self.live;
         }
