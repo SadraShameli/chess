@@ -41,3 +41,21 @@ legal weights.
   exist for that wiring.
 - Corpus and book preview/apply handlers need the dataset installation flow.
 - Real engine analysis timing for reports needs external evidence.
+
+## Report search interruption when a live game starts (written, not compiled or run)
+
+The report worker used to learn about a started live game only after its current
+queue drain returned, so a running report search kept its engine and lease until it
+finished. `DesktopNativeReportHost::run_next` now reads the live game watch between
+engine events, updates the scheduler demand when the running count changes, and when
+the scheduler answers Stop for the bound search it stops that search through the
+session with the receipt time and records the actual terminal. The job then pauses and
+resumes automatically once the live game ends. The check runs between engine events, so
+the stop latency is one event interval. Test: `report_demand_counts_only_active_games`
+in `tests/presentation/app.rs` covers the demand count; the stop path itself needs a
+real or fake engine process.
+
+Still not wired: `DesktopNativeReportHost::pump` has no caller, so the report panel,
+explorer and dataset intents are not exchanged with the live window. Mounting it needs
+a two-phase main-thread exchange (take intents, send them to the async host, apply the
+returned views) and the packaged starter manifest, which does not exist yet.

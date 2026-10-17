@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 use crate::board::position::BoardPosition;
 use crate::capacity::lease::CapacityLease;
@@ -12,11 +12,14 @@ use crate::desktop::opening_commands::{
 use crate::desktop::report_commands::DesktopReportEnumConfirmation;
 use crate::desktop::report_commands::{DesktopReportCommands, DesktopReportCommandsError};
 use crate::engine::process_provider::EngineProcess;
+use crate::engine::search::identity::EngineSearchTag;
 use crate::engine::search::session::{
     EngineSearchSession, EngineSearchSessionEnumEvent, EngineSearchSessionError,
 };
+use crate::engine::search::stop::{EngineSearchStop, EngineSearchStopError};
 use crate::engine::session::EngineSession;
-use crate::game::enums::{GameId, GameMoveId, GameRevision};
+use crate::desktop::game_snapshot::DesktopGameSnapshot;
+use crate::game::enums::{GameEnumPhase, GameId, GameMoveId, GameRevision};
 use crate::game::tree::GameTree;
 use crate::presentation::opening::controller::PresentationOpeningIntent;
 use crate::presentation::report::controller::PresentationReportIntent;
@@ -61,6 +64,8 @@ pub enum DesktopNativeReportHostError {
     Search(#[from] EngineSearchSessionError),
     #[error(transparent)]
     Datasets(#[from] StorageDatasetRegistryError),
+    #[error(transparent)]
+    Stop(#[from] EngineSearchStopError),
 }
 
 pub struct DesktopNativeReportHostFinishedGame<'a, P: EngineProcess> {
@@ -178,10 +183,26 @@ impl DesktopNativeReportHost {
         self.game_completed(job).await
     }
 
+    pub fn running_games(snapshots: &[DesktopGameSnapshot]) -> u32 {
+        let running = snapshots
+            .iter()
+            .filter(|snapshot| snapshot.phase() == GameEnumPhase::Active)
+            .count();
+        u32::try_from(running).unwrap_or(u32::MAX)
+    }
+
+    async fn stop_requested(&self, tag: EngineSearchTag) -> bool {
+        matches!(
+            self.reports.lock().await.service_mut().scheduler_mut().decision(),
+            ReportSchedulerEnumDecision::Stop(requested) if requested == tag
+        )
+    }
+
     pub async fn run_next<P: EngineProcess>(
         &self,
         session: &mut EngineSearchSession<P>,
         lease: CapacityLease,
+        live: &watch::Receiver<Vec<DesktopGameSnapshot>>,
     ) -> Result<bool, DesktopNativeReportHostError> {
         let tag = {
             let mut reports = self.reports.lock().await;
@@ -200,7 +221,18 @@ impl DesktopNativeReportHost {
             scheduler.bind(session)?;
             tag
         };
+        let mut applied = None;
         let terminal = loop {
+            let running = Self::running_games(&live.borrow());
+            if applied != Some(running) {
+                self.live_games_changed(running).await?;
+                applied = Some(running);
+            }
+            if self.stop_requested(tag).await {
+                break session
+                    .stop(EngineSearchStop::received_at(tag, tokio::time::Instant::now())?)
+                    .await?;
+            }
             if let EngineSearchSessionEnumEvent::Finished(terminal) =
                 session.next_event(tag).await?
             {
@@ -233,10 +265,11 @@ impl DesktopNativeReportHost {
         &self,
         session: &mut EngineSearchSession<P>,
         lease: impl Fn() -> Option<CapacityLease>,
+        live: &watch::Receiver<Vec<DesktopGameSnapshot>>,
     ) -> Result<usize, DesktopNativeReportHostError> {
         let mut completed = 0_usize;
         while let Some(lease) = lease() {
-            if !self.run_next(session, lease).await? {
+            if !self.run_next(session, lease, live).await? {
                 break;
             }
             completed += 1;

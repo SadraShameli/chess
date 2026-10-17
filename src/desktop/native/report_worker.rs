@@ -55,7 +55,7 @@ impl DesktopNativeReportWorker {
                 }
             }
             let drained = host
-                .drain(&mut session, || Self::lease(&capacity))
+                .drain(&mut session, || Self::lease(&capacity), &games)
                 .await;
             if let Err(error) = drained {
                 host.record_failure(error.to_string());
@@ -83,11 +83,7 @@ impl DesktopNativeReportWorker {
         snapshots: &[DesktopGameSnapshot],
         reported: &mut HashSet<GameId>,
     ) -> Result<(), DesktopNativeReportHostError> {
-        let running = snapshots
-            .iter()
-            .filter(|snapshot| snapshot.phase() == GameEnumPhase::Active)
-            .count();
-        host.live_games_changed(u32::try_from(running).unwrap_or(u32::MAX))
+        host.live_games_changed(DesktopNativeReportHost::running_games(snapshots))
             .await?;
         for snapshot in snapshots {
             if snapshot.phase() != GameEnumPhase::Completed || reported.contains(&snapshot.id()) {

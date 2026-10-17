@@ -2000,5 +2000,24 @@ fn closing_with_several_games_open_needs_an_explicit_confirmation_and_keep_open_
     assert!(!fixture.presentation.is_quit_confirmation_open());
     assert!(fixture.presentation.take_confirmed_quit_request());
     assert!(fixture.application.try_next()?.is_none());
+
+#[test]
+fn report_demand_counts_only_active_games() -> PresentationAppTestResult {
+    use crate::game_transition_fixture::GameTransitionFixture;
+    use chess::desktop::game_snapshot::DesktopGameSnapshot;
+    use chess::desktop::native::report_host::DesktopNativeReportHost;
+    use chess::game::enums::GameEnumPhase;
+
+    let session = GameTransitionFixture::session(
+        chess::clock::time_control::ClockTimeControl::untimed(),
+        None,
+    )?;
+    let snapshot = DesktopGameSnapshot::capture(&session, ClockInstant::from_nanos(0))?;
+    let active = u32::from(snapshot.phase() == GameEnumPhase::Active);
+    assert_eq!(DesktopNativeReportHost::running_games(&[]), 0);
+    assert_eq!(
+        DesktopNativeReportHost::running_games(&[snapshot.clone(), snapshot]),
+        active * 2
+    );
     Ok(())
 }
