@@ -4,6 +4,7 @@ pub mod clock;
 pub mod desktop;
 pub mod engine;
 pub mod game;
+pub mod notation;
 pub mod package;
 pub mod presentation;
 pub mod puzzle;

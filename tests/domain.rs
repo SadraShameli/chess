@@ -35,6 +35,9 @@ mod game_transition_fixture;
 #[path = "game/tree.rs"]
 mod game_tree;
 
+#[path = "notation/game_identity.rs"]
+mod notation_game_identity;
+
 #[path = "puzzle/checkpoint.rs"]
 mod puzzle_checkpoint;
 #[path = "puzzle/csv_import.rs"]
