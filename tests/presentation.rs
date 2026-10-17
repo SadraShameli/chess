@@ -5,6 +5,8 @@ mod presentation_compatibility;
 mod presentation_app;
 #[path = "presentation/board.rs"]
 mod presentation_board;
+#[path = "presentation/board/accessibility.rs"]
+mod presentation_board_accessibility;
 
 #[path = "game/transition_fixture.rs"]
 mod game_transition_fixture;

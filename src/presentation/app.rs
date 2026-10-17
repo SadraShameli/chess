@@ -37,6 +37,7 @@ use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
+use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
 use crate::presentation::app::editor::{
     PresentationAppEditor, PresentationAppEditorBoardInput, PresentationAppEditorError,
 };
@@ -258,7 +259,7 @@ pub struct PresentationApp {
     failure: Option<String>,
     game_notice: Option<PresentationAppGameNotice>,
     quit_confirmation: bool,
-    quit_focus_pending: bool,
+    quit_modal: PresentationAnalysisEditorModal,
     confirmed_quit_pending: bool,
     quit_ready: bool,
     quit_retry_frame: Option<u64>,
@@ -307,7 +308,7 @@ impl PresentationApp {
             failure: None,
             game_notice: None,
             quit_confirmation: false,
-            quit_focus_pending: false,
+            quit_modal: PresentationAnalysisEditorModal::default(),
             confirmed_quit_pending: false,
             quit_ready: false,
             quit_retry_frame: None,
@@ -771,7 +772,7 @@ impl PresentationApp {
     fn request_quit_unguarded(&mut self) {
         if !self.quit_confirmation {
             self.quit_confirmation = true;
-            self.quit_focus_pending = true;
+            self.quit_modal.open(None);
             self.board.cancel_gesture();
         }
     }
@@ -1821,19 +1822,17 @@ impl PresentationApp {
         if self.quit_confirmation {
             let mut cancel = false;
             let mut confirm = false;
+            self.quit_modal.capture_invoker(ui.ctx());
             let modal = egui::Modal::new(Id::new("chess.quit.confirmation")).show(ui.ctx(), |ui| {
+                PresentationAnalysisEditorModal::label(ui, "Quit Chess?");
                 ui.heading("Quit Chess?");
                 ui.label("The application will finish its owned shutdown before closing.");
                 ui.horizontal(|ui| {
-                    let button = ui.button("Keep open");
-                    if self.quit_focus_pending {
-                        button.request_focus();
-                        self.quit_focus_pending = false;
-                    }
-                    cancel = button.clicked();
-                    confirm = ui
-                        .button(PresentationActionEnumId::ConfirmQuit.label())
-                        .clicked();
+                    let keep = ui.button("Keep open");
+                    let quit = ui.button(PresentationActionEnumId::ConfirmQuit.label());
+                    cancel = keep.clicked();
+                    confirm = quit.clicked();
+                    self.quit_modal.contain(ui, &[keep.id, quit.id]);
                 });
             });
             if confirm {
@@ -1841,6 +1840,7 @@ impl PresentationApp {
             }
             if cancel || confirm || modal.should_close() {
                 self.quit_confirmation = false;
+                self.quit_modal.close(ui.ctx());
             }
         }
         for action in actions {

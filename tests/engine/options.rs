@@ -2,9 +2,10 @@ use std::future::{Future, poll_fn};
 use std::num::NonZeroU32;
 use std::task::Poll;
 
-use chess::board::enums::BoardEnumVariant;
+use chess::board::enums::{BoardEnumColor, BoardEnumVariant};
 use chess::board::position::BoardPosition;
 use chess::clock::duration::ClockDuration;
+use chess::engine::analysis::{EngineAnalysis, EngineAnalysisStaticEvaluation};
 use chess::engine::process_provider::EngineProcessLimits;
 use chess::engine::search::enums::{EngineSearchEnumOutput, EngineSearchEnumState};
 use chess::engine::search::identity::{
@@ -879,5 +880,131 @@ async fn failed_tablebase_replacement_clears_prior_loaded_state_without_claiming
     provider.assert_no_command();
     session.shutdown().await?;
     provider.expect("shutdown").await?;
+    Ok(())
+}
+
+#[test]
+fn numeric_options_accept_both_documented_boundaries_with_exact_wire_commands()
+-> EngineOptionsTestResult {
+    let capabilities = EngineOptionsFixture::capabilities()?;
+    for (value, command) in [
+        (
+            EngineOptionsEnumValue::Hash(1),
+            "setoption name Hash value 1",
+        ),
+        (
+            EngineOptionsEnumValue::Hash(262_144),
+            "setoption name Hash value 262144",
+        ),
+        (
+            EngineOptionsEnumValue::Threads(1),
+            "setoption name Threads value 1",
+        ),
+        (
+            EngineOptionsEnumValue::Threads(512),
+            "setoption name Threads value 512",
+        ),
+        (
+            EngineOptionsEnumValue::MoveOverhead(ClockDuration::ZERO),
+            "setoption name MoveOverhead value 0",
+        ),
+        (
+            EngineOptionsEnumValue::MoveOverhead(ClockDuration::from_millis(2_000)?),
+            "setoption name MoveOverhead value 2000",
+        ),
+        (
+            EngineOptionsEnumValue::Minimal(false),
+            "setoption name Minimal value false",
+        ),
+        (
+            EngineOptionsEnumValue::Chess960(BoardEnumVariant::Standard),
+            "setoption name UCI_Chess960 value false",
+        ),
+        (
+            EngineOptionsEnumValue::MultiPv(1),
+            "setoption name MultiPV value 1",
+        ),
+    ] {
+        assert_eq!(
+            EngineOptionsSetting::new(value, &capabilities)?.command(),
+            command
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn threads_bounds_follow_the_discovered_descriptor_in_both_directions() -> EngineOptionsTestResult {
+    let mut high = EngineCapabilities::default();
+    high.discover("option name Threads type spin default 1 min 1 max 1024")?;
+    EngineOptionsSetting::new(EngineOptionsEnumValue::Threads(1_024), &high)?;
+    assert!(EngineOptionsSetting::new(EngineOptionsEnumValue::Threads(1_025), &high).is_err());
+    let mut mid = EngineCapabilities::default();
+    mid.discover("option name Threads type spin default 1 min 1 max 600")?;
+    EngineOptionsSetting::new(EngineOptionsEnumValue::Threads(1), &mid)?;
+    EngineOptionsSetting::new(EngineOptionsEnumValue::Threads(600), &mid)?;
+    assert!(EngineOptionsSetting::new(EngineOptionsEnumValue::Threads(601), &mid).is_err());
+    assert!(EngineOptionsSetting::new(EngineOptionsEnumValue::Threads(0), &mid).is_err());
+    Ok(())
+}
+
+#[test]
+fn syzygy_paths_accept_whitespace_free_aliases_and_format_without_quoting()
+-> EngineOptionsTestResult {
+    let capabilities = EngineOptionsFixture::capabilities()?;
+    for path in [
+        "/managed/alias",
+        "C:\\managed\\alias",
+        "/managed/\u{e9}checs",
+        "relative-alias",
+    ] {
+        let setting = EngineOptionsSetting::new(
+            EngineOptionsEnumValue::SyzygyPath(EngineOptionsSyzygyPath::new(path.to_owned())?),
+            &capabilities,
+        )?;
+        assert_eq!(
+            setting.command(),
+            format!("setoption name SyzygyPath value {path}")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn multipv_rank_is_capped_by_the_legal_root_moves_of_the_searched_position()
+-> EngineOptionsTestResult {
+    let root = BoardPosition::from_fen("7k/8/8/8/8/8/8/K6R b - - 0 1", BoardEnumVariant::Standard)?;
+    let legal = root.legal_moves().len();
+    assert_eq!(legal, 2);
+    assert!(EngineAnalysis::parse("info multipv 1 pv h8g7", &root).is_ok());
+    assert!(EngineAnalysis::parse("info multipv 3 pv h8g7", &root).is_err());
+    let start = BoardPosition::standard();
+    let all = start.legal_moves().len();
+    assert_eq!(all, 20);
+    for rank in [1, 2, all] {
+        assert!(EngineAnalysis::parse(&format!("info multipv {rank} pv e2e4"), &start).is_ok());
+    }
+    assert!(EngineAnalysis::parse(&format!("info multipv {} pv e2e4", all + 1), &start).is_err());
+    assert!(EngineAnalysis::parse("info multipv 256 pv e2e4", &start).is_err());
+    Ok(())
+}
+
+#[test]
+fn search_scores_and_raw_evaluation_are_distinct_white_perspective_results()
+-> EngineOptionsTestResult {
+    let black_to_move = BoardPosition::standard().play_uci("e2e4")?;
+    let analysis = EngineAnalysis::parse("info depth 9 score cp -50 pv e7e5", &black_to_move)?;
+    let score = analysis
+        .line()
+        .and_then(|line| line.score())
+        .ok_or("missing search score")?;
+    assert_eq!(score.perspective(), BoardEnumColor::Black);
+    assert_eq!(score.white_value(), 50);
+    assert_eq!(
+        EngineAnalysisStaticEvaluation::parse("-50")?.white_value(),
+        -50
+    );
+    assert!(EngineAnalysisStaticEvaluation::parse("score cp -50").is_err());
+    assert!(EngineAnalysis::parse("-50", &black_to_move).is_err());
     Ok(())
 }

@@ -298,7 +298,7 @@ impl DesktopCommand {
         )
     }
 
-    pub(crate) fn editor_expected_revision(
+    pub fn editor_expected_revision(
         operation: &DesktopEditorCommandsEnumOperation,
     ) -> DesktopRevision {
         operation

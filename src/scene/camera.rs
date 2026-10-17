@@ -16,6 +16,27 @@ pub enum SceneCameraError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SceneCameraPose {
+    yaw_degrees: f32,
+    tilt_degrees: f32,
+    zoom: f32,
+}
+
+impl SceneCameraPose {
+    pub const fn yaw_degrees(self) -> f32 {
+        self.yaw_degrees
+    }
+
+    pub const fn tilt_degrees(self) -> f32 {
+        self.tilt_degrees
+    }
+
+    pub const fn zoom(self) -> f32 {
+        self.zoom
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SceneCamera {
     yaw_degrees: f32,
     tilt_degrees: f32,
@@ -81,6 +102,21 @@ impl SceneCamera {
 
     pub const fn orientation(self) -> BoardEnumColor {
         self.orientation
+    }
+
+    pub const fn pose(self) -> SceneCameraPose {
+        SceneCameraPose {
+            yaw_degrees: self.yaw_degrees,
+            tilt_degrees: self.tilt_degrees,
+            zoom: self.zoom,
+        }
+    }
+
+    pub fn from_pose(
+        pose: SceneCameraPose,
+        orientation: BoardEnumColor,
+    ) -> Result<Self, SceneCameraError> {
+        Self::new(pose.yaw_degrees, pose.tilt_degrees, pose.zoom, orientation)
     }
 
     pub const fn with_orientation(self, orientation: BoardEnumColor) -> Self {

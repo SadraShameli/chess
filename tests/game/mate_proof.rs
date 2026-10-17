@@ -8,7 +8,9 @@ use chess::game::adjudication::{
     GameAdjudicationEnumInterruption, GameAdjudicationEnumMateProof,
     GameAdjudicationEnumMateQuestion, GameAdjudicationMateProofProvider,
 };
-use chess::game::mate_proof::{GameMateProof, GameMateProofBudget, GameMateProofControl};
+use chess::game::mate_proof::{
+    GameMateProof, GameMateProofBudget, GameMateProofControl, GameMateProofError,
+};
 use serde::Deserialize;
 
 #[derive(Default)]
@@ -27,6 +29,23 @@ impl GameMateProofControl for GameMateProofTestControl {
 
     fn is_cancelled(&self) -> bool {
         self.cancelled
+    }
+}
+
+struct GameMateProofTestScriptedClock {
+    readings: Vec<Duration>,
+    cursor: Cell<usize>,
+}
+
+impl GameMateProofControl for GameMateProofTestScriptedClock {
+    fn now(&self) -> Duration {
+        let index = self.cursor.get().min(self.readings.len().saturating_sub(1));
+        self.cursor.set(self.cursor.get().saturating_add(1));
+        self.readings.get(index).copied().unwrap_or_default()
+    }
+
+    fn is_cancelled(&self) -> bool {
+        false
     }
 }
 
@@ -307,6 +326,83 @@ fn common_openings_and_middlegames_never_receive_unproved_draw_certificates()
         }
         assert!(report.states() <= 256);
         assert!(report.requested_bytes() <= 1024 * 1024);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_clock_moving_backwards_is_unknown_with_a_typed_failure() -> Result<(), Box<dyn Error>> {
+    let proof = GameMateProof::new(
+        GameMateProofBudget::default(),
+        GameMateProofTestScriptedClock {
+            readings: vec![Duration::from_secs(5), Duration::from_secs(1)],
+            cursor: Cell::new(0),
+        },
+    );
+    let report = proof.report(
+        &BoardPosition::standard(),
+        GameAdjudicationEnumMateQuestion::AnySide,
+    );
+    assert_eq!(
+        report.proof(),
+        GameAdjudicationEnumMateProof::Unknown(GameAdjudicationEnumInterruption::Unresolved)
+    );
+    assert!(report.witness().is_none());
+    assert!(matches!(
+        report.failure(),
+        Some(GameMateProofError::ClockWentBackwards { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_mid_search_deadline_is_unknown_never_impossible() -> Result<(), Box<dyn Error>> {
+    let position = GameMateProofTestPosition::parse("4k3/8/8/8/8/8/PPPPPPPP/4K3 w - - 0 1")?;
+    let proof = GameMateProof::new(
+        GameMateProofBudget::new(
+            Duration::from_secs(2),
+            GameMateProofBudget::DEFAULT_STATES,
+            GameMateProofBudget::DEFAULT_BYTES,
+        )?,
+        GameMateProofTestControl {
+            tick: Duration::from_millis(1),
+            ..GameMateProofTestControl::default()
+        },
+    );
+    let report = proof.report(&position, GameAdjudicationEnumMateQuestion::AnySide);
+    assert_ne!(report.proof(), GameAdjudicationEnumMateProof::Impossible);
+    assert!(report.elapsed() <= Duration::from_secs(2) + Duration::from_millis(8));
+    Ok(())
+}
+
+#[test]
+fn unknown_is_reported_for_a_side_question_under_each_limit_without_a_witness()
+-> Result<(), Box<dyn Error>> {
+    let position = BoardPosition::standard();
+    for states in [1_u32, 2, 5, 50] {
+        let proof = GameMateProof::new(
+            GameMateProofTestPosition::budget(states, 128 * 1024 * 1024)?,
+            GameMateProofTestControl::default(),
+        );
+        let report = proof.report(
+            &position,
+            GameAdjudicationEnumMateQuestion::Side(BoardEnumColor::White),
+        );
+        assert!(report.states() <= states);
+        match report.proof() {
+            GameAdjudicationEnumMateProof::Possible => {
+                assert!(
+                    report
+                        .witness()
+                        .ok_or("Possible without witness")?
+                        .verify(&position)?
+                );
+            }
+            GameAdjudicationEnumMateProof::Unknown(_) => assert!(report.witness().is_none()),
+            GameAdjudicationEnumMateProof::Impossible => {
+                return Err("A bounded search certified an unproved draw".into());
+            }
+        }
     }
     Ok(())
 }

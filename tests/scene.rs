@@ -9,3 +9,6 @@ mod scene_picking;
 mod scene_renderer;
 #[path = "scene/task_pools.rs"]
 mod scene_task_pools;
+
+#[path = "scene/camera.rs"]
+mod scene_camera;

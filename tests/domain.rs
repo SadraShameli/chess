@@ -88,6 +88,8 @@ mod opening_book;
 
 #[path = "opening/corpus.rs"]
 mod opening_corpus;
+#[path = "opening/explorer.rs"]
+mod opening_explorer;
 #[path = "opening/fixtures.rs"]
 mod opening_fixture;
 #[path = "opening/query.rs"]
