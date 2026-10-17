@@ -8,6 +8,9 @@ use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use crate::engine::options::EngineOptionsEnumValue;
 use crate::engine::package::manifest::EnginePackageManifest;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::workbench::engine_information::{
+    PresentationWorkbenchEngineInformation, PresentationWorkbenchEngineInformationEnumState,
+};
 use crate::presentation::workbench::configuration::{
     PresentationWorkbenchConfiguration, PresentationWorkbenchConfigurationError,
 };
@@ -142,8 +145,18 @@ impl PresentationWorkbenchView {
             ui.label("Diagnostic export completed by the backend.");
         }
         if controller.engine().is_none() {
-            if controller.failure().is_none() {
-                ui.label("Loading engine identity and capabilities...");
+            match controller.failure() {
+                None => {
+                    ui.label("Loading engine identity and capabilities...");
+                }
+                Some(failure) => Self::show_information(
+                    ui,
+                    &PresentationWorkbenchEngineInformation::unavailable(
+                        PresentationWorkbenchEngineInformationEnumState::Diagnostic(
+                            failure.message().to_owned(),
+                        ),
+                    ),
+                ),
             }
             return;
         }
@@ -191,18 +204,24 @@ impl PresentationWorkbenchView {
     }
 
     fn show_package(ui: &mut Ui, engine: &PresentationWorkbenchSnapshot) {
-        ui.label(format!(
-            "Reckless {} | {} | {:?}",
-            EnginePackageManifest::VERSION,
-            engine.package().target().triple(),
-            engine.package().profile()
-        ));
-        ui.small(format!("Package SHA-256: {}", engine.package().digest()));
-        ui.small(format!(
-            "Source: {} | NNUE: {}",
-            EnginePackageManifest::COMMIT,
-            EnginePackageManifest::NETWORK_NAME
-        ));
+        Self::show_information(
+            ui,
+            &PresentationWorkbenchEngineInformation::from_package(
+                engine.package(),
+                PresentationWorkbenchEngineInformationEnumState::Ready,
+            ),
+        );
+    }
+
+    fn show_information(ui: &mut Ui, information: &PresentationWorkbenchEngineInformation) {
+        egui::CollapsingHeader::new("Engine Information")
+            .id_salt("workbench.engine_information")
+            .default_open(true)
+            .show(ui, |ui| {
+                for line in information.lines() {
+                    ui.label(line);
+                }
+            });
     }
 
     fn show_option(

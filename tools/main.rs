@@ -18,7 +18,7 @@ mod packaging;
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools data-verify <sources.json> <cache-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa] | engine-check | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools data-verify <sources.json> <cache-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa|apple-neon] | engine-check | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
     #[error(transparent)]

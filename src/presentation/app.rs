@@ -60,6 +60,9 @@ use crate::presentation::board::recovery::{
 use crate::presentation::board::toolbar::PresentationBoardToolbar;
 use crate::desktop::layout::DesktopLayout;
 use crate::desktop::renderer_commands::DesktopRendererCommands;
+use crate::game::save_coordinator::{
+    GameSaveCoordinator, GameSaveCoordinatorEnumBarrier, GameSaveCoordinatorError,
+};
 use crate::presentation::board::view::{
     PresentationBoardAction, PresentationBoardPickingProvider, PresentationBoardView,
     PresentationBoardViewError, PresentationBoardViewFrame, PresentationBoardViewInput,
@@ -84,11 +87,6 @@ use crate::presentation::puzzle::panel::{
 };
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
-use crate::desktop::layout::DesktopLayout;
-use crate::desktop::renderer_commands::DesktopRendererCommands;
-use crate::presentation::board::recovery::{
-    PresentationBoardRecovery, PresentationBoardRecoveryEnumIntent,
-};
 use crate::scene::camera::SceneCamera;
 use crate::scene::quality::{SceneQualityEnumMode, SceneQualityEnumTier};
 use crate::scene::picking::ScenePickingViewport;
@@ -162,6 +160,7 @@ struct PresentationAppGame {
     controller: PresentationGameController,
     play: PresentationGamePlay,
     last_notice: Option<DesktopGameSnapshotEnumNotice>,
+    save: GameSaveCoordinator,
 }
 
 struct PresentationAppGameNotice {
@@ -723,16 +722,25 @@ impl PresentationApp {
                 self.game_notice = Some(PresentationAppGameNotice::new(notice));
                 game.last_notice = Some(notice);
             }
+            let tracked = Self::track_save(&mut game.save, &snapshot);
             game.snapshot = snapshot;
+            if let Err(error) = tracked {
+                self.failure = Some(error.to_string());
+            }
         } else {
             if let Some(notice) = notice {
                 self.game_notice = Some(PresentationAppGameNotice::new(notice));
+            }
+            let mut save = GameSaveCoordinator::new(id, snapshot.revision());
+            if let Err(error) = Self::track_save(&mut save, &snapshot) {
+                self.failure = Some(error.to_string());
             }
             self.games.push(PresentationAppGame {
                 snapshot,
                 controller: PresentationGameController::new(),
                 play: PresentationGamePlay::new(),
                 last_notice: notice,
+                save,
             });
             if self.selected_game.is_none() {
                 self.selected_game = Some(id);
@@ -882,7 +890,45 @@ impl PresentationApp {
         self.request_quit_unguarded();
     }
 
+    fn track_save(
+        coordinator: &mut GameSaveCoordinator,
+        snapshot: &DesktopGameSnapshot,
+    ) -> Result<(), GameSaveCoordinatorError> {
+        coordinator.observe_memory(snapshot.revision());
+        if snapshot.is_save_required() {
+            coordinator.record_failure("the latest moves are not saved".to_owned());
+        } else {
+            coordinator.acknowledge(snapshot.id(), snapshot.revision())?;
+        }
+        Ok(())
+    }
+
+    pub fn require_game_saved(
+        &self,
+        game: GameId,
+        barrier: GameSaveCoordinatorEnumBarrier,
+    ) -> Result<(), GameSaveCoordinatorError> {
+        self.games
+            .iter()
+            .find(|candidate| candidate.snapshot.id() == game)
+            .map_or(Ok(()), |candidate| candidate.save.require_saved(barrier))
+    }
+
     fn request_quit_unguarded(&mut self) {
+        if let Some(error) = self
+            .games
+            .iter()
+            .find_map(|game| {
+                game.save
+                    .require_saved(GameSaveCoordinatorEnumBarrier::QuitApplication)
+                    .err()
+            })
+        {
+            self.failure = Some(format!(
+                "{error}. Use Retry Save on the unsaved game, then quit again."
+            ));
+            return;
+        }
         if !self.quit_confirmation {
             self.quit_confirmation = true;
             self.quit_modal.open(None);

@@ -66,6 +66,10 @@ impl EngineLifecycleProvider {
         self.threads_maximum = Some(maximum);
     }
 
+    pub(super) fn close_output(&mut self) {
+        drop(std::mem::replace(&mut self.input, mpsc::channel(1).0));
+    }
+
     pub(super) fn block_stop_write(&mut self) {
         self.stall_stop_write = true;
     }
@@ -720,6 +724,22 @@ async fn malformed_or_illegal_search_output_fails_and_reaps_without_becoming_res
         session.shutdown().await?;
         provider.assert_no_command();
     }
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn engine_output_ending_during_a_search_fails_the_session_and_reaps_the_process()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = EnginePackageFixture::new()?;
+    let mut provider = EngineLifecycleProvider::new();
+    let mut session = provider.start(&fixture).await?;
+    provider.search(&mut session, 1).await?;
+    provider.close_output();
+    assert!(session.next_event().await.is_err());
+    assert_eq!(session.state(), EngineSearchEnumState::Failed);
+    provider.expect("terminate").await?;
+    session.shutdown().await?;
+    provider.assert_no_command();
     Ok(())
 }
 

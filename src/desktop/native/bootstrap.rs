@@ -120,7 +120,6 @@ use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore}
 use crate::desktop::layout::DesktopLayout;
 use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
 use crate::storage::editor_repository::StorageEditorRepository;
-use crate::storage::preferences_repository::StoragePreferencesRepository;
 use crate::storage::puzzle_repository::StoragePuzzleRepository;
 
 struct DesktopNativeBootstrapEditorDraftIds;

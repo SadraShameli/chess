@@ -245,6 +245,8 @@ fn builds_outside_a_targets_supported_profiles_are_rejected() -> EnginePackageRe
         (EnginePackageEnumTarget::MacosArm, EnginePackageEnumProfile::X8664V3),
         (EnginePackageEnumTarget::MacosArm, EnginePackageEnumProfile::Numa),
         (EnginePackageEnumTarget::WindowsX64, EnginePackageEnumProfile::Numa),
+        (EnginePackageEnumTarget::WindowsX64, EnginePackageEnumProfile::AppleNeon),
+        (EnginePackageEnumTarget::LinuxX64, EnginePackageEnumProfile::AppleNeon),
     ] {
         assert!(
             EnginePackageEntry::profiled(target, profile, 6, digest, "compiler".to_owned())
@@ -258,6 +260,37 @@ fn builds_outside_a_targets_supported_profiles_are_rejected() -> EnginePackageRe
             EnginePackageEnumProfile::X8664V4,
             6,
             digest,
+            "compiler".to_owned()
+        )
+        .is_ok()
+    );
+    Ok(())
+}
+
+#[test]
+fn the_apple_neon_profile_needs_neon_and_ranks_above_the_portable_baseline() -> EnginePackageResult {
+    let profile = EnginePackageEnumProfile::AppleNeon;
+    assert!(EnginePackageEnumTarget::MacosArm.supports_profile(profile));
+    assert!(profile.rank() > EnginePackageEnumProfile::Portable.rank());
+    assert!(profile.rustflags().is_some_and(|flags| flags.contains("+neon")));
+    let without_neon = EnginePackagePlatform::from_observation([], [], 1, false);
+    assert_eq!(
+        EnginePackageSelector::incompatibilities(profile, &without_neon),
+        vec!["the processor lacks NEON".to_owned()]
+    );
+    let with_neon = EnginePackagePlatform::from_observation(
+        [EnginePackagePlatformEnumFeature::Neon],
+        [],
+        1,
+        false,
+    );
+    assert!(EnginePackageSelector::incompatibilities(profile, &with_neon).is_empty());
+    assert!(
+        EnginePackageEntry::profiled(
+            EnginePackageEnumTarget::MacosArm,
+            profile,
+            6,
+            PackageDigest::hash_slice(b"engine"),
             "compiler".to_owned()
         )
         .is_ok()

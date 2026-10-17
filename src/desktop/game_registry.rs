@@ -245,6 +245,11 @@ enum DesktopGameRegistryEnumControl {
     ResumeInterrupted {
         deadline: Instant,
     },
+    PauseAll {
+        cause: GamePauseEnumCause,
+        received_at: ClockInstant,
+        deadline: Instant,
+    },
 }
 
 impl DesktopGameRegistryEnumControl {
@@ -256,6 +261,7 @@ impl DesktopGameRegistryEnumControl {
             Self::PauseGraphics { .. } => 3,
             Self::RecoverGraphics { .. } => 4,
             Self::ResumeInterrupted { .. } => 5,
+            Self::PauseAll { .. } => 6,
         }
     }
 }
@@ -388,6 +394,19 @@ impl DesktopGameRegistryPort {
         deadline: Instant,
     ) -> Result<DesktopGameRegistryReceipt, DesktopGameRegistryError> {
         self.control(DesktopGameRegistryEnumControl::RecoverGraphics { deadline })
+    }
+
+    pub fn pause_all(
+        &self,
+        cause: GamePauseEnumCause,
+        received_at: ClockInstant,
+        deadline: Instant,
+    ) -> Result<DesktopGameRegistryReceipt, DesktopGameRegistryError> {
+        self.control(DesktopGameRegistryEnumControl::PauseAll {
+            cause,
+            received_at,
+            deadline,
+        })
     }
 
     pub fn resume_interrupted_all(
@@ -1117,6 +1136,18 @@ where
             DesktopGameRegistryEnumControl::RecoverGraphics { deadline } => {
                 self.broadcast(DesktopGameCommandsEnumAction::RecoverGraphics, deadline)
                     .await
+            }
+            DesktopGameRegistryEnumControl::PauseAll {
+                cause,
+                received_at,
+                deadline,
+            } => {
+                self.broadcast_at(
+                    DesktopGameCommandsEnumAction::Pause { cause },
+                    received_at,
+                    deadline,
+                )
+                .await
             }
             DesktopGameRegistryEnumControl::ResumeInterrupted { deadline } => {
                 let ports: Vec<_> = self

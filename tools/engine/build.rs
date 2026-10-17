@@ -388,7 +388,8 @@ impl ToolsEngineBuild {
             }
             EnginePackageEnumProfile::X8664V3
             | EnginePackageEnumProfile::X8664V4
-            | EnginePackageEnumProfile::Numa => {
+            | EnginePackageEnumProfile::Numa
+            | EnginePackageEnumProfile::AppleNeon => {
                 EnginePackageEntry::profiled(target, profile, bytes, digest, compiler)?
             }
         };

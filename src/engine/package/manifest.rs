@@ -86,6 +86,7 @@ impl EnginePackageEnumTarget {
                 EnginePackageEnumProfile::X8664V3 | EnginePackageEnumProfile::X8664V4,
             ) => true,
             (Self::LinuxX64, EnginePackageEnumProfile::Numa) => true,
+            (Self::MacosArm, EnginePackageEnumProfile::AppleNeon) => true,
             _ => false,
         }
     }
@@ -107,6 +108,8 @@ pub enum EnginePackageEnumProfile {
     #[serde(rename = "x86_64_v4")]
     X8664V4,
     Numa,
+    #[serde(rename = "apple_arm64_neon")]
+    AppleNeon,
 }
 
 impl EnginePackageEnumProfile {
@@ -137,7 +140,15 @@ impl EnginePackageEnumProfile {
         EnginePackagePlatformEnumOsState::YmmEnabled,
         EnginePackagePlatformEnumOsState::ZmmEnabled,
     ];
-    pub const ALL: [Self; 4] = [Self::Portable, Self::X8664V3, Self::X8664V4, Self::Numa];
+    const NEON_FEATURES: [EnginePackagePlatformEnumFeature; 1] =
+        [EnginePackagePlatformEnumFeature::Neon];
+    pub const ALL: [Self; 5] = [
+        Self::Portable,
+        Self::X8664V3,
+        Self::X8664V4,
+        Self::Numa,
+        Self::AppleNeon,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -145,6 +156,7 @@ impl EnginePackageEnumProfile {
             Self::X8664V3 => "x86-64-v3",
             Self::X8664V4 => "x86-64-v4",
             Self::Numa => "Linux NUMA",
+            Self::AppleNeon => "Apple ARM64 NEON",
         }
     }
 
@@ -154,6 +166,7 @@ impl EnginePackageEnumProfile {
             Self::X8664V3 => Some("x86-64-v3"),
             Self::X8664V4 => Some("x86-64-v4"),
             Self::Numa => Some("numa"),
+            Self::AppleNeon => Some("apple-neon"),
         }
     }
 
@@ -163,12 +176,13 @@ impl EnginePackageEnumProfile {
             Self::X8664V3 => Some("-C\x1ftarget-cpu=x86-64-v3"),
             Self::X8664V4 => Some("-C\x1ftarget-cpu=x86-64-v4"),
             Self::Numa => Some("-C\x1ftarget-cpu=x86-64"),
+            Self::AppleNeon => Some("-C\x1ftarget-cpu=apple-m1\x1f-C\x1ftarget-feature=+neon"),
         }
     }
 
     pub const fn cargo_features(self) -> &'static [&'static str] {
         match self {
-            Self::Portable | Self::X8664V3 | Self::X8664V4 => &["syzygy"],
+            Self::Portable | Self::X8664V3 | Self::X8664V4 | Self::AppleNeon => &["syzygy"],
             Self::Numa => &["syzygy", "numa"],
         }
     }
@@ -176,7 +190,7 @@ impl EnginePackageEnumProfile {
     pub const fn rank(self) -> u8 {
         match self {
             Self::Portable => 0,
-            Self::Numa => 1,
+            Self::Numa | Self::AppleNeon => 1,
             Self::X8664V3 => 2,
             Self::X8664V4 => 3,
         }
@@ -185,6 +199,7 @@ impl EnginePackageEnumProfile {
     pub fn required_features(self) -> &'static [EnginePackagePlatformEnumFeature] {
         match self {
             Self::Portable | Self::Numa => &[],
+            Self::AppleNeon => &Self::NEON_FEATURES,
             Self::X8664V3 => &Self::V3_FEATURES,
             Self::X8664V4 => &Self::V4_FEATURES,
         }
@@ -192,7 +207,7 @@ impl EnginePackageEnumProfile {
 
     pub fn required_os_states(self) -> &'static [EnginePackagePlatformEnumOsState] {
         match self {
-            Self::Portable | Self::Numa => &[],
+            Self::Portable | Self::Numa | Self::AppleNeon => &[],
             Self::X8664V3 => &Self::V3_STATES,
             Self::X8664V4 => &Self::V4_STATES,
         }

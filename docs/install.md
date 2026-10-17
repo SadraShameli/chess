@@ -38,7 +38,7 @@ unverified until that file says otherwise.
   `make debug` for a debuggable one. Use `--profile-directory <path>` for an
   isolated profile.
 - Build the engine with `cargo run --locked --bin chess-tools -- engine-build`. Add
-  `--profile x86-64-v3`, `x86-64-v4` or `numa` for the optimized x86 builds; the
+  `--profile x86-64-v3`, `x86-64-v4` or `numa` for the optimized x86 builds, or `apple-neon` on Apple Silicon; the
   application picks the best profile your processor and operating system support
   and falls back to the portable baseline with a stated reason.
 - Assemble a package on its own operating system with
