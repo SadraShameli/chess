@@ -2,7 +2,39 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+mod artifact;
+mod manifest;
+mod measurement;
+mod observation;
+mod provenance;
+mod source;
+
+pub use artifact::{
+    StorageDatasetPackageArtifact, StorageDatasetPackageArtifactInput,
+    StorageDatasetPackageArtifactReference, StorageDatasetPackageEnumArtifactRole,
+};
+pub use manifest::{StorageDatasetPackageManifest, StorageDatasetPackageManifestInput};
+pub use measurement::{
+    StorageDatasetPackageMeasurement, StorageDatasetPackageMeasurements,
+    StorageDatasetPackageReduction,
+};
+pub use observation::{
+    StorageDatasetPackageCounts, StorageDatasetPackageObservation,
+    StorageDatasetPackageObservationInput,
+};
+pub use provenance::{
+    StorageDatasetPackageEnumClassification, StorageDatasetPackageRawField,
+    StorageDatasetPackageRecordProvenance, StorageDatasetPackageSourceRecord,
+};
+pub use source::{
+    StorageDatasetPackageEnumLicense, StorageDatasetPackageEnumSourceKind,
+    StorageDatasetPackageEnumUnavailableCategory, StorageDatasetPackageEnumUnavailableReason,
+    StorageDatasetPackageLicense, StorageDatasetPackageLicenseId, StorageDatasetPackageSource,
+    StorageDatasetPackageSourceIdentity, StorageDatasetPackageUnavailable,
+};
 
 use crate::capacity::executor::{
     CapacityExecutor, CapacityExecutorCancellation, CapacityExecutorError, CapacityExecutorJob,
@@ -11,6 +43,54 @@ use crate::package::digest::{PackageDigest, PackageDigestError};
 
 #[derive(Debug, Error)]
 pub enum StorageDatasetPackageError {
+    #[error("Dataset text is empty, contains a control character, or has surrounding whitespace")]
+    InvalidText,
+    #[error("Unsafe or noncanonical installed artifact path: {0}")]
+    UnsafePath(String),
+    #[error("Observed counts are inconsistent or exceed their checked range")]
+    Counts,
+    #[error("Dataset source identities or source/version bindings are duplicated")]
+    DuplicateSource,
+    #[error("A source or record binding is missing or conflicts with the frozen source")]
+    SourceBinding,
+    #[error(
+        "Starter preparation requires exactly one CC0 standard-game, puzzle, and openings source"
+    )]
+    SourceKinds,
+    #[error("An installed artifact reference is missing, duplicated, or has a different checksum")]
+    ArtifactReference,
+    #[error("The artifact role, component, or source bindings do not match the reference")]
+    ArtifactBinding,
+    #[error("Artifact fixed bytes exceed its installed bytes")]
+    ArtifactSize,
+    #[error("Subset observations must occur once each in canonical order")]
+    ObservationOrder,
+    #[error("Observed stratum counts, order, subset, or unknown counts are inconsistent")]
+    Strata,
+    #[error(
+        "Selected or initial prefix lengths do not match observed availability or reduction history"
+    )]
+    Prefix,
+    #[error("Frozen inputs do not reproduce the declared selection")]
+    Reproduction,
+    #[error("Installed component measurements are incomplete, unordered, or inconsistent")]
+    Measurements,
+    #[error("The recorded byte-cap reduction does not match the canonical transition")]
+    Reduction,
+    #[error("Unsupported dataset preparation format, schema, or policy version")]
+    Version,
+    #[error("The semantic validation receipt does not bind this descriptor's format and checksum")]
+    SemanticBinding,
+    #[error("Raw metadata has ambiguous values for a classified field")]
+    AmbiguousMetadata,
+    #[error("An accepted preparation manifest cannot have an unavailable required source")]
+    RequiredSourceUnavailable,
+    #[error(transparent)]
+    Selection(#[from] crate::storage::dataset_selection::StorageDatasetSelectionError),
+    #[error(transparent)]
+    RecordIdentity(#[from] crate::puzzle::identity::PuzzleDefinitionIdentityError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
     #[error("A dataset location must be absolute: {0}")]
     RelativeLocation(PathBuf),
     #[error("The dataset is not a regular file: {0}")]
@@ -34,11 +114,59 @@ pub enum StorageDatasetPackageError {
     Executor(#[from] CapacityExecutorError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageDatasetPackageEnumFormat {
     Pgn,
     Polyglot,
     PuzzleCsv,
+    PreparedPuzzleCatalogV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageDatasetPackageEnumSemanticValidation {
+    Unchecked,
+    Validated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageDatasetPackageSemanticReceipt {
+    format: StorageDatasetPackageEnumFormat,
+    checksum: PackageDigest,
+    accepted: u64,
+    rejected: u64,
+}
+
+impl StorageDatasetPackageSemanticReceipt {
+    pub fn new(
+        format: StorageDatasetPackageEnumFormat,
+        checksum: PackageDigest,
+        accepted: u64,
+        rejected: u64,
+    ) -> Result<Self, StorageDatasetPackageError> {
+        accepted
+            .checked_add(rejected)
+            .ok_or(StorageDatasetPackageError::Counts)?;
+        Ok(Self {
+            format,
+            checksum,
+            accepted,
+            rejected,
+        })
+    }
+
+    pub const fn format(&self) -> StorageDatasetPackageEnumFormat {
+        self.format
+    }
+    pub const fn checksum(&self) -> PackageDigest {
+        self.checksum
+    }
+    pub const fn accepted(&self) -> u64 {
+        self.accepted
+    }
+    pub const fn rejected(&self) -> u64 {
+        self.rejected
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +181,8 @@ pub struct StorageDatasetPackage {
     checksum: PackageDigest,
     location: PathBuf,
     validation: StorageDatasetPackageEnumValidation,
+    source: Option<StorageDatasetPackageSource>,
+    semantic_receipt: Option<StorageDatasetPackageSemanticReceipt>,
 }
 
 impl StorageDatasetPackage {
@@ -69,6 +199,8 @@ impl StorageDatasetPackage {
             checksum,
             location,
             validation: StorageDatasetPackageEnumValidation::Unchecked,
+            source: None,
+            semantic_receipt: None,
         })
     }
 
@@ -86,6 +218,47 @@ impl StorageDatasetPackage {
 
     pub const fn validation(&self) -> StorageDatasetPackageEnumValidation {
         self.validation
+    }
+
+    pub fn with_source(
+        mut self,
+        source: StorageDatasetPackageSource,
+    ) -> Result<Self, StorageDatasetPackageError> {
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|existing| existing != &source)
+        {
+            return Err(StorageDatasetPackageError::SourceBinding);
+        }
+        self.source = Some(source);
+        Ok(self)
+    }
+
+    pub const fn source(&self) -> Option<&StorageDatasetPackageSource> {
+        self.source.as_ref()
+    }
+
+    pub fn with_semantic_receipt(
+        mut self,
+        receipt: StorageDatasetPackageSemanticReceipt,
+    ) -> Result<Self, StorageDatasetPackageError> {
+        if receipt.format != self.format || receipt.checksum != self.checksum {
+            return Err(StorageDatasetPackageError::SemanticBinding);
+        }
+        self.semantic_receipt = Some(receipt);
+        Ok(self)
+    }
+
+    pub const fn semantic_validation(&self) -> StorageDatasetPackageEnumSemanticValidation {
+        match self.semantic_receipt {
+            Some(_) => StorageDatasetPackageEnumSemanticValidation::Validated,
+            None => StorageDatasetPackageEnumSemanticValidation::Unchecked,
+        }
+    }
+
+    pub const fn semantic_receipt(&self) -> Option<&StorageDatasetPackageSemanticReceipt> {
+        self.semantic_receipt.as_ref()
     }
 
     pub fn verify_integrity(
