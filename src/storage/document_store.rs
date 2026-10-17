@@ -14,6 +14,11 @@ use uuid::Uuid;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
+use crate::storage::library_repository::{StorageLibraryError, StorageLibraryPending};
+use crate::storage::library_transaction::{
+    StorageLibraryEnumTransactionRequest, StorageLibraryEnumTransactionResponse,
+    StorageLibraryTransaction,
+};
 use crate::storage::migration::StorageMigration;
 use crate::storage::puzzle_repository::{
     StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
@@ -36,6 +41,10 @@ pub enum StorageDocumentError {
     Conflict { expected: u64, actual: u64 },
     #[error("Document revision is exhausted")]
     RevisionOverflow,
+    #[error("Indexed library document {id} requires an atomic content and projection write")]
+    IndexedLibraryRecord { id: Uuid },
+    #[error("Library catalog operation failed: {0}")]
+    Library(#[source] Box<StorageLibraryError>),
     #[error("Database schema {found} is newer than supported schema {supported}")]
     FutureSchema { found: u32, supported: u32 },
     #[error("Migration versions must form a nonempty consecutive sequence starting at one")]
@@ -89,6 +98,12 @@ impl StorageDocumentReceipt {
 }
 
 enum StorageDocumentEnumCommand {
+    Library {
+        request: Box<StorageLibraryEnumTransactionRequest>,
+        _memory_reservation: OwnedSemaphorePermit,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<StorageLibraryEnumTransactionResponse, StorageLibraryError>>,
+    },
     PuzzleInventory {
         after: Option<PuzzleSessionId>,
         memory_reservation: OwnedSemaphorePermit,
@@ -251,6 +266,24 @@ impl StorageDocumentStore {
 }
 
 impl StorageDocumentClient {
+    pub(crate) fn begin_library(
+        &self,
+        request: StorageLibraryEnumTransactionRequest,
+    ) -> Result<StorageLibraryPending, StorageLibraryError> {
+        request.validate_memory_owner(self)?;
+        let admission = self.admit()?;
+        let memory_reservation =
+            Self::reserve_memory(&self.memory, request.unreserved_admission_bytes()?)?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Library {
+            request: Box::new(request),
+            _memory_reservation: memory_reservation,
+            _admission: admission,
+            result,
+        })?;
+        Ok(StorageLibraryPending::new(receiver))
+    }
+
     pub(crate) async fn inventory_puzzle_runs(
         &self,
         after: Option<PuzzleSessionId>,
@@ -356,6 +389,17 @@ impl StorageDocumentClient {
             .map_err(|_error| StorageDocumentError::Saturated)
     }
 
+    pub(crate) fn reserve_library_memory(
+        &self,
+        bytes: usize,
+    ) -> Result<OwnedSemaphorePermit, StorageDocumentError> {
+        Self::reserve_memory(&self.memory, bytes)
+    }
+
+    pub(crate) fn is_library_memory_owner(&self, reservation: &OwnedSemaphorePermit) -> bool {
+        Arc::ptr_eq(&self.memory, reservation.semaphore())
+    }
+
     fn enqueue(&self, command: StorageDocumentEnumCommand) -> Result<(), StorageDocumentError> {
         if self.admission.is_closed() {
             return Err(StorageDocumentError::Closed);
@@ -373,6 +417,7 @@ impl StorageDocumentClient {
 
 struct StorageDocumentActor {
     connection: Connection,
+    has_library: bool,
     memory: Arc<Semaphore>,
     budget: CapacityBudget,
     runtime: tokio::runtime::Handle,
@@ -394,8 +439,14 @@ impl StorageDocumentActor {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         StorageMigration::apply(&mut connection, &migrations)?;
+        let has_library = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name IN ('library_entries', 'library_state'))",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(Self {
             connection,
+            has_library,
             memory,
             budget,
             runtime,
@@ -409,6 +460,22 @@ impl StorageDocumentActor {
         while let Some(command) = receiver.blocking_recv() {
             let lease = self.runtime.block_on(self.budget.lease(1))?;
             match command {
+                StorageDocumentEnumCommand::Library {
+                    request,
+                    _memory_reservation,
+                    _admission,
+                    result,
+                } => {
+                    let outcome = StorageLibraryTransaction::execute(
+                        &mut self.connection,
+                        *request,
+                        &self.memory,
+                    );
+                    drop((_memory_reservation, _admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
                 StorageDocumentEnumCommand::PuzzleInventory {
                     after,
                     memory_reservation,
@@ -509,10 +576,24 @@ impl StorageDocumentActor {
                 actual,
             });
         }
+        if self.has_library {
+            let indexed: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_entries WHERE game_id = ?1)",
+                [id.to_string()],
+                |row| row.get(0),
+            )?;
+            if indexed {
+                return Err(StorageDocumentError::IndexedLibraryRecord { id });
+            }
+        }
         let revision = actual
             .checked_add(1)
             .ok_or(StorageDocumentError::RevisionOverflow)?;
         transaction.execute("INSERT INTO documents (id, revision, body) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, body = excluded.body", params![id.to_string(), revision.to_string(), body])?;
+        if self.has_library {
+            StorageLibraryTransaction::bump_catalog(&transaction)
+                .map_err(|error| StorageDocumentError::Library(Box::new(error)))?;
+        }
         transaction.commit()?;
         Ok(StorageDocumentReceipt { id, revision })
     }

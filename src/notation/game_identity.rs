@@ -159,18 +159,24 @@ impl NotationGameIdentity {
         }
     }
 
-    fn canonical_player(value: Option<&GameMetadataText>) -> Option<String> {
+    pub fn canonical_player(value: Option<&GameMetadataText>) -> Option<String> {
         let trimmed = value?.as_str().trim();
         if trimmed.is_empty() || trimmed == Self::MISSING_PLAYER {
             return None;
         }
-        let decomposed = DecomposingNormalizer::new_nfd().normalize(trimmed);
+        Some(Self::canonical_fold(trimmed))
+    }
+
+    pub fn canonical_text(value: &str) -> String {
+        Self::canonical_fold(value.trim())
+    }
+
+    fn canonical_fold(value: &str) -> String {
+        let decomposed = DecomposingNormalizer::new_nfd().normalize(value);
         let folded = CaseMapper::new().fold_string(&decomposed);
-        Some(
-            ComposingNormalizer::new_nfc()
-                .normalize(&folded)
-                .into_owned(),
-        )
+        ComposingNormalizer::new_nfc()
+            .normalize(&folded)
+            .into_owned()
     }
 
     fn conflicts<T: PartialEq>(left: Option<T>, right: Option<T>) -> bool {

@@ -8,6 +8,8 @@ mod clock_state;
 #[path = "clock/time.rs"]
 mod clock_time;
 
+#[path = "game/annotations.rs"]
+mod game_annotations;
 #[path = "game/configuration.rs"]
 mod game_configuration;
 #[path = "game/mate_proof.rs"]
@@ -37,6 +39,8 @@ mod game_tree;
 
 #[path = "notation/fen.rs"]
 mod notation_fen;
+#[path = "notation/game_annotations.rs"]
+mod notation_game_annotations;
 #[path = "notation/game_identity.rs"]
 mod notation_game_identity;
 #[path = "notation/interchange.rs"]

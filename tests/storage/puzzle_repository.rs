@@ -27,6 +27,7 @@ use chess::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
 use chess::puzzle::storage_repository::PuzzleStorageDriver;
 use chess::puzzle::timer::PuzzleTimerEnumReadiness;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
+use chess::storage::migration::StorageMigration;
 use chess::storage::puzzle_repository::{StoragePuzzleError, StoragePuzzleRepository};
 use uuid::Uuid;
 
@@ -184,7 +185,7 @@ async fn transactional_receipt_survives_reopen_and_puzzle_rows_do_not_enter_game
     reopened.close().await?;
     let connection = rusqlite::Connection::open(path)?;
     let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    assert_eq!(version, 2);
+    assert_eq!(version, u32::try_from(StorageMigration::core().len())?);
     Ok(())
 }
 

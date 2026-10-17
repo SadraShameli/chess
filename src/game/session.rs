@@ -15,6 +15,11 @@ use crate::game::adjudication::{
     GameAdjudicationEnumMateQuestion, GameAdjudicationError, GameAdjudicationHistory,
     GameAdjudicationMateProofProvider,
 };
+use crate::game::annotations::{
+    GameAnnotationsEnumChange, GameAnnotationsEnumVariationRequest,
+    GameAnnotationsSessionConfirmation, GameAnnotationsSessionPreview,
+    GameAnnotationsVariationPreview,
+};
 use crate::game::draw_claim::{
     GameDrawClaimEnumAvailability, GameDrawClaimEnumIntent, GameDrawClaimEnumKind,
     GameDrawClaimError,
@@ -26,7 +31,9 @@ use crate::game::enums::{
     GameEnumEngineReadiness, GameEnumMode, GameEnumOutcomeReason, GameEnumPhase, GameEnumResult,
     GameEnumSeat, GameEnumTransitionKind, GameId, GameMoveId, GameRevision, GameRevisionError,
 };
-use crate::game::move_node::{GameMoveNode, GameMoveNodeAnnotations};
+use crate::game::move_node::{
+    GameMoveNode, GameMoveNodeAnnotations, GameMoveNodeMarking, GameMoveNodeNag,
+};
 use crate::game::outcome::{GameOutcome, GameOutcomeError};
 use crate::game::pause::{
     GamePauseEnumCause, GamePauseEnumFault, GamePauseError, GamePauseRequest, GameResumeRequest,
@@ -562,6 +569,10 @@ pub enum GameSessionError {
     WrongSeat,
     #[error("This draw claim must be explicitly requested by the human seat")]
     HumanClaimRequired,
+    #[error("The annotation confirmation belongs to game {received:?}, expected {expected:?}")]
+    ForeignAnnotationConfirmation { expected: GameId, received: GameId },
+    #[error("A study edit cannot delete the played live path")]
+    ProtectedLivePath,
     #[error(transparent)]
     Revision(#[from] GameRevisionError),
     #[error(transparent)]
@@ -1659,22 +1670,122 @@ impl GameSession {
         self.view = self.live;
     }
 
+    pub fn save_notes_and_nags(
+        &mut self,
+        expected: GameRevision,
+        node: GameMoveId,
+        notes: String,
+        nags: Vec<GameMoveNodeNag>,
+    ) -> Result<GameRevision, GameSessionError> {
+        self.validate_study_edit(expected)?;
+        let prepared = self.tree.prepare_notes_and_nags(node, notes, nags)?;
+        let revision = Self::annotation_revision(self.revision, prepared.change())?;
+        prepared.commit();
+        self.revision = revision;
+        Ok(revision)
+    }
+
+    pub fn save_markings(
+        &mut self,
+        expected: GameRevision,
+        node: GameMoveId,
+        markings: Vec<GameMoveNodeMarking>,
+    ) -> Result<GameRevision, GameSessionError> {
+        self.validate_study_edit(expected)?;
+        let prepared = self.tree.prepare_markings(node, markings)?;
+        let revision = Self::annotation_revision(self.revision, prepared.change())?;
+        prepared.commit();
+        self.revision = revision;
+        Ok(revision)
+    }
+
+    pub fn preview_variation(
+        &self,
+        expected: GameRevision,
+        request: GameAnnotationsEnumVariationRequest,
+    ) -> Result<GameAnnotationsSessionPreview, GameSessionError> {
+        self.validate_study_edit(expected)?;
+        let preview = self
+            .tree
+            .preview_variation(request, self.study_mainline_tip)?;
+        self.validate_variation_policy(&preview)?;
+        Ok(GameAnnotationsSessionPreview::new(
+            self.id,
+            self.revision,
+            preview,
+        ))
+    }
+
+    pub fn apply_variation(
+        &mut self,
+        confirmation: GameAnnotationsSessionConfirmation,
+    ) -> Result<GameRevision, GameSessionError> {
+        if confirmation.game() != self.id {
+            return Err(GameSessionError::ForeignAnnotationConfirmation {
+                expected: self.id,
+                received: confirmation.game(),
+            });
+        }
+        self.validate_study_edit(confirmation.revision())?;
+        self.validate_variation_policy(confirmation.variation().preview())?;
+        let prepared = self.tree.prepare_variation(
+            confirmation.variation(),
+            self.study_mainline_tip,
+            self.view,
+        )?;
+        let revision = Self::annotation_revision(self.revision, prepared.change())?;
+        let tip = prepared.tip();
+        let view = prepared.view();
+        prepared.commit();
+        self.study_mainline_tip = tip;
+        self.view = view;
+        self.revision = revision;
+        Ok(revision)
+    }
+
+    fn annotation_revision(
+        revision: GameRevision,
+        change: GameAnnotationsEnumChange,
+    ) -> Result<GameRevision, GameRevisionError> {
+        match change {
+            GameAnnotationsEnumChange::Unchanged => Ok(revision),
+            GameAnnotationsEnumChange::Changed => revision.next(),
+        }
+    }
+
+    fn validate_variation_policy(
+        &self,
+        preview: &GameAnnotationsVariationPreview,
+    ) -> Result<(), GameSessionError> {
+        if preview.deleted_nodes().contains(&self.live) {
+            return Err(GameSessionError::ProtectedLivePath);
+        }
+        if preview.parent() != Some(preview.resulting_tip()) {
+            self.tree.validate_study_tip(preview.resulting_tip())?;
+        }
+        Ok(())
+    }
+
+    fn validate_study_edit(&self, expected: GameRevision) -> Result<(), GameSessionError> {
+        self.revision.check_expected(expected)?;
+        self.save_status.validate()?;
+        match self.state {
+            GameSessionEnumState::Completed(_) | GameSessionEnumState::Analysis(_) => Ok(()),
+            GameSessionEnumState::Setup
+            | GameSessionEnumState::Active
+            | GameSessionEnumState::Interrupted(_) => {
+                Err(GameSessionError::WrongPhase(self.phase()))
+            }
+        }
+    }
+
     pub fn append_study_variation(
         &mut self,
         expected: GameRevision,
         node: GameMoveId,
         movement: BoardMove,
     ) -> Result<GameMoveId, GameSessionError> {
-        self.revision.check_expected(expected)?;
-        self.save_status.validate()?;
-        match self.state {
-            GameSessionEnumState::Completed(_) | GameSessionEnumState::Analysis(_) => {}
-            GameSessionEnumState::Setup
-            | GameSessionEnumState::Active
-            | GameSessionEnumState::Interrupted(_) => {
-                return Err(GameSessionError::WrongPhase(self.phase()));
-            }
-        }
+        self.validate_study_edit(expected)?;
         let revision = self.revision.next()?;
         let advances_study = self.view == self.study_mainline_tip;
         let insertion = self.tree.prepare_study(self.view, node, movement)?;

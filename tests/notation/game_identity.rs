@@ -863,3 +863,35 @@ fn partial_dates_require_a_possible_common_calendar_date() -> Result<(), Box<dyn
     }
     Ok(())
 }
+
+#[test]
+fn canonical_text_is_shared_unicode_normalization_without_player_missing_semantics() {
+    for (source, expected) in [
+        ("\u{2003}Cafe\u{301}\t", "café"),
+        (" Straße ", "strasse"),
+        ("ΟΣ", "οσ"),
+        (" ? ", "?"),
+        (" \n\t ", ""),
+    ] {
+        assert_eq!(NotationGameIdentity::canonical_text(source), expected);
+    }
+}
+
+#[test]
+fn canonical_player_retains_its_missing_policy_and_preserves_the_display_value()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(NotationGameIdentity::canonical_player(None), None);
+    for source in ["", " \n\t ", " ? "] {
+        let value = GameMetadataText::new(source.to_owned())?;
+        assert_eq!(NotationGameIdentity::canonical_player(Some(&value)), None);
+        assert_eq!(value.as_str(), source);
+    }
+    let source = "\u{2003}Straße Cafe\u{301}\t";
+    let value = GameMetadataText::new(source.to_owned())?;
+    assert_eq!(
+        NotationGameIdentity::canonical_player(Some(&value)),
+        Some(NotationGameIdentity::canonical_text(source))
+    );
+    assert_eq!(value.as_str(), source);
+    Ok(())
+}

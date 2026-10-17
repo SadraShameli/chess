@@ -1,11 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
 use crate::board::enums::BoardEnumColor;
 use crate::board::start::BoardStart;
 use crate::clock::duration::ClockDuration;
+use crate::game::annotations::{
+    GameAnnotationsConfirmedVariation, GameAnnotationsEnumChange,
+    GameAnnotationsEnumVariationRequest, GameAnnotationsVariationApplied,
+    GameAnnotationsVariationPreview,
+};
 use crate::game::enums::GameMoveId;
+use crate::game::move_node::{GameMoveNodeMarking, GameMoveNodeNag};
 use crate::game::session::{GameMetadata, GameMetadataText};
 use crate::game::tree::{GameTree, GameTreeError};
 use crate::notation::game_identity::NotationGameIdentityEnumResult;
@@ -151,6 +157,67 @@ impl NotationGame {
 
     pub fn tree(&self) -> &GameTree {
         &self.tree
+    }
+
+    pub fn save_notes_and_nags(
+        &mut self,
+        node: GameMoveId,
+        notes: String,
+        nags: Vec<GameMoveNodeNag>,
+    ) -> Result<GameAnnotationsEnumChange, NotationGameError> {
+        Ok(self
+            .tree
+            .prepare_notes_and_nags(node, notes, nags)?
+            .commit())
+    }
+
+    pub fn save_markings(
+        &mut self,
+        node: GameMoveId,
+        markings: Vec<GameMoveNodeMarking>,
+    ) -> Result<GameAnnotationsEnumChange, NotationGameError> {
+        Ok(self.tree.prepare_markings(node, markings)?.commit())
+    }
+
+    pub fn preview_variation(
+        &self,
+        request: GameAnnotationsEnumVariationRequest,
+    ) -> Result<GameAnnotationsVariationPreview, NotationGameError> {
+        Ok(self.tree.preview_variation(request, self.mainline_tip)?)
+    }
+
+    pub fn apply_variation(
+        &mut self,
+        confirmation: GameAnnotationsConfirmedVariation,
+        current_view: GameMoveId,
+    ) -> Result<GameAnnotationsVariationApplied, NotationGameError> {
+        let removed: HashSet<_> = confirmation
+            .preview()
+            .deleted_nodes()
+            .iter()
+            .copied()
+            .collect();
+        let prepared =
+            self.tree
+                .prepare_variation(&confirmation, self.mainline_tip, current_view)?;
+        let tip = prepared.tip();
+        let view = prepared.view();
+        let change = prepared.commit();
+        self.mainline_tip = tip;
+        if !removed.is_empty() {
+            self.clocks.retain(|clock| !removed.contains(&clock.node()));
+            self.clock_indices = self
+                .clocks
+                .iter()
+                .enumerate()
+                .map(|(index, clock)| (clock.node(), index))
+                .collect();
+            self.warnings.retain(|warning| match warning {
+                NotationGameEnumWarning::UnknownDirective { node, .. } => !removed.contains(node),
+                NotationGameEnumWarning::UnavailableRating { .. } => true,
+            });
+        }
+        Ok(GameAnnotationsVariationApplied::new(change, tip, view))
     }
 
     pub const fn mainline_tip(&self) -> GameMoveId {

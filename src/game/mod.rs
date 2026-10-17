@@ -1,8 +1,10 @@
 pub mod adjudication;
+pub mod annotations;
 pub mod configuration;
 pub mod draw_claim;
 pub mod engine_provider;
 pub mod enums;
+pub mod library_organization;
 pub mod mate_proof;
 pub mod move_node;
 pub mod outcome;

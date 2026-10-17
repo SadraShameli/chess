@@ -18,6 +18,12 @@ mod storage_dataset_package;
 mod storage_dataset_selection;
 #[path = "storage/game_document.rs"]
 mod storage_game_document;
+#[path = "storage/library.rs"]
+mod storage_library;
+#[path = "storage/library_actor.rs"]
+mod storage_library_actor;
+#[path = "storage/library_filters.rs"]
+mod storage_library_filters;
 #[path = "storage/library_record.rs"]
 mod storage_library_record;
 #[path = "storage/puzzle_repository.rs"]

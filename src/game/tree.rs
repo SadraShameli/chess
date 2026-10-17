@@ -1,13 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::board::r#move::{BoardMove, BoardMoveError};
 use crate::board::position::BoardPosition;
 use crate::clock::state::ClockStateSnapshot;
 use crate::game::adjudication::GameAdjudicationCandidate;
-use crate::game::enums::GameMoveId;
-use crate::game::move_node::{GameMoveNode, GameMoveNodeAnnotations};
+use crate::game::annotations::{
+    GameAnnotationsConfirmedVariation, GameAnnotationsDeletionScope, GameAnnotationsEnumChange,
+    GameAnnotationsEnumVariationRequest, GameAnnotationsPromotionScope,
+    GameAnnotationsVariationPreview,
+};
+use crate::game::enums::{GameEnumMarkingColor, GameMoveId};
+use crate::game::move_node::{
+    GameMoveNode, GameMoveNodeAnnotationError, GameMoveNodeAnnotations, GameMoveNodeMarking,
+    GameMoveNodeNag,
+};
 
 #[derive(Debug, Error)]
 pub enum GameTreeError {
@@ -25,6 +34,12 @@ pub enum GameTreeError {
     BrokenRelationship,
     #[error("The study mainline tip must identify a leaf of the game tree")]
     InteriorStudyTip,
+    #[error("The variation scope changed after its preview")]
+    StaleVariation,
+    #[error("The variation content exceeds the fingerprint length range")]
+    ContentLengthOverflow,
+    #[error(transparent)]
+    Annotation(#[from] GameMoveNodeAnnotationError),
     #[error(transparent)]
     Move(#[from] BoardMoveError),
 }
@@ -34,6 +49,82 @@ pub struct GameTree {
     root: GameMoveId,
     nodes: Vec<GameMoveNode>,
     indices: HashMap<GameMoveId, usize>,
+}
+
+struct GameTreeVariationContentHasher {
+    digest: Sha256,
+}
+
+impl GameTreeVariationContentHasher {
+    const DOMAIN: &[u8] = b"game-annotations-content-v1";
+    const ABSENT: u8 = 0;
+    const PRESENT: u8 = 1;
+
+    fn new() -> Self {
+        let mut digest = Sha256::new();
+        digest.update(Self::DOMAIN);
+        Self { digest }
+    }
+
+    fn length(&mut self, length: usize) -> Result<(), GameTreeError> {
+        let length =
+            u64::try_from(length).map_err(|_error| GameTreeError::ContentLengthOverflow)?;
+        self.digest.update(length.to_be_bytes());
+        Ok(())
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) -> Result<(), GameTreeError> {
+        self.length(bytes.len())?;
+        self.digest.update(bytes);
+        Ok(())
+    }
+
+    fn node(&mut self, node: &GameMoveNode) -> Result<(), GameTreeError> {
+        self.digest.update(node.id().as_uuid().as_bytes());
+        match node.parent() {
+            Some(parent) => {
+                self.digest.update([Self::PRESENT]);
+                self.digest.update(parent.as_uuid().as_bytes());
+            }
+            None => self.digest.update([Self::ABSENT]),
+        }
+        self.length(node.children().len())?;
+        for child in node.children() {
+            self.digest.update(child.as_uuid().as_bytes());
+        }
+        match node.san() {
+            Some(san) => {
+                self.digest.update([Self::PRESENT]);
+                self.bytes(san.as_bytes())?;
+            }
+            None => self.digest.update([Self::ABSENT]),
+        }
+        let annotations = node.annotations();
+        self.bytes(annotations.notes().as_bytes())?;
+        self.length(annotations.nags().len())?;
+        for nag in annotations.nags() {
+            self.digest.update([nag.value()]);
+        }
+        self.length(annotations.markings().len())?;
+        for marking in annotations.markings() {
+            let color = match marking.color() {
+                GameEnumMarkingColor::Green => b'G',
+                GameEnumMarkingColor::Red => b'R',
+                GameEnumMarkingColor::Blue => b'B',
+                GameEnumMarkingColor::Yellow => b'Y',
+            };
+            self.digest.update([color, u8::from(marking.origin())]);
+            match marking.destination() {
+                Some(destination) => self.digest.update([Self::PRESENT, u8::from(destination)]),
+                None => self.digest.update([Self::ABSENT]),
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> [u8; 32] {
+        self.digest.finalize().into()
+    }
 }
 
 struct GameTreeAncestors<'a> {
@@ -86,6 +177,78 @@ pub(crate) struct GameTreePreparedMove<'a> {
     tree: &'a mut GameTree,
     insertion: GameTreeEnumInsertion,
     node: GameMoveNode,
+}
+
+pub(crate) struct GameTreePreparedAnnotations<'a> {
+    tree: &'a mut GameTree,
+    index: usize,
+    annotations: GameMoveNodeAnnotations,
+    change: GameAnnotationsEnumChange,
+}
+
+impl GameTreePreparedAnnotations<'_> {
+    pub(crate) const fn change(&self) -> GameAnnotationsEnumChange {
+        self.change
+    }
+
+    pub(crate) fn commit(self) -> GameAnnotationsEnumChange {
+        if self.change == GameAnnotationsEnumChange::Changed {
+            self.tree.nodes[self.index].set_annotations(self.annotations);
+        }
+        self.change
+    }
+}
+
+enum GameTreeEnumPreparedVariation {
+    Promote {
+        ordering: Vec<(usize, usize)>,
+    },
+    Delete {
+        parent_index: usize,
+        removed: HashSet<GameMoveId>,
+    },
+}
+
+pub(crate) struct GameTreePreparedVariation<'a> {
+    tree: &'a mut GameTree,
+    operation: GameTreeEnumPreparedVariation,
+    change: GameAnnotationsEnumChange,
+    tip: GameMoveId,
+    view: GameMoveId,
+}
+
+impl GameTreePreparedVariation<'_> {
+    pub(crate) const fn change(&self) -> GameAnnotationsEnumChange {
+        self.change
+    }
+
+    pub(crate) const fn tip(&self) -> GameMoveId {
+        self.tip
+    }
+
+    pub(crate) const fn view(&self) -> GameMoveId {
+        self.view
+    }
+
+    pub(crate) fn commit(self) -> GameAnnotationsEnumChange {
+        match self.operation {
+            GameTreeEnumPreparedVariation::Promote { ordering } => {
+                for (parent, child) in ordering {
+                    self.tree.nodes[parent].children_mut()[..=child].rotate_right(1);
+                }
+            }
+            GameTreeEnumPreparedVariation::Delete {
+                parent_index,
+                removed,
+            } => {
+                self.tree.nodes[parent_index]
+                    .children_mut()
+                    .retain(|child| !removed.contains(child));
+                self.tree.remove_nodes(&removed);
+            }
+        }
+        self.change
+    }
 }
 
 impl GameTreePreparedMove<'_> {
@@ -332,6 +495,202 @@ impl GameTree {
         Ok(())
     }
 
+    pub(crate) fn prepare_notes_and_nags(
+        &mut self,
+        id: GameMoveId,
+        notes: String,
+        nags: Vec<GameMoveNodeNag>,
+    ) -> Result<GameTreePreparedAnnotations<'_>, GameTreeError> {
+        let annotations = GameMoveNodeAnnotations::new(
+            notes,
+            nags,
+            self.node(id)?.annotations().markings().to_vec(),
+        )?;
+        self.prepare_annotations(id, annotations)
+    }
+
+    pub(crate) fn prepare_markings(
+        &mut self,
+        id: GameMoveId,
+        markings: Vec<GameMoveNodeMarking>,
+    ) -> Result<GameTreePreparedAnnotations<'_>, GameTreeError> {
+        let previous = self.node(id)?.annotations();
+        let annotations = GameMoveNodeAnnotations::new(
+            previous.notes().to_owned(),
+            previous.nags().to_vec(),
+            markings,
+        )?;
+        self.prepare_annotations(id, annotations)
+    }
+
+    fn prepare_annotations(
+        &mut self,
+        id: GameMoveId,
+        annotations: GameMoveNodeAnnotations,
+    ) -> Result<GameTreePreparedAnnotations<'_>, GameTreeError> {
+        let index = *self.indices.get(&id).ok_or(GameTreeError::UnknownNode)?;
+        let change = if self.node(id)?.annotations() == &annotations {
+            GameAnnotationsEnumChange::Unchanged
+        } else {
+            GameAnnotationsEnumChange::Changed
+        };
+        Ok(GameTreePreparedAnnotations {
+            tree: self,
+            index,
+            annotations,
+            change,
+        })
+    }
+
+    pub(crate) fn preview_variation(
+        &self,
+        request: GameAnnotationsEnumVariationRequest,
+        previous_tip: GameMoveId,
+    ) -> Result<GameAnnotationsVariationPreview, GameTreeError> {
+        let previous_path = self.path_to(previous_tip)?;
+        match request {
+            GameAnnotationsEnumVariationRequest::Promote { tip } => {
+                let path = self.path_to(tip)?;
+                let mut content = GameTreeVariationContentHasher::new();
+                self.fingerprint_nodes(&mut content, &previous_path)?;
+                self.fingerprint_nodes(&mut content, &path)?;
+                let children = path
+                    .iter()
+                    .map(|id| self.node(*id).map(|node| node.children().to_vec()))
+                    .collect::<Result<_, _>>()?;
+                Ok(GameAnnotationsVariationPreview::promotion(
+                    previous_tip,
+                    previous_path,
+                    GameAnnotationsPromotionScope {
+                        tip,
+                        path,
+                        children,
+                        content_fingerprint: content.finish(),
+                    },
+                ))
+            }
+            GameAnnotationsEnumVariationRequest::Delete { root } => {
+                let parent = self
+                    .node(root)?
+                    .parent()
+                    .ok_or(GameTreeError::ImmutableRoot)?;
+                let siblings = self.node(parent)?.children();
+                if !siblings.contains(&root) {
+                    return Err(GameTreeError::BrokenRelationship);
+                }
+                let nodes = self.ordered_subtree(root)?;
+                let mut content = GameTreeVariationContentHasher::new();
+                self.fingerprint_nodes(&mut content, &nodes)?;
+                let replacement_tip = if nodes.contains(&previous_tip) {
+                    match siblings.iter().find(|child| **child != root) {
+                        Some(child) => self.ordered_leaf(*child)?,
+                        None => parent,
+                    }
+                } else {
+                    previous_tip
+                };
+                self.path_to(replacement_tip)?;
+                Ok(GameAnnotationsVariationPreview::deletion(
+                    previous_tip,
+                    previous_path,
+                    GameAnnotationsDeletionScope {
+                        root,
+                        parent,
+                        siblings: siblings.to_vec(),
+                        nodes,
+                        replacement_tip,
+                        content_fingerprint: content.finish(),
+                    },
+                ))
+            }
+        }
+    }
+
+    fn fingerprint_nodes(
+        &self,
+        content: &mut GameTreeVariationContentHasher,
+        nodes: &[GameMoveId],
+    ) -> Result<(), GameTreeError> {
+        content.length(nodes.len())?;
+        for id in nodes {
+            content.node(self.node(*id)?)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn prepare_variation(
+        &mut self,
+        confirmation: &GameAnnotationsConfirmedVariation,
+        previous_tip: GameMoveId,
+        current_view: GameMoveId,
+    ) -> Result<GameTreePreparedVariation<'_>, GameTreeError> {
+        self.node(current_view)?;
+        let preview = confirmation.preview();
+        let current = self.preview_variation(preview.request(), previous_tip)?;
+        if &current != preview {
+            return Err(GameTreeError::StaleVariation);
+        }
+        let tip = preview.resulting_tip();
+        let mut view = current_view;
+        let (operation, change) = match preview.request() {
+            GameAnnotationsEnumVariationRequest::Promote { tip } => {
+                let path = self.path_to(tip)?;
+                let mut ordering = Vec::with_capacity(path.len());
+                for edge in path.windows(2) {
+                    let parent_index = *self
+                        .indices
+                        .get(&edge[0])
+                        .ok_or(GameTreeError::BrokenRelationship)?;
+                    let child_index = self.nodes[parent_index]
+                        .children()
+                        .iter()
+                        .position(|child| *child == edge[1])
+                        .ok_or(GameTreeError::BrokenRelationship)?;
+                    if child_index != 0 {
+                        ordering.push((parent_index, child_index));
+                    }
+                }
+                let change = if tip == previous_tip && ordering.is_empty() {
+                    GameAnnotationsEnumChange::Unchanged
+                } else {
+                    GameAnnotationsEnumChange::Changed
+                };
+                (GameTreeEnumPreparedVariation::Promote { ordering }, change)
+            }
+            GameAnnotationsEnumVariationRequest::Delete { root } => {
+                let parent = self
+                    .node(root)?
+                    .parent()
+                    .ok_or(GameTreeError::ImmutableRoot)?;
+                let parent_index = *self
+                    .indices
+                    .get(&parent)
+                    .ok_or(GameTreeError::BrokenRelationship)?;
+                let removed: HashSet<_> = preview.deleted_nodes().iter().copied().collect();
+                if removed.contains(&current_view) {
+                    view = parent;
+                }
+                if removed.contains(&tip) {
+                    return Err(GameTreeError::BrokenRelationship);
+                }
+                (
+                    GameTreeEnumPreparedVariation::Delete {
+                        parent_index,
+                        removed,
+                    },
+                    GameAnnotationsEnumChange::Changed,
+                )
+            }
+        };
+        Ok(GameTreePreparedVariation {
+            tree: self,
+            operation,
+            change,
+            tip,
+            view,
+        })
+    }
+
     pub fn path_to(&self, id: GameMoveId) -> Result<Vec<GameMoveId>, GameTreeError> {
         let mut path = self
             .ancestors(id)
@@ -447,15 +806,28 @@ impl GameTree {
     }
 
     fn subtree(&self, id: GameMoveId) -> Result<HashSet<GameMoveId>, GameTreeError> {
+        self.ordered_subtree(id)
+            .map(|nodes| nodes.into_iter().collect())
+    }
+
+    fn ordered_subtree(&self, id: GameMoveId) -> Result<Vec<GameMoveId>, GameTreeError> {
         let mut pending = vec![id];
-        let mut removed = HashSet::new();
+        let mut visited = HashSet::new();
+        let mut ordered = Vec::new();
         while let Some(id) = pending.pop() {
-            if !removed.insert(id) {
+            if !visited.insert(id) {
                 return Err(GameTreeError::BrokenRelationship);
             }
-            pending.extend_from_slice(self.node(id)?.children());
+            let node = self.node(id)?;
+            for child in node.children().iter().rev() {
+                if self.node(*child)?.parent() != Some(id) {
+                    return Err(GameTreeError::BrokenRelationship);
+                }
+                pending.push(*child);
+            }
+            ordered.push(id);
         }
-        Ok(removed)
+        Ok(ordered)
     }
 
     fn remove_nodes(&mut self, removed: &HashSet<GameMoveId>) {

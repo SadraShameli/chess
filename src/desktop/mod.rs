@@ -15,6 +15,7 @@ pub mod game_snapshot;
 pub mod game_supervisor;
 pub mod game_transition;
 pub mod identity;
+pub mod library_commands;
 pub mod messages;
 pub mod native;
 pub mod preferences;
