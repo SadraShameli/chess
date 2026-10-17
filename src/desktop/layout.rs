@@ -14,25 +14,22 @@ pub enum DesktopLayoutError {
     Camera(#[from] SceneCameraError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::EnumIter, strum::IntoStaticStr)]
 pub enum DesktopLayoutEnumTab {
     #[default]
+    #[strum(serialize = "Game")]
     Game,
+    #[strum(serialize = "Analysis")]
     Analysis,
+    #[strum(serialize = "Review")]
     Review,
+    #[strum(serialize = "Report")]
     Report,
 }
 
 impl DesktopLayoutEnumTab {
-    pub const ALL: [Self; 4] = [Self::Game, Self::Analysis, Self::Review, Self::Report];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Game => "Game",
-            Self::Analysis => "Analysis",
-            Self::Review => "Review",
-            Self::Report => "Report",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

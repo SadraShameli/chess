@@ -322,7 +322,7 @@ fn reduced_motion_preference_is_typed_defaults_off_and_is_listed_for_settings() 
     assert_eq!(preferences.motion(), DesktopPreferencesEnumMotion::Full);
     assert!(!preferences.motion().is_reduced());
     assert_eq!(
-        DesktopPreferences::motions(),
+        <DesktopPreferencesEnumMotion as strum::IntoEnumIterator>::iter().collect::<Vec<_>>(),
         [
             DesktopPreferencesEnumMotion::Full,
             DesktopPreferencesEnumMotion::Reduced

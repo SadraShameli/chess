@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -26,52 +27,49 @@ pub enum DesktopPreferencesError {
     StaleRevision,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumTheme {
+    #[strum(serialize = "Dark")]
     Dark,
+    #[strum(serialize = "Light")]
     Light,
 }
 
 impl DesktopPreferencesEnumTheme {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Dark => "Dark",
-            Self::Light => "Light",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumNotation {
     #[default]
+    #[strum(serialize = "Letters")]
     Letters,
+    #[strum(serialize = "Figurines")]
     Figurines,
 }
 
 impl DesktopPreferencesEnumNotation {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Letters => "Letters",
-            Self::Figurines => "Figurines",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumMotion {
+    #[strum(serialize = "Full motion")]
     Full,
+    #[strum(serialize = "Reduced motion")]
     Reduced,
 }
 
 impl DesktopPreferencesEnumMotion {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Full => "Full motion",
-            Self::Reduced => "Reduced motion",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub const fn is_reduced(self) -> bool {
@@ -79,97 +77,68 @@ impl DesktopPreferencesEnumMotion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumAid {
+    #[strum(serialize = "Board coordinates")]
     Coordinates,
+    #[strum(serialize = "Legal move hints")]
     LegalMoves,
+    #[strum(serialize = "Last move highlight")]
     LastMove,
+    #[strum(serialize = "Check highlight")]
     CheckHighlight,
 }
 
 impl DesktopPreferencesEnumAid {
-    pub const ALL: [Self; 4] = [
-        Self::Coordinates,
-        Self::LegalMoves,
-        Self::LastMove,
-        Self::CheckHighlight,
-    ];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Coordinates => "Board coordinates",
-            Self::LegalMoves => "Legal move hints",
-            Self::LastMove => "Last move highlight",
-            Self::CheckHighlight => "Check highlight",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     const fn index(self) -> usize {
-        match self {
-            Self::Coordinates => 0,
-            Self::LegalMoves => 1,
-            Self::LastMove => 2,
-            Self::CheckHighlight => 3,
-        }
+        self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumAudioCategory {
+    #[strum(serialize = "Moves")]
     Move,
+    #[strum(serialize = "Checks")]
     Check,
+    #[strum(serialize = "Results")]
     Result,
+    #[strum(serialize = "Low time")]
     LowTime,
 }
 
 impl DesktopPreferencesEnumAudioCategory {
-    pub const ALL: [Self; 4] = [Self::Move, Self::Check, Self::Result, Self::LowTime];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Move => "Moves",
-            Self::Check => "Checks",
-            Self::Result => "Results",
-            Self::LowTime => "Low time",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     const fn index(self) -> usize {
-        match self {
-            Self::Move => 0,
-            Self::Check => 1,
-            Self::Result => 2,
-            Self::LowTime => 3,
-        }
+        self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumShortcutAction {
+    #[strum(serialize = "Command palette")]
     Palette,
+    #[strum(serialize = "New game")]
     NewGame,
+    #[strum(serialize = "Settings")]
     Settings,
+    #[strum(serialize = "Flip board")]
     FlipBoard,
 }
 
 impl DesktopPreferencesEnumShortcutAction {
-    pub const ALL: [Self; 4] = [
-        Self::Palette,
-        Self::NewGame,
-        Self::Settings,
-        Self::FlipBoard,
-    ];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Palette => "Command palette",
-            Self::NewGame => "New game",
-            Self::Settings => "Settings",
-            Self::FlipBoard => "Flip board",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub const fn default_chord(self) -> DesktopPreferencesChord {
@@ -192,34 +161,28 @@ impl DesktopPreferencesEnumShortcutAction {
     }
 
     const fn index(self) -> usize {
-        match self {
-            Self::Palette => 0,
-            Self::NewGame => 1,
-            Self::Settings => 2,
-            Self::FlipBoard => 3,
-        }
+        self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumSection {
+    #[strum(serialize = "Appearance")]
     Appearance,
+    #[strum(serialize = "Board aids")]
     BoardAids,
+    #[strum(serialize = "Audio")]
     Audio,
+    #[strum(serialize = "Shortcuts")]
     Shortcuts,
+    #[strum(serialize = "Engine")]
     Engine,
 }
 
 impl DesktopPreferencesEnumSection {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Appearance => "Appearance",
-            Self::BoardAids => "Board aids",
-            Self::Audio => "Audio",
-            Self::Shortcuts => "Shortcuts",
-            Self::Engine => "Engine",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 
@@ -466,47 +429,12 @@ impl DesktopPreferences {
 }
 
 impl DesktopPreferences {
-    const SECTIONS: [DesktopPreferencesEnumSection; 5] = [
-        DesktopPreferencesEnumSection::Appearance,
-        DesktopPreferencesEnumSection::BoardAids,
-        DesktopPreferencesEnumSection::Audio,
-        DesktopPreferencesEnumSection::Shortcuts,
-        DesktopPreferencesEnumSection::Engine,
-    ];
-    const THEMES: [DesktopPreferencesEnumTheme; 2] = [
-        DesktopPreferencesEnumTheme::Dark,
-        DesktopPreferencesEnumTheme::Light,
-    ];
-    const MOTIONS: [DesktopPreferencesEnumMotion; 2] = [
-        DesktopPreferencesEnumMotion::Full,
-        DesktopPreferencesEnumMotion::Reduced,
-    ];
-
-    pub fn sections() -> &'static [DesktopPreferencesEnumSection] {
-        &Self::SECTIONS
-    }
-
-    pub fn themes() -> &'static [DesktopPreferencesEnumTheme] {
-        &Self::THEMES
-    }
-
-    pub fn motions() -> &'static [DesktopPreferencesEnumMotion] {
-        &Self::MOTIONS
-    }
-
     pub const fn motion(self) -> DesktopPreferencesEnumMotion {
         self.motion
     }
 
     pub const fn notation(self) -> DesktopPreferencesEnumNotation {
         self.notation
-    }
-
-    pub fn notations() -> &'static [DesktopPreferencesEnumNotation] {
-        &[
-            DesktopPreferencesEnumNotation::Letters,
-            DesktopPreferencesEnumNotation::Figurines,
-        ]
     }
 
     pub fn set_motion(&mut self, motion: DesktopPreferencesEnumMotion) -> bool {
@@ -595,12 +523,11 @@ impl DesktopPreferences {
             DesktopPreferencesEnumPatch::Notation(self.notation),
         ];
         patches.extend(
-            DesktopPreferencesEnumAid::ALL
-                .into_iter()
+            DesktopPreferencesEnumAid::iter()
                 .map(|aid| DesktopPreferencesEnumPatch::Aid(aid, self.aid(aid))),
         );
         patches.push(DesktopPreferencesEnumPatch::MasterVolume(self.master));
-        for category in DesktopPreferencesEnumAudioCategory::ALL {
+        for category in DesktopPreferencesEnumAudioCategory::iter() {
             let entry = self.category(category);
             patches.push(DesktopPreferencesEnumPatch::CategoryEnabled(
                 category,
@@ -612,8 +539,7 @@ impl DesktopPreferences {
             ));
         }
         patches.extend(
-            DesktopPreferencesEnumShortcutAction::ALL
-                .into_iter()
+            DesktopPreferencesEnumShortcutAction::iter()
                 .map(|action| DesktopPreferencesEnumPatch::Shortcut(action, self.shortcut(action))),
         );
         patches.push(DesktopPreferencesEnumPatch::EngineThreads(self.engine[0]));

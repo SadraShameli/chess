@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
@@ -98,8 +99,7 @@ impl DesktopPreferencesCodec {
                 notation: Some(preferences.notation()),
             }),
             board_aids: Some(
-                DesktopPreferencesEnumAid::ALL
-                    .into_iter()
+                DesktopPreferencesEnumAid::iter()
                     .map(|aid| DesktopPreferencesAidWire {
                         aid,
                         enabled: preferences.aid(aid),
@@ -108,8 +108,7 @@ impl DesktopPreferencesCodec {
             ),
             audio: Some(DesktopPreferencesAudioWire {
                 master: Some(preferences.master_volume()),
-                categories: DesktopPreferencesEnumAudioCategory::ALL
-                    .into_iter()
+                categories: DesktopPreferencesEnumAudioCategory::iter()
                     .map(|category| {
                         let entry = preferences.category(category);
                         DesktopPreferencesCategoryWire {
@@ -121,8 +120,7 @@ impl DesktopPreferencesCodec {
                     .collect(),
             }),
             shortcuts: Some(
-                DesktopPreferencesEnumShortcutAction::ALL
-                    .into_iter()
+                DesktopPreferencesEnumShortcutAction::iter()
                     .map(|action| DesktopPreferencesShortcutWire {
                         action,
                         chord: preferences.shortcut(action),

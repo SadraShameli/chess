@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use chess::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
     DesktopPreferencesEnumAudioCategory, DesktopPreferencesEnumShortcutAction,
@@ -62,7 +63,7 @@ fn palette_derives_availability_and_confirmation_from_the_registry() {
 
 #[test]
 fn every_shortcut_action_belongs_to_one_registered_action() {
-    for action in DesktopPreferencesEnumShortcutAction::ALL {
+    for action in DesktopPreferencesEnumShortcutAction::iter() {
         let workspace = PresentationActionRegistry::workspace_for(action);
         assert!(workspace.is_some_and(|found| found.shortcut_action() == Some(action)));
     }
@@ -256,7 +257,8 @@ fn the_controller_previews_an_import_before_changing_pending_values() {
 #[test]
 fn every_settings_section_is_registered_once_with_its_own_label() {
     use chess::desktop::preferences::DesktopPreferencesEnumSection;
-    let sections = DesktopPreferences::sections();
+    use strum::IntoEnumIterator;
+    let sections: Vec<_> = DesktopPreferencesEnumSection::iter().collect();
     assert_eq!(
         sections,
         [

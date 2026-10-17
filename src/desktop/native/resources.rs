@@ -27,17 +27,27 @@ pub enum DesktopNativeResourcesError {
     Digest(#[from] PackageDigestError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::IntoStaticStr)]
 pub enum DesktopNativeResourcesEnumDependency {
+    #[strum(serialize = "graphics")]
     Graphics,
+    #[strum(serialize = "fonts")]
     Fonts,
+    #[strum(serialize = "shaders")]
     Shaders,
+    #[strum(serialize = "pieces")]
     Pieces,
+    #[strum(serialize = "engine")]
     Engine,
+    #[strum(serialize = "credentials")]
     Credentials,
+    #[strum(serialize = "portal")]
     Portal,
+    #[strum(serialize = "audio")]
     Audio,
+    #[strum(serialize = "tablebases")]
     Tablebases,
+    #[strum(serialize = "starter-dataset")]
     StarterDataset,
 }
 
@@ -49,32 +59,8 @@ pub enum DesktopNativeResourcesEnumFailure {
 }
 
 impl DesktopNativeResourcesEnumDependency {
-    pub const ALL: [Self; 10] = [
-        Self::Graphics,
-        Self::Fonts,
-        Self::Shaders,
-        Self::Pieces,
-        Self::Engine,
-        Self::Credentials,
-        Self::Portal,
-        Self::Audio,
-        Self::Tablebases,
-        Self::StarterDataset,
-    ];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Graphics => "graphics",
-            Self::Fonts => "fonts",
-            Self::Shaders => "shaders",
-            Self::Pieces => "pieces",
-            Self::Engine => "engine",
-            Self::Credentials => "credentials",
-            Self::Portal => "portal",
-            Self::Audio => "audio",
-            Self::Tablebases => "tablebases",
-            Self::StarterDataset => "starter-dataset",
-        }
+    pub fn name(self) -> &'static str {
+        self.into()
     }
 
     pub const fn failure(self) -> DesktopNativeResourcesEnumFailure {

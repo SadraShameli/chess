@@ -1,3 +1,5 @@
+use strum::IntoEnumIterator;
+
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesEnumShortcutAction,
 };
@@ -68,8 +70,7 @@ impl PresentationShortcuts {
         action: DesktopPreferencesEnumShortcutAction,
         chord: DesktopPreferencesChord,
     ) -> Option<DesktopPreferencesEnumShortcutAction> {
-        DesktopPreferencesEnumShortcutAction::ALL
-            .into_iter()
+        DesktopPreferencesEnumShortcutAction::iter()
             .filter(|other| *other != action)
             .find(|other| Self::chord(preferences, *other) == chord)
     }
@@ -82,8 +83,7 @@ impl PresentationShortcuts {
         if context == PresentationShortcutEnumContext::TextInput && !pressed.command() {
             return None;
         }
-        DesktopPreferencesEnumShortcutAction::ALL
-            .into_iter()
+        DesktopPreferencesEnumShortcutAction::iter()
             .find(|action| Self::chord(preferences, *action) == pressed)
     }
 

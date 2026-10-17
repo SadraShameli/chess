@@ -472,8 +472,11 @@ async fn closing_admission_cancels_queued_work_and_rejects_new_work()
 #[tokio::test]
 async fn every_registered_purpose_starts_on_the_owning_thread()
 -> Result<(), Box<dyn std::error::Error>> {
-    assert!(!DesktopFileEnumPurpose::ALL.is_empty());
-    for purpose in DesktopFileEnumPurpose::ALL {
+    {
+        use strum::IntoEnumIterator;
+        assert!(DesktopFileEnumPurpose::iter().next().is_some());
+    }
+    for purpose in <DesktopFileEnumPurpose as strum::IntoEnumIterator>::iter() {
         let mut fixture = DesktopNativeDialogsFixture::new()?;
         let request = fixture.port.try_request(purpose)?;
         fixture.host.poll()?;

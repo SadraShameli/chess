@@ -62,10 +62,18 @@ struct DesktopNativeUpdateEnvironment {
     backup: Uuid,
     command: Command,
     child: Option<Child>,
+    ready_timeout: Duration,
 }
 
 impl DesktopNativeUpdateEnvironment {
     const READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+    fn stop_helper(&mut self) {
+        if let Some(child) = &mut self.child {
+            let _killed = child.kill();
+            let _reaped = child.wait();
+        }
+    }
 }
 
 impl UpdateInstallEnvironment for DesktopNativeUpdateEnvironment {
@@ -104,6 +112,7 @@ impl UpdateInstallEnvironment for DesktopNativeUpdateEnvironment {
         };
         let Some(stdout) = child.stdout.take() else {
             self.child = Some(child);
+            self.stop_helper();
             return UpdateHelperEnumReadiness::Lost;
         };
         self.child = Some(child);
@@ -113,11 +122,14 @@ impl UpdateInstallEnvironment for DesktopNativeUpdateEnvironment {
             let _read = BufReader::new(stdout).read_line(&mut line);
             let _sent = sender.send(line);
         });
-        match receiver.recv_timeout(Self::READY_TIMEOUT) {
+        match receiver.recv_timeout(self.ready_timeout) {
             Ok(line) if line.trim() == format!("ready {generation}") => {
                 UpdateHelperEnumReadiness::Ready(spec.helper_generation)
             }
-            Ok(_) | Err(_) => UpdateHelperEnumReadiness::Lost,
+            Ok(_) | Err(_) => {
+                self.stop_helper();
+                UpdateHelperEnumReadiness::Lost
+            }
         }
     }
 
@@ -369,6 +381,7 @@ impl DesktopNativeUpdateService {
                 backup,
                 command,
                 child: None,
+                ready_timeout: DesktopNativeUpdateEnvironment::READY_TIMEOUT,
             };
             UpdateInstall::run(
                 UpdateInstallConfirmation::explicit(),
@@ -422,3 +435,7 @@ impl DesktopUpdateProvider for DesktopNativeUpdateService {
             .clone()
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/desktop/native/update_helper_deadline.rs"]
+mod tests;

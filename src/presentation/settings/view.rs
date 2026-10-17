@@ -1,7 +1,9 @@
 use bevy_egui::egui::{self, Ui};
+use strum::IntoEnumIterator;
 
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesEnumAid, DesktopPreferencesEnumAudioCategory,
+    DesktopPreferencesEnumMotion, DesktopPreferencesEnumNotation, DesktopPreferencesEnumTheme,
     DesktopPreferencesEnumPatch, DesktopPreferencesEnumSection,
     DesktopPreferencesEnumShortcutAction, DesktopPreferencesPercent,
 };
@@ -32,7 +34,7 @@ impl PresentationSettingsView {
         if let Some(notice) = controller.notice() {
             ui.label(notice.to_owned());
         }
-        for &section in DesktopPreferences::sections() {
+        for section in DesktopPreferencesEnumSection::iter() {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.heading(section.label());
@@ -63,7 +65,7 @@ impl PresentationSettingsView {
         match section {
             DesktopPreferencesEnumSection::Appearance => {
                 let mut theme = controller.theme();
-                for &choice in DesktopPreferences::themes() {
+                for choice in DesktopPreferencesEnumTheme::iter() {
                     ui.radio_value(&mut theme, choice, choice.label());
                 }
                 if theme != controller.theme() {
@@ -71,7 +73,7 @@ impl PresentationSettingsView {
                     outcome.appearance_changed |= step.appearance_changed;
                 }
                 let mut motion = controller.motion();
-                for &choice in DesktopPreferences::motions() {
+                for choice in DesktopPreferencesEnumMotion::iter() {
                     ui.radio_value(&mut motion, choice, choice.label());
                 }
                 if motion != controller.motion() {
@@ -80,7 +82,7 @@ impl PresentationSettingsView {
                 }
                 ui.label("Move notation");
                 let mut notation = pending.notation();
-                for &choice in DesktopPreferences::notations() {
+                for choice in DesktopPreferencesEnumNotation::iter() {
                     ui.radio_value(&mut notation, choice, choice.label());
                 }
                 if notation != pending.notation() {
@@ -89,7 +91,7 @@ impl PresentationSettingsView {
                 }
             }
             DesktopPreferencesEnumSection::BoardAids => {
-                for aid in DesktopPreferencesEnumAid::ALL {
+                for aid in DesktopPreferencesEnumAid::iter() {
                     let mut enabled = pending.aid(aid);
                     if ui.checkbox(&mut enabled, aid.label()).changed() {
                         controller.edit(DesktopPreferencesEnumPatch::Aid(aid, enabled));
@@ -112,7 +114,7 @@ impl PresentationSettingsView {
         {
             controller.edit(DesktopPreferencesEnumPatch::MasterVolume(volume));
         }
-        for category in DesktopPreferencesEnumAudioCategory::ALL {
+        for category in DesktopPreferencesEnumAudioCategory::iter() {
             let entry = pending.category(category);
             let mut enabled = entry.enabled();
             if ui.checkbox(&mut enabled, category.label()).changed() {
@@ -138,7 +140,7 @@ impl PresentationSettingsView {
         pending: DesktopPreferences,
     ) {
         let platform = PresentationShortcutEnumPlatform::current();
-        for action in DesktopPreferencesEnumShortcutAction::ALL {
+        for action in DesktopPreferencesEnumShortcutAction::iter() {
             let label = PresentationShortcuts::label(
                 platform,
                 PresentationShortcuts::chord(pending, action),

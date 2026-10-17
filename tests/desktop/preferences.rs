@@ -1,3 +1,4 @@
+use strum::IntoEnumIterator;
 use std::error::Error;
 
 use chess::desktop::preferences::{
@@ -24,7 +25,7 @@ fn percent(value: u8) -> Result<DesktopPreferencesPercent, DesktopPreferencesErr
 fn defaults_use_seventy_percent_master_and_full_categories_multiplied() {
     let preferences = DesktopPreferences::default();
     assert_eq!(preferences.master_volume().value(), 70);
-    for category in DesktopPreferencesEnumAudioCategory::ALL {
+    for category in DesktopPreferencesEnumAudioCategory::iter() {
         assert_eq!(preferences.category(category).volume().value(), 100);
         assert!(preferences.category(category).enabled());
         assert!((preferences.effective_gain(category) - 0.7).abs() < f32::EPSILON);

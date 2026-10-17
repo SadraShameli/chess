@@ -14,22 +14,21 @@ pub enum DesktopRendererCommandsError {
     ResumeUnavailable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum DesktopRendererCommandsEnumCause {
+    #[strum(serialize = "Graphics could not be initialized")]
     Initialization,
+    #[strum(serialize = "The graphics context was lost")]
     ContextLoss,
+    #[strum(serialize = "A graphics shader failed")]
     Shader,
+    #[strum(serialize = "The board assets could not be loaded")]
     Asset,
 }
 
 impl DesktopRendererCommandsEnumCause {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Initialization => "Graphics could not be initialized",
-            Self::ContextLoss => "The graphics context was lost",
-            Self::Shader => "A graphics shader failed",
-            Self::Asset => "The board assets could not be loaded",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

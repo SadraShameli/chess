@@ -39,22 +39,13 @@ pub enum DesktopFileHandleError {
     Capacity(#[from] CapacityExecutorError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopFileEnumPurpose {
     ReadFile,
     BackupArchive,
     WriteFile,
     Directory,
-}
-
-impl DesktopFileEnumPurpose {
-    pub const ALL: [Self; 4] = [
-        Self::ReadFile,
-        Self::BackupArchive,
-        Self::WriteFile,
-        Self::Directory,
-    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

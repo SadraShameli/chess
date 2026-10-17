@@ -56,7 +56,7 @@ impl NativeInstallationHarness {
             .get("dependencies")
             .and_then(serde_json::Value::as_array)
             .ok_or("the fixture lists dependency failure classes")?;
-        for dependency in DesktopNativeResourcesEnumDependency::ALL {
+        for dependency in <DesktopNativeResourcesEnumDependency as strum::IntoEnumIterator>::iter() {
             let entry = classes
                 .iter()
                 .find(|entry| {
