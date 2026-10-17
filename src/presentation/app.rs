@@ -30,7 +30,11 @@ use crate::desktop::messages::{
     DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
     DesktopRequest,
 };
-use crate::desktop::preferences::{DesktopPreferences, DesktopPreferencesEnumSection};
+use crate::desktop::preferences::{
+    DesktopPreferences, DesktopPreferencesEnumAid, DesktopPreferencesEnumAudioCategory,
+    DesktopPreferencesEnumPatch, DesktopPreferencesEnumSection,
+    DesktopPreferencesEnumShortcutAction, DesktopPreferencesPercent,
+};
 use crate::desktop::puzzle_service::DesktopPuzzleServiceError;
 use crate::desktop::stream::DesktopStream;
 use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
@@ -1319,6 +1323,68 @@ impl PresentationApp {
                     }
                     if self.preferences.set_motion(motion) {
                         self.board.set_reduced_motion(motion.is_reduced());
+                    }
+                }
+                DesktopPreferencesEnumSection::BoardAids => {
+                    for aid in DesktopPreferencesEnumAid::ALL {
+                        let mut enabled = self.preferences.aid(aid);
+                        if ui.checkbox(&mut enabled, aid.label()).changed() {
+                            self.preferences
+                                .apply(DesktopPreferencesEnumPatch::Aid(aid, enabled));
+                        }
+                    }
+                }
+                DesktopPreferencesEnumSection::Audio => {
+                    let mut master = self.preferences.master_volume().value();
+                    if ui
+                        .add(
+                            bevy_egui::egui::Slider::new(
+                                &mut master,
+                                0..=DesktopPreferencesPercent::MAX,
+                            )
+                            .text("Master volume"),
+                        )
+                        .changed()
+                        && let Ok(volume) = DesktopPreferencesPercent::new(master)
+                    {
+                        self.preferences
+                            .apply(DesktopPreferencesEnumPatch::MasterVolume(volume));
+                    }
+                    for category in DesktopPreferencesEnumAudioCategory::ALL {
+                        let entry = self.preferences.category(category);
+                        let mut enabled = entry.enabled();
+                        if ui.checkbox(&mut enabled, category.label()).changed() {
+                            self.preferences
+                                .apply(DesktopPreferencesEnumPatch::CategoryEnabled(
+                                    category, enabled,
+                                ));
+                        }
+                        let mut level = entry.volume().value();
+                        if ui
+                            .add(
+                                bevy_egui::egui::Slider::new(
+                                    &mut level,
+                                    0..=DesktopPreferencesPercent::MAX,
+                                )
+                                .text(format!("{} volume", category.label())),
+                            )
+                            .changed()
+                            && let Ok(volume) = DesktopPreferencesPercent::new(level)
+                        {
+                            self.preferences
+                                .apply(DesktopPreferencesEnumPatch::CategoryVolume(
+                                    category, volume,
+                                ));
+                        }
+                    }
+                }
+                DesktopPreferencesEnumSection::Shortcuts => {
+                    for action in DesktopPreferencesEnumShortcutAction::ALL {
+                        let text = self
+                            .preferences
+                            .shortcut(action)
+                            .map_or_else(|| "Default".to_owned(), |chord| chord.key().to_string());
+                        ui.label(format!("{}: {text}", action.label()));
                     }
                 }
             }

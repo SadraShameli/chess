@@ -38,6 +38,10 @@ use crate::storage::puzzle_repository::{
     StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
     StoragePuzzleWrite,
 };
+use crate::storage::preferences_repository::{
+    StoragePreferencesEnumRequest, StoragePreferencesEnumResponse, StoragePreferencesError,
+    StoragePreferencesTransaction,
+};
 use crate::storage::report_repository::{
     StorageReportEnumRequest, StorageReportEnumResponse, StorageReportError,
     StorageReportTransaction,
@@ -143,6 +147,11 @@ enum StorageDocumentEnumCommand {
         request: Box<StorageReportEnumRequest>,
         _admission: OwnedSemaphorePermit,
         result: oneshot::Sender<Result<StorageReportEnumResponse, StorageReportError>>,
+    },
+    Preferences {
+        request: Box<StoragePreferencesEnumRequest>,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<StoragePreferencesEnumResponse, StoragePreferencesError>>,
     },
     Opening {
         request: Box<StorageOpeningEnumRequest>,
@@ -407,6 +416,20 @@ impl StorageDocumentClient {
         receiver.await?
     }
 
+    pub(crate) async fn preferences(
+        &self,
+        request: StoragePreferencesEnumRequest,
+    ) -> Result<StoragePreferencesEnumResponse, StoragePreferencesError> {
+        let admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Preferences {
+            request: Box::new(request),
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub(crate) async fn opening(
         &self,
         request: StorageOpeningEnumRequest,
@@ -627,6 +650,18 @@ impl StorageDocumentActor {
                 } => {
                     let outcome =
                         StorageReportTransaction::execute(self.connection.diesel(), *request);
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
+                StorageDocumentEnumCommand::Preferences {
+                    request,
+                    _admission,
+                    result,
+                } => {
+                    let outcome =
+                        StoragePreferencesTransaction::execute(self.connection.diesel(), *request);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);

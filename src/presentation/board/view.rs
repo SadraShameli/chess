@@ -17,6 +17,9 @@ use crate::presentation::board::enums::{
     PresentationBoardEnumCameraAction, PresentationBoardEnumInputSource,
     PresentationBoardEnumPremoveSquare,
 };
+use crate::presentation::board::input::{
+    PresentationBoardInput, PresentationBoardInputEnumGesture,
+};
 use crate::presentation::board::markings::PresentationBoardMarkings;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::{
@@ -162,6 +165,7 @@ pub struct PresentationBoardView {
     animation: Option<PresentationBoardAnimation>,
     observed: Option<DesktopBoardSnapshot>,
     markings: PresentationBoardMarkings,
+    press_point: Option<Pos2>,
 }
 
 impl Default for PresentationBoardView {
@@ -184,6 +188,7 @@ impl PresentationBoardView {
             animation: None,
             observed: None,
             markings: PresentationBoardMarkings::default(),
+            press_point: None,
         }
     }
 
@@ -461,27 +466,38 @@ impl PresentationBoardView {
             && let Some(picking) = &mut self.picking
         {
             picking.press(scene.generation(), square);
+            self.press_point = Some(point);
         }
         if input.enabled && released {
             let square = match point {
                 Some(point) if viewport.to_physical(point).is_some() => input.picker.pick(point)?,
                 Some(_) | None => None,
             };
+            let press = self.press_point.take();
             if let Some((origin, destination)) = self
                 .picking
                 .as_mut()
                 .and_then(|picking| picking.release(scene.generation(), square))
-                && let Some(action) = self.activate(
-                    frame,
-                    destination,
-                    PresentationBoardEnumInputSource::Pointer,
-                    (origin != destination).then_some(origin),
-                )
             {
-                ui.ctx().memory_mut(|memory| {
-                    memory.request_focus(PresentationBoardSemanticGrid::square_id(destination));
-                });
-                output.actions.push(action);
+                let (target, source) =
+                    match PresentationBoardInput::classify(origin, destination, press, point) {
+                        PresentationBoardInputEnumGesture::Click(square) => (square, None),
+                        PresentationBoardInputEnumGesture::Drag {
+                            origin,
+                            destination,
+                        } => (destination, Some(origin)),
+                    };
+                if let Some(action) = self.activate(
+                    frame,
+                    target,
+                    PresentationBoardEnumInputSource::Pointer,
+                    source,
+                ) {
+                    ui.ctx().memory_mut(|memory| {
+                        memory.request_focus(PresentationBoardSemanticGrid::square_id(target));
+                    });
+                    output.actions.push(action);
+                }
             }
         }
         let process_keyboard = input.enabled && self.keyboard_frame != Some(frame);

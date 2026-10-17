@@ -1,5 +1,7 @@
+pub mod accessibility;
 pub mod activation;
 pub mod analysis_resources;
+pub mod audio;
 pub mod bootstrap;
 pub mod dialogs;
 pub mod dialogs_proxy;

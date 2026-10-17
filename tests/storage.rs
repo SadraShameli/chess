@@ -53,3 +53,6 @@ mod storage_puzzle_repository;
 
 #[path = "storage/report_repository.rs"]
 mod storage_report_repository;
+
+#[path = "storage/preferences_repository.rs"]
+mod storage_preferences_repository;

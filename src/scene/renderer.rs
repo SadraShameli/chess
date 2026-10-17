@@ -1,5 +1,6 @@
 use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::camera::{RenderTarget, Viewport, visibility::RenderLayers};
+use bevy::light::DirectionalLightShadowMap;
 use bevy::math::{UVec2, Vec3};
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings, RayCastVisibility};
 use bevy::platform::collections::HashMap;
@@ -26,6 +27,7 @@ use crate::scene::camera::{SceneCamera, SceneCameraError, SceneCameraFrame};
 use crate::scene::editor::SceneEditorBinding;
 use crate::scene::enums::SceneEnumLifecycle;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport};
+use crate::scene::quality::SceneQualityProfile;
 
 #[derive(Debug, Error)]
 pub enum SceneRendererError {
@@ -41,6 +43,8 @@ pub enum SceneRendererError {
     Lifecycle(SceneEnumLifecycle),
     #[error("The completion belongs to an obsolete scene generation")]
     StaleGeneration,
+    #[error("The quality profile exceeds the supported shadow map range")]
+    Quality,
     #[error(transparent)]
     Camera(#[from] SceneCameraError),
     #[error(transparent)]
@@ -91,11 +95,13 @@ pub struct SceneRenderer {
     pieces: HashMap<BoardSquare, SceneRendererPiece>,
     entity_squares: HashMap<Entity, BoardSquare>,
     animated: Option<BoardSquare>,
+    quality: Option<SceneQualityProfile>,
 }
 
 impl SceneRenderer {
     pub const RENDER_LAYER: usize = 1;
     const SQUARE_THICKNESS: f32 = 0.05;
+    const KEY_ILLUMINANCE: f32 = 10_000.0;
     const LIGHT_SQUARE: Color = Color::srgb_u8(238, 229, 207);
     const DARK_SQUARE: Color = Color::srgb_u8(75, 112, 87);
     const BACKGROUND: Color = Color::srgb_u8(17, 21, 26);
@@ -158,6 +164,7 @@ impl SceneRenderer {
             pieces: HashMap::default(),
             entity_squares: HashMap::default(),
             animated: None,
+            quality: None,
         };
         renderer.spawn_board(world)?;
         renderer.spawn_lights(world);
@@ -287,6 +294,32 @@ impl SceneRenderer {
         self.viewport = viewport;
         self.camera = camera;
         self.generation = generation;
+        Ok(true)
+    }
+
+    pub fn apply_quality(
+        &mut self,
+        world: &mut World,
+        profile: SceneQualityProfile,
+    ) -> Result<bool, SceneRendererError> {
+        self.require_renderable()?;
+        if self.quality == Some(profile) {
+            return Ok(false);
+        }
+        let size = profile.shadow_map_size();
+        if let Some(size) = size {
+            world.insert_resource(DirectionalLightShadowMap {
+                size: usize::try_from(size).map_err(|_error| SceneRendererError::Quality)?,
+            });
+        }
+        let mut lights = world.query::<(&mut DirectionalLight, &ChildOf)>();
+        for (mut light, parent) in lights.iter_mut(world) {
+            if parent.parent() == self.root && light.illuminance >= Self::KEY_ILLUMINANCE {
+                light.shadow_maps_enabled = size.is_some();
+            }
+        }
+        self.quality = Some(profile);
+        self.request_frame(world)?;
         Ok(true)
     }
 

@@ -16,7 +16,7 @@ mod engine;
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools engine-build | engine-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools engine-build | engine-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
     #[error(transparent)]
@@ -153,6 +153,11 @@ enum ToolsEnumCommand {
         destination: std::path::PathBuf,
         check: bool,
     },
+    #[cfg(feature = "asset-tools")]
+    GenerateSounds {
+        destination: std::path::PathBuf,
+        check: bool,
+    },
 }
 
 impl ToolsEnumCommand {
@@ -202,6 +207,22 @@ impl ToolsEnumCommand {
         {
             if supplied
                 .first()
+                .is_some_and(|command| command == "sounds-generate")
+            {
+                return match supplied.as_slice() {
+                    [_, destination] => Ok(Self::GenerateSounds {
+                        destination: destination.into(),
+                        check: false,
+                    }),
+                    [_, destination, check] if check == "--check" => Ok(Self::GenerateSounds {
+                        destination: destination.into(),
+                        check: true,
+                    }),
+                    _ => Err(ToolsCommandError::Usage),
+                };
+            }
+            if supplied
+                .first()
                 .is_some_and(|command| command == "assets-generate")
             {
                 return match supplied.as_slice() {
@@ -247,6 +268,10 @@ impl ToolsEnumCommand {
                     .enable_all()
                     .build()?;
                 runtime.block_on(engine::ToolsEngineCheck::run())?;
+            }
+            #[cfg(feature = "asset-tools")]
+            Self::GenerateSounds { destination, check } => {
+                assets::ToolsAssetsSounds::run(&destination, check)?;
             }
             #[cfg(feature = "asset-tools")]
             Self::GenerateAssets { destination, check } => {

@@ -18,6 +18,7 @@ pub mod library_repository;
 pub(crate) mod library_transaction;
 pub mod migration;
 pub mod opening_repository;
+pub mod preferences_repository;
 pub mod puzzle_repository;
 pub mod report_repository;
 mod schema;

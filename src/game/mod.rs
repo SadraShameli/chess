@@ -1,4 +1,5 @@
 pub mod adjudication;
+pub mod alerts;
 pub mod annotations;
 pub mod configuration;
 pub mod draw_claim;

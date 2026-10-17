@@ -9,6 +9,10 @@ mod presentation_board;
 mod presentation_board_accessibility;
 #[path = "presentation/board/animation.rs"]
 mod presentation_board_animation;
+#[path = "presentation/board/input.rs"]
+mod presentation_board_input;
+#[path = "presentation/board/layout.rs"]
+mod presentation_board_layout;
 #[path = "presentation/board/markings.rs"]
 mod presentation_board_markings;
 
@@ -30,3 +34,10 @@ mod presentation_game_new_game;
 mod presentation_game_play;
 #[path = "presentation/workbench.rs"]
 mod presentation_workbench;
+
+#[path = "presentation/settings.rs"]
+mod presentation_settings;
+#[path = "presentation/shortcuts.rs"]
+mod presentation_shortcuts;
+#[path = "presentation/audio.rs"]
+mod presentation_audio;

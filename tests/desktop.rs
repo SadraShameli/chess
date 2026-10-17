@@ -90,3 +90,6 @@ mod desktop_application_action;
 mod desktop_coordinator_editor;
 #[path = "desktop/editor_commands/write_recovery_review.rs"]
 mod desktop_editor_commands_write_recovery_review;
+
+#[path = "desktop/preferences.rs"]
+mod desktop_preferences;
