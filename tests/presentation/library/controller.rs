@@ -574,3 +574,29 @@ async fn organization_runs_in_its_own_lane_and_marks_the_page_for_resync()
     assert_eq!(observation?, (true, true, false));
     Ok(())
 }
+
+#[tokio::test]
+async fn trash_preview_runs_in_its_own_lane_without_resync() -> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        fixture.service.seed(710, true).await?;
+        let game = DesktopLibraryServiceFixture::id(710)?;
+        let mut controller = PresentationLibraryController::new(fixture.service.workspace);
+        let input = DesktopRequestId::new();
+        let request = crate::storage::trash::StorageTrashPreviewRequest::MoveToTrash(game);
+        let intent = controller
+            .preview_trash(input, request)?
+            .ok_or("preview")?;
+        let repeated = controller.preview_trash(input, request)?.is_none();
+        let busy = matches!(
+            controller.preview_trash(DesktopRequestId::new(), request),
+            Err(PresentationLibraryError::Busy)
+        );
+        fixture.execute(&mut controller, &intent).await??;
+        Ok((repeated, busy, controller.needs_resync()))
+    }
+    .await;
+    fixture.close().await?;
+    assert_eq!(observation?, (true, true, false));
+    Ok(())
+}

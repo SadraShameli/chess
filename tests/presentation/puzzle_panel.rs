@@ -41,6 +41,7 @@ use crate::puzzle::checkpoint::{
 };
 use crate::puzzle::definition::PuzzleDefinition;
 use crate::puzzle::enums::{PuzzleEnumCountdownMode, PuzzleEnumPhase};
+use crate::puzzle::history::{PuzzleHistoryEnumConfirmation, PuzzleHistoryEnumScope};
 use crate::puzzle::identity::PuzzleDefinitionIdentity;
 use crate::puzzle::metadata::PuzzleDefinitionMetadata;
 use crate::puzzle::persistence::{
@@ -1648,5 +1649,79 @@ async fn newer_watch_requires_a_matching_opened_receipt_before_installing_a_cont
             .request_id(),
         work.request().request_id()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn history_deletion_dispatches_only_after_explicit_confirmation()
+-> PresentationPuzzlePanelTestResult {
+    let directory = tempfile::tempdir()?;
+    let store = StorageDocumentStore::open(
+        directory.path().join("delete.sqlite3"),
+        CapacityBudget::new(NonZeroUsize::MIN)?,
+    )
+    .await?;
+    let page = Arc::new(
+        StoragePuzzleRepository::new(store.client())
+            .inventory(None)
+            .await?,
+    );
+    let mut fixture = PresentationPuzzlePanelFixture::new()?;
+    fixture.panel.first_page(&fixture.application.port())?;
+    let work = fixture.next()?;
+    fixture.application.begin_commit(&work)?;
+    fixture.application.complete_value(
+        &work,
+        DesktopEnumValue::Puzzle(Box::new(DesktopPuzzleServiceEnumResult::Inventory(page))),
+        None,
+    )?;
+    fixture.panel.synchronize(&fixture.application.port())?;
+    {
+        let mut errors = Vec::new();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1100.0, 1600.0))
+            .build_ui(|ui| {
+                if let Err(error) = fixture.panel.show(ui, &fixture.application.port()) {
+                    errors.push(error);
+                }
+            });
+        harness.run_ok().ok_or("panel did not settle")?;
+        harness.get_by_label("Delete All History").click();
+        harness.run_ok().ok_or("confirmation did not settle")?;
+        harness.get_by_label("Delete puzzle history?");
+        harness.get_by_label("Keep History");
+        drop(harness);
+        assert!(errors.is_empty());
+    }
+    assert_eq!(
+        fixture.panel.pending_deletion(),
+        Some(PuzzleHistoryEnumScope::All)
+    );
+    assert!(fixture.application.try_next()?.is_none());
+    fixture.panel.request_history_deletion(
+        PuzzleHistoryEnumScope::All,
+        PuzzleHistoryEnumConfirmation::Confirmed,
+        &fixture.application.port(),
+    )?;
+    let work = fixture.next()?;
+    assert!(matches!(
+        PresentationPuzzlePanelFixture::operation(&work)?,
+        DesktopPuzzleServiceEnumOperation::DeleteHistory {
+            scope: PuzzleHistoryEnumScope::All,
+            confirmation: PuzzleHistoryEnumConfirmation::Confirmed
+        }
+    ));
+    fixture.application.begin_commit(&work)?;
+    fixture.application.complete_value(
+        &work,
+        DesktopEnumValue::Puzzle(Box::new(DesktopPuzzleServiceEnumResult::HistoryDeleted {
+            removed: 0,
+        })),
+        None,
+    )?;
+    fixture.panel.synchronize(&fixture.application.port())?;
+    assert!(fixture.panel.inventory().is_none());
+    assert_eq!(fixture.panel.pending_deletion(), None);
+    store.close().await?;
     Ok(())
 }

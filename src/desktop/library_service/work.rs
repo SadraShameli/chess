@@ -26,7 +26,9 @@ use crate::desktop::library_service::{
 use crate::storage::library_metadata::StorageLibraryMetadataRepository;
 use crate::storage::library_query::StorageLibraryQuery;
 use crate::storage::library_record::StorageLibraryEnumContent;
-use crate::storage::library_repository::{StorageLibraryError, StorageLibraryRepository};
+use crate::storage::library_repository::{
+    StorageLibraryEnumMutationReceipt, StorageLibraryError, StorageLibraryRepository,
+};
 use crate::storage::trash::StorageTrashEnumLocation;
 
 pub(super) struct DesktopLibraryServiceWork {
@@ -214,6 +216,37 @@ impl DesktopLibraryServiceWork {
                         .organize(request)
                         .await?,
                 ))
+            }
+            DesktopLibraryServiceEnumAction::PreviewTrash(request) => {
+                Ok(DesktopLibraryServiceEnumResult::TrashPlan(
+                    StorageLibraryRepository::new(resources.client, &resources.executor)
+                        .preview_destruction(request)
+                        .await?,
+                ))
+            }
+            DesktopLibraryServiceEnumAction::ApplyTrash(request) => {
+                match StorageLibraryRepository::new(resources.client, &resources.executor)
+                    .begin_destruction(request)?
+                    .wait()
+                    .await?
+                {
+                    StorageLibraryEnumMutationReceipt::DestructionApplied(receipt) => {
+                        Ok(DesktopLibraryServiceEnumResult::Trashed(receipt))
+                    }
+                    _ => Err(StorageLibraryError::Protocol.into()),
+                }
+            }
+            DesktopLibraryServiceEnumAction::Restore(request) => {
+                match StorageLibraryRepository::new(resources.client, &resources.executor)
+                    .begin_restore(request)?
+                    .wait()
+                    .await?
+                {
+                    StorageLibraryEnumMutationReceipt::Restored(receipt) => {
+                        Ok(DesktopLibraryServiceEnumResult::Restored(receipt))
+                    }
+                    _ => Err(StorageLibraryError::Protocol.into()),
+                }
             }
             DesktopLibraryServiceEnumAction::Editor { expected, action } => {
                 match expected.source() {

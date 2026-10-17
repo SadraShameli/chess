@@ -66,6 +66,9 @@ impl DesktopLibraryServiceNotesApplicationRecoveryReviewSaved {
             result @ (DesktopLibraryServiceEnumResult::Query(_)
             | DesktopLibraryServiceEnumResult::Metadata(_)
             | DesktopLibraryServiceEnumResult::Organized(_)
+            | DesktopLibraryServiceEnumResult::TrashPlan(_)
+            | DesktopLibraryServiceEnumResult::Trashed(_)
+            | DesktopLibraryServiceEnumResult::Restored(_)
             | DesktopLibraryServiceEnumResult::Opened(_)
             | DesktopLibraryServiceEnumResult::Editor(_)
             | DesktopLibraryServiceEnumResult::PendingSnapshot { .. }) => {
@@ -208,6 +211,9 @@ impl DesktopLibraryServiceOpenApplicationRecoveryReviewFixture {
             result @ (DesktopLibraryServiceEnumResult::Query(_)
             | DesktopLibraryServiceEnumResult::Metadata(_)
             | DesktopLibraryServiceEnumResult::Organized(_)
+            | DesktopLibraryServiceEnumResult::TrashPlan(_)
+            | DesktopLibraryServiceEnumResult::Trashed(_)
+            | DesktopLibraryServiceEnumResult::Restored(_)
             | DesktopLibraryServiceEnumResult::Editor(_)
             | DesktopLibraryServiceEnumResult::Saved { .. }) => {
                 Err(format!("Open did not return retained source: {result:?}").into())

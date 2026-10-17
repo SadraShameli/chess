@@ -30,6 +30,7 @@ use crate::presentation::puzzle::controller::{
 use crate::presentation::puzzle::setup::PresentationPuzzleSetup;
 use crate::presentation::puzzle::summary::PresentationPuzzleSummary;
 use crate::presentation::puzzle::view::PresentationPuzzleView;
+use crate::puzzle::history::{PuzzleHistoryEnumConfirmation, PuzzleHistoryEnumScope};
 use crate::puzzle::persistence::PuzzlePersistenceStorageRevision;
 use crate::puzzle::run::PuzzleRunEnumStatus;
 use crate::puzzle::session::{PuzzleSessionContext, PuzzleSessionId};
@@ -136,6 +137,7 @@ pub struct PresentationPuzzlePanel {
     hidden: bool,
     readiness: PuzzleTimerEnumReadiness,
     opponent_requested: Option<PuzzleSessionContext>,
+    deletion: Option<PuzzleHistoryEnumScope>,
 }
 
 impl PresentationPuzzlePanel {
@@ -155,7 +157,38 @@ impl PresentationPuzzlePanel {
             hidden: false,
             readiness: PuzzleTimerEnumReadiness::BoardNotReady,
             opponent_requested: None,
+            deletion: None,
         }
+    }
+
+    pub const fn pending_deletion(&self) -> Option<PuzzleHistoryEnumScope> {
+        self.deletion
+    }
+
+    pub fn request_history_deletion<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        scope: PuzzleHistoryEnumScope,
+        confirmation: PuzzleHistoryEnumConfirmation,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationPuzzlePanelError> {
+        self.submit(
+            DesktopPuzzleServiceEnumOperation::DeleteHistory {
+                scope,
+                confirmation,
+            },
+            None,
+            port,
+        )?;
+        self.deletion = None;
+        Ok(())
+    }
+
+    pub fn begin_history_deletion(&mut self, scope: PuzzleHistoryEnumScope) {
+        self.deletion = Some(scope);
+    }
+
+    pub fn cancel_history_deletion(&mut self) {
+        self.deletion = None;
     }
 
     pub fn board(&self) -> Option<&DesktopBoardSnapshot> {
@@ -868,6 +901,12 @@ impl PresentationPuzzlePanel {
                 }
                 self.observe_session(urgent, result)?;
             }
+            (
+                DesktopPuzzleServiceEnumOperation::DeleteHistory { .. },
+                DesktopPuzzleServiceEnumResult::HistoryDeleted { .. },
+            ) => {
+                self.inventory = None;
+            }
             _ => return Err(PresentationPuzzlePanelError::Response),
         }
         Ok(())
@@ -959,6 +998,7 @@ impl PresentationPuzzlePanel {
                 ui.label("No saved puzzle runs on this page");
             }
             let mut selected = None;
+            let mut requested = None;
             for entry in page.entries() {
                 ui.horizontal(|ui| {
                     ui.label(format!(
@@ -970,14 +1010,30 @@ impl PresentationPuzzlePanel {
                     if ui.add_enabled(enabled, egui::Button::new("Open")).clicked() {
                         selected = Some((entry.id(), entry.storage_revision()));
                     }
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Delete Run"))
+                        .clicked()
+                    {
+                        requested = Some(PuzzleHistoryEnumScope::Session(entry.id()));
+                    }
                 });
             }
             if let Some((id, revision)) = selected {
                 self.open_saved(id, revision, port)?;
             }
+            if requested.is_some() {
+                self.deletion = requested;
+            }
         } else {
             ui.label("Select First Page to read saved runs");
         }
+        if ui
+            .add_enabled(enabled, egui::Button::new("Delete All History"))
+            .clicked()
+        {
+            self.deletion = Some(PuzzleHistoryEnumScope::All);
+        }
+        self.show_deletion_confirmation(ui, port)?;
         if self.ordinary.as_ref().is_some_and(|pending| {
             pending.is_pending()
                 && matches!(
@@ -986,6 +1042,35 @@ impl PresentationPuzzlePanel {
                 )
         }) {
             ui.label("Loading saved-run page");
+        }
+        Ok(())
+    }
+
+    fn show_deletion_confirmation<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        ui: &mut Ui,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationPuzzlePanelError> {
+        let Some(scope) = self.deletion else {
+            return Ok(());
+        };
+        let mut confirm = false;
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::new("puzzle.history.deletion")).show(ui.ctx(), |ui| {
+            ui.heading("Delete puzzle history?");
+            ui.label(match scope {
+                PuzzleHistoryEnumScope::Attempt { .. } => "This attempt is permanently removed from history.",
+                PuzzleHistoryEnumScope::Session(_) => "This saved run and its attempts are permanently removed. Puzzle datasets are kept.",
+                PuzzleHistoryEnumScope::All => "All saved puzzle runs are permanently removed. Puzzle datasets are kept.",
+            });
+            ui.label("A run in progress cannot be deleted.");
+            cancel = ui.button("Keep History").clicked();
+            confirm = ui.button("Confirm Delete").clicked();
+        });
+        if cancel || modal.should_close() {
+            self.cancel_history_deletion();
+        } else if confirm {
+            self.request_history_deletion(scope, PuzzleHistoryEnumConfirmation::Confirmed, port)?;
         }
         Ok(())
     }

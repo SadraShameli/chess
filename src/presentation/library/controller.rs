@@ -21,6 +21,9 @@ use crate::storage::library_metadata::{
     StorageLibraryMetadataEnumRequest, StorageLibraryMetadataFolderPage,
     StorageLibraryMetadataFolderRead, StorageLibraryMetadataTagPage,
 };
+use crate::storage::trash::{
+    StorageTrashConfirmedRequest, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+};
 use crate::storage::library_query::{
     StorageLibraryQuery, StorageLibraryQueryCursor, StorageLibraryQueryOptions,
     StorageLibraryQueryPage,
@@ -222,6 +225,30 @@ impl PresentationLibraryController {
         request: GameLibraryOrganizationRequest,
     ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
         self.begin(input, DesktopLibraryServiceEnumAction::Organize(request))
+    }
+
+    pub fn preview_trash(
+        &mut self,
+        input: DesktopRequestId,
+        request: StorageTrashPreviewRequest,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(input, DesktopLibraryServiceEnumAction::PreviewTrash(request))
+    }
+
+    pub fn apply_trash(
+        &mut self,
+        input: DesktopRequestId,
+        request: StorageTrashConfirmedRequest,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(input, DesktopLibraryServiceEnumAction::ApplyTrash(request))
+    }
+
+    pub fn restore(
+        &mut self,
+        input: DesktopRequestId,
+        request: StorageTrashRestoreRequest,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(input, DesktopLibraryServiceEnumAction::Restore(request))
     }
 
     pub fn can_retry_open(&self) -> bool {

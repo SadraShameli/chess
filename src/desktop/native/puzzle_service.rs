@@ -495,9 +495,21 @@ where
                     );
                     return;
                 }
-                let selected = self.state.borrow().selected();
+                let active = {
+                    let state = self.state.borrow();
+                    state.selected().filter(|_| {
+                        state.snapshot().is_none_or(|snapshot| {
+                            !matches!(
+                                snapshot.status(),
+                                PuzzleRunEnumStatus::Ended(_)
+                                    | PuzzleRunEnumStatus::Exhausted
+                                    | PuzzleRunEnumStatus::Expired(_)
+                            )
+                        })
+                    })
+                };
                 let authorization =
-                    match PuzzleHistoryAuthorization::new(*scope, *confirmation, selected) {
+                    match PuzzleHistoryAuthorization::new(*scope, *confirmation, active) {
                         Ok(authorization) => authorization,
                         Err(error) => {
                             self.respond(

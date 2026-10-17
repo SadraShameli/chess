@@ -155,3 +155,69 @@ async fn organize_action_applies_through_the_service_and_reports_the_organizatio
     drop(tags);
     fixture.close().await
 }
+
+struct DesktopLibraryServiceTrashLifecycle(crate::game::storage_repository::GameStorageRevision);
+
+impl crate::desktop::library_commands::DesktopLibraryCommandsLifecycleProvider
+    for DesktopLibraryServiceTrashLifecycle
+{
+    type Error = std::convert::Infallible;
+
+    fn closed_revision(
+        &self,
+        _game: crate::game::enums::GameId,
+    ) -> Result<Option<crate::game::storage_repository::GameStorageRevision>, Self::Error> {
+        Ok(Some(self.0))
+    }
+}
+
+#[tokio::test]
+async fn trash_actions_preview_apply_and_restore_a_closed_game_through_the_service()
+-> DesktopLibraryServiceTestResult {
+    use crate::desktop::library_commands::DesktopLibraryCommandsConfirmation;
+    use crate::game::library_organization::GameLibraryOrganizationGameTarget;
+    use crate::storage::trash::{
+        StorageTrashEnumAppliedAction, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+    };
+    let mut fixture = DesktopLibraryServiceFixture::new().await?;
+    let revision = fixture.seed(800, true).await?;
+    let game = DesktopLibraryServiceFixture::id(800)?;
+    let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
+        .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
+            StorageTrashPreviewRequest::MoveToTrash(game),
+        ))
+        .await?
+    else {
+        return Err("missing trash plan".into());
+    };
+    assert_eq!(plan.content_revision(), Some(revision));
+    let organization = plan.organization_revision();
+    let confirmed = DesktopLibraryCommandsConfirmation::confirm(plan).prepare(
+        &DesktopLibraryServiceTrashLifecycle(revision),
+        GameLibraryOrganizationTimestamp::new(20)?,
+    )?;
+    let action = DesktopLibraryServiceEnumAction::ApplyTrash(confirmed);
+    assert_eq!(action, action.clone());
+    let applied = fixture.execute(action).await?;
+    let DesktopLibraryServiceEnumResult::Trashed(receipt) = &applied else {
+        return Err("missing trash receipt".into());
+    };
+    assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Trashed(game));
+    assert_eq!(
+        applied.revision().map(|revision| revision.value()),
+        Some(receipt.catalog_revision().value())
+    );
+    let restored = fixture
+        .execute(DesktopLibraryServiceEnumAction::Restore(
+            StorageTrashRestoreRequest::new(
+                GameLibraryOrganizationGameTarget::new(game, organization.next()?),
+                GameLibraryOrganizationTimestamp::new(30)?,
+            ),
+        ))
+        .await?;
+    let DesktopLibraryServiceEnumResult::Restored(receipt) = restored else {
+        return Err("missing restore receipt".into());
+    };
+    assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Restored(game));
+    fixture.close().await
+}

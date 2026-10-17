@@ -71,6 +71,9 @@ impl DesktopLibraryServiceOpenApplicationRecoveryReviewPublication {
                 value @ (DesktopLibraryServiceEnumResult::Query(_)
                 | DesktopLibraryServiceEnumResult::Metadata(_)
                 | DesktopLibraryServiceEnumResult::Organized(_)
+                | DesktopLibraryServiceEnumResult::TrashPlan(_)
+                | DesktopLibraryServiceEnumResult::Trashed(_)
+                | DesktopLibraryServiceEnumResult::Restored(_)
                 | DesktopLibraryServiceEnumResult::Editor(_)
                 | DesktopLibraryServiceEnumResult::PendingSnapshot { .. }
                 | DesktopLibraryServiceEnumResult::Saved { .. }) => Err(format!(

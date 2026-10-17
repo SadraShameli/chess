@@ -170,6 +170,9 @@ impl PresentationLibraryPanel {
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
             | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::Editor { .. } => {
                 PresentationLibraryEnumEffect::Dispatch(intent)
             }
@@ -184,6 +187,7 @@ impl PresentationLibraryPanel {
             PresentationLibraryEnumLane::Folder,
             PresentationLibraryEnumLane::Open,
             PresentationLibraryEnumLane::Organize,
+            PresentationLibraryEnumLane::Trash,
         ] {
             let Some(error) = self.controller.failure(lane) else {
                 continue;

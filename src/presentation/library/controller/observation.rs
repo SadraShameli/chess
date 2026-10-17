@@ -52,17 +52,37 @@ impl PresentationLibraryController {
             ) => {
                 self.needs_resync = true;
             }
+            (
+                DesktopLibraryServiceEnumAction::PreviewTrash(_),
+                DesktopLibraryServiceEnumResult::TrashPlan(_),
+            ) => {}
+            (
+                DesktopLibraryServiceEnumAction::ApplyTrash(_),
+                DesktopLibraryServiceEnumResult::Trashed(_),
+            )
+            | (
+                DesktopLibraryServiceEnumAction::Restore(_),
+                DesktopLibraryServiceEnumResult::Restored(_),
+            ) => {
+                self.needs_resync = true;
+            }
             (DesktopLibraryServiceEnumAction::Editor { action: crate::desktop::annotation_commands::DesktopAnnotationCommandsEnumAction::RetrySave, .. }, DesktopLibraryServiceEnumResult::Opened(publication)) if lane == PresentationLibraryEnumLane::Open => self.pending[index].check_opened(publication)?,
             (
                 DesktopLibraryServiceEnumAction::Query { .. }
                 | DesktopLibraryServiceEnumAction::Metadata(_)
                 | DesktopLibraryServiceEnumAction::Open { .. }
                 | DesktopLibraryServiceEnumAction::Organize(_)
+                | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+                | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+                | DesktopLibraryServiceEnumAction::Restore(_)
                 | DesktopLibraryServiceEnumAction::Editor { .. },
                 DesktopLibraryServiceEnumResult::Query(_)
                 | DesktopLibraryServiceEnumResult::Metadata(_)
                 | DesktopLibraryServiceEnumResult::Opened(_)
                 | DesktopLibraryServiceEnumResult::Organized(_)
+                | DesktopLibraryServiceEnumResult::TrashPlan(_)
+                | DesktopLibraryServiceEnumResult::Trashed(_)
+                | DesktopLibraryServiceEnumResult::Restored(_)
                 | DesktopLibraryServiceEnumResult::Editor(_)
                 | DesktopLibraryServiceEnumResult::PendingSnapshot { .. }
                 | DesktopLibraryServiceEnumResult::Saved { .. },

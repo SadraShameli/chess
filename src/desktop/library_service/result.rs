@@ -12,6 +12,7 @@ use crate::game::library_organization::GameLibraryOrganizationReceipt;
 use crate::game::storage_repository::GameStorageReceipt;
 use crate::storage::library_metadata::StorageLibraryMetadataEnumResponse;
 use crate::storage::library_query::StorageLibraryQueryPage;
+use crate::storage::trash::{StorageTrashPlan, StorageTrashReceipt};
 use crate::storage::library_repository::StorageLibraryContentReceipt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,9 @@ pub enum DesktopLibraryServiceEnumResult {
     Metadata(StorageLibraryMetadataEnumResponse),
     Opened(DesktopGameEditorPublication),
     Organized(GameLibraryOrganizationReceipt),
+    TrashPlan(StorageTrashPlan),
+    Trashed(StorageTrashReceipt),
+    Restored(StorageTrashReceipt),
     Editor(DesktopAnnotationCommandsEnumResult),
     PendingSnapshot {
         snapshot: DesktopGameEditorPublication,
@@ -56,7 +60,12 @@ impl DesktopLibraryServiceEnumResult {
             | Self::PendingSnapshot { snapshot, .. }
             | Self::Saved { snapshot, .. } => Some(snapshot.context()),
             Self::Editor(result) => Some(Self::result_context(result)),
-            Self::Query(_) | Self::Metadata(_) | Self::Organized(_) => None,
+            Self::Query(_)
+            | Self::Metadata(_)
+            | Self::Organized(_)
+            | Self::TrashPlan(_)
+            | Self::Trashed(_)
+            | Self::Restored(_) => None,
         }
     }
 
@@ -83,6 +92,8 @@ impl DesktopLibraryServiceEnumResult {
         }
         let catalog = match self {
             Self::Query(page) => page.catalog_revision(),
+            Self::TrashPlan(plan) => plan.catalog_revision(),
+            Self::Trashed(receipt) | Self::Restored(receipt) => receipt.catalog_revision(),
             Self::Metadata(response) => match response {
                 StorageLibraryMetadataEnumResponse::Folders(page) => page.catalog_revision(),
                 StorageLibraryMetadataEnumResponse::Tags(page) => page.catalog_revision(),
@@ -128,6 +139,9 @@ impl Debug for DesktopLibraryServiceEnumResult {
                 .debug_tuple("Opened")
                 .field(&snapshot.context())
                 .finish(),
+            Self::TrashPlan(plan) => formatter.debug_tuple("TrashPlan").field(plan).finish(),
+            Self::Trashed(receipt) => formatter.debug_tuple("Trashed").field(receipt).finish(),
+            Self::Restored(receipt) => formatter.debug_tuple("Restored").field(receipt).finish(),
             Self::Organized(receipt) => formatter
                 .debug_tuple("Organized")
                 .field(receipt)

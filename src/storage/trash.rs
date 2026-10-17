@@ -35,7 +35,7 @@ pub enum StorageTrashPreviewRequest {
     PermanentlyDelete(GameId),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageTrashPlan {
     action: StorageTrashPreviewRequest,
     catalog: StorageLibraryCatalogRevision,
@@ -88,9 +88,10 @@ impl StorageTrashPlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageTrashApprovedPlan(StorageTrashPlan);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageTrashClosedGameEvidence {
     id: GameId,
     revision: GameStorageRevision,
@@ -108,6 +109,7 @@ impl StorageTrashClosedGameEvidence {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageTrashConfirmedRequest {
     approved: StorageTrashApprovedPlan,
     timestamp: GameLibraryOrganizationTimestamp,
@@ -153,7 +155,7 @@ impl StorageTrashConfirmedRequest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageTrashRestoreRequest {
     target: GameLibraryOrganizationGameTarget,
     timestamp: GameLibraryOrganizationTimestamp,
@@ -182,7 +184,7 @@ pub enum StorageTrashEnumAppliedAction {
     Deleted(GameId),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageTrashReceipt {
     action: StorageTrashEnumAppliedAction,
     catalog: StorageLibraryCatalogRevision,

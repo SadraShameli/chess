@@ -10,6 +10,9 @@ use crate::game::library_organization::GameLibraryOrganizationRequest;
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::library_metadata::StorageLibraryMetadataEnumRequest;
+use crate::storage::trash::{
+    StorageTrashConfirmedRequest, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+};
 use crate::storage::library_query::{StorageLibraryQueryCursor, StorageLibraryQueryOptions};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -28,6 +31,9 @@ pub enum DesktopLibraryServiceEnumAction {
         action: DesktopAnnotationCommandsEnumAction,
     },
     Organize(GameLibraryOrganizationRequest),
+    PreviewTrash(StorageTrashPreviewRequest),
+    ApplyTrash(StorageTrashConfirmedRequest),
+    Restore(StorageTrashRestoreRequest),
 }
 
 impl Debug for DesktopLibraryServiceEnumAction {
@@ -50,6 +56,14 @@ impl Debug for DesktopLibraryServiceEnumAction {
                 .debug_tuple("Organize")
                 .field(&std::mem::discriminant(request.mutation()))
                 .finish(),
+            Self::PreviewTrash(request) => {
+                formatter.debug_tuple("PreviewTrash").field(request).finish()
+            }
+            Self::ApplyTrash(request) => formatter
+                .debug_tuple("ApplyTrash")
+                .field(&request.plan().action())
+                .finish(),
+            Self::Restore(request) => formatter.debug_tuple("Restore").field(request).finish(),
             Self::Editor { expected, action } => formatter
                 .debug_struct("Editor")
                 .field("expected", expected)
@@ -95,6 +109,9 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
             | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => None,
         }
     }
@@ -133,6 +150,9 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::Metadata(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => 0,
             DesktopLibraryServiceEnumAction::Organize(request) => request.transport_bytes(),
+            DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_) => 0,
         };
         let bytes = payload
             .checked_add(std::mem::size_of::<Self>())
@@ -167,6 +187,9 @@ impl DesktopLibraryServiceOperation {
             },
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -181,6 +204,9 @@ impl DesktopLibraryServiceOperation {
             }
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -207,6 +233,9 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
             | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => false,
         }
     }
@@ -217,6 +246,9 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Editor { expected, .. } => Some(expected.game()),
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Organize(_)
+            | DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }

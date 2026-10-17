@@ -99,6 +99,9 @@ impl PresentationAnalysisAnnotations {
             DesktopLibraryServiceEnumResult::Query(_)
             | DesktopLibraryServiceEnumResult::Metadata(_)
             | DesktopLibraryServiceEnumResult::Organized(_)
+            | DesktopLibraryServiceEnumResult::TrashPlan(_)
+            | DesktopLibraryServiceEnumResult::Trashed(_)
+            | DesktopLibraryServiceEnumResult::Restored(_)
             | DesktopLibraryServiceEnumResult::Opened(_) => {
                 Err(PresentationAnalysisEditorError::WrongResult)
             }

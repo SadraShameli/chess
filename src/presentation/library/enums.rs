@@ -12,10 +12,11 @@ pub(crate) enum PresentationLibraryEnumLane {
     Folder,
     Open,
     Organize,
+    Trash,
 }
 
 impl PresentationLibraryEnumLane {
-    pub(crate) const COUNT: usize = 6;
+    pub(crate) const COUNT: usize = 7;
 
     pub(crate) fn operation(
         operation: &DesktopLibraryServiceOperation,
@@ -29,6 +30,9 @@ impl PresentationLibraryEnumLane {
             },
             DesktopLibraryServiceEnumAction::Open { .. } => Self::Open,
             DesktopLibraryServiceEnumAction::Organize(_) => Self::Organize,
+            DesktopLibraryServiceEnumAction::PreviewTrash(_)
+            | DesktopLibraryServiceEnumAction::ApplyTrash(_)
+            | DesktopLibraryServiceEnumAction::Restore(_) => Self::Trash,
             DesktopLibraryServiceEnumAction::Editor { .. } => {
                 return Err(PresentationLibraryError::EditorAction);
             }
@@ -43,6 +47,7 @@ impl PresentationLibraryEnumLane {
             Self::Folder => 3,
             Self::Open => 4,
             Self::Organize => 5,
+            Self::Trash => 6,
         }
     }
 
@@ -54,6 +59,7 @@ impl PresentationLibraryEnumLane {
             Self::Folder => "Folder details",
             Self::Open => "Open saved game",
             Self::Organize => "Organize library",
+            Self::Trash => "Trash",
         }
     }
 }
