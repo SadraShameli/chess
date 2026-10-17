@@ -1,5 +1,6 @@
 use url::Url;
 
+use chess::package::digest::PackageDigest;
 use chess::update::cache::UpdateCache;
 use chess::update::discovery::{UpdateOrigins, UpdateRedirects};
 use chess::update::http::UpdateHttpRequest;
@@ -157,14 +158,20 @@ fn installers_refuse_relative_packages_before_running_anything() {
     use chess::desktop::native::update::windows::DesktopNativeUpdateWindows;
     use std::path::Path;
 
+    let digest = PackageDigest::hash_slice(b"package");
     assert!(
-        DesktopNativeUpdateWindows::install(Path::new("setup.exe"), Path::new("C:\\Chess"))
-            .is_err()
+        DesktopNativeUpdateWindows::install(
+            Path::new("setup.exe"),
+            Path::new("C:\\Chess"),
+            digest
+        )
+        .is_err()
     );
     assert!(
         DesktopNativeUpdateMacos::install(
             Path::new("package.zip"),
-            Path::new("/Applications/Chess.app")
+            Path::new("/Applications/Chess.app"),
+            digest
         )
         .is_err()
     );
@@ -184,7 +191,11 @@ fn the_appimage_swap_writes_an_exclusive_staging_file_and_leaves_no_residue() ->
     std::fs::write(&destination, b"old image")?;
     let package = root.join("package.bin");
     std::fs::write(&package, b"new image")?;
-    let outcome = DesktopNativeUpdateLinux::install_appimage(&package, &destination)?;
+    let outcome = DesktopNativeUpdateLinux::install_appimage(
+        &package,
+        &destination,
+        PackageDigest::hash_slice(b"new image"),
+    )?;
     assert_eq!(outcome, DesktopNativeUpdateEnumOutcome::Installed);
     assert_eq!(std::fs::read(&destination)?, b"new image");
     assert_eq!(std::fs::metadata(&destination)?.permissions().mode() & 0o777, 0o755);
@@ -192,5 +203,109 @@ fn the_appimage_swap_writes_an_exclusive_staging_file_and_leaves_no_residue() ->
         .filter_map(Result::ok)
         .any(|entry| entry.file_name().to_string_lossy().starts_with(".chess-update-"));
     assert!(!residue);
+    Ok(())
+}
+
+#[test]
+fn a_verified_copy_hashes_the_bytes_it_writes_and_removes_a_mismatched_copy() -> UpdateSecurityResult
+{
+    use chess::desktop::native::update::{DesktopNativeUpdateError, DesktopNativeUpdateStaging};
+
+    let directory = tempfile::tempdir()?;
+    let source = directory.path().join("source.bin");
+    std::fs::write(&source, b"signed bytes")?;
+    let good = directory.path().join("good.bin");
+    DesktopNativeUpdateStaging::copy_verified(
+        &source,
+        PackageDigest::hash_slice(b"signed bytes"),
+        &good,
+    )?;
+    assert_eq!(std::fs::read(&good)?, b"signed bytes");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&good)?.permissions().mode() & 0o777, 0o600);
+    }
+    let bad = directory.path().join("bad.bin");
+    let mismatch = DesktopNativeUpdateStaging::copy_verified(
+        &source,
+        PackageDigest::hash_slice(b"other bytes"),
+        &bad,
+    );
+    assert!(matches!(mismatch, Err(DesktopNativeUpdateError::DigestMismatch)));
+    assert!(!bad.exists());
+    let occupied = DesktopNativeUpdateStaging::copy_verified(
+        &source,
+        PackageDigest::hash_slice(b"signed bytes"),
+        &good,
+    );
+    assert!(occupied.is_err());
+    assert_eq!(std::fs::read(&good)?, b"signed bytes");
+    let folder = DesktopNativeUpdateStaging::copy_verified(
+        directory.path(),
+        PackageDigest::hash_slice(b"signed bytes"),
+        &directory.path().join("never.bin"),
+    );
+    assert!(folder.is_err());
+    Ok(())
+}
+
+#[test]
+fn the_debian_plan_runs_one_root_helper_action_with_the_digest_and_refuses_unsafe_paths()
+-> UpdateSecurityResult {
+    use chess::desktop::native::update::linux::DesktopNativeUpdateLinuxDebPlan;
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    let digest = PackageDigest::hash_slice(b"deb");
+    let plan = DesktopNativeUpdateLinuxDebPlan::new(
+        Path::new("/usr/lib/chess/chess-update-helper"),
+        Path::new("/home/user/.cache/chess/update/chess.deb"),
+        digest,
+    )?;
+    assert_eq!(DesktopNativeUpdateLinuxDebPlan::PROGRAM, "pkexec");
+    assert_eq!(
+        plan.arguments(),
+        vec![
+            OsString::from("/usr/lib/chess/chess-update-helper"),
+            OsString::from("--privileged-install-deb"),
+            OsString::from("--package"),
+            OsString::from("/home/user/.cache/chess/update/chess.deb"),
+            OsString::from("--sha256"),
+            OsString::from(digest.to_string()),
+        ]
+    );
+    for (helper, package) in [
+        ("relative/helper", "/tmp/chess.deb"),
+        ("/usr/lib/chess/helper", "relative.deb"),
+        ("/usr/lib/chess/helper", "-evil.deb"),
+        ("/usr/lib/chess/../../tmp/helper", "/tmp/chess.deb"),
+        ("/usr/lib/chess/helper", "/tmp/../etc/chess.deb"),
+    ] {
+        assert!(
+            DesktopNativeUpdateLinuxDebPlan::new(Path::new(helper), Path::new(package), digest)
+                .is_err(),
+            "{helper} {package}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_a_root_owned_helper_in_root_owned_directories_may_run_privileged() -> UpdateSecurityResult {
+    use chess::desktop::native::update::linux::DesktopNativeUpdateLinux;
+    use std::path::Path;
+
+    let directory = tempfile::tempdir()?;
+    let helper = directory.path().canonicalize()?.join("chess-update-helper");
+    std::fs::write(&helper, b"#!/bin/sh\n")?;
+    assert!(DesktopNativeUpdateLinux::validate_privileged_helper(&helper).is_err());
+    assert!(
+        DesktopNativeUpdateLinux::validate_privileged_helper(Path::new("relative-helper"))
+            .is_err()
+    );
+    assert!(
+        DesktopNativeUpdateLinux::validate_privileged_helper(directory.path()).is_err()
+    );
     Ok(())
 }

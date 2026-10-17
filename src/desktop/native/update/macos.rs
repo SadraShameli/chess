@@ -4,7 +4,10 @@ use std::process::Command;
 
 use uuid::Uuid;
 
-use crate::desktop::native::update::{DesktopNativeUpdateEnumOutcome, DesktopNativeUpdateError};
+use crate::desktop::native::update::{
+    DesktopNativeUpdateEnumOutcome, DesktopNativeUpdateError, DesktopNativeUpdateStaging,
+};
+use crate::package::digest::PackageDigest;
 
 pub struct DesktopNativeUpdateMacos;
 
@@ -26,6 +29,7 @@ impl DesktopNativeUpdateMacos {
     pub fn install(
         package: &Path,
         bundle: &Path,
+        digest: PackageDigest,
     ) -> Result<DesktopNativeUpdateEnumOutcome, DesktopNativeUpdateError> {
         let parent = bundle
             .parent()
@@ -38,7 +42,12 @@ impl DesktopNativeUpdateMacos {
         }
         let staging = parent.join(format!(".chess-update-{}", Uuid::new_v4()));
         fs::create_dir(&staging)?;
-        let outcome = Self::replace(package, bundle, &staging);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
+        }
+        let outcome = Self::replace(package, bundle, &staging, digest);
         fs::remove_dir_all(&staging)?;
         outcome
     }
@@ -47,12 +56,17 @@ impl DesktopNativeUpdateMacos {
         package: &Path,
         bundle: &Path,
         staging: &Path,
+        digest: PackageDigest,
     ) -> Result<DesktopNativeUpdateEnumOutcome, DesktopNativeUpdateError> {
+        let verified = staging.join("package.zip");
+        DesktopNativeUpdateStaging::copy_verified(package, digest, &verified)?;
+        let extracted = staging.join("extracted");
+        fs::create_dir(&extracted)?;
         let status = Command::new("/usr/bin/ditto")
             .arg("-x")
             .arg("-k")
-            .arg(package)
-            .arg(staging)
+            .arg(&verified)
+            .arg(&extracted)
             .status()?;
         if !status.success() {
             return Err(DesktopNativeUpdateError::Command {
@@ -60,7 +74,7 @@ impl DesktopNativeUpdateMacos {
                 status: status.code(),
             });
         }
-        let fresh = Self::single_bundle(staging)?;
+        let fresh = Self::single_bundle(&extracted)?;
         let retired = staging.join("previous.app");
         fs::rename(bundle, &retired)?;
         if let Err(error) = fs::rename(&fresh, bundle) {

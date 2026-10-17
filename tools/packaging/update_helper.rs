@@ -3,6 +3,9 @@ use std::process::{Command, ExitCode};
 use std::str::FromStr;
 use std::time::Duration;
 
+use chess::desktop::native::update::linux::{
+    DesktopNativeUpdateLinux, DesktopNativeUpdateLinuxDebPlan,
+};
 use chess::desktop::native::update::{DesktopNativeUpdate, DesktopNativeUpdateEnumOutcome};
 use chess::desktop::profile::installation::{
     DesktopProfileInstallationEnumOutcome, DesktopProfileInstallationEnumState,
@@ -25,8 +28,6 @@ enum UpdateHelperError {
     Argument(&'static str),
     #[error("The committed intent does not match this handoff")]
     Intent,
-    #[error("The package bytes no longer match the committed digest")]
-    Package,
     #[error("The profile is owned by another process")]
     Busy,
     #[error("{0}")]
@@ -114,18 +115,13 @@ fn run(arguments: UpdateHelperArguments) -> Result<(), UpdateHelperError> {
     {
         return Err(UpdateHelperError::Intent);
     }
-    let file = std::fs::File::open(&arguments.package)
-        .map_err(|error| UpdateHelperError::Other(error.to_string()))?;
-    let digest = PackageDigest::read(file).map_err(|_error| UpdateHelperError::Package)?;
-    if digest != intent.package_digest() {
-        return Err(UpdateHelperError::Package);
-    }
     let spec = intent.spec();
     let result = DesktopNativeUpdate::install(
         arguments.target,
         &arguments.package,
         &arguments.destination,
         &arguments.version,
+        intent.package_digest(),
     );
     let (outcome, relaunch) = match result {
         Ok(DesktopNativeUpdateEnumOutcome::Installed) => {
@@ -151,8 +147,47 @@ fn run(arguments: UpdateHelperArguments) -> Result<(), UpdateHelperError> {
     Ok(())
 }
 
+struct UpdateHelperPrivileged;
+
+impl UpdateHelperPrivileged {
+    fn run(arguments: Vec<String>) -> Result<(), UpdateHelperError> {
+        let mut values = std::collections::HashMap::new();
+        let mut iterator = arguments.into_iter();
+        while let Some(flag) = iterator.next() {
+            let value = iterator.next().ok_or(UpdateHelperError::Usage)?;
+            if values.insert(flag, value).is_some() {
+                return Err(UpdateHelperError::Usage);
+            }
+        }
+        let package = values
+            .remove(DesktopNativeUpdateLinuxDebPlan::PACKAGE_FLAG)
+            .ok_or(UpdateHelperError::Argument("--package"))?;
+        let digest = values
+            .remove(DesktopNativeUpdateLinuxDebPlan::DIGEST_FLAG)
+            .ok_or(UpdateHelperError::Argument("--sha256"))?;
+        if !values.is_empty() {
+            return Err(UpdateHelperError::Usage);
+        }
+        let digest = PackageDigest::from_str(&digest)
+            .map_err(|_error| UpdateHelperError::Argument("--sha256"))?;
+        DesktopNativeUpdateLinux::privileged_install_deb(&PathBuf::from(package), digest)
+            .map_err(|error| UpdateHelperError::Other(error.to_string()))
+    }
+}
+
 fn main() -> ExitCode {
-    let arguments = match UpdateHelperArguments::parse(std::env::args().skip(1).collect()) {
+    let mut command_line: Vec<String> = std::env::args().skip(1).collect();
+    if command_line.first().map(String::as_str) == Some(DesktopNativeUpdateLinuxDebPlan::ACTION) {
+        command_line.remove(0);
+        return match UpdateHelperPrivileged::run(command_line) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        };
+    }
+    let arguments = match UpdateHelperArguments::parse(command_line) {
         Ok(arguments) => arguments,
         Err(error) => {
             eprintln!("{error}");
