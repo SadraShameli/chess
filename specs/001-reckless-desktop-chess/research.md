@@ -93,8 +93,8 @@ Sources:
 ## 3. Chess rules, notation, and persistence
 
 **Decision**: Wrap shakmaty 0.30.2 in owning BoardPosition/GameSession types; use
-pgn-reader 0.29.1 for bounded streaming PGN import, and an owned exporter for the
-supported move-tree/annotation contract. The owner selected SQLite for indexed
+pgn-reader 0.29.1 helpers with a strict owned bounded PGN lexer, and an owned
+exporter for the supported move-tree/annotation contract. The owner selected SQLite for indexed
 data, with PGN/FEN interchange. Select bundled rusqlite and the storage actor/
 schema ownership in resolved decisions.
 
@@ -103,6 +103,15 @@ support are concrete library facilities. pgn-reader moved into the shakmaty
 repository; its old separate repository is not the current release source.
 Its 0.29.1 manifest depends on shakmaty 0.30. Both declare Rust 1.97 minimum,
 compatible with the project's 1.99 pin.
+
+Implementation inspection showed that Reader success can silently omit malformed
+tokens and semicolon comments. The notation owner therefore performs strict
+lexical validation and reuses the board owner for legality. A standalone semantic
+probe also observed incorrect adjacent backslash-pair decoding in the pinned
+RawTag helper before the importer adopted one strict pair decoder. The NAG
+helper remains in use; vendor code is unchanged. Exact source observations,
+the probe and integration limits are retained in
+[PGN import evidence](evidence/pgn-import.md).
 
 **Alternatives considered**: The engine's FEN parser is not a rules library.
 Implementing every move rule from scratch adds correctness risk. Browser chess

@@ -35,8 +35,16 @@ mod game_transition_fixture;
 #[path = "game/tree.rs"]
 mod game_tree;
 
+#[path = "notation/fen.rs"]
+mod notation_fen;
 #[path = "notation/game_identity.rs"]
 mod notation_game_identity;
+#[path = "notation/interchange.rs"]
+mod notation_interchange;
+#[path = "notation/pgn_export.rs"]
+mod notation_pgn_export;
+#[path = "notation/pgn_import.rs"]
+mod notation_pgn_import;
 
 #[path = "puzzle/checkpoint.rs"]
 mod puzzle_checkpoint;

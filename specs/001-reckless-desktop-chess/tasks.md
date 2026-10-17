@@ -202,12 +202,12 @@ replaces each caller. Do not reset, discard or stage them during task generation
 
 **Independent Test**: Play locally with no engine replies, round-trip annotated games, organize/search the library, preview duplicates/errors and recover games from Trash.
 
-- [ ] T093 [P] [US3] Add full/mainline PGN and declared-variant FEN round-trip, invalid-branch exclusion and streaming-limit fixtures in `tests/notation/interchange.rs`.
+- [X] T093 [P] [US3] Add full/mainline PGN and declared-variant FEN round-trip, invalid-branch exclusion and streaming-limit fixtures in `tests/notation/interchange.rs`. Accepted mirrored/public/private fixtures and observed review regressions: [PGN import](evidence/pgn-import.md) and [PGN/FEN export](evidence/pgn-export.md).
 - [ ] T094 [P] [US3] Add library metadata filters, normalization/duplicate preview, folder removal, modified-time, Trash/restore and notes/variation-protection tests in `tests/storage/library.rs`.
 - [ ] T095 [US3] Add native library/local-play/annotation input and modal focus flows in `tests/presentation/library.rs`, including explicit Save/Discard/Stay, full/mainline export, invalid/duplicate previews, subtree confirmations, paused reopen and native file-handle cancellation.
 - [ ] T096 [US3] Complete local-seat creation/turn routing and local consent UI in `src/game/local_play.rs` and `src/presentation/game/local_controls.rs`, reusing authoritative legality/clocks and never starting an engine reply.
-- [ ] T097 [US3] Implement bounded streaming PGN staging in `src/notation/pgn_import.rs`, with 20 GiB input, 1,000,000 games, 100,000,000 total plies, 100,000 plies per game, 64 variation levels, 1 MiB text fields and 64 MiB decoded buffers, rejecting size/space limit violations before commit; exclude an entire game with invalid moves/branches.
-- [ ] T098 [US3] Implement canonical PGN full/mainline export and declared-variant FEN import/export in `src/notation/pgn_export.rs` and `src/notation/fen.rs`, preserving ordered unknown tags, escaped plain-text notes/NAGs/markings/clocks/variations and the 512-byte FEN bound.
+- [ ] T097 [US3] Implement bounded streaming PGN staging in `src/notation/pgn_import.rs`, with 20 GiB input, 1,000,000 games, 100,000,000 total plies, 100,000 plies per game, 64 variation levels, 1 MiB text fields and 64 MiB decoded buffers, rejecting size/space limit violations before commit; exclude an entire game with invalid moves/branches. Verified parser/in-memory staging progress: [PGN import](evidence/pgn-import.md). Complete physical staging/space acceptance remains open with T100.
+- [X] T098 [US3] Implement canonical PGN full/mainline export and declared-variant FEN import/export in `src/notation/pgn_export.rs` and `src/notation/fen.rs`, preserving ordered unknown tags, escaped plain-text notes/NAGs/markings/clocks/variations and the 512-byte FEN bound. Accepted supported representations, explicit refusals and canonical checkpoint: [PGN/FEN export](evidence/pgn-export.md). Native handles/publication and UI remain T106/T108.
 - [X] T099 [US3] Implement collision-checked game/position identity and duplicate matching in `src/notation/game_identity.rs`, with Unicode NFC/trim/case-fold rules, canonical starts/mainline, explicit partial/missing metadata and preserved display strings. Exact model constraints: "variant, initial position, played mainline, players, date, and result". Accepted owner, observed partial-date regression and canonical verification: [game identity](evidence/game-identity.md). Import preview and dataset preparation remain T100/T268.
 - [ ] T100 [US3] Implement staged import previews, space estimates, exclusion/duplicate counts, default Skip/explicit Keep Copy and cancel cleanup in `src/storage/import_session.rs`; confirm immutable preview identity/digest before atomic commit and preserve existing annotations.
 - [ ] T101 [US3] Add library organization/index schema in `src/storage/migrations/0003_library.sql`, preserving "one folder or Unfiled" per game, multiple tags, favorites, Trash status and no fixed total-library game cap. Exact model constraints: "favorites, tags, folders, and Trash status"; "tags allow multiple groupings."
@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 1 library/interchange task completed, 8 puzzle tasks completed, 2 dataset tasks completed and 208 pending.
-**Active parallel tasks**: 43 across disjoint contract-test files; three additional
-`[P]` markers belong to historical completed rows. No native task is accepted
+**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 3 library/interchange tasks completed, 8 puzzle tasks completed, 2 dataset tasks completed and 206 pending.
+**Pending parallel tasks**: 33 across disjoint contract-test files; 13 additional
+`[P]` markers belong to completed rows, including three historical rows. No native task is accepted
 merely by this generation.
