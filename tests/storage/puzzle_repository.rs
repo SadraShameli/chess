@@ -1328,7 +1328,7 @@ async fn confirmed_history_deletion_removes_only_the_selected_saved_runs()
         PuzzleHistoryEnumConfirmation::Confirmed,
         None,
     )?;
-    assert_eq!(repository.delete_history(deletion).await?, 1);
+    assert_eq!(repository.delete_history(deletion.authorization()).await?, 1);
     assert!(repository.load(first).await?.is_none());
     assert!(repository.load(second).await?.is_some());
     let deletion = history.delete(
@@ -1336,7 +1336,7 @@ async fn confirmed_history_deletion_removes_only_the_selected_saved_runs()
         PuzzleHistoryEnumConfirmation::Confirmed,
         None,
     )?;
-    assert_eq!(repository.delete_history(deletion).await?, 1);
+    assert_eq!(repository.delete_history(deletion.authorization()).await?, 1);
     assert!(repository.inventory(None).await?.entries().is_empty());
     store.close().await?;
     Ok(())
@@ -1382,7 +1382,7 @@ async fn deleted_attempt_is_tombstoned_and_the_saved_run_still_loads_and_resaves
         None,
     )?;
     assert_eq!(deletion.summary().finalized(), 0);
-    assert_eq!(repository.delete_history(deletion).await?, 1);
+    assert_eq!(repository.delete_history(deletion.authorization()).await?, 1);
     let loaded = repository.load(id).await?.ok_or("missing run")?;
     assert_eq!(loaded.deleted_attempts(), &[attempt]);
     assert_eq!(loaded.storage_revision(), receipt.storage_revision());

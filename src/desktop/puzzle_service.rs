@@ -14,6 +14,9 @@ use crate::desktop::puzzle_bridge::{
     DesktopPuzzleBridgeError,
 };
 use crate::desktop::puzzle_snapshot::DesktopPuzzleSnapshot;
+use crate::puzzle::history::{
+    PuzzleHistoryEnumConfirmation, PuzzleHistoryEnumScope, PuzzleHistoryError,
+};
 use crate::puzzle::persistence::PuzzlePersistenceStorageRevision;
 use crate::puzzle::session::{PuzzleSessionContext, PuzzleSessionId};
 use crate::puzzle::summary::PuzzleSummary;
@@ -37,12 +40,18 @@ pub enum DesktopPuzzleServiceEnumOperation {
         session: PuzzleSessionId,
         reason: PuzzleTimerEnumPauseReason,
     },
+    DeleteHistory {
+        scope: PuzzleHistoryEnumScope,
+        confirmation: PuzzleHistoryEnumConfirmation,
+    },
 }
 
 impl DesktopPuzzleServiceEnumOperation {
     pub fn expected_revision(&self) -> DesktopRevision {
         match self {
-            Self::Inventory { .. } | Self::Interrupt { .. } => DesktopRevision::ZERO,
+            Self::Inventory { .. } | Self::Interrupt { .. } | Self::DeleteHistory { .. } => {
+                DesktopRevision::ZERO
+            }
             Self::OpenSaved {
                 storage_revision, ..
             } => DesktopRevision::for_puzzle_storage(*storage_revision),
@@ -54,7 +63,7 @@ impl DesktopPuzzleServiceEnumOperation {
         match self {
             Self::Interrupt { .. } => true,
             Self::Session { operation, .. } => operation.is_urgent(),
-            Self::Inventory { .. } | Self::OpenSaved { .. } => false,
+            Self::Inventory { .. } | Self::OpenSaved { .. } | Self::DeleteHistory { .. } => false,
         }
     }
 
@@ -62,7 +71,7 @@ impl DesktopPuzzleServiceEnumOperation {
         match self {
             Self::Interrupt { .. } => true,
             Self::Session { operation, .. } => operation.is_available_while_closing(),
-            Self::Inventory { .. } | Self::OpenSaved { .. } => false,
+            Self::Inventory { .. } | Self::OpenSaved { .. } | Self::DeleteHistory { .. } => false,
         }
     }
 }
@@ -82,12 +91,15 @@ pub enum DesktopPuzzleServiceEnumResult {
         summary: PuzzleSummary,
     },
     Session(DesktopPuzzleBridgeEnumResult),
+    HistoryDeleted {
+        removed: usize,
+    },
 }
 
 impl DesktopPuzzleServiceEnumResult {
     pub fn revision(&self) -> Option<DesktopRevision> {
         match self {
-            Self::Inventory(_) => None,
+            Self::Inventory(_) | Self::HistoryDeleted { .. } => None,
             Self::Opened(snapshot) => {
                 Some(DesktopRevision::for_puzzle(snapshot.context().revision()))
             }
@@ -120,6 +132,10 @@ impl std::fmt::Debug for DesktopPuzzleServiceEnumResult {
                 .field("summary", summary)
                 .finish(),
             Self::Session(result) => formatter.debug_tuple("Session").field(result).finish(),
+            Self::HistoryDeleted { removed } => formatter
+                .debug_struct("HistoryDeleted")
+                .field("removed", removed)
+                .finish(),
         }
     }
 }
@@ -136,6 +152,8 @@ pub enum DesktopPuzzleServiceError {
     Closing,
     #[error("The saved puzzle request was cancelled")]
     Cancelled,
+    #[error(transparent)]
+    History(#[from] PuzzleHistoryError),
     #[error("The saved puzzle run {0:?} is missing")]
     Missing(PuzzleSessionId),
     #[error("The saved puzzle run {id:?} changed from revision {expected:?} to {actual:?}")]

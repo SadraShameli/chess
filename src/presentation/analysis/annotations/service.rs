@@ -98,6 +98,7 @@ impl PresentationAnalysisAnnotations {
             }
             DesktopLibraryServiceEnumResult::Query(_)
             | DesktopLibraryServiceEnumResult::Metadata(_)
+            | DesktopLibraryServiceEnumResult::Organized(_)
             | DesktopLibraryServiceEnumResult::Opened(_) => {
                 Err(PresentationAnalysisEditorError::WrongResult)
             }

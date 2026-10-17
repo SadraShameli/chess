@@ -70,6 +70,7 @@ impl DesktopLibraryServiceOpenApplicationRecoveryReviewPublication {
                 DesktopLibraryServiceEnumResult::Opened(snapshot) => Ok(Self::capture(snapshot)),
                 value @ (DesktopLibraryServiceEnumResult::Query(_)
                 | DesktopLibraryServiceEnumResult::Metadata(_)
+                | DesktopLibraryServiceEnumResult::Organized(_)
                 | DesktopLibraryServiceEnumResult::Editor(_)
                 | DesktopLibraryServiceEnumResult::PendingSnapshot { .. }
                 | DesktopLibraryServiceEnumResult::Saved { .. }) => Err(format!(

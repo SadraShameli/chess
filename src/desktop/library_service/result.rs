@@ -8,6 +8,7 @@ use crate::desktop::game_editor::{DesktopGameEditorContext, DesktopGameEditorPub
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::library_service::DesktopLibraryServiceOperation;
 use crate::game::enums::GameRevision;
+use crate::game::library_organization::GameLibraryOrganizationReceipt;
 use crate::game::storage_repository::GameStorageReceipt;
 use crate::storage::library_metadata::StorageLibraryMetadataEnumResponse;
 use crate::storage::library_query::StorageLibraryQueryPage;
@@ -36,6 +37,7 @@ pub enum DesktopLibraryServiceEnumResult {
     Query(Arc<StorageLibraryQueryPage>),
     Metadata(StorageLibraryMetadataEnumResponse),
     Opened(DesktopGameEditorPublication),
+    Organized(GameLibraryOrganizationReceipt),
     Editor(DesktopAnnotationCommandsEnumResult),
     PendingSnapshot {
         snapshot: DesktopGameEditorPublication,
@@ -54,7 +56,7 @@ impl DesktopLibraryServiceEnumResult {
             | Self::PendingSnapshot { snapshot, .. }
             | Self::Saved { snapshot, .. } => Some(snapshot.context()),
             Self::Editor(result) => Some(Self::result_context(result)),
-            Self::Query(_) | Self::Metadata(_) => None,
+            Self::Query(_) | Self::Metadata(_) | Self::Organized(_) => None,
         }
     }
 
@@ -76,6 +78,9 @@ impl DesktopLibraryServiceEnumResult {
         if let Some(context) = self.editor_context() {
             return Some(DesktopLibraryServiceOperation::editor_revision(context));
         }
+        if let Self::Organized(receipt) = self {
+            return Some(DesktopRevision::for_library_organization(receipt.revision()));
+        }
         let catalog = match self {
             Self::Query(page) => page.catalog_revision(),
             Self::Metadata(response) => match response {
@@ -84,6 +89,7 @@ impl DesktopLibraryServiceEnumResult {
                 StorageLibraryMetadataEnumResponse::Folder(read) => read.catalog_revision(),
             },
             Self::Opened(_)
+            | Self::Organized(_)
             | Self::Editor(_)
             | Self::PendingSnapshot { .. }
             | Self::Saved { .. } => return None,
@@ -121,6 +127,10 @@ impl Debug for DesktopLibraryServiceEnumResult {
             Self::Opened(snapshot) => formatter
                 .debug_tuple("Opened")
                 .field(&snapshot.context())
+                .finish(),
+            Self::Organized(receipt) => formatter
+                .debug_tuple("Organized")
+                .field(receipt)
                 .finish(),
             Self::Editor(result) => formatter
                 .debug_struct("Editor")

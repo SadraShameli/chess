@@ -54,10 +54,43 @@ impl PresentationBoardToolbar {
             );
         }
         markings.select_color(color);
+        ui.label("Mark from");
+        ui.add(
+            egui::TextEdit::singleline(markings.entry_origin_mut())
+                .id_salt("chess.board.marking_origin")
+                .hint_text("e2")
+                .desired_width(40.0),
+        )
+        .widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Marking source square")
+        });
+        ui.label("to");
+        ui.add(
+            egui::TextEdit::singleline(markings.entry_destination_mut())
+                .id_salt("chess.board.marking_destination")
+                .hint_text("e4")
+                .desired_width(40.0),
+        )
+        .widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::TextEdit,
+                true,
+                "Marking destination square for arrows",
+            )
+        });
+        if ui.button("Mark Circle").clicked() {
+            markings.toggle_entry(false);
+        }
+        if ui.button("Mark Arrow").clicked() {
+            markings.toggle_entry(true);
+        }
+        if markings.is_entry_invalid() {
+            ui.label("Enter squares such as e2 and e4, different for arrows");
+        }
         if ui
             .add_enabled(
-                !markings.marks().is_empty(),
-                egui::Button::new("Clear Temporary Markings").small(),
+                markings.has_temporary(),
+                egui::Button::new("Clear Board Markings").small(),
             )
             .clicked()
         {

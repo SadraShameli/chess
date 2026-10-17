@@ -215,6 +215,7 @@ impl PresentationAppLibrary {
             }
             DesktopLibraryServiceEnumResult::Query(_)
             | DesktopLibraryServiceEnumResult::Metadata(_)
+            | DesktopLibraryServiceEnumResult::Organized(_)
             | DesktopLibraryServiceEnumResult::Editor(_) => return,
         };
         let changed = self

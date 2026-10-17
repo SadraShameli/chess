@@ -119,3 +119,39 @@ async fn metadata_cursor_returns_real_catalog_rows_across_pages() -> DesktopLibr
     drop((first, second));
     fixture.close().await
 }
+
+#[tokio::test]
+async fn organize_action_applies_through_the_service_and_reports_the_organization_revision()
+-> DesktopLibraryServiceTestResult {
+    let mut fixture = DesktopLibraryServiceFixture::new().await?;
+    let request = GameLibraryOrganizationRequest::new(
+        GameLibraryOrganizationTimestamp::new(10)?,
+        GameLibraryOrganizationEnumMutation::CreateTag(
+            uuid::Uuid::from_u128(7).to_string().parse()?,
+            GameLibraryOrganizationName::new("Endgames".to_owned())?,
+        ),
+    )?;
+    let action = DesktopLibraryServiceEnumAction::Organize(request);
+    assert_eq!(action, action.clone());
+    let result = fixture.execute(action).await?;
+    let DesktopLibraryServiceEnumResult::Organized(receipt) = &result else {
+        return Err("missing organization receipt".into());
+    };
+    assert!(receipt.is_changed());
+    assert_eq!(
+        result.revision().map(|revision| revision.value()),
+        Some(receipt.revision().value())
+    );
+    let DesktopLibraryServiceEnumResult::Metadata(StorageLibraryMetadataEnumResponse::Tags(tags)) =
+        fixture
+            .execute(DesktopLibraryServiceEnumAction::Metadata(
+                StorageLibraryMetadataEnumRequest::Tags { cursor: None },
+            ))
+            .await?
+    else {
+        return Err("missing tags".into());
+    };
+    assert_eq!(tags.entries().len(), 1);
+    drop(tags);
+    fixture.close().await
+}

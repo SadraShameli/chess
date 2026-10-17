@@ -37,6 +37,7 @@ use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
+use crate::presentation::analysis::annotations::PresentationAnalysisAnnotationsEnumMarkingInput;
 use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
 use crate::presentation::app::editor::{
     PresentationAppEditor, PresentationAppEditorBoardInput, PresentationAppEditorError,
@@ -46,6 +47,7 @@ use crate::presentation::app::library::{
 };
 use crate::presentation::board::animation::PresentationBoardAnimationFrame;
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
+use crate::presentation::board::markings::{PresentationBoardMark, PresentationBoardMarkRequest};
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::toolbar::PresentationBoardToolbar;
@@ -275,6 +277,7 @@ pub struct PresentationApp {
     preferences: DesktopPreferences,
     settings_open: bool,
     settings_toggle_frame: Option<u64>,
+    markings_identity: Option<(PresentationAppEnumWorkspace, Option<GameId>, Option<GameId>)>,
     inspector_open: bool,
     inspector_toggle_frame: Option<u64>,
     camera_queue: Vec<PresentationBoardEnumCameraAction>,
@@ -325,6 +328,7 @@ impl PresentationApp {
             preferences,
             settings_open: false,
             settings_toggle_frame: None,
+            markings_identity: None,
             inspector_open: true,
             inspector_toggle_frame: None,
             camera_queue: Vec::new(),
@@ -1760,7 +1764,9 @@ impl PresentationApp {
         let mut editor_viewport = None;
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
-                if let Some(action) = PresentationBoardToolbar::show(ui, scene.is_some(), self.board.markings_mut()) {
+                if let Some(action) =
+                    PresentationBoardToolbar::show(ui, scene.is_some(), self.board.markings_mut())
+                {
                     camera_action = Some(action);
                     self.board.cancel_gesture();
                 }
@@ -1771,10 +1777,12 @@ impl PresentationApp {
                                 .show_board(
                                     ui,
                                     port,
-                                    PresentationAppEditorBoardInput::new(scene, picker)
-                                        .with_enabled(
-                                            !self.quit_confirmation && !self.settings_open,
-                                        ),
+                                    PresentationAppEditorBoardInput::new(
+                                        scene,
+                                        picker,
+                                        self.board.markings_mut(),
+                                    )
+                                    .with_enabled(!self.quit_confirmation && !self.settings_open),
                                 )
                                 .map_err(PresentationAppError::from)?,
                         );
@@ -1806,6 +1814,12 @@ impl PresentationApp {
                             ui,
                             PresentationBoardViewInput::new(snapshot, scene, picker)
                                 .with_pending_move(pending_move)
+                                .with_marks_enabled(
+                                    !self.quit_confirmation
+                                        && !promotion_owns_input
+                                        && self.new_game.is_none()
+                                        && !self.settings_open,
+                                )
                                 .with_enabled(
                                     !self.quit_confirmation
                                         && !promotion_owns_input
@@ -2015,6 +2029,7 @@ impl PresentationApp {
         {
             game.controller.restore_board_focus(ui.ctx(), scene);
         }
+        self.synchronize_markings(ui.ctx());
         let animation = if self.workspace == PresentationAppEnumWorkspace::Editor {
             match self.board.camera_animation(ui.ctx()) {
                 Ok(frame) => frame,
@@ -2035,6 +2050,70 @@ impl PresentationApp {
             camera_action,
             animation,
         })
+    }
+
+    fn synchronize_markings(&mut self, ctx: &egui::Context) {
+        let library_game = self
+            .library
+            .as_ref()
+            .and_then(|library| library.annotations.context())
+            .map(|context| context.game());
+        let identity = (self.workspace, self.selected_game, library_game);
+        if self.markings_identity != Some(identity) {
+            self.markings_identity = Some(identity);
+            self.board.markings_mut().reset_baseline();
+        }
+        let requests = self.board.markings_mut().take_requests();
+        let library = match (&mut self.library, self.workspace) {
+            (Some(library), PresentationAppEnumWorkspace::Library) => library,
+            _ => {
+                self.board.markings_mut().set_external(None);
+                return;
+            }
+        };
+        if !requests.is_empty() {
+            ctx.request_repaint();
+        }
+        for request in requests {
+            let Some(context) = library
+                .annotations
+                .markings()
+                .map(|markings| markings.context())
+            else {
+                break;
+            };
+            let input = match request {
+                PresentationBoardMarkRequest::Toggle(mark) => match mark.to_game() {
+                    Some(marking) => {
+                        PresentationAnalysisAnnotationsEnumMarkingInput::Toggle(marking)
+                    }
+                    None => continue,
+                },
+                PresentationBoardMarkRequest::ClearTemporary => {
+                    PresentationAnalysisAnnotationsEnumMarkingInput::ClearTemporary
+                }
+            };
+            if let Err(error) = library.annotations.marking_input(context, input) {
+                self.failure = Some(error.to_string());
+            }
+        }
+        let external = library.annotations.markings().map(|markings| {
+            (
+                markings
+                    .saved()
+                    .iter()
+                    .copied()
+                    .map(PresentationBoardMark::from_game)
+                    .collect(),
+                markings
+                    .temporary()
+                    .iter()
+                    .copied()
+                    .map(PresentationBoardMark::from_game)
+                    .collect(),
+            )
+        });
+        self.board.markings_mut().set_external(external);
     }
 
     fn toggle_frame_is_new(&mut self, frame: u64) -> bool {

@@ -5,6 +5,7 @@ use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::application::{DesktopApplicationPort, DesktopApplicationWakeProvider};
 use crate::desktop::editor_commands::DesktopEditorCommandsSnapshot;
 use crate::presentation::app::editor::{PresentationAppEditor, PresentationAppEditorError};
+use crate::presentation::board::markings::PresentationBoardMarkings;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::view::{
@@ -30,6 +31,7 @@ pub(in crate::presentation::app) struct PresentationAppEditorBoardInput<
 > {
     scene: Option<&'a PresentationBoardScene>,
     picker: &'a mut P,
+    markings: &'a mut PresentationBoardMarkings,
     enabled: bool,
 }
 
@@ -37,10 +39,12 @@ impl<'a, P: PresentationBoardPickingProvider> PresentationAppEditorBoardInput<'a
     pub(in crate::presentation::app) fn new(
         scene: Option<&'a PresentationBoardScene>,
         picker: &'a mut P,
+        markings: &'a mut PresentationBoardMarkings,
     ) -> Self {
         Self {
             scene,
             picker,
+            markings,
             enabled: true,
         }
     }
@@ -89,6 +93,7 @@ impl PresentationAppEditor {
         let PresentationAppEditorBoardInput {
             scene,
             picker,
+            markings,
             enabled,
         } = input;
         let side = ui.available_width().min(ui.available_height()).max(1.0);
@@ -98,6 +103,7 @@ impl PresentationAppEditor {
                 .map_err(PresentationBoardViewError::from)?;
         let Some(scene) = scene else {
             self.gesture = None;
+            markings.cancel_gesture();
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -136,6 +142,7 @@ impl PresentationAppEditor {
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
+        let input_marks_enabled = enabled;
         let enabled = enabled
             && self.can_input()
             && scene.viewport() == viewport
@@ -145,11 +152,29 @@ impl PresentationAppEditor {
         if !enabled {
             self.gesture = None;
         }
+        markings.paint_overlay(ui, scene);
         let response = ui.interact(
             rect,
             egui::Id::new("chess.editor.image"),
             egui::Sense::click_and_drag(),
         );
+        let marks_visible = scene.viewport() == viewport
+            && scene.lifecycle() == SceneEnumLifecycle::Ready
+            && !ui.is_sizing_pass();
+        if marks_visible {
+            markings
+                .handle_input(
+                    ui,
+                    input_marks_enabled,
+                    &mut *picker,
+                    response.contains_pointer(),
+                    scene,
+                    viewport,
+                )
+                .map_err(PresentationBoardViewError::from)?;
+        } else {
+            markings.cancel_gesture();
+        }
         let frame = ui.ctx().cumulative_frame_nr();
         let input_available = enabled && self.input_frame != Some(frame);
         let mut operation = None;

@@ -329,3 +329,84 @@ fn per_player_mean_loss_uses_only_eligible_samples_and_formats_one_decimal()
     assert_eq!(summary.coverage(), ReportScoringEnumCoverage::Partial);
     Ok(())
 }
+
+#[test]
+fn an_unscored_sample_downgrades_a_complete_summary_to_partial() -> ReportScoringTestResult {
+    let scored = ReportScoringFixture::sample("info score cp 0", "info score cp 0")?;
+    let missing = ReportScoringSample::new(
+        &BoardPosition::standard(),
+        BoardPosition::standard().parse_uci("d2d4")?,
+        None,
+        None,
+    )?;
+    let complete = ReportScoringSummary::new(
+        ReportScoringEnumPolicyVersion::ExpectedScoreV1,
+        ReportScoringEnumCoverage::Complete,
+        [&scored],
+    )?;
+    assert_eq!(complete.coverage(), ReportScoringEnumCoverage::Complete);
+    let downgraded = ReportScoringSummary::new(
+        ReportScoringEnumPolicyVersion::ExpectedScoreV1,
+        ReportScoringEnumCoverage::Complete,
+        [&scored, &missing],
+    )?;
+    assert_eq!(downgraded.coverage(), ReportScoringEnumCoverage::Partial);
+    Ok(())
+}
+
+#[test]
+fn bound_only_moves_are_counted_unscored_and_give_no_accuracy() -> ReportScoringTestResult {
+    let lower = ReportScoringFixture::sample("info score cp 100 lowerbound", "info score cp 0")?;
+    let upper = ReportScoringFixture::sample("info score cp 100", "info score cp 0 upperbound")?;
+    for sample in [&lower, &upper] {
+        assert!(matches!(
+            sample.assess(ReportScoringEnumPolicyVersion::ExpectedScoreV1),
+            ReportScoringEnumAssessment::Unscored { .. }
+        ));
+    }
+    let summary = ReportScoringSummary::new(
+        ReportScoringEnumPolicyVersion::ExpectedScoreV1,
+        ReportScoringEnumCoverage::Complete,
+        [&lower, &upper],
+    )?;
+    let white = summary.player(BoardEnumColor::White);
+    assert_eq!(white.scored_moves(), 0);
+    assert_eq!(white.unscored_moves(), 2);
+    assert_eq!(white.accuracy(), None);
+    assert_eq!(white.display_accuracy(), None);
+    assert_eq!(summary.coverage(), ReportScoringEnumCoverage::Partial);
+    Ok(())
+}
+
+#[test]
+fn players_accumulate_independently_with_shared_sample_accounting() -> ReportScoringTestResult {
+    let white = ReportScoringFixture::sample("info score cp 400", "info score cp 0")?;
+    let black = ReportScoringFixture::at(
+        BoardPosition::standard().play_uci("e2e4")?,
+        "e7e5",
+        "info score cp 0",
+        "info score cp 0",
+    )?;
+    let summary = ReportScoringSummary::new(
+        ReportScoringEnumPolicyVersion::ExpectedScoreV1,
+        ReportScoringEnumCoverage::Complete,
+        [&white, &black],
+    )?;
+    assert_eq!(summary.player(BoardEnumColor::White).scored_moves(), 1);
+    assert_eq!(summary.player(BoardEnumColor::Black).scored_moves(), 1);
+    assert_eq!(
+        summary
+            .player(BoardEnumColor::Black)
+            .display_accuracy()
+            .as_deref(),
+        Some("100.0")
+    );
+    assert!(
+        summary
+            .player(BoardEnumColor::White)
+            .accuracy()
+            .ok_or("accuracy")?
+            < 100.0
+    );
+    Ok(())
+}

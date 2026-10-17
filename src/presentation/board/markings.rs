@@ -5,10 +5,14 @@ use bevy_egui::egui::{self, Color32, Modifiers, Painter, Pos2, Rect, Stroke, Ui}
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind};
 use crate::board::square::BoardSquare;
 use crate::desktop::dto::DesktopBoardSnapshot;
+use crate::game::enums::GameEnumMarkingColor;
+use crate::game::move_node::GameMoveNodeMarking;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::transition::PresentationBoardTransition;
-use crate::scene::picking::ScenePicking;
+use crate::presentation::board::view::PresentationBoardPickingProvider;
+use crate::scene::picking::{ScenePicking, ScenePickingViewport};
+use crate::scene::renderer::{SceneRendererError, SceneRendererGeneration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PresentationBoardMarkColor {
@@ -37,6 +41,24 @@ impl PresentationBoardMarkColor {
             Self::Red => Color32::from_rgb(0xdc, 0x26, 0x26),
             Self::Blue => Color32::from_rgb(0x25, 0x63, 0xeb),
             Self::Yellow => Color32::from_rgb(0xca, 0x8a, 0x04),
+        }
+    }
+
+    pub const fn game_color(self) -> GameEnumMarkingColor {
+        match self {
+            Self::Green => GameEnumMarkingColor::Green,
+            Self::Red => GameEnumMarkingColor::Red,
+            Self::Blue => GameEnumMarkingColor::Blue,
+            Self::Yellow => GameEnumMarkingColor::Yellow,
+        }
+    }
+
+    pub const fn from_game_color(color: GameEnumMarkingColor) -> Self {
+        match color {
+            GameEnumMarkingColor::Green => Self::Green,
+            GameEnumMarkingColor::Red => Self::Red,
+            GameEnumMarkingColor::Blue => Self::Blue,
+            GameEnumMarkingColor::Yellow => Self::Yellow,
         }
     }
 
@@ -90,6 +112,46 @@ impl PresentationBoardMark {
             Self::Circle { color, .. } | Self::Arrow { color, .. } => color,
         }
     }
+
+    pub fn from_game(marking: GameMoveNodeMarking) -> Self {
+        let color = PresentationBoardMarkColor::from_game_color(marking.color());
+        match marking.destination() {
+            Some(destination) => Self::Arrow {
+                origin: marking.origin(),
+                destination,
+                color,
+            },
+            None => Self::Circle {
+                square: marking.origin(),
+                color,
+            },
+        }
+    }
+
+    pub fn to_game(self) -> Option<GameMoveNodeMarking> {
+        match self {
+            Self::Circle { square, color } => {
+                Some(GameMoveNodeMarking::circle(color.game_color(), square))
+            }
+            Self::Arrow {
+                origin,
+                destination,
+                color,
+            } => GameMoveNodeMarking::arrow(color.game_color(), origin, destination).ok(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresentationBoardMarkRequest {
+    Toggle(PresentationBoardMark),
+    ClearTemporary,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PresentationBoardExternalMarks {
+    saved: Vec<PresentationBoardMark>,
+    temporary: Vec<PresentationBoardMark>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +192,16 @@ pub struct PresentationBoardMarkings {
     last_move: Option<(BoardSquare, BoardSquare)>,
     baseline: Option<PresentationBoardPieceCounts>,
     current: PresentationBoardPieceCounts,
+    external: Option<PresentationBoardExternalMarks>,
+    requests: Vec<PresentationBoardMarkRequest>,
+    gesture: Option<(
+        BoardSquare,
+        SceneRendererGeneration,
+        PresentationBoardMarkColor,
+    )>,
+    entry_origin: String,
+    entry_destination: String,
+    entry_invalid: bool,
 }
 
 impl PresentationBoardMarkings {
@@ -141,6 +213,7 @@ impl PresentationBoardMarkings {
         BoardEnumPieceKind::Pawn,
         BoardEnumPieceKind::King,
     ];
+    const DASH_SEGMENTS: usize = 48;
     const COLORS: [BoardEnumColor; 2] = [BoardEnumColor::White, BoardEnumColor::Black];
 
     pub fn marks(&self) -> &[PresentationBoardMark] {
@@ -169,9 +242,117 @@ impl PresentationBoardMarkings {
 
     pub fn clear(&mut self) {
         self.marks.clear();
+        self.requests
+            .push(PresentationBoardMarkRequest::ClearTemporary);
+    }
+
+    pub fn has_temporary(&self) -> bool {
+        match &self.external {
+            Some(external) => !external.temporary.is_empty(),
+            None => !self.marks.is_empty(),
+        }
+    }
+
+    pub fn set_external(
+        &mut self,
+        marks: Option<(Vec<PresentationBoardMark>, Vec<PresentationBoardMark>)>,
+    ) {
+        self.external =
+            marks.map(|(saved, temporary)| PresentationBoardExternalMarks { saved, temporary });
+    }
+
+    pub fn take_requests(&mut self) -> Vec<PresentationBoardMarkRequest> {
+        std::mem::take(&mut self.requests)
+    }
+
+    pub fn reset_baseline(&mut self) {
+        self.baseline = None;
+        self.last_move = None;
+        self.marks.clear();
+        self.gesture = None;
+    }
+
+    pub fn cancel_gesture(&mut self) {
+        self.gesture = None;
+    }
+
+    pub fn entry_origin_mut(&mut self) -> &mut String {
+        &mut self.entry_origin
+    }
+
+    pub fn entry_destination_mut(&mut self) -> &mut String {
+        &mut self.entry_destination
+    }
+
+    pub const fn is_entry_invalid(&self) -> bool {
+        self.entry_invalid
+    }
+
+    pub fn toggle_entry(&mut self, arrow: bool) {
+        let color = self.selected_color;
+        let origin = self.entry_origin.trim().parse::<BoardSquare>();
+        let destination = self.entry_destination.trim().parse::<BoardSquare>();
+        self.entry_invalid = false;
+        match (origin, destination, arrow) {
+            (Ok(origin), _, false) => self.toggle_circle(origin, color),
+            (Ok(origin), Ok(destination), true) if origin != destination => {
+                self.toggle_arrow(origin, destination, color)
+            }
+            _ => self.entry_invalid = true,
+        }
+    }
+
+    pub fn handle_input<P: PresentationBoardPickingProvider>(
+        &mut self,
+        ui: &Ui,
+        enabled: bool,
+        picker: &mut P,
+        hovered: bool,
+        scene: &PresentationBoardScene,
+        viewport: ScenePickingViewport,
+    ) -> Result<(), SceneRendererError> {
+        let (pressed, released, point, modifiers, escape) = ui.input(|input| {
+            (
+                input.pointer.button_pressed(egui::PointerButton::Secondary),
+                input
+                    .pointer
+                    .button_released(egui::PointerButton::Secondary),
+                input.pointer.interact_pos(),
+                input.modifiers,
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape || !enabled {
+            self.gesture = None;
+            return Ok(());
+        }
+        if !pressed && !released {
+            return Ok(());
+        }
+        let square = match point {
+            Some(point) if viewport.to_physical(point).is_some() => picker.pick(point)?,
+            Some(_) | None => None,
+        };
+        if pressed
+            && hovered
+            && let Some(square) = square
+        {
+            let color = PresentationBoardMarkColor::from_modifiers(modifiers, self.selected_color);
+            self.gesture = Some((square, scene.generation(), color));
+        }
+        if released
+            && let Some((origin, generation, color)) = self.gesture.take()
+            && generation == scene.generation()
+            && let Some(destination) = square
+        {
+            self.toggle_arrow(origin, destination, color);
+        }
+        Ok(())
     }
 
     pub fn toggle(&mut self, mark: PresentationBoardMark) {
+        self.requests
+            .push(PresentationBoardMarkRequest::Toggle(mark));
         match self
             .marks
             .iter()
@@ -212,21 +393,14 @@ impl PresentationBoardMarkings {
         snapshot: &DesktopBoardSnapshot,
     ) {
         let counts = Self::counts(snapshot);
-        let previous_total = previous.map(|previous| Self::counts(previous).values().sum::<u8>());
-        let grew = previous_total.is_some_and(|total| counts.values().sum::<u8>() > total);
-        if self.baseline.is_none() || grew {
+        if self.baseline.is_none() {
             self.baseline = Some(counts.clone());
-            self.last_move = None;
         }
         if let Some(previous) = previous
             && previous.fen() != snapshot.fen()
         {
             self.marks.clear();
-            self.last_move = if grew {
-                None
-            } else {
-                PresentationBoardTransition::piece_move(previous, snapshot)
-            };
+            self.last_move = PresentationBoardTransition::piece_move(previous, snapshot);
         }
         self.current = counts;
     }
@@ -235,18 +409,31 @@ impl PresentationBoardMarkings {
         let Some(baseline) = &self.baseline else {
             return Vec::new();
         };
-        Self::COLORS
-            .into_iter()
-            .flat_map(|color| Self::KINDS.into_iter().map(move |kind| (color, kind)))
-            .filter_map(|(color, kind)| {
-                let before = baseline.get(&(color, kind)).copied().unwrap_or(0);
-                let now = self.current.get(&(color, kind)).copied().unwrap_or(0);
-                before
-                    .checked_sub(now)
-                    .filter(|count| *count > 0)
-                    .map(|count| PresentationBoardCapture { color, kind, count })
-            })
-            .collect()
+        let mut captures = Vec::new();
+        for color in Self::COLORS {
+            let count = |counts: &PresentationBoardPieceCounts, kind| {
+                counts.get(&(color, kind)).copied().unwrap_or(0)
+            };
+            let promoted: u8 = Self::KINDS
+                .into_iter()
+                .filter(|kind| *kind != BoardEnumPieceKind::Pawn)
+                .map(|kind| count(&self.current, kind).saturating_sub(count(baseline, kind)))
+                .sum();
+            for kind in Self::KINDS {
+                let mut lost = count(baseline, kind).saturating_sub(count(&self.current, kind));
+                if kind == BoardEnumPieceKind::Pawn {
+                    lost = lost.saturating_sub(promoted);
+                }
+                if lost > 0 {
+                    captures.push(PresentationBoardCapture {
+                        color,
+                        kind,
+                        count: lost,
+                    });
+                }
+            }
+        }
+        captures
     }
 
     fn counts(snapshot: &DesktopBoardSnapshot) -> PresentationBoardPieceCounts {
@@ -324,8 +511,27 @@ impl PresentationBoardMarkings {
                 }
             }
         }
-        for mark in &self.marks {
-            Self::paint_mark(&painter, scene, *mark);
+        self.paint_overlay(ui, scene);
+    }
+
+    pub fn paint_overlay(&self, ui: &Ui, scene: &PresentationBoardScene) {
+        let painter = ui
+            .painter()
+            .with_clip_rect(scene.viewport().image().intersect(ui.clip_rect()));
+        match &self.external {
+            Some(external) => {
+                for mark in &external.saved {
+                    Self::paint_mark(&painter, scene, *mark, true);
+                }
+                for mark in &external.temporary {
+                    Self::paint_mark(&painter, scene, *mark, false);
+                }
+            }
+            None => {
+                for mark in &self.marks {
+                    Self::paint_mark(&painter, scene, *mark, false);
+                }
+            }
         }
         if self.aids.coordinates {
             Self::paint_coordinates(&painter, scene, ui.visuals().text_color());
@@ -350,15 +556,37 @@ impl PresentationBoardMarkings {
         }
     }
 
-    fn paint_mark(painter: &Painter, scene: &PresentationBoardScene, mark: PresentationBoardMark) {
+    fn paint_mark(
+        painter: &Painter,
+        scene: &PresentationBoardScene,
+        mark: PresentationBoardMark,
+        saved: bool,
+    ) {
         match mark {
             PresentationBoardMark::Circle { square, color } => {
                 if let Some(rect) = PresentationBoardSemanticGrid::square_rect(square, scene) {
-                    painter.circle_stroke(
-                        rect.center(),
-                        rect.width() * 0.46,
-                        Stroke::new(4.0, color.color()),
-                    );
+                    let radius = rect.width() * 0.46;
+                    if saved {
+                        let points: Vec<Pos2> = (0..=Self::DASH_SEGMENTS)
+                            .map(|step| {
+                                let angle = std::f32::consts::TAU * step as f32
+                                    / Self::DASH_SEGMENTS as f32;
+                                rect.center() + egui::vec2(angle.cos(), angle.sin()) * radius
+                            })
+                            .collect();
+                        painter.extend(egui::Shape::dashed_line(
+                            &points,
+                            Stroke::new(4.0, color.color()),
+                            6.0,
+                            4.0,
+                        ));
+                    } else {
+                        painter.circle_stroke(
+                            rect.center(),
+                            radius,
+                            Stroke::new(4.0, color.color()),
+                        );
+                    }
                 }
             }
             PresentationBoardMark::Arrow {
@@ -372,7 +600,14 @@ impl PresentationBoardMarkings {
                 ) else {
                     return;
                 };
-                Self::paint_arrow(painter, from.center(), to.center(), from.width(), color);
+                Self::paint_arrow(
+                    painter,
+                    from.center(),
+                    to.center(),
+                    from.width(),
+                    color,
+                    saved,
+                );
             }
         }
     }
@@ -383,6 +618,7 @@ impl PresentationBoardMarkings {
         to: Pos2,
         square_width: f32,
         color: PresentationBoardMarkColor,
+        saved: bool,
     ) {
         let direction = to - from;
         let length = direction.length();
@@ -395,7 +631,16 @@ impl PresentationBoardMarkings {
         let width = square_width * 0.12;
         let base = to - unit * head;
         let tint = color.color().gamma_multiply(0.9);
-        painter.line_segment([from, base], Stroke::new(width, tint));
+        if saved {
+            painter.extend(egui::Shape::dashed_line(
+                &[from, base],
+                Stroke::new(width, tint),
+                width * 2.0,
+                width,
+            ));
+        } else {
+            painter.line_segment([from, base], Stroke::new(width, tint));
+        }
         painter.add(egui::Shape::convex_polygon(
             vec![to, base + normal * head * 0.6, base - normal * head * 0.6],
             tint,

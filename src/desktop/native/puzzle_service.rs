@@ -31,6 +31,7 @@ use crate::desktop::puzzle_service::{
     DesktopPuzzleServiceReceipt, DesktopPuzzleServiceRequest, DesktopPuzzleServiceState,
 };
 use crate::desktop::puzzle_snapshot::DesktopPuzzleSnapshot;
+use crate::puzzle::history::PuzzleHistoryAuthorization;
 use crate::puzzle::run::PuzzleRunEnumStatus;
 use crate::puzzle::session::PuzzleSessionId;
 use crate::puzzle::timer::PuzzleTimerEnumPauseReason;
@@ -254,7 +255,8 @@ struct DesktopNativePuzzleServiceOwner<C, W, S> {
     worker_failure: Option<Arc<DesktopPuzzleServiceError>>,
     snapshots: watch::Receiver<Option<Arc<DesktopPuzzleSnapshot>>>,
     health: watch::Receiver<DesktopPuzzleBridgeEnumHealth>,
-    inventory: Option<DesktopNativePuzzleServiceFuture<DesktopNativePuzzleServiceOperationOutcome>>,
+    storage_task:
+        Option<DesktopNativePuzzleServiceFuture<DesktopNativePuzzleServiceOperationOutcome>>,
     recovery: Option<
         DesktopNativePuzzleServiceFuture<(
             DesktopNativePuzzleServiceRequest,
@@ -313,7 +315,7 @@ where
                 worker_failure: None,
                 snapshots,
                 health,
-                inventory: None,
+                storage_task: None,
                 recovery: None,
                 opening: None,
                 replies: Vec::new(),
@@ -378,8 +380,8 @@ where
                     self.recovery = None;
                     self.observe_recovery(result);
                 }
-                result = Self::wait_future(&mut self.inventory) => {
-                    self.inventory = None;
+                result = Self::wait_future(&mut self.storage_task) => {
+                    self.storage_task = None;
                     self.finish_operation(result);
                 }
                 changed = self.snapshots.changed(), if has_selected => {
@@ -464,7 +466,7 @@ where
         }
         match &envelope.request.operation {
             DesktopPuzzleServiceEnumOperation::Inventory { after } => {
-                if self.inventory.is_some() {
+                if self.storage_task.is_some() {
                     self.respond(
                         envelope.response,
                         Err(Arc::new(DesktopPuzzleServiceError::Busy)),
@@ -473,11 +475,44 @@ where
                 }
                 let repository = self.options.repository.clone();
                 let after = *after;
-                self.inventory = Some(Box::pin(async move {
+                self.storage_task = Some(Box::pin(async move {
                     let result = repository
                         .inventory(after)
                         .await
                         .map(|page| DesktopPuzzleServiceEnumResult::Inventory(Arc::new(page)))
+                        .map_err(|error| Arc::new(DesktopPuzzleServiceError::Storage(error)));
+                    (envelope, result)
+                }));
+            }
+            DesktopPuzzleServiceEnumOperation::DeleteHistory {
+                scope,
+                confirmation,
+            } => {
+                if self.storage_task.is_some() {
+                    self.respond(
+                        envelope.response,
+                        Err(Arc::new(DesktopPuzzleServiceError::Busy)),
+                    );
+                    return;
+                }
+                let selected = self.state.borrow().selected();
+                let authorization =
+                    match PuzzleHistoryAuthorization::new(*scope, *confirmation, selected) {
+                        Ok(authorization) => authorization,
+                        Err(error) => {
+                            self.respond(
+                                envelope.response,
+                                Err(Arc::new(DesktopPuzzleServiceError::History(error))),
+                            );
+                            return;
+                        }
+                    };
+                let repository = self.options.repository.clone();
+                self.storage_task = Some(Box::pin(async move {
+                    let result = repository
+                        .delete_history(authorization)
+                        .await
+                        .map(|removed| DesktopPuzzleServiceEnumResult::HistoryDeleted { removed })
                         .map_err(|error| Arc::new(DesktopPuzzleServiceError::Storage(error)));
                     (envelope, result)
                 }));
@@ -518,7 +553,8 @@ where
                 DesktopPuzzleServiceEnumOperation::OpenSaved { id, .. } => *id,
                 DesktopPuzzleServiceEnumOperation::Inventory { .. }
                 | DesktopPuzzleServiceEnumOperation::Session { .. }
-                | DesktopPuzzleServiceEnumOperation::Interrupt { .. } => {
+                | DesktopPuzzleServiceEnumOperation::Interrupt { .. }
+                | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. } => {
                     self.respond(
                         envelope.response,
                         Err(Arc::new(DesktopPuzzleServiceError::Incomplete)),
@@ -551,7 +587,8 @@ where
             } => (*id, *storage_revision),
             DesktopPuzzleServiceEnumOperation::Inventory { .. }
             | DesktopPuzzleServiceEnumOperation::Session { .. }
-            | DesktopPuzzleServiceEnumOperation::Interrupt { .. } => {
+            | DesktopPuzzleServiceEnumOperation::Interrupt { .. }
+            | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. } => {
                 self.respond(
                     envelope.response,
                     Err(Arc::new(DesktopPuzzleServiceError::Incomplete)),
@@ -704,7 +741,8 @@ where
             DesktopPuzzleServiceEnumOperation::Session { expected, .. } => expected.session_id(),
             DesktopPuzzleServiceEnumOperation::Interrupt { session, .. } => *session,
             DesktopPuzzleServiceEnumOperation::Inventory { .. }
-            | DesktopPuzzleServiceEnumOperation::OpenSaved { .. } => {
+            | DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
+            | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. } => {
                 self.respond(
                     response,
                     Err(Arc::new(DesktopPuzzleServiceError::Incomplete)),
@@ -739,7 +777,8 @@ where
             }),
             DesktopPuzzleServiceEnumOperation::Interrupt { reason, .. } => port.interrupt(reason),
             DesktopPuzzleServiceEnumOperation::Inventory { .. }
-            | DesktopPuzzleServiceEnumOperation::OpenSaved { .. } => {
+            | DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
+            | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. } => {
                 self.respond(
                     response,
                     Err(Arc::new(DesktopPuzzleServiceError::Incomplete)),
@@ -914,7 +953,7 @@ where
             return;
         }
         if self.recovery.is_some()
-            || self.inventory.is_some()
+            || self.storage_task.is_some()
             || self.opening.is_some()
             || !self.replies.is_empty()
         {
@@ -1179,7 +1218,7 @@ where
                     && owner.worker.is_none()
                     && owner.retained.is_none()
                     && owner.recovery.is_none()
-                    && owner.inventory.is_none()
+                    && owner.storage_task.is_none()
                     && owner.replies.is_empty()
                     && owner.runtime_cleanup.is_none()
             })

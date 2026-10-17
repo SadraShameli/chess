@@ -264,7 +264,7 @@ pub enum GameLibraryOrganizationEnumMutation {
     ),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameLibraryOrganizationRequest {
     timestamp: GameLibraryOrganizationTimestamp,
     mutation: GameLibraryOrganizationEnumMutation,
@@ -357,7 +357,7 @@ pub enum GameLibraryOrganizationEnumTarget {
     Tag(GameLibraryOrganizationTagId),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameLibraryOrganizationReceipt {
     target: GameLibraryOrganizationEnumTarget,
     revision: GameLibraryOrganizationRevision,

@@ -9,7 +9,7 @@ use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
 use crate::puzzle::attempt::PuzzleAttemptId;
-use crate::puzzle::history::{PuzzleHistoryDeletion, PuzzleHistoryEnumScope};
+use crate::puzzle::history::{PuzzleHistoryAuthorization, PuzzleHistoryEnumScope};
 use crate::puzzle::persistence::{
     PuzzlePersistenceCodec, PuzzlePersistenceError, PuzzlePersistenceJournalProof,
     PuzzlePersistenceReceipt, PuzzlePersistenceRun, PuzzlePersistenceSaveRequest,
@@ -219,9 +219,9 @@ impl StoragePuzzleRepository {
 
     pub async fn delete_history(
         &self,
-        deletion: PuzzleHistoryDeletion,
+        authorization: PuzzleHistoryAuthorization,
     ) -> Result<usize, StoragePuzzleError> {
-        self.client.delete_puzzle_history(deletion).await
+        self.client.delete_puzzle_history(authorization).await
     }
 
     pub async fn inventory(
@@ -497,9 +497,9 @@ impl StoragePuzzleTransaction {
 
     pub(super) fn delete(
         connection: &mut SqliteConnection,
-        deletion: &PuzzleHistoryDeletion,
+        authorization: &PuzzleHistoryAuthorization,
     ) -> Result<usize, StoragePuzzleError> {
-        connection.immediate_transaction(|connection| match deletion.scope() {
+        connection.immediate_transaction(|connection| match authorization.scope() {
             PuzzleHistoryEnumScope::Attempt { session, attempt } => {
                 let run = session.value().get().to_string();
                 let attempt = attempt.value().get().to_string();

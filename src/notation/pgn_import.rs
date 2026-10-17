@@ -1159,6 +1159,60 @@ mod tests {
     }
 
     #[test]
+    fn tag_values_are_bounded_and_exact_limits_are_accepted() -> Result<(), Box<dyn Error>> {
+        NotationPgnImportPolicyFixture::failure(
+            b"[Event \"abcd\"] *",
+            NotationPgnImportBudgetPolicy {
+                text_bytes: 3,
+                ..NotationPgnImportBudgetPolicy::production()
+            },
+            NotationPgnImportEnumLimit::TextBytes,
+        );
+        let exact = NotationPgnImportBudgetPolicy {
+            game_plies: 2,
+            variation_depth: 1,
+            ..NotationPgnImportBudgetPolicy::production()
+        };
+        let mut reader = NotationPgnImport::with_policy(
+            Cursor::new(b"1. e4 (1. d4) *"),
+            NotationPgnImportPolicyFixture::ids(),
+            exact,
+        );
+        assert!(matches!(reader.next_game(&|| false), Ok(Some(_))));
+        assert!(matches!(reader.next_game(&|| false), Ok(None)));
+        Ok(())
+    }
+
+    #[test]
+    fn a_limit_violation_terminates_the_importer_without_yielding_a_game() {
+        let policy = NotationPgnImportBudgetPolicy {
+            game_plies: 1,
+            ..NotationPgnImportBudgetPolicy::production()
+        };
+        let mut reader = NotationPgnImport::with_policy(
+            Cursor::new(b"1. e4 e5 * 1. d4 *"),
+            NotationPgnImportPolicyFixture::ids(),
+            policy,
+        );
+        assert!(matches!(
+            reader
+                .next_game(&|| false)
+                .as_ref()
+                .map_err(|error| error.reason()),
+            Err(NotationPgnImportReason::Limit(
+                NotationPgnImportEnumLimit::GamePlies
+            ))
+        ));
+        assert!(matches!(
+            reader
+                .next_game(&|| false)
+                .as_ref()
+                .map_err(|error| error.reason()),
+            Err(NotationPgnImportReason::Terminated)
+        ));
+    }
+
+    #[test]
     fn cancellation_during_error_drain_is_observed() -> Result<(), Box<dyn Error>> {
         let checks = std::cell::Cell::new(0_u32);
         let cancel = || {

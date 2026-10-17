@@ -323,7 +323,8 @@ impl PresentationPuzzlePanelFixture {
                 )?;
             }
             DesktopPuzzleServiceEnumOperation::Inventory { .. }
-            | DesktopPuzzleServiceEnumOperation::OpenSaved { .. } => {
+            | DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
+            | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. } => {
                 return Err("unexpected fixture operation".into());
             }
         }

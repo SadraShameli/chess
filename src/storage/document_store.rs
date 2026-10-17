@@ -13,7 +13,7 @@ use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
-use crate::puzzle::history::PuzzleHistoryDeletion;
+use crate::puzzle::history::PuzzleHistoryAuthorization;
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
 use crate::storage::connection::StorageConnection;
@@ -168,7 +168,7 @@ enum StorageDocumentEnumCommand {
         result: oneshot::Sender<Result<Option<StoragePuzzleRecovered>, StoragePuzzleError>>,
     },
     PuzzleDelete {
-        deletion: PuzzleHistoryDeletion,
+        authorization: PuzzleHistoryAuthorization,
         _admission: OwnedSemaphorePermit,
         result: oneshot::Sender<Result<usize, StoragePuzzleError>>,
     },
@@ -440,12 +440,12 @@ impl StorageDocumentClient {
 
     pub(crate) async fn delete_puzzle_history(
         &self,
-        deletion: PuzzleHistoryDeletion,
+        authorization: PuzzleHistoryAuthorization,
     ) -> Result<usize, StoragePuzzleError> {
         let admission = self.admit()?;
         let (result, receiver) = oneshot::channel();
         self.enqueue(StorageDocumentEnumCommand::PuzzleDelete {
-            deletion,
+            authorization,
             _admission: admission,
             result,
         })?;
@@ -687,12 +687,12 @@ impl StorageDocumentActor {
                     }
                 }
                 StorageDocumentEnumCommand::PuzzleDelete {
-                    deletion,
+                    authorization,
                     _admission,
                     result,
                 } => {
                     let outcome =
-                        StoragePuzzleTransaction::delete(self.connection.diesel(), &deletion);
+                        StoragePuzzleTransaction::delete(self.connection.diesel(), &authorization);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);

@@ -542,3 +542,35 @@ async fn known_revision_opens_without_a_loaded_page() -> DesktopLibraryServiceTe
     assert_eq!(observation?, (true, true, true, true));
     Ok(())
 }
+
+#[tokio::test]
+async fn organization_runs_in_its_own_lane_and_marks_the_page_for_resync()
+-> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        fixture.service.seed(700, true).await?;
+        let mut controller = PresentationLibraryController::new(fixture.service.workspace);
+        let initial = controller
+            .refresh(DesktopRequestId::new())?
+            .ok_or("initial")?;
+        fixture.execute(&mut controller, &initial).await??;
+        let request = GameLibraryOrganizationRequest::new(
+            GameLibraryOrganizationTimestamp::new(10)?,
+            GameLibraryOrganizationEnumMutation::CreateTag(
+                uuid::Uuid::from_u128(9).to_string().parse()?,
+                GameLibraryOrganizationName::new("Rapid".to_owned())?,
+            ),
+        )?;
+        let input = DesktopRequestId::new();
+        let intent = controller
+            .organize(input, request.clone())?
+            .ok_or("organize")?;
+        let repeated = controller.organize(input, request)?.is_none();
+        fixture.execute(&mut controller, &intent).await??;
+        Ok((repeated, controller.needs_resync(), controller.is_query_pending()))
+    }
+    .await;
+    fixture.close().await?;
+    assert_eq!(observation?, (true, true, false));
+    Ok(())
+}

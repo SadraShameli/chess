@@ -1006,6 +1006,7 @@ where
                 (DesktopEnumFailureCode::StaleRevision, true)
             }
             DesktopPuzzleServiceError::Cancelled => (DesktopEnumFailureCode::Cancelled, false),
+            DesktopPuzzleServiceError::History(_) => (DesktopEnumFailureCode::InvalidInput, false),
             DesktopPuzzleServiceError::Missing(_) | DesktopPuzzleServiceError::Storage(_) => {
                 (DesktopEnumFailureCode::FileUnavailable, true)
             }

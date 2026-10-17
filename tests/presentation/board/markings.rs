@@ -111,3 +111,68 @@ fn aids_default_to_the_approved_initial_settings() {
     let aids = PresentationBoardAids::default();
     assert!(aids.legal_dots && aids.last_move && aids.check && aids.captured && aids.coordinates);
 }
+
+#[test]
+fn a_promotion_does_not_count_the_pawn_as_captured() -> PresentationBoardMarkingsResult {
+    let before = snapshot("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")?;
+    let after = snapshot("Q3k3/8/8/8/8/8/8/4K3 b - - 0 1")?;
+    let mut markings = PresentationBoardMarkings::default();
+    markings.observe(None, &before);
+    markings.observe(Some(&before), &after);
+    assert!(markings.captures().is_empty());
+    Ok(())
+}
+
+#[test]
+fn resetting_the_baseline_rebases_captures_on_the_next_snapshot() -> PresentationBoardMarkingsResult
+{
+    let initial = snapshot("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1")?;
+    let after = snapshot("4k3/8/8/4P3/8/8/8/4K3 b - - 0 1")?;
+    let mut markings = PresentationBoardMarkings::default();
+    markings.observe(None, &initial);
+    markings.observe(Some(&initial), &after);
+    assert_eq!(markings.captures().len(), 1);
+    markings.reset_baseline();
+    markings.observe(Some(&after), &after);
+    assert!(markings.captures().is_empty());
+    Ok(())
+}
+
+#[test]
+fn toggles_become_requests_and_external_marks_replace_local_ones() -> PresentationBoardMarkingsResult
+{
+    let mut markings = PresentationBoardMarkings::default();
+    let e4 = square("e4")?;
+    markings.toggle_circle(e4, PresentationBoardMarkColor::Red);
+    markings.clear();
+    let requests = markings.take_requests();
+    assert_eq!(requests.len(), 2);
+    assert!(markings.take_requests().is_empty());
+    let circle = PresentationBoardMark::Circle {
+        square: e4,
+        color: PresentationBoardMarkColor::Blue,
+    };
+    let game = circle.to_game().ok_or("circle converts")?;
+    assert_eq!(PresentationBoardMark::from_game(game), circle);
+    markings.set_external(Some((Vec::new(), vec![circle])));
+    assert!(markings.has_temporary());
+    markings.set_external(None);
+    assert!(!markings.has_temporary());
+    Ok(())
+}
+
+#[test]
+fn keyboard_entry_toggles_circles_and_arrows_and_flags_invalid_squares()
+-> PresentationBoardMarkingsResult {
+    let mut markings = PresentationBoardMarkings::default();
+    *markings.entry_origin_mut() = "e2".to_owned();
+    markings.toggle_entry(false);
+    assert_eq!(markings.marks().len(), 1);
+    markings.toggle_entry(true);
+    assert!(markings.is_entry_invalid());
+    *markings.entry_destination_mut() = "e4".to_owned();
+    markings.toggle_entry(true);
+    assert!(!markings.is_entry_invalid());
+    assert_eq!(markings.marks().len(), 2);
+    Ok(())
+}

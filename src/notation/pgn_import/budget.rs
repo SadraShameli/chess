@@ -251,6 +251,18 @@ mod tests {
     };
 
     #[test]
+    fn production_policy_matches_the_specified_limits() {
+        let policy = NotationPgnImportBudgetPolicy::production();
+        assert_eq!(policy.input_bytes, 20 * 1024 * 1024 * 1024);
+        assert_eq!(policy.games, 1_000_000);
+        assert_eq!(policy.total_plies, 100_000_000);
+        assert_eq!(policy.game_plies, 100_000);
+        assert_eq!(policy.variation_depth, 64);
+        assert_eq!(policy.text_bytes, 1024 * 1024);
+        assert_eq!(policy.decoded_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
     fn exact_boundaries_succeed_and_next_growth_fails() {
         let mut budget = NotationPgnImportBudget::new(NotationPgnImportBudgetPolicy {
             input_bytes: 2,

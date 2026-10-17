@@ -136,7 +136,8 @@ impl DesktopEnumCommand {
                         }
                     }
                     DesktopPuzzleServiceEnumOperation::Inventory { .. }
-                    | DesktopPuzzleServiceEnumOperation::OpenSaved { .. } => None,
+                    | DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
+                    | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. } => None,
                 }
             }
             Self::Engine(operation) => match operation.action() {
@@ -180,6 +181,7 @@ impl DesktopEnumCommand {
             Self::Editor { owner, operation } => operation.is_mutation().then_some(*owner),
             Self::Puzzle { owner, operation } => match operation {
                 DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
+                | DesktopPuzzleServiceEnumOperation::DeleteHistory { .. }
                 | DesktopPuzzleServiceEnumOperation::Session {
                     operation:
                         DesktopPuzzleBridgeEnumOperation::Command(_)

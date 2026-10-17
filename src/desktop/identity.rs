@@ -86,6 +86,12 @@ impl DesktopRevision {
         Self(revision.value())
     }
 
+    pub const fn for_library_organization(
+        revision: crate::game::library_organization::GameLibraryOrganizationRevision,
+    ) -> Self {
+        Self(revision.value())
+    }
+
     pub const fn for_puzzle(revision: crate::puzzle::session::PuzzleSessionRevision) -> Self {
         Self(revision.value())
     }

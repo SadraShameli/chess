@@ -6,6 +6,7 @@ use crate::desktop::identity::DesktopRevision;
 use crate::desktop::library_service::DesktopLibraryServiceError;
 use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::enums::GameId;
+use crate::game::library_organization::GameLibraryOrganizationRequest;
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::library_metadata::StorageLibraryMetadataEnumRequest;
@@ -26,6 +27,7 @@ pub enum DesktopLibraryServiceEnumAction {
         expected: DesktopGameEditorContext,
         action: DesktopAnnotationCommandsEnumAction,
     },
+    Organize(GameLibraryOrganizationRequest),
 }
 
 impl Debug for DesktopLibraryServiceEnumAction {
@@ -43,6 +45,10 @@ impl Debug for DesktopLibraryServiceEnumAction {
                 .debug_struct("Open")
                 .field("game", game)
                 .field("storage_revision", storage_revision)
+                .finish(),
+            Self::Organize(request) => formatter
+                .debug_tuple("Organize")
+                .field(&std::mem::discriminant(request.mutation()))
                 .finish(),
             Self::Editor { expected, action } => formatter
                 .debug_struct("Editor")
@@ -88,6 +94,7 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Editor { expected, .. } => Some(*expected),
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
+            | DesktopLibraryServiceEnumAction::Organize(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => None,
         }
     }
@@ -125,6 +132,7 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => 0,
+            DesktopLibraryServiceEnumAction::Organize(request) => request.transport_bytes(),
         };
         let bytes = payload
             .checked_add(std::mem::size_of::<Self>())
@@ -158,6 +166,7 @@ impl DesktopLibraryServiceOperation {
                 }
             },
             DesktopLibraryServiceEnumAction::Query { .. }
+            | DesktopLibraryServiceEnumAction::Organize(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -171,6 +180,7 @@ impl DesktopLibraryServiceOperation {
                 Some(Self::editor_revision(*expected))
             }
             DesktopLibraryServiceEnumAction::Query { .. }
+            | DesktopLibraryServiceEnumAction::Organize(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -196,6 +206,7 @@ impl DesktopLibraryServiceOperation {
             ),
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
+            | DesktopLibraryServiceEnumAction::Organize(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => false,
         }
     }
@@ -205,6 +216,7 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Open { game, .. } => Some(*game),
             DesktopLibraryServiceEnumAction::Editor { expected, .. } => Some(expected.game()),
             DesktopLibraryServiceEnumAction::Query { .. }
+            | DesktopLibraryServiceEnumAction::Organize(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }

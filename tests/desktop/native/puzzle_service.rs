@@ -40,6 +40,7 @@ use crate::desktop::puzzle_service::{
 use crate::desktop::puzzle_snapshot::DesktopPuzzleSnapshot;
 use crate::puzzle::definition::PuzzleDefinition;
 use crate::puzzle::enums::PuzzleEnumCountdownMode;
+use crate::puzzle::history::{PuzzleHistoryEnumConfirmation, PuzzleHistoryEnumScope};
 use crate::puzzle::identity::PuzzleDefinitionIdentity;
 use crate::puzzle::metadata::PuzzleDefinitionMetadata;
 use crate::puzzle::persistence::{
@@ -257,6 +258,7 @@ impl DesktopNativePuzzleServiceFixture {
             DesktopPuzzleServiceEnumResult::Opened(snapshot) => Ok(snapshot),
             DesktopPuzzleServiceEnumResult::Inventory(_)
             | DesktopPuzzleServiceEnumResult::Ended { .. }
+            | DesktopPuzzleServiceEnumResult::HistoryDeleted { .. }
             | DesktopPuzzleServiceEnumResult::Session(_) => Err("expected an opened run".into()),
         }
     }
@@ -293,6 +295,7 @@ impl DesktopNativePuzzleServiceFixture {
             DesktopPuzzleServiceEnumResult::Session(result) => Ok(result),
             DesktopPuzzleServiceEnumResult::Inventory(_)
             | DesktopPuzzleServiceEnumResult::Opened(_)
+            | DesktopPuzzleServiceEnumResult::HistoryDeleted { .. }
             | DesktopPuzzleServiceEnumResult::Ended { .. } => {
                 Err("expected a session result".into())
             }
@@ -366,6 +369,64 @@ async fn idle_inventory_keeps_no_placeholder_session_and_open_requires_explicit_
     assert_eq!(resumed.snapshot().status(), PuzzleRunEnumStatus::Active);
     assert!(resumed.snapshot().attempt().is_some());
     assert!(fixture.wake.0.load(Ordering::Acquire) > 0);
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn history_deletion_needs_confirmation_and_refuses_the_selected_run()
+-> DesktopNativePuzzleServiceTestResult {
+    let fixture = DesktopNativePuzzleServiceFixture::new().await?;
+    let first = DesktopNativePuzzleServiceFixture::id(1)?;
+    let second = DesktopNativePuzzleServiceFixture::id(2)?;
+    fixture.seed(first, false).await?;
+    fixture.seed(second, false).await?;
+    let delete = |scope, confirmation| DesktopPuzzleServiceEnumOperation::DeleteHistory {
+        scope,
+        confirmation,
+    };
+    let refused = fixture
+        .execute(delete(
+            PuzzleHistoryEnumScope::Session(second),
+            PuzzleHistoryEnumConfirmation::Unconfirmed,
+        ))
+        .await;
+    assert!(refused.is_err());
+    fixture.open(first).await?;
+    assert!(
+        fixture
+            .execute(delete(
+                PuzzleHistoryEnumScope::Session(first),
+                PuzzleHistoryEnumConfirmation::Confirmed,
+            ))
+            .await
+            .is_err()
+    );
+    assert!(
+        fixture
+            .execute(delete(
+                PuzzleHistoryEnumScope::All,
+                PuzzleHistoryEnumConfirmation::Confirmed,
+            ))
+            .await
+            .is_err()
+    );
+    let DesktopPuzzleServiceEnumResult::HistoryDeleted { removed } = fixture
+        .execute(delete(
+            PuzzleHistoryEnumScope::Session(second),
+            PuzzleHistoryEnumConfirmation::Confirmed,
+        ))
+        .await?
+    else {
+        return Err("missing deletion result".into());
+    };
+    assert_eq!(removed, 1);
+    let DesktopPuzzleServiceEnumResult::Inventory(page) = fixture
+        .execute(DesktopPuzzleServiceEnumOperation::Inventory { after: None })
+        .await?
+    else {
+        return Err("missing inventory".into());
+    };
+    assert_eq!(page.entries().len(), 1);
     fixture.close().await
 }
 
@@ -945,6 +1006,7 @@ async fn saturated_ordinary_queue_preserves_separate_bounded_urgent_and_native_c
             Ok(
                 DesktopPuzzleServiceEnumResult::Opened(_)
                 | DesktopPuzzleServiceEnumResult::Ended { .. }
+                | DesktopPuzzleServiceEnumResult::HistoryDeleted { .. }
                 | DesktopPuzzleServiceEnumResult::Session(_),
             )
             | Err(_) => return Err("unexpected inventory admission outcome".into()),

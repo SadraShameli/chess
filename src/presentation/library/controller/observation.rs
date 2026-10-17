@@ -46,15 +46,23 @@ impl PresentationLibraryController {
             ) => {
                 self.pending[index].check_opened(publication)?;
             }
+            (
+                DesktopLibraryServiceEnumAction::Organize(_),
+                DesktopLibraryServiceEnumResult::Organized(_),
+            ) => {
+                self.needs_resync = true;
+            }
             (DesktopLibraryServiceEnumAction::Editor { action: crate::desktop::annotation_commands::DesktopAnnotationCommandsEnumAction::RetrySave, .. }, DesktopLibraryServiceEnumResult::Opened(publication)) if lane == PresentationLibraryEnumLane::Open => self.pending[index].check_opened(publication)?,
             (
                 DesktopLibraryServiceEnumAction::Query { .. }
                 | DesktopLibraryServiceEnumAction::Metadata(_)
                 | DesktopLibraryServiceEnumAction::Open { .. }
+                | DesktopLibraryServiceEnumAction::Organize(_)
                 | DesktopLibraryServiceEnumAction::Editor { .. },
                 DesktopLibraryServiceEnumResult::Query(_)
                 | DesktopLibraryServiceEnumResult::Metadata(_)
                 | DesktopLibraryServiceEnumResult::Opened(_)
+                | DesktopLibraryServiceEnumResult::Organized(_)
                 | DesktopLibraryServiceEnumResult::Editor(_)
                 | DesktopLibraryServiceEnumResult::PendingSnapshot { .. }
                 | DesktopLibraryServiceEnumResult::Saved { .. },

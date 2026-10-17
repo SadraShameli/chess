@@ -11,10 +11,11 @@ pub(crate) enum PresentationLibraryEnumLane {
     Tags,
     Folder,
     Open,
+    Organize,
 }
 
 impl PresentationLibraryEnumLane {
-    pub(crate) const COUNT: usize = 5;
+    pub(crate) const COUNT: usize = 6;
 
     pub(crate) fn operation(
         operation: &DesktopLibraryServiceOperation,
@@ -27,6 +28,7 @@ impl PresentationLibraryEnumLane {
                 StorageLibraryMetadataEnumRequest::Folder { .. } => Self::Folder,
             },
             DesktopLibraryServiceEnumAction::Open { .. } => Self::Open,
+            DesktopLibraryServiceEnumAction::Organize(_) => Self::Organize,
             DesktopLibraryServiceEnumAction::Editor { .. } => {
                 return Err(PresentationLibraryError::EditorAction);
             }
@@ -40,6 +42,7 @@ impl PresentationLibraryEnumLane {
             Self::Tags => 2,
             Self::Folder => 3,
             Self::Open => 4,
+            Self::Organize => 5,
         }
     }
 
@@ -50,6 +53,7 @@ impl PresentationLibraryEnumLane {
             Self::Tags => "Tags",
             Self::Folder => "Folder details",
             Self::Open => "Open saved game",
+            Self::Organize => "Organize library",
         }
     }
 }

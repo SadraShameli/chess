@@ -78,15 +78,53 @@ impl PuzzleHistoryEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PuzzleHistoryDeletion {
+pub struct PuzzleHistoryAuthorization {
     scope: PuzzleHistoryEnumScope,
+}
+
+impl PuzzleHistoryAuthorization {
+    pub fn new(
+        scope: PuzzleHistoryEnumScope,
+        confirmation: PuzzleHistoryEnumConfirmation,
+        active_run: Option<PuzzleSessionId>,
+    ) -> Result<Self, PuzzleHistoryError> {
+        if confirmation != PuzzleHistoryEnumConfirmation::Confirmed {
+            return Err(PuzzleHistoryError::ConfirmationRequired);
+        }
+        if let Some(session) = active_run {
+            let blocked = match scope {
+                PuzzleHistoryEnumScope::Attempt {
+                    session: target, ..
+                }
+                | PuzzleHistoryEnumScope::Session(target) => target == session,
+                PuzzleHistoryEnumScope::All => true,
+            };
+            if blocked {
+                return Err(PuzzleHistoryError::ActiveRunRefused { session });
+            }
+        }
+        Ok(Self { scope })
+    }
+
+    pub const fn scope(&self) -> PuzzleHistoryEnumScope {
+        self.scope
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PuzzleHistoryDeletion {
+    authorization: PuzzleHistoryAuthorization,
     removed: usize,
     summary: PuzzleSummary,
 }
 
 impl PuzzleHistoryDeletion {
+    pub const fn authorization(&self) -> PuzzleHistoryAuthorization {
+        self.authorization
+    }
+
     pub const fn scope(&self) -> PuzzleHistoryEnumScope {
-        self.scope
+        self.authorization.scope
     }
 
     pub const fn removed(&self) -> usize {
@@ -126,21 +164,7 @@ impl PuzzleHistory {
         confirmation: PuzzleHistoryEnumConfirmation,
         active_run: Option<PuzzleSessionId>,
     ) -> Result<PuzzleHistoryDeletion, PuzzleHistoryError> {
-        if confirmation != PuzzleHistoryEnumConfirmation::Confirmed {
-            return Err(PuzzleHistoryError::ConfirmationRequired);
-        }
-        if let Some(session) = active_run {
-            let blocked = match scope {
-                PuzzleHistoryEnumScope::Attempt {
-                    session: target, ..
-                }
-                | PuzzleHistoryEnumScope::Session(target) => target == session,
-                PuzzleHistoryEnumScope::All => true,
-            };
-            if blocked {
-                return Err(PuzzleHistoryError::ActiveRunRefused { session });
-            }
-        }
+        let authorization = PuzzleHistoryAuthorization::new(scope, confirmation, active_run)?;
         let removed = self
             .entries
             .iter()
@@ -151,7 +175,7 @@ impl PuzzleHistory {
         }
         self.entries.retain(|entry| !entry.matches(scope));
         Ok(PuzzleHistoryDeletion {
-            scope,
+            authorization,
             removed,
             summary: self.summary()?,
         })

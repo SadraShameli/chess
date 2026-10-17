@@ -208,6 +208,13 @@ impl DesktopLibraryServiceWork {
                     }
                 }
             }
+            DesktopLibraryServiceEnumAction::Organize(request) => {
+                Ok(DesktopLibraryServiceEnumResult::Organized(
+                    StorageLibraryRepository::new(resources.client, &resources.executor)
+                        .organize(request)
+                        .await?,
+                ))
+            }
             DesktopLibraryServiceEnumAction::Editor { expected, action } => {
                 match expected.source() {
                     DesktopGameEditorEnumSource::Notation { .. } => {

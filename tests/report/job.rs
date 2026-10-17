@@ -489,3 +489,94 @@ async fn unavailable_completion_does_not_invent_score_and_score_without_pv_can_s
     fixture.close().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn running_summary_is_partial_until_every_position_completes() -> ReportFixtureResult {
+    use chess::board::enums::BoardEnumColor;
+    use chess::report::scoring::ReportScoringEnumCoverage;
+    let mut fixture = ReportFixture::new().await?;
+    let mut job = fixture.job(&["e2e4", "e7e5"])?;
+    job.resume()?;
+    fixture
+        .complete(&mut job, 0, "info score cp 400 pv e2e4")
+        .await?;
+    fixture
+        .complete(&mut job, 1, "info score cp 0 pv e7e5")
+        .await?;
+    let partial = job.summary()?;
+    assert_eq!(partial.coverage(), ReportScoringEnumCoverage::Partial);
+    assert_eq!(partial.player(BoardEnumColor::White).scored_moves(), 1);
+    assert_eq!(partial.player(BoardEnumColor::Black).scored_moves(), 0);
+    assert_eq!(partial.player(BoardEnumColor::Black).unscored_moves(), 1);
+    assert_eq!(partial.player(BoardEnumColor::Black).accuracy(), None);
+    assert_ne!(job.state(), ReportJobEnumState::Completed);
+    fixture
+        .complete(&mut job, 2, "info score cp 0 pv g1f3")
+        .await?;
+    assert_eq!(job.state(), ReportJobEnumState::Completed);
+    assert_eq!(
+        job.summary()?.coverage(),
+        ReportScoringEnumCoverage::Complete
+    );
+    fixture.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn metadata_revisions_keep_a_running_job_current_and_a_changed_line_pauses_and_outdates_it()
+-> ReportFixtureResult {
+    let mut fixture = ReportFixture::new().await?;
+    let tree = ReportFixture::tree(&["e2e4", "e7e5"])?;
+    let mut job = fixture.job(&["e2e4", "e7e5"])?;
+    job.resume()?;
+    fixture
+        .complete(&mut job, 0, "info score cp 30 pv e2e4")
+        .await?;
+    let original = ReportFixture::source(&tree)?;
+    let newer = ReportJobSource::capture(
+        original.game(),
+        GameRevision::ZERO.next()?,
+        &tree,
+        original.tip(),
+        original.limits(),
+    )?;
+    job.observe_source(&newer)?;
+    assert_eq!(job.freshness(), ReportJobEnumFreshness::Current);
+    assert_eq!(job.state(), ReportJobEnumState::Running);
+    let changed = ReportFixture::source(&ReportFixture::tree(&["d2d4", "d7d5"])?)?;
+    job.observe_source(&changed)?;
+    assert_eq!(job.freshness(), ReportJobEnumFreshness::Outdated);
+    assert_eq!(job.state(), ReportJobEnumState::Paused);
+    assert_eq!(job.progress().completed(), 1);
+    assert!(job.finding(0).is_ok());
+    assert!(matches!(
+        job.start_position(1),
+        Err(ReportJobError::Outdated)
+    ));
+    fixture.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn relaunch_keeps_completed_scores_and_requires_explicit_resume_before_restart()
+-> ReportFixtureResult {
+    let mut fixture = ReportFixture::new().await?;
+    let mut job = fixture.job(&["e2e4", "e7e5"])?;
+    job.resume()?;
+    fixture
+        .complete(&mut job, 0, "info score cp 400 pv e2e4")
+        .await?;
+    let first = job.start_position(1)?;
+    let budget = first.limit();
+    job.recover_after_relaunch()?;
+    assert_eq!(job.state(), ReportJobEnumState::Paused);
+    assert_eq!(job.progress().completed(), 1);
+    assert!(job.start_position(1).is_err());
+    job.resume()?;
+    let restarted = job.start_position(1)?;
+    assert_ne!(restarted.sequence(), first.sequence());
+    assert_eq!(restarted.limit(), budget);
+    assert_eq!(job.progress().completed(), 1);
+    fixture.close().await?;
+    Ok(())
+}

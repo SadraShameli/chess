@@ -10,7 +10,9 @@ use crate::desktop::library_service::{
 };
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
 use crate::game::enums::GameId;
-use crate::game::library_organization::GameLibraryOrganizationFolderId;
+use crate::game::library_organization::{
+    GameLibraryOrganizationFolderId, GameLibraryOrganizationRequest,
+};
 use crate::game::storage_repository::GameStorageRevision;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
@@ -212,6 +214,14 @@ impl PresentationLibraryController {
                 storage_revision,
             },
         )
+    }
+
+    pub fn organize(
+        &mut self,
+        input: DesktopRequestId,
+        request: GameLibraryOrganizationRequest,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        self.begin(input, DesktopLibraryServiceEnumAction::Organize(request))
     }
 
     pub fn can_retry_open(&self) -> bool {
