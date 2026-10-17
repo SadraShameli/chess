@@ -503,3 +503,42 @@ async fn query_producer_forwards_real_filters_without_fabricating_opponent_metad
     assert!(exact && filtered && unavailable && excluded);
     Ok(())
 }
+
+#[tokio::test]
+async fn known_revision_opens_without_a_loaded_page() -> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        fixture.service.seed(600, true).await?;
+        let mut controller = PresentationLibraryController::new(fixture.service.workspace);
+        let game = DesktopLibraryServiceFixture::id(600)?;
+        let refused = matches!(
+            controller.open_saved(DesktopRequestId::new(), game),
+            Err(PresentationLibraryError::MissingGame)
+        );
+        let initial = controller
+            .refresh(DesktopRequestId::new())?
+            .ok_or("initial")?;
+        fixture.execute(&mut controller, &initial).await??;
+        let revision = controller
+            .page()
+            .and_then(|page| page.entries().iter().find(|entry| entry.id() == game))
+            .ok_or("entry")?
+            .content_revision();
+        let mut other = PresentationLibraryController::new(fixture.service.workspace);
+        let input = DesktopRequestId::new();
+        let open = other
+            .open_saved_revision(input, game, revision)?
+            .ok_or("open")?;
+        let repeated = other.open_saved_revision(input, game, revision)?.is_none();
+        let exact = matches!(
+            open.operation().action(),
+            DesktopLibraryServiceEnumAction::Open { game: opened, storage_revision }
+                if *opened == game && *storage_revision == revision
+        );
+        Ok((refused, repeated, exact, other.is_open_pending()))
+    }
+    .await;
+    fixture.close().await?;
+    assert_eq!(observation?, (true, true, true, true));
+    Ok(())
+}

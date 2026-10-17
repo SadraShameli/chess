@@ -357,6 +357,7 @@ impl PresentationApp {
     ) -> Result<(), PresentationAppError> {
         match target {
             PresentationAppLibraryEnumNavigation::OpenSaved(intent) => {
+                self.select_workspace_unguarded(PresentationAppEnumWorkspace::Library, port)?;
                 if let Some(library) = &mut self.library {
                     library.dispatch_panel(*intent, port)?;
                 }

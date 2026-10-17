@@ -79,6 +79,8 @@ pub enum PresentationAppEditorError {
     Failure(#[from] DesktopFailure),
     #[error("The editor action was canceled; refresh before continuing")]
     Canceled,
+    #[error(transparent)]
+    Library(#[from] crate::presentation::library::error::PresentationLibraryError),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

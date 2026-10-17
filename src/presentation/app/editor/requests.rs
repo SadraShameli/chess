@@ -7,8 +7,9 @@ use crate::desktop::application::{
 use crate::desktop::dto::DesktopEnumValue;
 use crate::desktop::editor_commands::{
     DesktopEditorCommandsEnumOperation, DesktopEditorCommandsEnumResult,
-    DesktopEditorCommandsOpening, DesktopEditorCommandsSnapshot,
+    DesktopEditorCommandsOpening, DesktopEditorCommandsSnapshot, DesktopEditorCommandsStudy,
 };
+use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::messages::{
     DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult, DesktopRequest,
 };
@@ -338,6 +339,7 @@ impl PresentationApp {
             }
         }
         let mut effect = PresentationEditorControllerEnumEffect::None;
+        let mut opening_study = None;
         if let Some(receipt) = editor.controller.receipt().cloned()
             && let Some(response) = receipt.response()
         {
@@ -422,6 +424,7 @@ impl PresentationApp {
             PresentationEditorControllerEnumEffect::OpenStudy { study, .. } => {
                 editor.created_study = Some(study);
                 editor.list_requested = true;
+                opening_study = Some(study);
             }
             PresentationEditorControllerEnumEffect::NewGame { start, .. } => {
                 self.new_game = Some(PresentationGameNewGame::from_position(
@@ -456,6 +459,42 @@ impl PresentationApp {
             };
         if let Some(target) = navigation {
             self.navigate_library(target, application)?;
+        }
+        if let Some(study) = opening_study {
+            self.open_study(study, application)?;
+        }
+        Ok(())
+    }
+
+    fn open_study<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        study: DesktopEditorCommandsStudy,
+        application: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        let Some(library) = &mut self.library else {
+            return Ok(());
+        };
+        let opened = library.panel.controller_mut().open_saved_revision(
+            DesktopRequestId::new(),
+            study.game(),
+            study.storage_revision(),
+        );
+        let intent = match opened {
+            Ok(Some(intent)) => intent,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                if let Some(editor) = &mut self.editor {
+                    editor.failure = Some(error.into());
+                }
+                return Ok(());
+            }
+        };
+        self.navigate(
+            PresentationAppLibraryEnumNavigation::OpenSaved(Box::new(intent)),
+            application,
+        )?;
+        if let Some(editor) = &mut self.editor {
+            editor.created_study = None;
         }
         Ok(())
     }

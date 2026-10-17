@@ -10,6 +10,7 @@ use crate::desktop::library_service::{
 };
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
 use crate::game::enums::GameId;
+use crate::game::storage_repository::GameStorageRevision;
 use crate::game::library_organization::GameLibraryOrganizationFolderId;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
@@ -187,15 +188,28 @@ impl PresentationLibraryController {
         if self.has_input(input) {
             return Ok(None);
         }
-        let entry = self
+        let storage_revision = self
             .page()
             .and_then(|page| page.entries().iter().find(|entry| entry.id() == game))
-            .ok_or(PresentationLibraryError::MissingGame)?;
+            .ok_or(PresentationLibraryError::MissingGame)?
+            .content_revision();
+        self.open_saved_revision(input, game, storage_revision)
+    }
+
+    pub fn open_saved_revision(
+        &mut self,
+        input: DesktopRequestId,
+        game: GameId,
+        storage_revision: GameStorageRevision,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        if self.has_input(input) {
+            return Ok(None);
+        }
         self.begin(
             input,
             DesktopLibraryServiceEnumAction::Open {
                 game,
-                storage_revision: entry.content_revision(),
+                storage_revision,
             },
         )
     }
