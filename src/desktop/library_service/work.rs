@@ -23,6 +23,11 @@ use crate::desktop::library_service::{
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumResult,
     DesktopLibraryServiceEnumSaveReceipt, DesktopLibraryServiceError,
 };
+use crate::desktop::annotation_owner::DesktopAnnotationOwnerError;
+use crate::game::library_organization::GameLibraryOrganizationRequest;
+use crate::storage::trash::{
+    StorageTrashConfirmedRequest, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+};
 use crate::storage::library_metadata::StorageLibraryMetadataRepository;
 use crate::storage::library_query::StorageLibraryQuery;
 use crate::storage::library_record::StorageLibraryEnumContent;
@@ -210,7 +215,13 @@ impl DesktopLibraryServiceWork {
                     }
                 }
             }
-            DesktopLibraryServiceEnumAction::Organize(request) => {
+            DesktopLibraryServiceEnumAction::Organize(mutation) => {
+                let timestamp = resources
+                    .wall_time
+                    .now()
+                    .map_err(DesktopAnnotationOwnerError::from)?;
+                let request = GameLibraryOrganizationRequest::new(timestamp, mutation)
+                    .map_err(StorageLibraryError::from)?;
                 Ok(DesktopLibraryServiceEnumResult::Organized(
                     StorageLibraryRepository::new(resources.client, &resources.executor)
                         .organize(request)
@@ -236,7 +247,32 @@ impl DesktopLibraryServiceWork {
                     _ => Err(StorageLibraryError::Protocol.into()),
                 }
             }
-            DesktopLibraryServiceEnumAction::Restore(request) => {
+            DesktopLibraryServiceEnumAction::RemoveFolder(plan) => {
+                if !matches!(plan.action(), StorageTrashPreviewRequest::RemoveFolder(_)) {
+                    return Err(StorageLibraryError::LifecycleRequired.into());
+                }
+                let timestamp = resources
+                    .wall_time
+                    .now()
+                    .map_err(DesktopAnnotationOwnerError::from)?;
+                let request = StorageTrashConfirmedRequest::new(plan.approve(), timestamp, None)?;
+                match StorageLibraryRepository::new(resources.client, &resources.executor)
+                    .begin_destruction(request)?
+                    .wait()
+                    .await?
+                {
+                    StorageLibraryEnumMutationReceipt::DestructionApplied(receipt) => {
+                        Ok(DesktopLibraryServiceEnumResult::Trashed(receipt))
+                    }
+                    _ => Err(StorageLibraryError::Protocol.into()),
+                }
+            }
+            DesktopLibraryServiceEnumAction::Restore(target) => {
+                let timestamp = resources
+                    .wall_time
+                    .now()
+                    .map_err(DesktopAnnotationOwnerError::from)?;
+                let request = StorageTrashRestoreRequest::new(target, timestamp);
                 match StorageLibraryRepository::new(resources.client, &resources.executor)
                     .begin_restore(request)?
                     .wait()

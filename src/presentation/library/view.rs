@@ -1,4 +1,6 @@
+mod folders;
 mod navigation;
+mod trash;
 
 use bevy_egui::egui::{self, Id, Ui};
 
@@ -7,6 +9,9 @@ use crate::desktop::library_service::{
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumDisposition,
 };
 use crate::desktop::messages::DesktopMessagesEntityId;
+use crate::game::library_organization::{
+    GameLibraryOrganizationEnumMutation, GameLibraryOrganizationGameTarget,
+};
 use crate::presentation::library::controller::PresentationLibraryController;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
@@ -94,6 +99,8 @@ impl PresentationLibraryPanel {
                     self.collect(result, &mut effects);
                 }
             });
+            self.trash_controls(ui, &mut effects);
+            self.folder_removal(ui, &mut effects);
             self.errors(ui);
             if self.controller.can_retry_open() {
                 let retry = ui.button("Retry opening");
@@ -173,6 +180,7 @@ impl PresentationLibraryPanel {
             | DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
             | DesktopLibraryServiceEnumAction::Editor { .. } => {
                 PresentationLibraryEnumEffect::Dispatch(intent)
             }
@@ -224,6 +232,8 @@ impl PresentationLibraryPanel {
         if self.controller.is_open_pending() {
             ui.label("Open request pending. Any unsaved edits must be resolved before opening.");
         }
+        let in_trash = self.in_trash();
+        let can_trash = !self.controller.is_pending(PresentationLibraryEnumLane::Trash);
         let Some(page) = self.controller.page() else {
             if !self.controller.is_query_pending() {
                 ui.label("Games are unavailable until the library is reloaded");
@@ -236,7 +246,10 @@ impl PresentationLibraryPanel {
         ui.label(format!("{} games on this page", page.entries().len()));
         let has_next = page.next_cursor().is_some();
         let can_open = !self.controller.is_open_pending();
+        let can_organize = !self.controller.is_pending(PresentationLibraryEnumLane::Organize);
         let mut selected = None;
+        let mut favorite = None;
+        let mut restore = None;
         egui::ScrollArea::vertical()
             .id_salt("library-games")
             .show(ui, |ui| {
@@ -244,10 +257,36 @@ impl PresentationLibraryPanel {
                     ui.push_id(row.id().as_uuid(), |ui| {
                         ui.group(|ui| {
                             PresentationLibraryRows::show(ui, row, &self.controller);
+                            if in_trash {
+                                let button = ui.add_enabled(
+                                    can_trash,
+                                    egui::Button::new("Restore to Library"),
+                                );
+                                if self.frame.clicked(ui, &button) {
+                                    restore = Some(Self::restore_target(row));
+                                }
+                                return;
+                            }
                             let open =
                                 ui.add_enabled(can_open, egui::Button::new("Open saved game"));
                             if self.frame.clicked(ui, &open) {
                                 selected = Some(row.id());
+                            }
+                            let is_favorite = row.organization().is_favorite();
+                            let label = if is_favorite {
+                                "Remove from Favorites"
+                            } else {
+                                "Add to Favorites"
+                            };
+                            let toggle = ui.add_enabled(can_organize, egui::Button::new(label));
+                            if self.frame.clicked(ui, &toggle) {
+                                favorite = Some(GameLibraryOrganizationEnumMutation::SetFavorite(
+                                    GameLibraryOrganizationGameTarget::new(
+                                        row.id(),
+                                        row.organization().revision(),
+                                    ),
+                                    !is_favorite,
+                                ));
                             }
                         });
                     });
@@ -255,6 +294,16 @@ impl PresentationLibraryPanel {
             });
         if let Some(game) = selected {
             let result = self.controller.open_saved(DesktopRequestId::new(), game);
+            self.collect(result, effects);
+        }
+        if let Some(target) = restore {
+            let result = self.controller.restore(DesktopRequestId::new(), target);
+            self.collect(result, effects);
+        }
+        if let Some(mutation) = favorite {
+            let result = self
+                .controller
+                .organize(DesktopRequestId::new(), mutation);
             self.collect(result, effects);
         }
         let next = ui.add_enabled(

@@ -292,7 +292,7 @@ The domain/storage increment and its executed gates are recorded in the
 [Library/editor/report checkpoint](evidence/library-editor-report-checkpoint.md).
 
 - [X] T146 [P] [US6] Add invalid-draft persistence, structural king/check/right/counter validation, declared-variant FEN and source-game isolation tests in `tests/board/editor.rs`.
-- [ ] T147 [P] [US6] Add editor placement, shortcut, unsaved-edit, Undo/Redo/session-reset and Play-from-Position flows in `tests/presentation/editor.rs`.
+- [X] T147 [P] [US6] Add editor placement, shortcut, unsaved-edit, Undo/Redo/session-reset and Play-from-Position flows in `tests/presentation/editor.rs`.
 - [X] T148 [US6] Implement raw editor draft fields and validation findings in `src/board/editor/draft.rs` and `src/board/editor/validation.rs`, preserving invalid status separately from BoardPosition and exact halfmove 0..1000000/fullmove 1..1000000 bounds. Exact model constraints: "Persist invalid editor drafts separately from validated positions, with explicit invalid status and actionable validation findings."; "prohibit play/engine analysis until corrected."
 - [X] T149 [US6] Implement editor-local select/place/remove/move, piece/turn/castling/en-passant/counter edits and session-only Undo/Redo in `src/board/editor/session.rs`, with confirmed Clear Board/Standard Setup and no modification of the source game.
 - [X] T150 [US6] Persist valid/invalid drafts with explicit save and separate identities in `src/storage/migrations/0004_editor.sql` and `src/storage/editor_repository.rs`; reopen saved position fields without persisted Undo/Redo. Exact model constraints: "Persist the draft position but not editor Undo/Redo history across sessions."
@@ -300,7 +300,7 @@ The domain/storage increment and its executed gates are recorded in the
 - [X] T152 [US6] Implement piece palette, click/drag/keyboard placement/removal, field validation and explicit Save/Discard/Stay in `src/presentation/editor/view.rs` and `src/presentation/editor/controller.rs`, including selected-position-or-Standard draft initialization. Exact model constraints: "New drafts copy the selected position or Standard setup if none; saved drafts restore their own position."
 - [X] T153 [US6] Implement shared Library Positions/editor draft lists and valid-only Play from Position/New Game prefill in `src/presentation/library/positions.rs` and `src/presentation/editor/draft_list.rs`, requiring explicit Start and preserving current drafts. Exact model constraints: "Play from Position opens New Game with the validated position prefilled and requires Start."; "FEN-to-editor creates a new draft, preserving the previous draft and its unsaved-edit prompt".
 - [X] T154 [US6] Connect validated drafts to analysis/annotations and typed native application ports in `src/desktop/bootstrap.rs` and `src/presentation/app.rs`, preserving existing game/tree histories and all four promotion choices.
-- [ ] T155 [US6] Register editor fixtures through `tests/domain.rs`, exercise story 6 scenarios 1 through 7 and record draft/FEN/annotation round trips in `specs/001-reckless-desktop-chess/evidence/us6.md`.
+- [X] T155 [US6] Register editor fixtures through `tests/domain.rs`, exercise story 6 scenarios 1 through 7 and record draft/FEN/annotation round trips in `specs/001-reckless-desktop-chess/evidence/us6.md`.
 
 **Checkpoint**: Record actual passing evidence for this increment; unavailable platform evidence and unresolved release gates remain outstanding.
 

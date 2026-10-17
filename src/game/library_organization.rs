@@ -297,8 +297,13 @@ impl GameLibraryOrganizationRequest {
         &self.mutation
     }
     pub fn transport_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + match &self.mutation {
+        std::mem::size_of::<Self>() + self.mutation.payload_bytes()
+    }
+}
+
+impl GameLibraryOrganizationEnumMutation {
+    pub fn payload_bytes(&self) -> usize {
+        match self {
                 GameLibraryOrganizationEnumMutation::CreateFolder(_, _, name)
                 | GameLibraryOrganizationEnumMutation::RenameFolder(_, name)
                 | GameLibraryOrganizationEnumMutation::CreateTag(_, name)

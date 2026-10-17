@@ -32,7 +32,8 @@ impl PresentationLibraryEnumLane {
             DesktopLibraryServiceEnumAction::Organize(_) => Self::Organize,
             DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
-            | DesktopLibraryServiceEnumAction::Restore(_) => Self::Trash,
+            | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_) => Self::Trash,
             DesktopLibraryServiceEnumAction::Editor { .. } => {
                 return Err(PresentationLibraryError::EditorAction);
             }

@@ -6,12 +6,15 @@ use crate::desktop::identity::DesktopRevision;
 use crate::desktop::library_service::DesktopLibraryServiceError;
 use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::enums::GameId;
-use crate::game::library_organization::GameLibraryOrganizationRequest;
+use crate::game::library_organization::{
+    GameLibraryOrganizationEnumMutation, GameLibraryOrganizationGameTarget,
+    GameLibraryOrganizationRequest,
+};
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::library_metadata::StorageLibraryMetadataEnumRequest;
 use crate::storage::trash::{
-    StorageTrashConfirmedRequest, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
 };
 use crate::storage::library_query::{StorageLibraryQueryCursor, StorageLibraryQueryOptions};
 
@@ -30,10 +33,11 @@ pub enum DesktopLibraryServiceEnumAction {
         expected: DesktopGameEditorContext,
         action: DesktopAnnotationCommandsEnumAction,
     },
-    Organize(GameLibraryOrganizationRequest),
+    Organize(GameLibraryOrganizationEnumMutation),
     PreviewTrash(StorageTrashPreviewRequest),
     ApplyTrash(StorageTrashConfirmedRequest),
-    Restore(StorageTrashRestoreRequest),
+    Restore(GameLibraryOrganizationGameTarget),
+    RemoveFolder(StorageTrashPlan),
 }
 
 impl Debug for DesktopLibraryServiceEnumAction {
@@ -54,7 +58,7 @@ impl Debug for DesktopLibraryServiceEnumAction {
                 .finish(),
             Self::Organize(request) => formatter
                 .debug_tuple("Organize")
-                .field(&std::mem::discriminant(request.mutation()))
+                .field(&std::mem::discriminant(request))
                 .finish(),
             Self::PreviewTrash(request) => {
                 formatter.debug_tuple("PreviewTrash").field(request).finish()
@@ -64,6 +68,10 @@ impl Debug for DesktopLibraryServiceEnumAction {
                 .field(&request.plan().action())
                 .finish(),
             Self::Restore(request) => formatter.debug_tuple("Restore").field(request).finish(),
+            Self::RemoveFolder(plan) => formatter
+                .debug_tuple("RemoveFolder")
+                .field(&plan.action())
+                .finish(),
             Self::Editor { expected, action } => formatter
                 .debug_struct("Editor")
                 .field("expected", expected)
@@ -112,6 +120,7 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => None,
         }
     }
@@ -149,10 +158,13 @@ impl DesktopLibraryServiceOperation {
             DesktopLibraryServiceEnumAction::Query { .. }
             | DesktopLibraryServiceEnumAction::Metadata(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => 0,
-            DesktopLibraryServiceEnumAction::Organize(request) => request.transport_bytes(),
+            DesktopLibraryServiceEnumAction::Organize(mutation) => {
+                std::mem::size_of::<GameLibraryOrganizationRequest>() + mutation.payload_bytes()
+            }
             DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
-            | DesktopLibraryServiceEnumAction::Restore(_) => 0,
+            | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_) => 0,
         };
         let bytes = payload
             .checked_add(std::mem::size_of::<Self>())
@@ -190,6 +202,7 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -207,6 +220,7 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }
@@ -236,6 +250,7 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
             | DesktopLibraryServiceEnumAction::Open { .. } => false,
         }
     }
@@ -249,6 +264,7 @@ impl DesktopLibraryServiceOperation {
             | DesktopLibraryServiceEnumAction::PreviewTrash(_)
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
+            | DesktopLibraryServiceEnumAction::RemoveFolder(_)
             | DesktopLibraryServiceEnumAction::Metadata(_) => None,
         }
     }

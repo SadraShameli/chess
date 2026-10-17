@@ -28,6 +28,8 @@ pub enum PresentationLibraryError {
     EndOfPages,
     #[error("Load a current library page before opening this game")]
     MissingGame,
+    #[error("Preview the Trash action and confirm the exact plan first")]
+    MissingPlan,
     #[error("Reload the library from the first page")]
     ResyncRequired,
     #[error("Library editor actions belong to the annotation panel")]

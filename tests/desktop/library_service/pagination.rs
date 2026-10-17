@@ -124,14 +124,12 @@ async fn metadata_cursor_returns_real_catalog_rows_across_pages() -> DesktopLibr
 async fn organize_action_applies_through_the_service_and_reports_the_organization_revision()
 -> DesktopLibraryServiceTestResult {
     let mut fixture = DesktopLibraryServiceFixture::new().await?;
-    let request = GameLibraryOrganizationRequest::new(
-        GameLibraryOrganizationTimestamp::new(10)?,
+    let action = DesktopLibraryServiceEnumAction::Organize(
         GameLibraryOrganizationEnumMutation::CreateTag(
             uuid::Uuid::from_u128(7).to_string().parse()?,
             GameLibraryOrganizationName::new("Endgames".to_owned())?,
         ),
-    )?;
-    let action = DesktopLibraryServiceEnumAction::Organize(request);
+    );
     assert_eq!(action, action.clone());
     let result = fixture.execute(action).await?;
     let DesktopLibraryServiceEnumResult::Organized(receipt) = &result else {
@@ -177,7 +175,7 @@ async fn trash_actions_preview_apply_and_restore_a_closed_game_through_the_servi
     use crate::desktop::library_commands::DesktopLibraryCommandsConfirmation;
     use crate::game::library_organization::GameLibraryOrganizationGameTarget;
     use crate::storage::trash::{
-        StorageTrashEnumAppliedAction, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+        StorageTrashEnumAppliedAction, StorageTrashPreviewRequest,
     };
     let mut fixture = DesktopLibraryServiceFixture::new().await?;
     let revision = fixture.seed(800, true).await?;
@@ -209,15 +207,50 @@ async fn trash_actions_preview_apply_and_restore_a_closed_game_through_the_servi
     );
     let restored = fixture
         .execute(DesktopLibraryServiceEnumAction::Restore(
-            StorageTrashRestoreRequest::new(
-                GameLibraryOrganizationGameTarget::new(game, organization.next()?),
-                GameLibraryOrganizationTimestamp::new(30)?,
-            ),
+            GameLibraryOrganizationGameTarget::new(game, organization.next()?),
         ))
         .await?;
     let DesktopLibraryServiceEnumResult::Restored(receipt) = restored else {
         return Err("missing restore receipt".into());
     };
     assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Restored(game));
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn remove_folder_action_applies_a_previewed_plan_with_a_service_timestamp()
+-> DesktopLibraryServiceTestResult {
+    use crate::storage::trash::{StorageTrashEnumAppliedAction, StorageTrashPreviewRequest};
+    let mut fixture = DesktopLibraryServiceFixture::new().await?;
+    let folder: crate::game::library_organization::GameLibraryOrganizationFolderId =
+        uuid::Uuid::from_u128(31).to_string().parse()?;
+    fixture
+        .execute(DesktopLibraryServiceEnumAction::Organize(
+            GameLibraryOrganizationEnumMutation::CreateFolder(
+                folder,
+                None,
+                GameLibraryOrganizationName::new("Openings".to_owned())?,
+            ),
+        ))
+        .await?;
+    let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
+        .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
+            StorageTrashPreviewRequest::RemoveFolder(folder),
+        ))
+        .await?
+    else {
+        return Err("missing folder plan".into());
+    };
+    assert_eq!(plan.affected_folder_count(), 1);
+    let DesktopLibraryServiceEnumResult::Trashed(receipt) = fixture
+        .execute(DesktopLibraryServiceEnumAction::RemoveFolder(plan))
+        .await?
+    else {
+        return Err("missing removal receipt".into());
+    };
+    assert_eq!(
+        receipt.action(),
+        StorageTrashEnumAppliedAction::RemovedFolder(folder)
+    );
     fixture.close().await
 }

@@ -5,6 +5,7 @@ use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::library_service::DesktopLibraryServiceEnumAction;
 use crate::desktop::library_service::tests::fixture::DesktopLibraryServiceFixture;
 use crate::desktop::library_service::tests::fixture::DesktopLibraryServiceTestResult;
+use crate::game::library_organization::GameLibraryOrganizationEnumMutation;
 use crate::presentation::library::tests::fixture::PresentationLibraryTestFixture;
 use crate::presentation::library::view::{PresentationLibraryEnumEffect, PresentationLibraryPanel};
 use crate::storage::library_query::StorageLibraryEnumFilter;
@@ -129,5 +130,48 @@ async fn native_player_filter_and_open_emit_once_with_truthful_notation_labels()
     assert_eq!(queries, 1);
     assert_eq!(opens, 1);
     assert!(matched && unadmitted && exact_game);
+    Ok(())
+}
+
+#[tokio::test]
+async fn favorite_button_emits_one_exact_organization_mutation_and_toggles_off_after_refresh()
+-> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        let game = DesktopLibraryServiceFixture::id(1200)?;
+        fixture.seed_notation(game, "[White \"Ada\"]\n\n1. e4 *").await?;
+        let mut panel = PresentationLibraryPanel::new(fixture.service.workspace);
+        let query = panel.controller_mut().refresh(DesktopRequestId::new())?.ok_or("query")?;
+        fixture.execute(panel.controller_mut(), &query).await??;
+        let mut harness = Harness::builder().with_size(egui::vec2(1280.0, 1000.0)).build_ui_state(
+            |ui, (panel, effects): &mut (PresentationLibraryPanel, Vec<PresentationLibraryEnumEffect>)| {
+                let produced = panel.show(ui);
+                if !produced.is_empty() {
+                    ui.ctx().request_discard("Exercise favorite input");
+                }
+                effects.extend(produced);
+            }, (panel, Vec::<PresentationLibraryEnumEffect>::new())
+        );
+        let initial = std::mem::take(&mut harness.state_mut().1);
+        for effect in initial {
+            let PresentationLibraryEnumEffect::Dispatch(intent) = effect else { return Err("metadata opened a game".into()); };
+            fixture.execute(harness.state_mut().0.controller_mut(), &intent).await??;
+        }
+        harness.run_steps(3);
+        harness.get_by_label("Add to Favorites").click();
+        harness.run_steps(3);
+        let effects = std::mem::take(&mut harness.state_mut().1);
+        let count = effects.len();
+        let mut exact = false;
+        for effect in effects {
+            let PresentationLibraryEnumEffect::Dispatch(intent) = effect else { return Err("favorite opened a game".into()); };
+            exact = matches!(intent.operation().action(), DesktopLibraryServiceEnumAction::Organize(GameLibraryOrganizationEnumMutation::SetFavorite(target, true)) if target.id() == game);
+            fixture.execute(harness.state_mut().0.controller_mut(), &intent).await??;
+        }
+        let resync = harness.state().0.controller().needs_resync();
+        Ok((count, exact, resync))
+    }.await;
+    fixture.close().await?;
+    assert_eq!(observation?, (1, true, true));
     Ok(())
 }

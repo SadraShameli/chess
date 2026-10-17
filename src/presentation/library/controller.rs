@@ -11,7 +11,8 @@ use crate::desktop::library_service::{
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
 use crate::game::enums::GameId;
 use crate::game::library_organization::{
-    GameLibraryOrganizationFolderId, GameLibraryOrganizationRequest,
+    GameLibraryOrganizationEnumMutation, GameLibraryOrganizationFolderId,
+    GameLibraryOrganizationGameTarget,
 };
 use crate::game::storage_repository::GameStorageRevision;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
@@ -22,7 +23,7 @@ use crate::storage::library_metadata::{
     StorageLibraryMetadataFolderRead, StorageLibraryMetadataTagPage,
 };
 use crate::storage::trash::{
-    StorageTrashConfirmedRequest, StorageTrashPreviewRequest, StorageTrashRestoreRequest,
+    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
 };
 use crate::storage::library_query::{
     StorageLibraryQuery, StorageLibraryQueryCursor, StorageLibraryQueryOptions,
@@ -41,6 +42,7 @@ pub struct PresentationLibraryController {
     recent: VecDeque<DesktopRequestId>,
     failures: [Option<Arc<DesktopLibraryServiceError>>; PresentationLibraryEnumLane::COUNT],
     needs_resync: bool,
+    trash_plan: Option<StorageTrashPlan>,
 }
 
 impl PresentationLibraryController {
@@ -59,6 +61,7 @@ impl PresentationLibraryController {
             recent: VecDeque::with_capacity(Self::RECENT_INPUT_CAPACITY),
             failures: std::array::from_fn(|_| None),
             needs_resync: false,
+            trash_plan: None,
         }
     }
 
@@ -222,9 +225,9 @@ impl PresentationLibraryController {
     pub fn organize(
         &mut self,
         input: DesktopRequestId,
-        request: GameLibraryOrganizationRequest,
+        mutation: GameLibraryOrganizationEnumMutation,
     ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
-        self.begin(input, DesktopLibraryServiceEnumAction::Organize(request))
+        self.begin(input, DesktopLibraryServiceEnumAction::Organize(mutation))
     }
 
     pub fn preview_trash(
@@ -246,9 +249,32 @@ impl PresentationLibraryController {
     pub fn restore(
         &mut self,
         input: DesktopRequestId,
-        request: StorageTrashRestoreRequest,
+        target: GameLibraryOrganizationGameTarget,
     ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
-        self.begin(input, DesktopLibraryServiceEnumAction::Restore(request))
+        self.begin(input, DesktopLibraryServiceEnumAction::Restore(target))
+    }
+
+    pub fn remove_folder(
+        &mut self,
+        input: DesktopRequestId,
+    ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
+        if self.has_input(input) {
+            return Ok(None);
+        }
+        let plan = self
+            .trash_plan
+            .clone()
+            .filter(|plan| matches!(plan.action(), StorageTrashPreviewRequest::RemoveFolder(_)))
+            .ok_or(PresentationLibraryError::MissingPlan)?;
+        self.begin(input, DesktopLibraryServiceEnumAction::RemoveFolder(plan))
+    }
+
+    pub const fn trash_plan(&self) -> Option<&StorageTrashPlan> {
+        self.trash_plan.as_ref()
+    }
+
+    pub fn dismiss_trash_plan(&mut self) {
+        self.trash_plan = None;
     }
 
     pub fn can_retry_open(&self) -> bool {

@@ -554,13 +554,10 @@ async fn organization_runs_in_its_own_lane_and_marks_the_page_for_resync()
             .refresh(DesktopRequestId::new())?
             .ok_or("initial")?;
         fixture.execute(&mut controller, &initial).await??;
-        let request = GameLibraryOrganizationRequest::new(
-            GameLibraryOrganizationTimestamp::new(10)?,
-            GameLibraryOrganizationEnumMutation::CreateTag(
-                uuid::Uuid::from_u128(9).to_string().parse()?,
-                GameLibraryOrganizationName::new("Rapid".to_owned())?,
-            ),
-        )?;
+        let request = GameLibraryOrganizationEnumMutation::CreateTag(
+            uuid::Uuid::from_u128(9).to_string().parse()?,
+            GameLibraryOrganizationName::new("Rapid".to_owned())?,
+        );
         let input = DesktopRequestId::new();
         let intent = controller
             .organize(input, request.clone())?

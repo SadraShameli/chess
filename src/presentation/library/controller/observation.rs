@@ -54,10 +54,13 @@ impl PresentationLibraryController {
             }
             (
                 DesktopLibraryServiceEnumAction::PreviewTrash(_),
-                DesktopLibraryServiceEnumResult::TrashPlan(_),
-            ) => {}
+                DesktopLibraryServiceEnumResult::TrashPlan(plan),
+            ) => {
+                self.trash_plan = Some(plan.clone());
+            }
             (
-                DesktopLibraryServiceEnumAction::ApplyTrash(_),
+                DesktopLibraryServiceEnumAction::ApplyTrash(_)
+                | DesktopLibraryServiceEnumAction::RemoveFolder(_),
                 DesktopLibraryServiceEnumResult::Trashed(_),
             )
             | (
@@ -65,6 +68,9 @@ impl PresentationLibraryController {
                 DesktopLibraryServiceEnumResult::Restored(_),
             ) => {
                 self.needs_resync = true;
+                self.trash_plan = None;
+                self.folders = None;
+                self.folder = None;
             }
             (DesktopLibraryServiceEnumAction::Editor { action: crate::desktop::annotation_commands::DesktopAnnotationCommandsEnumAction::RetrySave, .. }, DesktopLibraryServiceEnumResult::Opened(publication)) if lane == PresentationLibraryEnumLane::Open => self.pending[index].check_opened(publication)?,
             (
@@ -75,6 +81,7 @@ impl PresentationLibraryController {
                 | DesktopLibraryServiceEnumAction::PreviewTrash(_)
                 | DesktopLibraryServiceEnumAction::ApplyTrash(_)
                 | DesktopLibraryServiceEnumAction::Restore(_)
+                | DesktopLibraryServiceEnumAction::RemoveFolder(_)
                 | DesktopLibraryServiceEnumAction::Editor { .. },
                 DesktopLibraryServiceEnumResult::Query(_)
                 | DesktopLibraryServiceEnumResult::Metadata(_)

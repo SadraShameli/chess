@@ -84,6 +84,7 @@ impl PresentationLibraryPanel {
         let catalog = page.catalog_revision();
         let cursor = page.next_cursor().copied();
         let mut browse = None;
+        let mut removal = None;
         for folder in page.entries() {
             ui.push_id(folder.id().as_uuid(), |ui| {
                 ui.label(format!("{} ({})", folder.name().as_str(), folder.id()));
@@ -96,10 +97,17 @@ impl PresentationLibraryPanel {
                 if self.frame.clicked(ui, &child) {
                     browse = Some(folder.id());
                 }
+                let remove = ui.add_enabled(!pending, egui::Button::new("Preview folder removal"));
+                if self.frame.clicked(ui, &remove) {
+                    removal = Some(folder.id());
+                }
             });
         }
         if let Some(id) = browse {
             self.browse(Some(id), Some(catalog), effects);
+        }
+        if let Some(id) = removal {
+            self.request_folder_removal(id, effects);
         }
         let next = ui.add_enabled(
             cursor.is_some() && !pending,
