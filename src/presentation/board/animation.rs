@@ -68,6 +68,10 @@ impl PresentationBoardAnimationFrame {
         self.panel_progress
     }
 
+    pub fn is_panel_sliding(self) -> bool {
+        self.panel_progress > 0.0 && self.panel_progress < 1.0
+    }
+
     pub const fn camera(self) -> Option<SceneCamera> {
         self.camera
     }

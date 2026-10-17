@@ -1514,6 +1514,9 @@ impl DesktopNativeHost {
             return Ok(());
         }
         if let Some(viewport) = frame.viewport()
+            && !frame
+                .animation()
+                .is_some_and(PresentationBoardAnimationFrame::is_panel_sliding)
             && renderer.is_some_and(|renderer| renderer.viewport() != viewport)
         {
             state.pending_view = Some(viewport);

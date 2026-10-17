@@ -210,6 +210,10 @@ impl DesktopGameRegistryFixtureRuntime {
         })
     }
 
+    pub(crate) fn database_path(&self) -> std::path::PathBuf {
+        self.directory.path().join("library.sqlite3")
+    }
+
     pub(crate) fn registry(&self) -> (DesktopGameRegistryFixtureActor, DesktopGameRegistryPort) {
         DesktopGameRegistry::new(self.options())
     }

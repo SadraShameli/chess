@@ -1,4 +1,6 @@
 use std::sync::{Arc, Mutex, atomic::Ordering};
+
+use diesel::{Connection, RunQueryDsl, SqliteConnection};
 use std::time::Duration;
 
 use chess::board::enums::BoardEnumColor;
@@ -22,19 +24,26 @@ use chess::desktop::native::library_startup::DesktopNativeLibraryStartupEnumRead
 use chess::game::enums::{
     GameEnumEngineReadiness, GameEnumMode, GameEnumPhase, GameEnumSeat, GameId, GameMoveId,
 };
+use chess::game::library_organization::GameLibraryOrganizationTimestamp;
 use chess::game::pause::GamePauseEnumCause;
 use chess::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionEnumInterruption, GameSessionMoveRequest,
     GameSessionOptions,
 };
 use chess::game::storage_repository::{
+    GameStorageContentEdit, GameStorageEnumContentChange, GameStorageEnumEditCause,
     GameStorageRepository, GameStorageRevision, GameStorageSaveRequest,
 };
 use chess::game::tree::GameTree;
 use chess::notation::game::{NotationGame, NotationGameParts};
 use chess::notation::game_identity::NotationGameIdentityEnumResult;
-use chess::storage::game_document::{StorageGameDocument, StorageGameDocumentRepository};
+use chess::storage::game_document::StorageGameDocument;
+use chess::storage::library_played::StorageLibraryPlayedRepository;
+use chess::storage::library_prepared::StorageLibraryEnumContentChange;
 use chess::storage::library_record::StorageLibraryEnumContent;
+use chess::storage::library_repository::{
+    StorageLibraryEnumMutationReceipt, StorageLibraryRepository,
+};
 use tokio::sync::watch;
 use tokio::time::{Instant, timeout, timeout_at};
 
@@ -169,6 +178,23 @@ impl DesktopNativeGameServiceFixture {
         Ok(session)
     }
 
+    fn created(
+        session: &GameSession,
+        saved_at: ClockInstant,
+    ) -> Result<GameStorageSaveRequest, Box<dyn std::error::Error>> {
+        Ok(GameStorageSaveRequest::capture_with_change(
+            session,
+            saved_at,
+            GameStorageRevision::INITIAL,
+            GameStorageEnumContentChange::Changed(GameStorageContentEdit::new(
+                session.revision(),
+                session.revision(),
+                GameStorageEnumEditCause::Created,
+                GameLibraryOrganizationTimestamp::new(10)?,
+            )?),
+        )?)
+    }
+
     fn assert_played(
         snapshot: &DesktopGameSnapshot,
         session: &GameSession,
@@ -245,25 +271,61 @@ impl DesktopNativeGameServiceFixture {
                 )?,
             ];
             let repository =
-                StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
+                StorageLibraryPlayedRepository::new(fixture.store.client(), &fixture.executor);
             for session in &played {
-                repository
-                    .save(GameStorageSaveRequest::capture(
-                        session,
-                        saved_at,
-                        GameStorageRevision::INITIAL,
-                    )?)
-                    .await?;
+                repository.save(Self::created(session, saved_at)?).await?;
             }
-            let saved = fixture
-                .store
-                .client()
-                .save(
-                    document_id.as_uuid(),
-                    GameStorageRevision::INITIAL.value(),
-                    body.clone(),
-                )
-                .await?;
+            let saved = match content {
+                DesktopNativeGameServiceFixtureEnumDocument::Unrelated => {
+                    let receipt = fixture
+                        .store
+                        .client()
+                        .save(
+                            document_id.as_uuid(),
+                            GameStorageRevision::INITIAL.value(),
+                            body.clone(),
+                        )
+                        .await?;
+                    receipt.revision()
+                }
+                DesktopNativeGameServiceFixtureEnumDocument::Notation => {
+                    let library =
+                        StorageLibraryRepository::new(fixture.store.client(), &fixture.executor);
+                    let prepared = library
+                        .prepare_write(
+                            document_id,
+                            GameStorageRevision::INITIAL,
+                            body.clone(),
+                            StorageLibraryEnumContentChange::Changed(
+                                GameLibraryOrganizationTimestamp::new(10)?,
+                            ),
+                        )
+                        .await?;
+                    let StorageLibraryEnumMutationReceipt::Saved(receipt) =
+                        library.begin_save(prepared)?.wait().await?
+                    else {
+                        return Err("missing notation save receipt".into());
+                    };
+                    receipt.content_revision().value()
+                }
+                DesktopNativeGameServiceFixtureEnumDocument::CorruptPlayed
+                | DesktopNativeGameServiceFixtureEnumDocument::FuturePlayed => {
+                    let session = Self::played(
+                        document_id,
+                        "20000000-0000-4000-8000-000000000002".parse()?,
+                        "20000000-0000-4000-8000-000000000003".parse()?,
+                        "c2c4",
+                    )?;
+                    let receipt = repository.save(Self::created(&session, saved_at)?).await?;
+                    let mut connection =
+                        SqliteConnection::establish(&fixture.database_path().to_string_lossy())?;
+                    diesel::sql_query("UPDATE documents SET body = ?1 WHERE id = ?2")
+                        .bind::<diesel::sql_types::Text, _>(body.clone())
+                        .bind::<diesel::sql_types::Text, _>(document_id.as_uuid().to_string())
+                        .execute(&mut connection)?;
+                    receipt.storage_revision().value()
+                }
+            };
             fixture.clock.advance_to(saved_at)?;
             let restoration = service.restore().await;
             let readiness = service.library_readiness();
@@ -307,8 +369,7 @@ impl DesktopNativeGameServiceFixture {
                 .all(|snapshot| snapshot.id() != document_id)
         );
         let preserved = preserved?.ok_or("non-played document was removed during recovery")?;
-        assert_eq!(saved.id(), document_id.as_uuid());
-        assert_eq!(preserved.revision(), saved.revision());
+        assert_eq!(preserved.revision(), saved);
         assert_eq!(preserved.body(), body);
         match content {
             DesktopNativeGameServiceFixtureEnumDocument::Notation => {
@@ -344,7 +405,7 @@ impl DesktopNativeGameServiceFixture {
                     .first()
                     .ok_or("missing played recovery issue")?;
                 assert_eq!(issue.id(), document_id.as_uuid());
-                assert_eq!(issue.content_revision().value(), saved.revision());
+                assert_eq!(issue.content_revision().value(), saved);
             }
         }
         Ok(())

@@ -41,6 +41,7 @@ impl PresentationAppLibraryFixture {
             Arc::new(DesktopNativeEventLoopWake::new()),
         );
         let mut app = PresentationApp::new(clock);
+        app.board.set_reduced_motion(true);
         app.mount_library(source.workspace);
         app.select_workspace(PresentationAppEnumWorkspace::Library, &application.port())?;
         Ok(Self {

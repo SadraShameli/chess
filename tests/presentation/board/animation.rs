@@ -244,6 +244,20 @@ fn panel_motion_runs_for_160_ms_and_reverses_from_its_current_progress()
 }
 
 #[test]
+fn panel_is_sliding_only_between_its_resting_states() -> PresentationBoardAnimationResult {
+    let mut fixture = PresentationBoardAnimationFixture::new(false);
+    assert!(!fixture.animation.frame()?.is_panel_sliding());
+    fixture.animation.set_panel_visible(false)?;
+    fixture.clock.advance_millis(80);
+    assert!(fixture.animation.frame()?.is_panel_sliding());
+    fixture.clock.advance_millis(160);
+    let settled = fixture.animation.frame()?;
+    assert!(!settled.is_panel_sliding());
+    assert!(near(settled.panel_progress(), 0.0));
+    Ok(())
+}
+
+#[test]
 fn reduced_motion_applies_final_states_immediately_and_schedules_nothing()
 -> PresentationBoardAnimationResult {
     let mut fixture = PresentationBoardAnimationFixture::new(true);

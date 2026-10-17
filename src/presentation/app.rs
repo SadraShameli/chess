@@ -48,6 +48,7 @@ use crate::presentation::board::animation::PresentationBoardAnimationFrame;
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+use crate::presentation::board::toolbar::PresentationBoardToolbar;
 use crate::presentation::board::view::{
     PresentationBoardAction, PresentationBoardPickingProvider, PresentationBoardView,
     PresentationBoardViewError, PresentationBoardViewFrame, PresentationBoardViewInput,
@@ -1320,37 +1321,6 @@ impl PresentationApp {
         }
     }
 
-    fn show_camera(
-        ui: &mut Ui,
-        scene: Option<&PresentationBoardScene>,
-    ) -> Option<PresentationBoardEnumCameraAction> {
-        let mut selected = None;
-        ui.heading("Camera");
-        ui.horizontal_wrapped(|ui| {
-            for (label, action) in [
-                ("Rotate left", PresentationBoardEnumCameraAction::RotateLeft),
-                (
-                    "Rotate right",
-                    PresentationBoardEnumCameraAction::RotateRight,
-                ),
-                ("Tilt up", PresentationBoardEnumCameraAction::TiltUp),
-                ("Tilt down", PresentationBoardEnumCameraAction::TiltDown),
-                ("Zoom in", PresentationBoardEnumCameraAction::ZoomIn),
-                ("Zoom out", PresentationBoardEnumCameraAction::ZoomOut),
-                ("Reset view", PresentationBoardEnumCameraAction::Reset),
-                ("Flip board", PresentationBoardEnumCameraAction::Flip),
-            ] {
-                if ui
-                    .add_enabled(scene.is_some(), egui::Button::new(label))
-                    .clicked()
-                {
-                    selected = Some(action);
-                }
-            }
-        });
-        selected
-    }
-
     pub fn show<C, W, P>(
         &mut self,
         ui: &mut Ui,
@@ -1629,8 +1599,6 @@ impl PresentationApp {
                     ui.add_enabled_ui(!self.quit_confirmation, |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             if let Err(error) = self.show_editor(ui, port) { self.report_failure(error); }
-                            ui.separator();
-                            if let Some(action) = Self::show_camera(ui, scene) { camera_action = Some(action); self.board.cancel_gesture(); }
                         });
                     });
                     return;
@@ -1706,8 +1674,6 @@ impl PresentationApp {
                     && let Err(error) = panels.show(ui, port) {
                     self.failure = Some(error.to_string());
                 }
-                ui.separator();
-                if let Some(action) = Self::show_camera(ui, scene) { camera_action = Some(action); self.board.cancel_gesture(); }
                 ui.separator();
                 ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(ui.visuals().weak_text_color()));
             });
@@ -1794,6 +1760,10 @@ impl PresentationApp {
         let mut editor_viewport = None;
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
+                if let Some(action) = PresentationBoardToolbar::show(ui, scene.is_some()) {
+                    camera_action = Some(action);
+                    self.board.cancel_gesture();
+                }
                 if self.workspace == PresentationAppEnumWorkspace::Editor {
                     if let Some(editor) = &mut self.editor {
                         editor_viewport = Some(
