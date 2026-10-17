@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::clock::duration::{ClockDuration, ClockInstant};
 use crate::desktop::dto::DesktopBoardSnapshot;
-use crate::puzzle::attempt::PuzzleAttempt;
+use crate::puzzle::attempt::{PuzzleAttempt, PuzzleAttemptId};
 use crate::puzzle::checkpoint::{PuzzleCheckpointEnumStatus, PuzzleCheckpointObservation};
 use crate::puzzle::enums::{
     PuzzleEnumAssistance, PuzzleEnumEvent, PuzzleEnumHint, PuzzleEnumHintStage, PuzzleEnumPhase,
@@ -94,7 +94,7 @@ pub struct DesktopPuzzleSnapshot {
     config: PuzzleSessionConfig,
     timer: PuzzleTimerView,
     attempt: Option<Arc<DesktopPuzzleSnapshotAttempt>>,
-    archived_attempts: usize,
+    archived: Arc<[PuzzleAttemptId]>,
     checkpoint_status: PuzzleCheckpointEnumStatus,
     durable: Option<PuzzleCheckpointObservation>,
     retained_write: bool,
@@ -138,7 +138,11 @@ impl DesktopPuzzleSnapshot {
             config: owner.config(),
             timer: view.timer(),
             attempt,
-            archived_attempts: run.previous_attempts().len(),
+            archived: run
+                .previous_attempts()
+                .iter()
+                .map(|archived| archived.attempt().id())
+                .collect(),
             checkpoint_status: save.status,
             durable: save.durable.cloned(),
             retained_write: save.retained_write,
@@ -170,8 +174,12 @@ impl DesktopPuzzleSnapshot {
         self.attempt.as_deref()
     }
 
-    pub const fn archived_attempts(&self) -> usize {
-        self.archived_attempts
+    pub fn archived_attempts(&self) -> usize {
+        self.archived.len()
+    }
+
+    pub fn archived_attempt_ids(&self) -> &[PuzzleAttemptId] {
+        &self.archived
     }
 
     pub const fn checkpoint_status(&self) -> PuzzleCheckpointEnumStatus {

@@ -172,6 +172,11 @@ integration, organization revisions, native roots, compilation/Clippy/semantic
 checks and task acceptance. The played repository still calls generic
 `client.save`; making content/index writes atomic is not implemented here.
 
+Addendum: content and `library_entries` index writes are already atomic in the
+root through `StorageLibraryTransaction` (`begin_save` in the played repository
+and `library_transaction/content.rs`), so the note above is stale. Not compiled
+or run in this pass.
+
 ## Parent integration and canonical verification
 
 The parent applied the ten-file patch with SHA-256

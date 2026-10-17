@@ -105,8 +105,15 @@ Unix uses stable safe `std::os::unix::fs::symlink` and compares link device/inod
 identity. Windows uses stable safe `std::os::windows::fs::symlink_file` and records
 link target plus creation/write timestamps and file attributes. Windows file-link
 privileges or Developer Mode may be unavailable: that is an explicit typed setup
-limitation, not an administrator prerequisite for ordinary play. Directory links,
-junction creation and junction fallback are not implemented. The owner-selected
+limitation, not an administrator prerequisite for ordinary play. Directory
+links are not used. An opt-in Windows junction fallback
+(`EngineTablebaseLocationPolicy::with_junction_fallback`) now exists: after a
+file-link privilege failure it removes the partial aliases and creates one
+junction through `cmd.exe /D /C mklink /J` (system directory from winsafe). It
+requires exactly one selected directory, exposes that whole directory, refuses
+paths with cmd metacharacters, never copies, and reports typed errors
+(`JunctionUnavailable`, `JunctionNeedsOneDirectory`, `JunctionSyntax`). It is
+written but uncompiled and unverified on Windows. The owner-selected
 parent is canonicalized and validated; file-link failure is surfaced without a
 copy fallback. Windows link permissions, junction/ancestor behavior, link
 identity guarantees, and native loading remain untested on this Mac. The Windows

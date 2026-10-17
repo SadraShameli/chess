@@ -29,5 +29,10 @@ confirmation, refuse the run in progress, retain datasets, record attempt
 tombstones (migration `0004_puzzle_attempt_deletion`) and recompute summaries
 without the deleted attempts.
 
+Attempt-level delete UI: the opened run lists its archived attempts with a
+Delete Attempt control (finished runs only) that opens the existing
+confirmation modal. Written, not compiled or run; no test added.
+
+
 Not covered here: real-display minimize behavior on each operating system and
 screen-reader output, which need external hardware evidence.

@@ -156,6 +156,33 @@ mod engine_tablebase_unix {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn the_junction_opt_in_never_changes_unix_links_and_windows_policy_stays_unsupported_here()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = EngineTablebaseFixture::new()?;
+        let mut linked = EngineTablebaseLocation::prepare_blocking(
+            fixture.selection()?,
+            EngineTablebaseLocationPolicy::unix_temporary(fixture.aliases.clone())
+                .with_junction_fallback(),
+            || false,
+        )?;
+        assert!(linked.file_count() > 0);
+        assert!(linked.path().symlink_metadata()?.is_dir());
+        linked.cleanup_blocking()?;
+        assert!(matches!(
+            EngineTablebaseLocation::prepare_blocking(
+                fixture.selection()?,
+                EngineTablebaseLocationPolicy::windows_owner_selected(fixture.aliases.clone())
+                    .with_junction_fallback(),
+                || false,
+            ),
+            Err(EngineTablebaseLocationError::UnsupportedPlatform { .. })
+        ));
+        assert_eq!(fs::read_dir(&fixture.sources)?.count(), 3);
+        Ok(())
+    }
+
     #[test]
     fn missing_unreadable_empty_and_nonregular_sources_return_typed_failures()
     -> Result<(), Box<dyn std::error::Error>> {

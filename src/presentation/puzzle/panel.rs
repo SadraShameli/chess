@@ -445,6 +445,7 @@ impl PresentationPuzzlePanel {
             self.retry(port)?;
         }
         self.show_inventory(ui, port)?;
+        self.show_archived_attempts(ui);
         match self.connection.state.borrow().activity() {
             DesktopPuzzleServiceEnumActivity::Idle => {}
             DesktopPuzzleServiceEnumActivity::Loading { .. } => {
@@ -966,6 +967,47 @@ impl PresentationPuzzlePanel {
             self.request_action(PresentationPuzzleControllerEnumAction::OpponentReply, port)?;
         }
         Ok(())
+    }
+
+    fn show_archived_attempts(&mut self, ui: &mut Ui) {
+        let Some(controller) = &self.controller else {
+            return;
+        };
+        let snapshot = controller.snapshot();
+        let session = snapshot.context().session_id();
+        let attempts = snapshot.archived_attempt_ids();
+        if attempts.is_empty() {
+            return;
+        }
+        let finished = matches!(
+            snapshot.status(),
+            PuzzleRunEnumStatus::Ended(_)
+                | PuzzleRunEnumStatus::Expired(_)
+                | PuzzleRunEnumStatus::Exhausted
+        );
+        let enabled = finished && self.deletion.is_none();
+        let mut requested = None;
+        ui.heading("Archived attempts");
+        for attempt in attempts {
+            ui.horizontal(|ui| {
+                ui.label(format!("Attempt {}", attempt.value()));
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Delete Attempt"))
+                    .clicked()
+                {
+                    requested = Some(PuzzleHistoryEnumScope::Attempt {
+                        session,
+                        attempt: *attempt,
+                    });
+                }
+            });
+        }
+        if !finished {
+            ui.small("Attempts can be deleted after the run has ended");
+        }
+        if requested.is_some() {
+            self.deletion = requested;
+        }
     }
 
     fn show_inventory<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(

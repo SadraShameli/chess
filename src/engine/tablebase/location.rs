@@ -84,13 +84,30 @@ pub enum EngineTablebaseLocationError {
     #[error("Tablebase setup was cancelled")]
     Cancelled,
     #[error(
-        "Cannot create a tablebase file link at {path}: {source}. On Windows, file links require Developer Mode or an existing link privilege; select a suitable owner-approved directory or continue ordinary chess without tablebases. Files are never copied and directory junctions are not substituted"
+        "Cannot create a tablebase file link at {path}: {source}. On Windows, file links require Developer Mode or an existing link privilege; select a suitable owner-approved directory or continue ordinary chess without tablebases. Files are never copied. When exactly one directory is selected, the owner may opt in to a directory junction, which exposes that whole directory to the engine"
     )]
     LinkUnavailable {
         path: PathBuf,
         #[source]
         source: io::Error,
     },
+    #[error(
+        "Cannot create a directory junction at {path} to {target}: {source}. No files were copied; select a directory on a local NTFS volume or continue ordinary chess without tablebases"
+    )]
+    JunctionUnavailable {
+        path: PathBuf,
+        target: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error(
+        "A directory junction links one whole directory. Select a single tablebase directory, or enable file links in Windows Developer Mode"
+    )]
+    JunctionNeedsOneDirectory,
+    #[error(
+        "The directory {path} cannot be used for a junction because its path contains characters that the Windows command interpreter treats specially"
+    )]
+    JunctionSyntax { path: PathBuf },
     #[error(
         "The managed alias identity changed at {path}; preserve its contents and prepare a new location"
     )]
@@ -142,6 +159,7 @@ impl EngineTablebaseLocationSelection {
 pub struct EngineTablebaseLocationPolicy {
     parent: PathBuf,
     platform: EngineTablebaseLocationEnumPlatform,
+    junction_fallback: bool,
 }
 
 impl EngineTablebaseLocationPolicy {
@@ -149,6 +167,7 @@ impl EngineTablebaseLocationPolicy {
         Self {
             parent,
             platform: EngineTablebaseLocationEnumPlatform::Unix,
+            junction_fallback: false,
         }
     }
 
@@ -156,7 +175,13 @@ impl EngineTablebaseLocationPolicy {
         Self {
             parent,
             platform: EngineTablebaseLocationEnumPlatform::Windows,
+            junction_fallback: false,
         }
+    }
+
+    pub const fn with_junction_fallback(mut self) -> Self {
+        self.junction_fallback = true;
+        self
     }
 
     fn validate_blocking(&self) -> Result<PathBuf, EngineTablebaseLocationError> {
@@ -265,7 +290,74 @@ pub struct EngineTablebaseLocation {
     identity: Handle,
     aliases: Vec<EngineTablebaseLocationAlias>,
     engine_path: EngineOptionsSyzygyPath,
+    junction: Option<EngineTablebaseLocationJunction>,
     is_removed: bool,
+}
+
+#[derive(Debug)]
+struct EngineTablebaseLocationJunction {
+    target: PathBuf,
+    files: usize,
+}
+
+impl EngineTablebaseLocationJunction {
+    const SPECIAL: [char; 8] = ['"', '%', '&', '^', '|', '<', '>', '!'];
+
+    fn check_syntax(target: &Path) -> Result<(), EngineTablebaseLocationError> {
+        let text = target
+            .to_str()
+            .ok_or_else(|| EngineTablebaseLocationError::JunctionSyntax {
+                path: target.to_path_buf(),
+            })?;
+        if text.chars().any(|character| {
+            character.is_control() || Self::SPECIAL.contains(&character)
+        }) {
+            return Err(EngineTablebaseLocationError::JunctionSyntax {
+                path: target.to_path_buf(),
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn create(link: &Path, target: &Path) -> Result<(), EngineTablebaseLocationError> {
+        let unavailable = |source: io::Error| EngineTablebaseLocationError::JunctionUnavailable {
+            path: link.to_path_buf(),
+            target: target.to_path_buf(),
+            source,
+        };
+        Self::check_syntax(link)?;
+        Self::check_syntax(target)?;
+        let system = winsafe::GetSystemDirectory().map_err(|error| unavailable(io::Error::other(error)))?;
+        let output = std::process::Command::new(Path::new(&system).join("cmd.exe"))
+            .arg("/D")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .output()
+            .map_err(unavailable)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(unavailable(io::Error::other(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            )))
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn create(link: &Path, target: &Path) -> Result<(), EngineTablebaseLocationError> {
+        Err(EngineTablebaseLocationError::JunctionUnavailable {
+            path: link.to_path_buf(),
+            target: target.to_path_buf(),
+            source: io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Directory junctions exist only on Windows",
+            ),
+        })
+    }
 }
 
 impl EngineTablebaseLocation {
@@ -310,18 +402,64 @@ impl EngineTablebaseLocation {
             identity,
             aliases: Vec::with_capacity(files.len()),
             engine_path,
+            junction: None,
             is_removed: false,
         };
+        let file_count = files.len();
         if let Err(operation) = location.link_files_blocking(files, &is_cancelled) {
-            return match location.cleanup_blocking() {
-                Ok(()) => Err(operation),
-                Err(cleanup) => Err(EngineTablebaseLocationError::Cleanup {
+            let eligible = policy.junction_fallback
+                && policy.platform == EngineTablebaseLocationEnumPlatform::Windows
+                && matches!(operation, EngineTablebaseLocationError::LinkUnavailable { .. });
+            if let Err(cleanup) = location.cleanup_blocking() {
+                return Err(EngineTablebaseLocationError::Cleanup {
                     operation: Box::new(operation),
                     cleanup: Box::new(cleanup),
-                }),
-            };
+                });
+            }
+            if !eligible {
+                return Err(operation);
+            }
+            return Self::junction_blocking(location, file_count, &is_cancelled);
         }
         Ok(location)
+    }
+
+    fn junction_blocking(
+        removed: Self,
+        file_count: usize,
+        is_cancelled: &impl Fn() -> bool,
+    ) -> Result<Self, EngineTablebaseLocationError> {
+        Self::check_cancellation(is_cancelled)?;
+        let Self {
+            selection,
+            path,
+            engine_path,
+            ..
+        } = removed;
+        let [target] = selection.directories() else {
+            return Err(EngineTablebaseLocationError::JunctionNeedsOneDirectory);
+        };
+        let target = target.clone();
+        EngineTablebaseLocationJunction::create(&path, &target)?;
+        let identity = match Handle::from_path(&path) {
+            Ok(identity) => identity,
+            Err(source) => {
+                let operation = EngineTablebaseLocationError::io(&path, source);
+                return Err(Self::cleanup_failure(operation, fs::remove_dir(&path), &path));
+            }
+        };
+        Ok(Self {
+            selection,
+            path,
+            identity,
+            aliases: Vec::new(),
+            engine_path,
+            junction: Some(EngineTablebaseLocationJunction {
+                target,
+                files: file_count,
+            }),
+            is_removed: false,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -337,7 +475,9 @@ impl EngineTablebaseLocation {
     }
 
     pub fn file_count(&self) -> usize {
-        self.aliases.len()
+        self.junction
+            .as_ref()
+            .map_or(self.aliases.len(), |junction| junction.files)
     }
 
     pub fn cleanup_blocking(&mut self) -> Result<(), EngineTablebaseLocationError> {
@@ -395,8 +535,14 @@ impl EngineTablebaseLocation {
             .path
             .symlink_metadata()
             .map_err(|source| EngineTablebaseLocationError::io(&self.path, source))?;
-        if !metadata.is_dir()
-            || metadata.file_type().is_symlink()
+        let shape_matches = match &self.junction {
+            None => metadata.is_dir() && !metadata.file_type().is_symlink(),
+            Some(junction) => {
+                metadata.file_type().is_symlink()
+                    && fs::canonicalize(&self.path).ok() == fs::canonicalize(&junction.target).ok()
+            }
+        };
+        if !shape_matches
             || self.identity
                 != Handle::from_path(&self.path)
                     .map_err(|source| EngineTablebaseLocationError::io(&self.path, source))?
