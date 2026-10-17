@@ -4,6 +4,7 @@ use chess::game::enums::GameEnumResult;
 use chess::game::session::{GameMetadataDate, GameMetadataText};
 use chess::notation::game_identity::NotationGameIdentityEnumResult;
 use chess::opening::corpus::{OpeningCorpus, OpeningCorpusMetadataSupport};
+use chess::opening::explorer::{OpeningExplorerDefinition, OpeningExplorerNames};
 use chess::opening::query::{
     OpeningQuery, OpeningQueryDateInterval, OpeningQueryEnumRatingCriterion, OpeningQueryFilters,
     OpeningQueryRating,
@@ -258,5 +259,56 @@ fn deduplication_across_sources_counts_once_under_a_filter_and_orders_samples_st
             Some(GameMetadataDate::new(Some(2026), Some(10), Some(17))?)
         );
     }
+    Ok(())
+}
+
+#[test]
+fn deepest_known_position_names_the_opening_with_code_then_name_tie_break()
+-> Result<(), Box<dyn std::error::Error>> {
+    let definitions = [
+        OpeningExplorerDefinition::new("C20", "King's Pawn Game", &["e2e4", "e7e5"])?,
+        OpeningExplorerDefinition::new("C44", "King's Knight Opening", &["e2e4", "e7e5", "g1f3"])?,
+        OpeningExplorerDefinition::new("C45", "Zeta", &["e2e4", "e7e5", "g1f3"])?,
+        OpeningExplorerDefinition::new("C44", "Alpha", &["e2e4", "e7e5", "g1f3"])?,
+        OpeningExplorerDefinition::new("C44", "Transposed", &["g1f3", "e7e5", "e2e4"])?,
+    ];
+    let names = OpeningExplorerNames::new(&definitions)?;
+    let mut line = vec![BoardPosition::standard()];
+    assert!(names.deepest_along(&line).is_none());
+    let mut labels = Vec::new();
+    for movement in ["e2e4", "e7e5", "g1f3", "b8c6"] {
+        let next = line[line.len() - 1].play_uci(movement)?;
+        line.push(next);
+        labels.push(
+            names
+                .deepest_along(&line)
+                .map(|label| (label.code().to_owned(), label.name().to_owned())),
+        );
+    }
+    assert_eq!(labels[0], None);
+    assert_eq!(
+        labels[1],
+        Some(("C20".to_owned(), "King's Pawn Game".to_owned()))
+    );
+    assert_eq!(labels[2], Some(("C44".to_owned(), "Alpha".to_owned())));
+    assert_eq!(labels[3], Some(("C44".to_owned(), "Alpha".to_owned())));
+    let transposed = ["g1f3", "e7e5", "e2e4"].iter().try_fold(
+        vec![BoardPosition::standard()],
+        |mut line, movement| {
+            let next = line[line.len() - 1].play_uci(movement)?;
+            line.push(next);
+            Ok::<_, Box<dyn std::error::Error>>(line)
+        },
+    )?;
+    assert_eq!(
+        names.deepest_along(&transposed).map(|label| label.name()),
+        Some("Alpha")
+    );
+    assert!(OpeningExplorerDefinition::new("", "x", &["e2e4"]).is_err());
+    assert!(
+        OpeningExplorerDefinition::new("A00", "x", &["e2e5"])
+            .and_then(|definition| OpeningExplorerNames::new(&[definition]))
+            .is_err()
+    );
     Ok(())
 }
