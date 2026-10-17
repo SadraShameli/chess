@@ -21,6 +21,7 @@ pub mod preferences;
 pub mod profile;
 pub mod puzzle_bridge;
 pub mod puzzle_commands;
+pub mod puzzle_service;
 pub mod puzzle_snapshot;
 pub mod request_cache;
 pub mod stream;

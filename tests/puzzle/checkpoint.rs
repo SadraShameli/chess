@@ -1,6 +1,7 @@
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use chess::board::position::BoardPosition;
+use chess::capacity::budget::CapacityBudget;
 use chess::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use chess::puzzle::attempt::PuzzleAttemptId;
 use chess::puzzle::checkpoint::{
@@ -13,15 +14,22 @@ use chess::puzzle::definition::PuzzleDefinition;
 use chess::puzzle::enums::PuzzleEnumCountdownMode;
 use chess::puzzle::identity::PuzzleDefinitionIdentity;
 use chess::puzzle::metadata::PuzzleDefinitionMetadata;
-use chess::puzzle::random_provider::PuzzleRandomProvider;
+use chess::puzzle::persistence::{
+    PuzzlePersistenceCodec, PuzzlePersistenceEnumCommand, PuzzlePersistenceRun,
+    PuzzlePersistenceSnapshot, PuzzlePersistenceStorageRevision,
+};
+use chess::puzzle::random_provider::{PuzzleRandomProvider, PuzzleRandomProviderSeeded};
 use chess::puzzle::run::{PuzzleRun, PuzzleRunEnumContent, PuzzleRunEnumStatus, PuzzleRunSnapshot};
 use chess::puzzle::selection::{PuzzleSelection, PuzzleSelectionDataset, PuzzleSelectionFilter};
 use chess::puzzle::session::{
     PuzzleSessionConfig, PuzzleSessionContext, PuzzleSessionId, PuzzleSessionRevision,
 };
+use chess::puzzle::storage_repository::PuzzleStorageDriver;
 use chess::puzzle::timer::{
     PuzzleTimerEnumPauseReason, PuzzleTimerEnumPhase, PuzzleTimerEnumReadiness,
 };
+use chess::storage::document_store::StorageDocumentStore;
+use chess::storage::puzzle_repository::StoragePuzzleRepository;
 
 struct PuzzleCheckpointFixture;
 
@@ -88,17 +96,21 @@ impl PuzzleCheckpointFixture {
         }
     }
 
-    fn run(
-        mode: PuzzleEnumCountdownMode,
-    ) -> Result<PuzzleRun<PuzzleCheckpointFixtureRandom>, Box<dyn std::error::Error>> {
+    fn definition() -> Result<PuzzleDefinition, Box<dyn std::error::Error>> {
         let position = BoardPosition::standard();
         let movement = position.parse_uci("e2e4")?;
-        let definition = PuzzleDefinition::new(
+        Ok(PuzzleDefinition::new(
             PuzzleDefinitionIdentity::new("real-run".into(), "v1".into(), "a".into())?,
             position,
             vec![vec![movement]],
             PuzzleDefinitionMetadata::default(),
-        )?;
+        )?)
+    }
+
+    fn run(
+        mode: PuzzleEnumCountdownMode,
+    ) -> Result<PuzzleRun<PuzzleCheckpointFixtureRandom>, Box<dyn std::error::Error>> {
+        let definition = Self::definition()?;
         let selection = PuzzleSelection::new(
             PuzzleSelectionDataset::from_identity(definition.identity()),
             vec![definition],
@@ -110,6 +122,28 @@ impl PuzzleCheckpointFixture {
             PuzzleSessionConfig::defaults(mode),
             selection,
         )?)
+    }
+
+    fn persistence_snapshot(
+        owner: &mut PuzzlePersistenceRun,
+        now: ClockInstant,
+    ) -> Result<PuzzleCheckpointSnapshot<PuzzlePersistenceSnapshot>, Box<dyn std::error::Error>>
+    {
+        let payload = owner.capture(now, 0)?;
+        Ok(PuzzleCheckpointSnapshot::new(
+            PuzzleCheckpointObservation::from_run(owner.run(), now)?,
+            payload,
+        ))
+    }
+
+    async fn commit(
+        driver: &mut PuzzleStorageDriver<StoragePuzzleRepository>,
+        now: ClockInstant,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        driver.begin_write(now)?;
+        driver.wait().await?;
+        assert_eq!(driver.settle(now)?, PuzzleCheckpointEnumAdvance::Proceed);
+        Ok(())
     }
 }
 
@@ -795,6 +829,202 @@ fn only_committed_actual_elapsed_rebases_the_next_durability_boundary()
         return Err("The durable elapsed counter must set the boundary".into());
     };
     assert_eq!(freeze.pause_at(), PuzzleCheckpointFixture::time(1250));
+    Ok(())
+}
+
+#[tokio::test]
+async fn crash_recovery_loses_only_one_second_after_the_last_committed_countdown()
+-> Result<(), Box<dyn std::error::Error>> {
+    for mode in [
+        PuzzleEnumCountdownMode::Session,
+        PuzzleEnumCountdownMode::PerPuzzle,
+    ] {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("checkpoint.sqlite3");
+        let budget = CapacityBudget::discover()?;
+        let store = StorageDocumentStore::open(path.clone(), budget.clone()).await?;
+        let repository = StoragePuzzleRepository::new(store.client());
+        let config = PuzzleSessionConfig::defaults(mode);
+        let mut owner = PuzzlePersistenceRun::new(
+            PuzzleSessionId::new(NonZeroU64::MIN),
+            config,
+            vec![PuzzleCheckpointFixture::definition()?],
+            PuzzleSelectionFilter::default(),
+            PuzzleRandomProviderSeeded::new(0),
+        )?;
+        let zero = PuzzleCheckpointFixture::time(0);
+        let mut driver = PuzzleStorageDriver::new(
+            repository.clone(),
+            PuzzleCheckpointFixture::persistence_snapshot(&mut owner, zero)?,
+            PuzzlePersistenceStorageRevision::INITIAL,
+            0,
+        )?;
+        PuzzleCheckpointFixture::commit(&mut driver, zero).await?;
+        assert_eq!(
+            driver.before_advance(zero)?,
+            PuzzleCheckpointEnumAdvance::Proceed
+        );
+        owner.execute(
+            PuzzlePersistenceEnumCommand::Readiness(PuzzleTimerEnumReadiness::Ready),
+            zero,
+        )?;
+        driver.record(
+            PuzzleCheckpointFixture::persistence_snapshot(&mut owner, zero)?,
+            PuzzleCheckpointEnumTrigger::AcceptedTransition,
+        )?;
+        PuzzleCheckpointFixture::commit(&mut driver, zero).await?;
+        let committed_at = PuzzleCheckpointFixture::time(250);
+        assert_eq!(
+            driver.before_advance(committed_at)?,
+            PuzzleCheckpointEnumAdvance::Proceed
+        );
+        assert!(driver.needs_snapshot(
+            &PuzzleCheckpointObservation::from_run(owner.run(), committed_at)?,
+            PuzzleCheckpointEnumTrigger::Countdown,
+        )?);
+        driver.record(
+            PuzzleCheckpointFixture::persistence_snapshot(&mut owner, committed_at)?,
+            PuzzleCheckpointEnumTrigger::Countdown,
+        )?;
+        let committed_bytes = PuzzlePersistenceCodec::encode(
+            driver
+                .checkpoint()
+                .pending()
+                .ok_or("Missing 250 ms checkpoint")?
+                .payload(),
+        )?;
+        PuzzleCheckpointFixture::commit(&mut driver, committed_at).await?;
+        let committed_timer = owner.run().view(committed_at)?.timer();
+        assert_eq!(committed_timer.elapsed(), ClockDuration::from_millis(250)?);
+        assert_eq!(
+            driver
+                .checkpoint()
+                .durable()
+                .map(|value| value.elapsed_active()),
+            Some(committed_timer.elapsed())
+        );
+        let storage_revision = driver.storage_revision();
+        let pending_at = PuzzleCheckpointFixture::time(500);
+        assert_eq!(
+            driver.before_advance(pending_at)?,
+            PuzzleCheckpointEnumAdvance::Proceed
+        );
+        driver.record(
+            PuzzleCheckpointFixture::persistence_snapshot(&mut owner, pending_at)?,
+            PuzzleCheckpointEnumTrigger::Countdown,
+        )?;
+        assert_eq!(
+            driver.before_advance(PuzzleCheckpointFixture::time(1249))?,
+            PuzzleCheckpointEnumAdvance::Proceed
+        );
+        let delayed = PuzzleCheckpointFixture::time(9000);
+        let PuzzleCheckpointEnumAdvance::FreezeRequired(freeze) = driver.before_advance(delayed)?
+        else {
+            return Err("The uncommitted countdown must freeze at its durable bound".into());
+        };
+        assert_eq!(freeze.cause(), PuzzleCheckpointEnumFreezeCause::DurableLag);
+        assert_eq!(freeze.pause_at(), PuzzleCheckpointFixture::time(1250));
+        owner.execute(
+            PuzzlePersistenceEnumCommand::Pause(PuzzleTimerEnumPauseReason::SaveBackpressure),
+            freeze.pause_at(),
+        )?;
+        driver.record(
+            PuzzleCheckpointFixture::persistence_snapshot(&mut owner, delayed)?,
+            PuzzleCheckpointEnumTrigger::AcceptedTransition,
+        )?;
+        let frozen_timer = owner.run().view(delayed)?.timer();
+        assert_eq!(frozen_timer.elapsed(), ClockDuration::from_millis(1250)?);
+        assert_eq!(
+            owner.run().view(delayed)?.content(),
+            PuzzleRunEnumContent::Hidden
+        );
+        assert_eq!(
+            driver
+                .checkpoint()
+                .pending()
+                .map(|value| value.observation().elapsed_active()),
+            Some(ClockDuration::from_millis(500)?)
+        );
+        assert_eq!(
+            driver
+                .checkpoint()
+                .coalesced()
+                .map(|value| value.observation().elapsed_active()),
+            Some(frozen_timer.elapsed())
+        );
+        assert_eq!(driver.storage_revision(), storage_revision);
+        assert!(!driver.has_retained_write());
+        let id = owner.run().context().session_id();
+        drop(driver);
+        drop(owner);
+        drop(repository);
+        store.close().await?;
+        let reopened = StorageDocumentStore::open(path, budget).await?;
+        let saved = StoragePuzzleRepository::new(reopened.client())
+            .load(id)
+            .await?
+            .ok_or("Missing committed run")?;
+        assert_eq!(saved.storage_revision(), storage_revision);
+        let mut recovered = PuzzlePersistenceCodec::decode(&committed_bytes)?;
+        assert_eq!(recovered.config(), config);
+        assert_eq!(saved.owner().run().context(), recovered.run().context());
+        let recovered_timer = recovered.run().view(zero)?.timer();
+        assert_eq!(saved.owner().run().view(zero)?.timer(), recovered_timer);
+        assert_eq!(recovered_timer.elapsed(), committed_timer.elapsed());
+        assert_eq!(
+            recovered_timer.puzzle_elapsed(),
+            committed_timer.puzzle_elapsed()
+        );
+        assert_eq!(recovered_timer.remaining(), committed_timer.remaining());
+        assert_eq!(recovered_timer.deadline(), None);
+        assert_eq!(
+            frozen_timer
+                .elapsed()
+                .checked_sub(recovered_timer.elapsed())?,
+            ClockDuration::from_millis(1000)?
+        );
+        let restored_at = PuzzleCheckpointFixture::time(90000);
+        recovered.execute(
+            PuzzlePersistenceEnumCommand::Readiness(PuzzleTimerEnumReadiness::Ready),
+            restored_at,
+        )?;
+        let restored = recovered.run().view(restored_at)?;
+        assert_eq!(
+            restored.status(),
+            PuzzleRunEnumStatus::Paused {
+                reason: PuzzleTimerEnumPauseReason::Recovery,
+                phase: PuzzleTimerEnumPhase::Active,
+            }
+        );
+        assert_eq!(restored.content(), PuzzleRunEnumContent::Hidden);
+        assert_eq!(restored.timer(), recovered_timer);
+        let resumed_at = PuzzleCheckpointFixture::time(120000);
+        recovered.execute(
+            PuzzlePersistenceEnumCommand::Resume(PuzzleTimerEnumReadiness::Ready),
+            resumed_at,
+        )?;
+        let resumed = recovered.run().view(resumed_at)?;
+        assert_eq!(resumed.status(), PuzzleRunEnumStatus::Active);
+        assert!(matches!(resumed.content(), PuzzleRunEnumContent::Board(_)));
+        assert_eq!(resumed.timer().remaining(), committed_timer.remaining());
+        assert_eq!(resumed.timer().elapsed(), committed_timer.elapsed());
+        assert_eq!(
+            resumed.timer().deadline(),
+            Some(resumed_at.checked_add(committed_timer.remaining())?)
+        );
+        let advanced = recovered
+            .run()
+            .view(PuzzleCheckpointFixture::time(120500))?
+            .timer();
+        assert_eq!(advanced.elapsed(), ClockDuration::from_millis(750)?);
+        assert_eq!(
+            advanced
+                .remaining()
+                .checked_add(ClockDuration::from_millis(500)?)?,
+            committed_timer.remaining()
+        );
+        reopened.close().await?;
+    }
     Ok(())
 }
 

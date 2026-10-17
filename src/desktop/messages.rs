@@ -8,6 +8,12 @@ use crate::desktop::file_handle::DesktopFileHandleOwner;
 use crate::desktop::game_bridge::DesktopGameBridgeEnumOperation;
 use crate::desktop::game_commands::DesktopGameCommandsEnumAction;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
+use crate::desktop::puzzle_bridge::DesktopPuzzleBridgeEnumOperation;
+use crate::desktop::puzzle_service::DesktopPuzzleServiceEnumOperation;
+use crate::puzzle::persistence::PuzzlePersistenceEnumCommand;
+use crate::puzzle::run::PuzzleRunEnumConfirmation;
+use crate::puzzle::session::PuzzleSessionId;
+use crate::puzzle::timer::{PuzzleTimerEnumPauseReason, PuzzleTimerEnumReadiness};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DesktopMessagesEntityId(DesktopRequestId);
@@ -35,6 +41,10 @@ impl Default for DesktopMessagesEntityId {
 pub enum DesktopEnumCommand {
     Game(DesktopGameBridgeEnumOperation),
     Engine(crate::desktop::engine_commands::DesktopEngineCommandsOperation),
+    Puzzle {
+        owner: DesktopMessagesEntityId,
+        operation: DesktopPuzzleServiceEnumOperation,
+    },
     Bootstrap,
     FileSelect {
         owner: DesktopMessagesEntityId,
@@ -58,12 +68,63 @@ pub enum DesktopEnumCommand {
 }
 
 impl DesktopEnumCommand {
+    pub fn is_available_while_closing(&self) -> bool {
+        match self {
+            Self::Puzzle { operation, .. } => operation.is_available_while_closing(),
+            Self::Game(_)
+            | Self::Engine(_)
+            | Self::Bootstrap
+            | Self::FileSelect { .. }
+            | Self::StreamSubscribe
+            | Self::StreamAcknowledge { .. }
+            | Self::StreamResync { .. }
+            | Self::Stop { .. }
+            | Self::Pause { .. }
+            | Self::Quit => false,
+        }
+    }
+
     pub fn is_control(&self) -> bool {
         self.control_key().is_some()
     }
 
     pub(crate) fn control_key(&self) -> Option<DesktopMessagesEnumControlKey> {
         match self {
+            Self::Puzzle { owner, operation } => {
+                if !operation.is_urgent() {
+                    return None;
+                }
+                match operation {
+                    DesktopPuzzleServiceEnumOperation::Interrupt { session, reason } => {
+                        Some(match reason {
+                            PuzzleTimerEnumPauseReason::FocusLost
+                            | PuzzleTimerEnumPauseReason::WindowHidden => {
+                                DesktopMessagesEnumControlKey::PuzzleHidden(*owner, *session)
+                            }
+                            PuzzleTimerEnumPauseReason::Manual
+                            | PuzzleTimerEnumPauseReason::Sleep
+                            | PuzzleTimerEnumPauseReason::Recovery
+                            | PuzzleTimerEnumPauseReason::SaveBackpressure => {
+                                DesktopMessagesEnumControlKey::PuzzlePause(*owner, *session)
+                            }
+                        })
+                    }
+                    DesktopPuzzleServiceEnumOperation::Session { expected, operation } => {
+                        let session = expected.session_id();
+                        match operation {
+                            DesktopPuzzleBridgeEnumOperation::Command(PuzzlePersistenceEnumCommand::End(PuzzleRunEnumConfirmation::Confirmed)) => Some(DesktopMessagesEnumControlKey::PuzzleEnd(*owner, session)),
+                            DesktopPuzzleBridgeEnumOperation::Command(PuzzlePersistenceEnumCommand::Readiness(PuzzleTimerEnumReadiness::Hidden)) => Some(DesktopMessagesEnumControlKey::PuzzleHidden(*owner, session)),
+                            DesktopPuzzleBridgeEnumOperation::Command(PuzzlePersistenceEnumCommand::Pause(_)) => Some(DesktopMessagesEnumControlKey::PuzzlePause(*owner, session)),
+                            DesktopPuzzleBridgeEnumOperation::Command(_)
+                            | DesktopPuzzleBridgeEnumOperation::RetrySave
+                            | DesktopPuzzleBridgeEnumOperation::Snapshot
+                            | DesktopPuzzleBridgeEnumOperation::Summary => None,
+                        }
+                    }
+                    DesktopPuzzleServiceEnumOperation::Inventory { .. }
+                    | DesktopPuzzleServiceEnumOperation::OpenSaved { .. } => None,
+                }
+            }
             Self::Engine(operation) => match operation.action() {
                 crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Stop { .. } => Some(DesktopMessagesEnumControlKey::EngineStop(operation.context().owner())),
                 crate::desktop::engine_commands::DesktopEngineCommandsEnumOperation::Workbench(crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation::Cancel { .. }) => Some(DesktopMessagesEnumControlKey::WorkbenchCancel(operation.context().owner())),
@@ -99,6 +160,23 @@ impl DesktopEnumCommand {
 
     pub fn mutation_entity(&self) -> Option<DesktopMessagesEntityId> {
         match self {
+            Self::Puzzle { owner, operation } => match operation {
+                DesktopPuzzleServiceEnumOperation::OpenSaved { .. }
+                | DesktopPuzzleServiceEnumOperation::Session {
+                    operation:
+                        DesktopPuzzleBridgeEnumOperation::Command(_)
+                        | DesktopPuzzleBridgeEnumOperation::RetrySave,
+                    ..
+                } => Some(*owner),
+                DesktopPuzzleServiceEnumOperation::Inventory { .. }
+                | DesktopPuzzleServiceEnumOperation::Interrupt { .. }
+                | DesktopPuzzleServiceEnumOperation::Session {
+                    operation:
+                        DesktopPuzzleBridgeEnumOperation::Snapshot
+                        | DesktopPuzzleBridgeEnumOperation::Summary,
+                    ..
+                } => None,
+            },
             Self::Engine(operation) => operation
                 .action()
                 .is_mutation()
@@ -122,20 +200,51 @@ pub(crate) enum DesktopMessagesEnumControlKey {
     WorkbenchCancel(DesktopMessagesEntityId),
     GamePause(DesktopMessagesEntityId),
     GameStop(DesktopMessagesEntityId),
+    PuzzlePause(DesktopMessagesEntityId, PuzzleSessionId),
+    PuzzleHidden(DesktopMessagesEntityId, PuzzleSessionId),
+    PuzzleEnd(DesktopMessagesEntityId, PuzzleSessionId),
     Stop(DesktopMessagesEntityId),
     Pause(DesktopMessagesEntityId),
     Quit,
 }
 
 impl DesktopMessagesEnumControlKey {
-    pub(crate) fn belongs_to(self, owner: DesktopMessagesEntityId) -> bool {
+    pub(crate) const PER_ENTITY_CAPACITY: usize = 9;
+
+    pub(crate) fn owner(self) -> Option<DesktopMessagesEntityId> {
         match self {
             Self::EngineStop(target)
             | Self::WorkbenchCancel(target)
             | Self::Stop(target)
             | Self::Pause(target)
             | Self::GameStop(target)
-            | Self::GamePause(target) => target == owner,
+            | Self::GamePause(target)
+            | Self::PuzzlePause(target, _)
+            | Self::PuzzleHidden(target, _)
+            | Self::PuzzleEnd(target, _) => Some(target),
+            Self::Quit => None,
+        }
+    }
+
+    pub(crate) fn targets_mutation(self, operation: &DesktopEnumCommand) -> bool {
+        match self {
+            Self::PuzzlePause(owner, session)
+            | Self::PuzzleHidden(owner, session)
+            | Self::PuzzleEnd(owner, session) => matches!(
+                operation,
+                DesktopEnumCommand::Puzzle {
+                    owner: target_owner,
+                    operation: DesktopPuzzleServiceEnumOperation::Session { expected, .. },
+                } if *target_owner == owner
+                    && expected.session_id() == session
+                    && operation.mutation_entity().is_some()
+            ),
+            Self::EngineStop(_)
+            | Self::WorkbenchCancel(_)
+            | Self::Stop(_)
+            | Self::Pause(_)
+            | Self::GameStop(_)
+            | Self::GamePause(_) => self.owner() == operation.mutation_entity(),
             Self::Quit => false,
         }
     }
@@ -146,6 +255,8 @@ impl DesktopMessagesEnumControlKey {
             Self::WorkbenchCancel(_) => DesktopMessagesEnumResult::Stopped,
             Self::Stop(_) | Self::GameStop(_) => DesktopMessagesEnumResult::Stopped,
             Self::Pause(_) | Self::GamePause(_) => DesktopMessagesEnumResult::Paused,
+            Self::PuzzlePause(_, _) | Self::PuzzleHidden(_, _) => DesktopMessagesEnumResult::Paused,
+            Self::PuzzleEnd(_, _) => DesktopMessagesEnumResult::Stopped,
             Self::Quit => DesktopMessagesEnumResult::QuitReady,
         }
     }
@@ -158,6 +269,17 @@ pub struct DesktopCommand {
 }
 
 impl DesktopCommand {
+    pub fn puzzle(
+        owner: DesktopMessagesEntityId,
+        operation: DesktopPuzzleServiceEnumOperation,
+    ) -> Self {
+        let expected_revision = Some(operation.expected_revision());
+        Self::new(
+            DesktopEnumCommand::Puzzle { owner, operation },
+            expected_revision,
+        )
+    }
+
     pub fn new(operation: DesktopEnumCommand, expected_revision: Option<DesktopRevision>) -> Self {
         Self {
             operation,

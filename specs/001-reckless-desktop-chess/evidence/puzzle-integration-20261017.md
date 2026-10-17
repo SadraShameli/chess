@@ -142,3 +142,13 @@ content manifests are under
 `.git/parallel-patches/completed-puzzle-worktrees-20261016T230152Z/`. Verification
 covered 498, 504 and 504 file/link entries before removal. Active inventory,
 collection-design and recovery-service worktrees remain separate.
+
+After checkpoint `43105cc` was pushed and remote-verified, the completed inventory
+and collection-design worktrees were archived and removed with their local
+branches. Every changed child file was first compared byte-for-byte with its
+accepted parent version. Full file/link and Git metadata archives, staged and
+unstaged binary patches, original HEADs and verified content manifests remain in
+`.git/parallel-patches/completed-inventory-design-worktrees-20261017/`.
+Verification covered 507 and 506 worktree file/link entries and six metadata
+files per checkout. The service, admission, workspace and native-window review
+worktrees remain retained while their current integration is under validation.

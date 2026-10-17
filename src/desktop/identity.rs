@@ -66,6 +66,16 @@ impl DesktopRevision {
         Self(revision.value())
     }
 
+    pub const fn for_puzzle(revision: crate::puzzle::session::PuzzleSessionRevision) -> Self {
+        Self(revision.value())
+    }
+
+    pub const fn for_puzzle_storage(
+        revision: crate::puzzle::persistence::PuzzlePersistenceStorageRevision,
+    ) -> Self {
+        Self(revision.value())
+    }
+
     pub const fn value(self) -> u64 {
         self.0
     }

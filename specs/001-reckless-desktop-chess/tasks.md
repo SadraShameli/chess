@@ -341,7 +341,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 **Independent Test**: Use fixed valid/invalid puzzle collections to exercise both timer modes, hints/retries/skip, focus/sleep/relaunch, exhaustion, history and exact summary rates.
 
 - [X] T176 [P] [US8] Add valid/unlisted/illegal solution, progressive-hint reset, failed-then-practice-solved, random listed-reply and no-engine-search fixtures in `tests/puzzle/solution.rs`.
-- [ ] T177 [P] [US8] Add controlled session/per-puzzle timer, readiness start, review/exhaustion pauses, expiry races and <=1-second checkpoint-recovery tests in `tests/puzzle/timer.rs`.
+- [X] T177 [P] [US8] Add controlled session/per-puzzle timer, readiness start, review/exhaustion pauses, expiry races and <=1-second checkpoint-recovery tests in `tests/puzzle/timer.rs`. Accepted deterministic timer and last-committed-checkpoint recovery evidence: [saved workspace integration](evidence/puzzle-saved-workspace.md). Native lifecycle and full durability acceptance retain their owning tasks.
 - [ ] T178 [P] [US8] Add bounded puzzle durability lag/failure/focus scenarios in `tests/puzzle/checkpoint.rs`: request checkpoint every 250 ms with at most one pending/coalesced snapshot, freeze countdown before it advances over one second past durable state, fail save with Retry Save and explicit Resume; minimize/hide the puzzle window even while another app window has focus must pause/hide it.
 - [ ] T179 [P] [US8] Add persisted shuffle/history, zero-denominator rates, confirmed deletion/recomputed summaries and active-run deletion refusal tests in `tests/puzzle/history.rs`.
 - [ ] T180 [US8] Add native presentation acceptance of hidden pause content, explicit Resume/Next, timer-mode exclusivity, unlisted wording and history outcomes in `tests/presentation/puzzle.rs`.
@@ -830,7 +830,7 @@ publication or external contact occurs as part of generating this list.
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 7 puzzle tasks completed and 212 pending.
+**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 8 puzzle tasks completed and 211 pending.
 **Active parallel tasks**: 43 across disjoint contract-test files; three additional
 `[P]` markers belong to historical completed rows. No native task is accepted
 merely by this generation.

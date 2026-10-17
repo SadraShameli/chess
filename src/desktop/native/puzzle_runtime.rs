@@ -33,6 +33,7 @@ pub trait DesktopNativePuzzleRuntimeScheduler: Send + Sync {
     ) -> impl Future<Output = Result<(), ClockDurationError>> + Send;
 }
 
+#[derive(Clone)]
 pub struct DesktopNativePuzzleRuntimeSchedulerTokio {
     runtime: Handle,
     clock_epoch: ClockInstant,

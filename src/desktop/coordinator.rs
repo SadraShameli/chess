@@ -18,8 +18,7 @@ use crate::desktop::application::{
 };
 use crate::desktop::dto::{DesktopBootstrapSnapshot, DesktopEnumEvent, DesktopEnumValue};
 use crate::desktop::engine_bridge::{
-    DesktopEngineBridgeEnumResult, DesktopEngineBridgeFuture, DesktopEngineBridgeProvider,
-    DesktopEngineBridgeRequest,
+    DesktopEngineBridgeEnumResult, DesktopEngineBridgeProvider, DesktopEngineBridgeRequest,
 };
 use crate::desktop::engine_commands::{
     DesktopEngineCommandsEnumOperation, DesktopEngineCommandsOperation,
@@ -29,12 +28,14 @@ use crate::desktop::file_handle::{
     DesktopFileDialogProvider, DesktopFileEnumPurpose, DesktopFileHandleError, DesktopFileHandleId,
     DesktopFileHandleRegistry, DesktopFileHandleRequest,
 };
-use crate::desktop::game_bridge::{
-    DesktopGameBridgeFuture, DesktopGameBridgeProvider, DesktopGameBridgeRequest,
-};
+use crate::desktop::game_bridge::{DesktopGameBridgeProvider, DesktopGameBridgeRequest};
 use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
-use crate::desktop::messages::DesktopEnumCommand;
+use crate::desktop::messages::{DesktopEnumCommand, DesktopMessagesEntityId};
+use crate::desktop::puzzle_service::{
+    DesktopPuzzleServiceEnumOperation, DesktopPuzzleServiceEnumResult, DesktopPuzzleServiceError,
+    DesktopPuzzleServiceProvider, DesktopPuzzleServiceRequest,
+};
 use crate::desktop::stream::{DesktopEnumStreamClass, DesktopStream};
 use crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation;
 
@@ -120,16 +121,35 @@ struct DesktopCoordinatorSelection<P> {
     selection: DesktopCoordinatorSelectionFuture<P>,
 }
 
-struct DesktopCoordinatorGamePending {
+type DesktopCoordinatorPendingFuture<T> =
+    Pin<Box<dyn Future<Output = Result<T, DesktopFailure>> + Send>>;
+
+struct DesktopCoordinatorPending<T> {
     work: DesktopApplicationWork,
-    future: Option<DesktopGameBridgeFuture>,
-    response: Option<Result<DesktopGameSnapshot, DesktopFailure>>,
+    future: Option<DesktopCoordinatorPendingFuture<T>>,
+    response: Option<Result<T, DesktopFailure>>,
 }
 
-struct DesktopCoordinatorEnginePending {
-    work: DesktopApplicationWork,
-    future: Option<DesktopEngineBridgeFuture>,
-    response: Option<Result<DesktopEngineBridgeEnumResult, DesktopFailure>>,
+struct DesktopCoordinatorPuzzles {
+    owner: DesktopMessagesEntityId,
+    provider: Arc<dyn DesktopPuzzleServiceProvider>,
+}
+
+impl<T> DesktopCoordinatorPending<T> {
+    async fn ready(pending: &mut [Self]) -> (usize, Result<T, DesktopFailure>) {
+        poll_fn(|context| {
+            for (index, pending) in pending.iter_mut().enumerate() {
+                if let Some(future) = &mut pending.future
+                    && let Poll::Ready(response) = future.as_mut().poll(context)
+                {
+                    pending.future = None;
+                    return Poll::Ready((index, response));
+                }
+            }
+            Poll::Pending
+        })
+        .await
+    }
 }
 
 type DesktopCoordinatorEngineQuiescenceFuture =
@@ -234,9 +254,11 @@ where
     games: Option<Arc<dyn DesktopGameBridgeProvider>>,
     game_snapshots: Option<watch::Receiver<Vec<DesktopGameSnapshot>>>,
     latest_games: Vec<DesktopGameSnapshot>,
-    pending_games: Vec<DesktopCoordinatorGamePending>,
+    pending_games: Vec<DesktopCoordinatorPending<DesktopGameSnapshot>>,
     engine: Option<Arc<dyn DesktopEngineBridgeProvider>>,
-    pending_engine: Vec<DesktopCoordinatorEnginePending>,
+    pending_engine: Vec<DesktopCoordinatorPending<DesktopEngineBridgeEnumResult>>,
+    puzzles: Option<DesktopCoordinatorPuzzles>,
+    pending_puzzles: Vec<DesktopCoordinatorPending<DesktopPuzzleServiceEnumResult>>,
     engine_quit: Option<DesktopCoordinatorEngineQuitEnumPhase>,
     shutdown_notice: Option<(DesktopRequestId, DesktopFailure)>,
     quit_retry_deadline: Option<Instant>,
@@ -287,6 +309,8 @@ where
             pending_games: Vec::new(),
             engine: None,
             pending_engine: Vec::new(),
+            puzzles: None,
+            pending_puzzles: Vec::new(),
             engine_quit: None,
             shutdown_notice: None,
             quit_retry_deadline: None,
@@ -311,10 +335,20 @@ where
         self
     }
 
+    pub fn with_puzzles(
+        mut self,
+        owner: DesktopMessagesEntityId,
+        provider: Arc<dyn DesktopPuzzleServiceProvider>,
+    ) -> Self {
+        self.puzzles = Some(DesktopCoordinatorPuzzles { owner, provider });
+        self
+    }
+
     pub async fn run(&mut self) -> Result<(), DesktopCoordinatorError> {
         loop {
             self.complete_games().await?;
             self.complete_engine().await?;
+            self.complete_puzzles().await?;
             if self.complete_controls().await? {
                 return Ok(());
             }
@@ -338,10 +372,13 @@ where
                         attempts[index].outcome = Some(outcome);
                     }
                 }
-                (index, response) = Self::engine_ready(&mut self.pending_engine) => {
+                (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_puzzles) => {
+                    self.pending_puzzles[index].response = Some(response);
+                }
+                (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_engine) => {
                     self.pending_engine[index].response = Some(response);
                 }
-                (index, response) = Self::game_ready(&mut self.pending_games) => {
+                (index, response) = DesktopCoordinatorPending::ready(&mut self.pending_games) => {
                     self.pending_games[index].response = Some(response);
                 }
                 snapshots = Self::game_snapshots_ready(&mut self.game_snapshots) => {
@@ -418,6 +455,9 @@ where
         work: DesktopApplicationWork,
     ) -> Result<(), DesktopCoordinatorError> {
         match work.request().command().operation().clone() {
+            DesktopEnumCommand::Puzzle { owner, operation } => {
+                self.dispatch_puzzle(work, owner, operation).await?;
+            }
             DesktopEnumCommand::Engine(operation) => self.dispatch_engine(work, operation).await?,
             DesktopEnumCommand::Game(operation) => {
                 let response =
@@ -455,7 +495,7 @@ where
                     })),
                     (Some(_), Some(_)) | (None, _) => None,
                 };
-                self.pending_games.push(DesktopCoordinatorGamePending {
+                self.pending_games.push(DesktopCoordinatorPending {
                     work,
                     future,
                     response,
@@ -656,6 +696,7 @@ where
                 if self.pending_selection.is_some()
                     || !self.pending_games.is_empty()
                     || !self.pending_engine.is_empty()
+                    || !self.pending_puzzles.is_empty()
                     || self.shutdown_failure.is_some()
                     || self
                         .engine_quit
@@ -712,46 +753,66 @@ where
     }
 
     async fn complete_games(&mut self) -> Result<(), DesktopCoordinatorError> {
-        let mut index = 0;
-        while index < self.pending_games.len() {
-            let Some(response) = self.pending_games[index].response.clone() else {
-                index += 1;
-                continue;
-            };
-            let work = &self.pending_games[index].work;
-            let result = if work.request().command().operation().is_control() {
-                Self::retry(|| {
-                    self.application
-                        .complete_game_control(work, response.clone())
-                })
-                .await
-            } else {
-                match response {
-                    Ok(snapshot) => {
-                        Self::retry(|| {
-                            self.application.complete_value(
-                                work,
-                                DesktopEnumValue::Game(Box::new(snapshot.clone())),
-                                Some(DesktopRevision::for_game(snapshot.revision())),
-                            )
-                        })
-                        .await
-                    }
-                    Err(failure) => {
-                        Self::retry(|| self.application.complete_failure(work, failure.clone()))
+        Self::complete_owned_pending(
+            &self.application,
+            &mut self.pending_games,
+            DesktopApplication::complete_game_control,
+            |snapshot| {
+                let revision = Some(DesktopRevision::for_game(snapshot.revision()));
+                (DesktopEnumValue::Game(Box::new(snapshot)), revision)
+            },
+        )
+        .await
+    }
+
+    async fn complete_owned_pending<T: Clone>(
+        application: &DesktopApplication<C, W>,
+        pending: &mut Vec<DesktopCoordinatorPending<T>>,
+        complete_control: impl Fn(
+            &DesktopApplication<C, W>,
+            &DesktopApplicationWork,
+            Result<T, DesktopFailure>,
+        ) -> Result<(), DesktopApplicationError>,
+        into_value: impl Fn(T) -> (DesktopEnumValue, Option<DesktopRevision>),
+    ) -> Result<(), DesktopCoordinatorError> {
+        loop {
+            let previous_length = pending.len();
+            let mut index = 0;
+            while index < pending.len() {
+                let Some(response) = pending[index].response.clone() else {
+                    index += 1;
+                    continue;
+                };
+                let work = &pending[index].work;
+                let result = if work.request().command().operation().is_control() {
+                    Self::retry(|| complete_control(application, work, response.clone())).await
+                } else {
+                    match response {
+                        Ok(response) => {
+                            let (value, revision) = into_value(response);
+                            Self::retry(|| {
+                                application.complete_value(work, value.clone(), revision)
+                            })
                             .await
+                        }
+                        Err(failure) => {
+                            Self::retry(|| application.complete_failure(work, failure.clone()))
+                                .await
+                        }
                     }
+                };
+                match result {
+                    Ok(()) => {
+                        pending.swap_remove(index);
+                    }
+                    Err(DesktopApplicationError::CancellationUnacknowledged) => index += 1,
+                    Err(error) => return Err(error.into()),
                 }
-            };
-            match result {
-                Ok(()) => {
-                    self.pending_games.swap_remove(index);
-                }
-                Err(DesktopApplicationError::CancellationUnacknowledged) => index += 1,
-                Err(error) => return Err(error.into()),
+            }
+            if pending.len() == previous_length {
+                return Ok(());
             }
         }
-        Ok(())
     }
 
     async fn dispatch_engine(
@@ -825,12 +886,108 @@ where
             })),
             (Some(_), Some(_)) | (None, _) => None,
         };
-        self.pending_engine.push(DesktopCoordinatorEnginePending {
+        self.pending_engine.push(DesktopCoordinatorPending {
             work,
             future,
             response: failure.map(Err),
         });
         Ok(())
+    }
+
+    async fn dispatch_puzzle(
+        &mut self,
+        work: DesktopApplicationWork,
+        owner: DesktopMessagesEntityId,
+        operation: DesktopPuzzleServiceEnumOperation,
+    ) -> Result<(), DesktopCoordinatorError> {
+        let failure = if work.request().command().expected_revision()
+            != Some(operation.expected_revision())
+        {
+            Some(DesktopFailure::new(
+                DesktopEnumFailureCode::StaleRevision,
+                "The puzzle command has a mismatched expected revision".to_owned(),
+                true,
+            ))
+        } else if self
+            .puzzles
+            .as_ref()
+            .is_some_and(|puzzles| puzzles.owner != owner)
+        {
+            Some(DesktopFailure::new(
+                DesktopEnumFailureCode::InvalidInput,
+                "The puzzle command belongs to another workspace".to_owned(),
+                false,
+            ))
+        } else if self.puzzles.is_none() {
+            Some(DesktopFailure::new(
+                DesktopEnumFailureCode::ResourceRefusal,
+                "The saved puzzle service is unavailable".to_owned(),
+                true,
+            ))
+        } else {
+            None
+        };
+        if !work.request().command().operation().is_control() {
+            match Self::retry(|| self.application.begin_commit(&work)).await {
+                Ok(()) => {}
+                Err(DesktopApplicationError::CancellationRequested) => {
+                    Self::retry(|| self.application.acknowledge_stopped(&work)).await?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let future: Option<DesktopCoordinatorPendingFuture<DesktopPuzzleServiceEnumResult>> =
+            match (&self.puzzles, &failure) {
+                (Some(puzzles), None) => {
+                    let future = puzzles.provider.execute(DesktopPuzzleServiceRequest {
+                        receipt: work.receipt().clone(),
+                        operation,
+                    });
+                    Some(Box::pin(async move {
+                        future.await.map_err(Self::puzzle_failure)
+                    }))
+                }
+                (Some(_), Some(_)) | (None, _) => None,
+            };
+        self.pending_puzzles.push(DesktopCoordinatorPending {
+            work,
+            future,
+            response: failure.map(Err),
+        });
+        Ok(())
+    }
+
+    fn puzzle_failure(error: Arc<DesktopPuzzleServiceError>) -> DesktopFailure {
+        let (code, retryable) = match error.as_ref() {
+            DesktopPuzzleServiceError::RevisionConflict { .. }
+            | DesktopPuzzleServiceError::SessionMismatch { .. } => {
+                (DesktopEnumFailureCode::StaleRevision, true)
+            }
+            DesktopPuzzleServiceError::Cancelled => (DesktopEnumFailureCode::Cancelled, false),
+            DesktopPuzzleServiceError::Missing(_) | DesktopPuzzleServiceError::Storage(_) => {
+                (DesktopEnumFailureCode::FileUnavailable, true)
+            }
+            DesktopPuzzleServiceError::Busy
+            | DesktopPuzzleServiceError::Closing
+            | DesktopPuzzleServiceError::ReplacementBlocked
+            | DesktopPuzzleServiceError::ShutdownDeadline
+            | DesktopPuzzleServiceError::Runtime(_)
+            | DesktopPuzzleServiceError::Capacity(_) => {
+                (DesktopEnumFailureCode::ResourceRefusal, true)
+            }
+            DesktopPuzzleServiceError::Closed
+            | DesktopPuzzleServiceError::Started
+            | DesktopPuzzleServiceError::Incomplete
+            | DesktopPuzzleServiceError::Worker(_)
+            | DesktopPuzzleServiceError::Preparation(_)
+            | DesktopPuzzleServiceError::Clock(_)
+            | DesktopPuzzleServiceError::Wake(_)
+            | DesktopPuzzleServiceError::Outcome(_) => {
+                (DesktopEnumFailureCode::InternalFailure, false)
+            }
+        };
+        DesktopFailure::new(code, error.to_string(), retryable)
     }
 
     fn engine_file_selection(
@@ -858,80 +1015,26 @@ where
         }
     }
 
-    async fn engine_ready(
-        pending: &mut [DesktopCoordinatorEnginePending],
-    ) -> (usize, Result<DesktopEngineBridgeEnumResult, DesktopFailure>) {
-        std::future::poll_fn(|context| {
-            for (index, pending) in pending.iter_mut().enumerate() {
-                if let Some(future) = &mut pending.future
-                    && let Poll::Ready(response) = future.as_mut().poll(context)
-                {
-                    pending.future = None;
-                    return Poll::Ready((index, response));
-                }
-            }
-            Poll::Pending
-        })
+    async fn complete_engine(&mut self) -> Result<(), DesktopCoordinatorError> {
+        Self::complete_owned_pending(
+            &self.application,
+            &mut self.pending_engine,
+            DesktopApplication::complete_engine_control,
+            |value| (DesktopEnumValue::Engine(Box::new(value)), None),
+        )
         .await
     }
 
-    async fn complete_engine(&mut self) -> Result<(), DesktopCoordinatorError> {
-        let mut index = 0;
-        while index < self.pending_engine.len() {
-            let Some(response) = self.pending_engine[index].response.clone() else {
-                index += 1;
-                continue;
-            };
-            let work = &self.pending_engine[index].work;
-            let result = if work.request().command().operation().is_control() {
-                Self::retry(|| {
-                    self.application
-                        .complete_engine_control(work, response.clone())
-                })
-                .await
-            } else {
-                match response {
-                    Ok(value) => {
-                        Self::retry(|| {
-                            self.application.complete_value(
-                                work,
-                                DesktopEnumValue::Engine(Box::new(value.clone())),
-                                None,
-                            )
-                        })
-                        .await
-                    }
-                    Err(failure) => {
-                        Self::retry(|| self.application.complete_failure(work, failure.clone()))
-                            .await
-                    }
-                }
-            };
-            match result {
-                Ok(()) => {
-                    self.pending_engine.swap_remove(index);
-                }
-                Err(DesktopApplicationError::CancellationUnacknowledged) => index += 1,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(())
-    }
-
-    async fn game_ready(
-        pending: &mut [DesktopCoordinatorGamePending],
-    ) -> (usize, Result<DesktopGameSnapshot, DesktopFailure>) {
-        std::future::poll_fn(|context| {
-            for (index, pending) in pending.iter_mut().enumerate() {
-                if let Some(future) = &mut pending.future
-                    && let Poll::Ready(response) = future.as_mut().poll(context)
-                {
-                    pending.future = None;
-                    return Poll::Ready((index, response));
-                }
-            }
-            Poll::Pending
-        })
+    async fn complete_puzzles(&mut self) -> Result<(), DesktopCoordinatorError> {
+        Self::complete_owned_pending(
+            &self.application,
+            &mut self.pending_puzzles,
+            DesktopApplication::complete_puzzle_control,
+            |value| {
+                let revision = value.revision();
+                (DesktopEnumValue::Puzzle(Box::new(value)), revision)
+            },
+        )
         .await
     }
 

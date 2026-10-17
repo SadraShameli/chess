@@ -410,6 +410,7 @@ impl NativeGameCompositionHarness {
         command: DesktopEnumCommand,
     ) -> NativeGameCompositionResult<DesktopMessagesEnumResult> {
         let revision = match &command {
+            DesktopEnumCommand::Puzzle { operation, .. } => Some(operation.expected_revision()),
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
             DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Bootstrap

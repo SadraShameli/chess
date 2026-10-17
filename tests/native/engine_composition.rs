@@ -66,6 +66,7 @@ impl NativeEngineCompositionHarness {
         command: DesktopEnumCommand,
     ) -> NativeEngineCompositionResult<DesktopEnumValue> {
         let revision = match &command {
+            DesktopEnumCommand::Puzzle { operation, .. } => Some(operation.expected_revision()),
             DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
             DesktopEnumCommand::FileSelect { .. } => {

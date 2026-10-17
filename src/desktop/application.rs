@@ -11,7 +11,7 @@ use crate::desktop::dto::{DesktopEnumEvent, DesktopEnumValue};
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::{
-    DesktopCommand, DesktopMessagesEntityId, DesktopMessagesEnumControlKey,
+    DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumControlKey,
     DesktopMessagesEnumResult, DesktopRequest,
 };
 use crate::desktop::request_cache::DesktopRequestCache;
@@ -223,6 +223,37 @@ enum DesktopApplicationEnumWorkPhase {
 enum DesktopApplicationEnumControlFamily {
     Game,
     Engine,
+    Puzzle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DesktopApplicationEnumControlBudget {
+    Idle,
+    Mutation,
+    Quit,
+}
+
+impl DesktopApplicationEnumControlBudget {
+    const BOUNDED: [Self; 2] = [Self::Idle, Self::Mutation];
+
+    fn is_full(self, state: &DesktopApplicationState) -> bool {
+        match self {
+            Self::Idle | Self::Mutation => {
+                state
+                    .controls
+                    .values()
+                    .filter(|control| control.budget == self)
+                    .count()
+                    >= DesktopApplicationState::CONTROL_CAPACITY
+            }
+            Self::Quit => false,
+        }
+    }
+}
+
+struct DesktopApplicationControl {
+    sequence: u64,
+    budget: DesktopApplicationEnumControlBudget,
 }
 
 struct DesktopApplicationEntry {
@@ -233,13 +264,36 @@ struct DesktopApplicationEntry {
 }
 
 struct DesktopApplicationMutation {
-    sequence: u64,
+    request: DesktopRequest,
     receipt: DesktopApplicationReceipt,
 }
 
 enum DesktopApplicationEnumLifecycle {
     Accepting,
     Closing { quit_sequence: u64 },
+    Closed { quit_sequence: u64 },
+}
+
+impl DesktopApplicationEnumLifecycle {
+    fn admits(&self, operation: &DesktopEnumCommand) -> bool {
+        if matches!(operation, DesktopEnumCommand::Quit) {
+            return true;
+        }
+        match self {
+            Self::Accepting => true,
+            Self::Closing { .. } => operation.is_available_while_closing(),
+            Self::Closed { .. } => false,
+        }
+    }
+
+    fn quit_sequence(&self) -> Option<u64> {
+        match self {
+            Self::Accepting => None,
+            Self::Closing { quit_sequence } | Self::Closed { quit_sequence } => {
+                Some(*quit_sequence)
+            }
+        }
+    }
 }
 
 struct DesktopApplicationState {
@@ -249,7 +303,7 @@ struct DesktopApplicationState {
     urgent: VecDeque<u64>,
     completed: VecDeque<u64>,
     mutations: HashMap<DesktopMessagesEntityId, DesktopApplicationMutation>,
-    controls: HashMap<DesktopMessagesEnumControlKey, u64>,
+    controls: HashMap<DesktopMessagesEnumControlKey, DesktopApplicationControl>,
     ordinary_in_flight: usize,
     retired_through: u64,
     last_time: Option<ClockInstant>,
@@ -258,6 +312,10 @@ struct DesktopApplicationState {
 
 impl DesktopApplicationState {
     const ORDINARY_CAPACITY: usize = 256;
+    const CONTROL_CAPACITY: usize =
+        Self::ORDINARY_CAPACITY * DesktopMessagesEnumControlKey::PER_ENTITY_CAPACITY;
+    const MAX_CONTROL_CAPACITY: usize =
+        Self::CONTROL_CAPACITY * DesktopApplicationEnumControlBudget::BOUNDED.len();
     const RESULT_CAPACITY: usize = DesktopRequestCache::<DesktopMessagesEnumResult>::CAPACITY;
     const RESULT_LIFETIME: ClockDuration = ClockDuration::from_nanos(300_000_000_000);
     const STOP_DEADLINE: ClockDuration = ClockDuration::from_nanos(2_000_000_000);
@@ -339,31 +397,31 @@ impl DesktopApplicationState {
         entry.phase = DesktopApplicationEnumWorkPhase::Completed(now);
         if let Some(key) = entry.request.command().operation().control_key() {
             self.controls.remove(&key);
-            match key {
-                DesktopMessagesEnumControlKey::EngineStop(owner)
-                | DesktopMessagesEnumControlKey::WorkbenchCancel(owner)
-                | DesktopMessagesEnumControlKey::Stop(owner)
-                | DesktopMessagesEnumControlKey::Pause(owner)
-                | DesktopMessagesEnumControlKey::GameStop(owner)
-                | DesktopMessagesEnumControlKey::GamePause(owner) => {
-                    if !self
-                        .controls
-                        .keys()
-                        .any(|pending| pending.belongs_to(owner))
-                        && self
-                            .mutations
-                            .get(&owner)
-                            .is_some_and(|mutation| mutation.receipt.response().is_some())
-                    {
-                        self.mutations.remove(&owner);
-                    }
+            if key == DesktopMessagesEnumControlKey::Quit {
+                self.lifecycle = DesktopApplicationEnumLifecycle::Closed {
+                    quit_sequence: sequence,
+                };
+            }
+            if let Some(owner) = key.owner()
+                && let Some(mutation) = self.mutations.get(&owner)
+                && mutation.receipt.response().is_some()
+            {
+                let operation = mutation.request.command().operation();
+                if !self
+                    .controls
+                    .keys()
+                    .any(|pending| pending.targets_mutation(operation))
+                {
+                    self.mutations.remove(&owner);
                 }
-                DesktopMessagesEnumControlKey::Quit => {}
             }
         } else {
             self.ordinary_in_flight -= 1;
             if let Some(owner) = entry.request.command().operation().mutation_entity()
-                && !self.controls.keys().any(|key| key.belongs_to(owner))
+                && !self
+                    .controls
+                    .keys()
+                    .any(|key| key.targets_mutation(entry.request.command().operation()))
             {
                 self.mutations.remove(&owner);
             }
@@ -376,27 +434,26 @@ impl DesktopApplicationState {
         &self,
         key: DesktopMessagesEnumControlKey,
     ) -> Result<Vec<(u64, DesktopApplicationReceipt)>, DesktopApplicationError> {
-        match key {
-            DesktopMessagesEnumControlKey::EngineStop(owner)
-            | DesktopMessagesEnumControlKey::WorkbenchCancel(owner)
-            | DesktopMessagesEnumControlKey::Stop(owner)
-            | DesktopMessagesEnumControlKey::Pause(owner)
-            | DesktopMessagesEnumControlKey::GameStop(owner)
-            | DesktopMessagesEnumControlKey::GamePause(owner) => match self.mutations.get(&owner) {
-                Some(mutation) => Ok(vec![(mutation.sequence, mutation.receipt.clone())]),
-                None if matches!(
-                    key,
-                    DesktopMessagesEnumControlKey::EngineStop(_)
-                        | DesktopMessagesEnumControlKey::WorkbenchCancel(_)
-                        | DesktopMessagesEnumControlKey::GameStop(_)
-                        | DesktopMessagesEnumControlKey::GamePause(_)
-                ) =>
-                {
-                    Ok(Vec::new())
+        if let Some(owner) = key.owner() {
+            if let Some(mutation) = self.mutations.get(&owner) {
+                let operation = mutation.request.command().operation();
+                if key.targets_mutation(operation) {
+                    return Ok(vec![(
+                        mutation.request.sequence(),
+                        mutation.receipt.clone(),
+                    )]);
                 }
-                None => Err(DesktopApplicationError::UnknownEntity),
-            },
-            DesktopMessagesEnumControlKey::Quit => Ok(self
+            }
+            if matches!(
+                key,
+                DesktopMessagesEnumControlKey::Stop(_) | DesktopMessagesEnumControlKey::Pause(_)
+            ) {
+                Err(DesktopApplicationError::UnknownEntity)
+            } else {
+                Ok(Vec::new())
+            }
+        } else {
+            Ok(self
                 .entries
                 .iter()
                 .filter(|(_sequence, entry)| {
@@ -404,7 +461,7 @@ impl DesktopApplicationState {
                         && entry.receipt.response().is_none()
                 })
                 .map(|(sequence, entry)| (*sequence, entry.receipt.clone()))
-                .collect()),
+                .collect())
         }
     }
 
@@ -415,7 +472,8 @@ impl DesktopApplicationState {
         now: ClockInstant,
         key: DesktopMessagesEnumControlKey,
     ) -> Result<(DesktopApplicationReceipt, bool), DesktopApplicationError> {
-        if let Some(sequence) = self.controls.get(&key).copied() {
+        if let Some(control) = self.controls.get(&key) {
+            let sequence = control.sequence;
             let receipt = self
                 .entries
                 .get(&sequence)
@@ -425,16 +483,11 @@ impl DesktopApplicationState {
             request.retain_admission(sequence);
             return Ok((receipt, false));
         }
-        if key != DesktopMessagesEnumControlKey::Quit
-            && matches!(
-                self.lifecycle,
-                DesktopApplicationEnumLifecycle::Closing { .. }
-            )
-        {
+        if !self.lifecycle.admits(request.command().operation()) {
             return Err(DesktopApplicationError::Closing);
         }
         if key == DesktopMessagesEnumControlKey::Quit
-            && let DesktopApplicationEnumLifecycle::Closing { quit_sequence } = self.lifecycle
+            && let Some(quit_sequence) = self.lifecycle.quit_sequence()
         {
             let receipt = self
                 .entries
@@ -446,8 +499,24 @@ impl DesktopApplicationState {
             return Ok((receipt, false));
         }
         let targets = self.targets(key)?;
+        let budget = if key == DesktopMessagesEnumControlKey::Quit {
+            DesktopApplicationEnumControlBudget::Quit
+        } else if targets.is_empty() {
+            DesktopApplicationEnumControlBudget::Idle
+        } else {
+            DesktopApplicationEnumControlBudget::Mutation
+        };
+        if budget.is_full(self) {
+            return Err(DesktopApplicationError::Busy);
+        }
         let receipt = DesktopApplicationReceipt::new(request, received_at)?;
-        self.controls.insert(key, request.sequence());
+        self.controls.insert(
+            key,
+            DesktopApplicationControl {
+                sequence: request.sequence(),
+                budget,
+            },
+        );
         let mut affected = Vec::with_capacity(targets.len());
         let mut completed_queued = false;
         for (sequence, target_receipt) in targets {
@@ -474,7 +543,6 @@ impl DesktopApplicationState {
                 affected,
             },
         );
-        self.controls.insert(key, sequence);
         if key == DesktopMessagesEnumControlKey::Quit {
             self.lifecycle = DesktopApplicationEnumLifecycle::Closing {
                 quit_sequence: sequence,
@@ -489,10 +557,7 @@ impl DesktopApplicationState {
         request: &DesktopRequest,
         received_at: ClockInstant,
     ) -> Result<DesktopApplicationReceipt, DesktopApplicationError> {
-        if matches!(
-            self.lifecycle,
-            DesktopApplicationEnumLifecycle::Closing { .. }
-        ) {
+        if !self.lifecycle.admits(request.command().operation()) {
             return Err(DesktopApplicationError::Closing);
         }
         if self.ordinary_in_flight == Self::ORDINARY_CAPACITY {
@@ -500,7 +565,10 @@ impl DesktopApplicationState {
         }
         if let Some(owner) = request.command().operation().mutation_entity()
             && (self.mutations.contains_key(&owner)
-                || self.controls.keys().any(|key| key.belongs_to(owner)))
+                || self
+                    .controls
+                    .keys()
+                    .any(|key| key.targets_mutation(request.command().operation())))
         {
             return Err(DesktopApplicationError::EntityBusy);
         }
@@ -525,7 +593,7 @@ impl DesktopApplicationState {
             self.mutations.insert(
                 owner,
                 DesktopApplicationMutation {
-                    sequence,
+                    request: request.clone(),
                     receipt: receipt.clone(),
                 },
             );
@@ -674,6 +742,8 @@ pub struct DesktopApplication<C: ClockTimeProvider, W: DesktopApplicationWakePro
 
 impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication<C, W> {
     pub const ORDINARY_CAPACITY: usize = DesktopApplicationState::ORDINARY_CAPACITY;
+    pub const CONTROL_CAPACITY: usize = DesktopApplicationState::CONTROL_CAPACITY;
+    pub const MAX_CONTROL_CAPACITY: usize = DesktopApplicationState::MAX_CONTROL_CAPACITY;
     pub const RESULT_CAPACITY: usize = DesktopApplicationState::RESULT_CAPACITY;
 
     pub fn new(clock: Arc<C>, wake: Arc<W>) -> Self {
@@ -905,6 +975,13 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         } else {
             DesktopMessagesEnumResult::ReconciliationRequired
         };
+        if key == DesktopMessagesEnumControlKey::Quit
+            && state.entries.iter().any(|(sequence, entry)| {
+                *sequence != work.request.sequence() && entry.receipt.response().is_none()
+            })
+        {
+            return Err(DesktopApplicationError::CancellationUnacknowledged);
+        }
         state.complete(work.request.sequence(), response, now)?;
         drop(state);
         self.shared.notify_presentation()
@@ -937,6 +1014,24 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
         )
     }
 
+    pub fn complete_puzzle_control(
+        &self,
+        work: &DesktopApplicationWork,
+        response: Result<
+            crate::desktop::puzzle_service::DesktopPuzzleServiceEnumResult,
+            DesktopFailure,
+        >,
+    ) -> Result<(), DesktopApplicationError> {
+        self.complete_owned_control(
+            work,
+            response.map(|value| {
+                let revision = value.revision();
+                (DesktopEnumValue::Puzzle(Box::new(value)), revision)
+            }),
+            DesktopApplicationEnumControlFamily::Puzzle,
+        )
+    }
+
     fn complete_owned_control(
         &self,
         work: &DesktopApplicationWork,
@@ -955,6 +1050,11 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
                 DesktopMessagesEnumControlKey::GamePause(_)
                 | DesktopMessagesEnumControlKey::GameStop(_),
             ) => matches!(family, DesktopApplicationEnumControlFamily::Game),
+            Some(
+                DesktopMessagesEnumControlKey::PuzzlePause(_, _)
+                | DesktopMessagesEnumControlKey::PuzzleHidden(_, _)
+                | DesktopMessagesEnumControlKey::PuzzleEnd(_, _),
+            ) => matches!(family, DesktopApplicationEnumControlFamily::Puzzle),
             Some(
                 DesktopMessagesEnumControlKey::Stop(_)
                 | DesktopMessagesEnumControlKey::Pause(_)
@@ -1012,3 +1112,7 @@ impl<C: ClockTimeProvider, W: DesktopApplicationWakeProvider> DesktopApplication
             .ok_or(DesktopApplicationError::UnknownWork)
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/desktop/puzzle_admission.rs"]
+mod puzzle_admission;

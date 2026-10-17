@@ -74,6 +74,7 @@ pub enum PuzzlePersistenceError {
     Range(#[from] TryFromIntError),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PuzzlePersistenceEnumCommand {
     Readiness(PuzzleTimerEnumReadiness),
     Move(BoardMove),

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, hash_map::Entry};
+use std::sync::Arc;
 
 use bevy_egui::egui::{self, Id, Ui};
 use thiserror::Error;
@@ -25,6 +26,7 @@ use crate::desktop::messages::{
     DesktopRequest,
 };
 use crate::desktop::preferences::{DesktopPreferences, DesktopPreferencesEnumSection};
+use crate::desktop::puzzle_service::DesktopPuzzleServiceError;
 use crate::desktop::stream::DesktopStream;
 use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
@@ -48,7 +50,12 @@ use crate::presentation::game::play::{
     PresentationGamePlay, PresentationGamePlayClock, PresentationGamePlayEnumOperation,
     PresentationGamePlayError, PresentationGamePlayIntent,
 };
+use crate::presentation::puzzle::controller::PresentationPuzzleController;
+use crate::presentation::puzzle::panel::{
+    PresentationPuzzlePanel, PresentationPuzzlePanelConnection, PresentationPuzzlePanelError,
+};
 use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::puzzle::timer::PuzzleTimerEnumReadiness;
 use crate::scene::picking::ScenePickingViewport;
 
 #[derive(Debug, Error)]
@@ -74,6 +81,10 @@ pub enum PresentationAppError {
     Clock(#[from] ClockStateError),
     #[error(transparent)]
     EnginePanels(#[from] PresentationEnginePanelsError),
+    #[error(transparent)]
+    PuzzlePanel(#[from] PresentationPuzzlePanelError),
+    #[error("The puzzle interruption was refused: {0}")]
+    PuzzleInterruption(#[from] Arc<DesktopPuzzleServiceError>),
     #[error("This game input identity was already used for another command")]
     GameRequestConflict,
     #[error("Wait for pending game actions before starting another action")]
@@ -84,6 +95,16 @@ pub enum PresentationAppError {
     UnsupportedRecovery,
     #[error("The native stream returned an unexpected synchronization result")]
     UnexpectedStreamResult,
+}
+
+#[cfg(test)]
+#[path = "../../tests/presentation/app_puzzles.rs"]
+mod puzzle_tests;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresentationAppEnumWorkspace {
+    Games,
+    Puzzles,
 }
 
 struct PresentationAppPending {
@@ -194,6 +215,8 @@ pub struct PresentationApp {
     games: Vec<PresentationAppGame>,
     selected_game: Option<GameId>,
     engine_panels: Option<PresentationEnginePanels>,
+    puzzle_panel: Option<PresentationPuzzlePanel>,
+    workspace: PresentationAppEnumWorkspace,
     new_game: Option<PresentationGameNewGame>,
     game_retained: HashMap<DesktopRequestId, PresentationAppGameRetained>,
     game_pending: Vec<PresentationAppGamePending>,
@@ -238,6 +261,8 @@ impl PresentationApp {
             games: Vec::new(),
             selected_game: None,
             engine_panels: None,
+            puzzle_panel: None,
+            workspace: PresentationAppEnumWorkspace::Games,
             new_game: None,
             game_retained: HashMap::new(),
             game_pending: Vec::new(),
@@ -273,6 +298,101 @@ impl PresentationApp {
 
     pub fn engine_panels(&self) -> Option<&PresentationEnginePanels> {
         self.engine_panels.as_ref()
+    }
+
+    pub fn mount_puzzles(&mut self, connection: PresentationPuzzlePanelConnection) {
+        self.puzzle_panel = Some(PresentationPuzzlePanel::new(connection));
+    }
+
+    pub const fn puzzle_panel(&self) -> Option<&PresentationPuzzlePanel> {
+        self.puzzle_panel.as_ref()
+    }
+
+    pub const fn workspace(&self) -> PresentationAppEnumWorkspace {
+        self.workspace
+    }
+
+    pub fn is_puzzle_input_ready(&self) -> bool {
+        self.workspace == PresentationAppEnumWorkspace::Puzzles
+            && !self.settings_open
+            && !self.quit_confirmation
+            && self.new_game.is_none()
+            && self
+                .puzzle_panel
+                .as_ref()
+                .and_then(PresentationPuzzlePanel::controller)
+                .is_none_or(|controller| !controller.is_confirming_end())
+    }
+
+    pub fn report_failure(&mut self, error: PresentationAppError) {
+        self.failure = Some(error.to_string());
+    }
+
+    pub fn select_workspace<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        workspace: PresentationAppEnumWorkspace,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        if workspace == self.workspace {
+            return Ok(());
+        }
+        if self.workspace == PresentationAppEnumWorkspace::Puzzles
+            && let Some(panel) = &mut self.puzzle_panel
+        {
+            panel.report_readiness(PuzzleTimerEnumReadiness::Hidden, port)?;
+        }
+        self.workspace = workspace;
+        self.board.cancel_gesture();
+        self.board.set_selected(None);
+        if workspace == PresentationAppEnumWorkspace::Puzzles {
+            self.new_game = None;
+            self.settings_open = false;
+            if let Some(panel) = &mut self.puzzle_panel
+                && panel.inventory().is_none()
+                && panel.controller().is_none()
+                && !panel.has_pending_work()
+            {
+                panel.first_page(port)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn synchronize_puzzles<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        if let Some(panel) = &mut self.puzzle_panel {
+            let key = |controller: &PresentationPuzzleController| {
+                let context = controller.snapshot().context();
+                (context.session_id(), context.revision())
+            };
+            let previous = panel.controller().map(key);
+            panel.synchronize(port)?;
+            if previous != panel.controller().map(key) {
+                self.board.cancel_gesture();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn report_puzzle_readiness<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        readiness: PuzzleTimerEnumReadiness,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        let input_ready = self.is_puzzle_input_ready();
+        if let Some(panel) = &mut self.puzzle_panel {
+            let readiness = if self.workspace == PresentationAppEnumWorkspace::Games {
+                PuzzleTimerEnumReadiness::Hidden
+            } else if readiness == PuzzleTimerEnumReadiness::Ready && !input_ready {
+                PuzzleTimerEnumReadiness::BoardNotReady
+            } else {
+                readiness
+            };
+            panel.report_readiness(readiness, port)?;
+        }
+        Ok(())
     }
 
     pub fn accept_snapshot(&mut self, snapshot: DesktopBootstrapSnapshot) {
@@ -312,6 +432,10 @@ impl PresentationApp {
             .is_some_and(PresentationEnginePanels::has_pending_work)
             || !self.pending.is_empty()
             || !self.game_pending.is_empty()
+            || self
+                .puzzle_panel
+                .as_ref()
+                .is_some_and(PresentationPuzzlePanel::has_pending_work)
             || self.stream_pending.as_ref().is_some_and(|pending| {
                 pending.receipt.is_some()
                     || self.stream.as_ref().is_some_and(|stream| {
@@ -321,6 +445,9 @@ impl PresentationApp {
     }
 
     pub fn game_snapshot(&self) -> Option<&DesktopGameSnapshot> {
+        if self.workspace == PresentationAppEnumWorkspace::Puzzles {
+            return None;
+        }
         self.games
             .iter()
             .find(|game| Some(game.snapshot.id()) == self.selected_game)
@@ -328,9 +455,32 @@ impl PresentationApp {
     }
 
     pub fn board_snapshot(&self) -> Option<&DesktopBoardSnapshot> {
-        self.game_snapshot()
-            .map(DesktopGameSnapshot::board)
-            .or_else(|| self.snapshot.as_ref().map(DesktopBootstrapSnapshot::board))
+        Self::board_for_workspace(
+            self.workspace,
+            &self.games,
+            self.selected_game,
+            self.snapshot.as_ref(),
+            self.puzzle_panel.as_ref(),
+        )
+    }
+
+    fn board_for_workspace<'a>(
+        workspace: PresentationAppEnumWorkspace,
+        games: &'a [PresentationAppGame],
+        selected: Option<GameId>,
+        bootstrap: Option<&'a DesktopBootstrapSnapshot>,
+        puzzles: Option<&'a PresentationPuzzlePanel>,
+    ) -> Option<&'a DesktopBoardSnapshot> {
+        match workspace {
+            PresentationAppEnumWorkspace::Games => games
+                .iter()
+                .find(|game| Some(game.snapshot.id()) == selected)
+                .map(|game| game.snapshot.board())
+                .or_else(|| bootstrap.map(DesktopBootstrapSnapshot::board)),
+            PresentationAppEnumWorkspace::Puzzles => {
+                puzzles.and_then(PresentationPuzzlePanel::board)
+            }
+        }
     }
 
     pub fn accept_game_snapshot(&mut self, snapshot: DesktopGameSnapshot) -> bool {
@@ -349,7 +499,10 @@ impl PresentationApp {
             {
                 return false;
             }
-            if game.controller.synchronize(&snapshot) && self.selected_game == Some(id) {
+            if game.controller.synchronize(&snapshot)
+                && self.selected_game == Some(id)
+                && self.workspace == PresentationAppEnumWorkspace::Games
+            {
                 self.board.cancel_gesture();
             }
             if let Some(notice) = notice.filter(|_| has_new_notice) {
@@ -596,6 +749,7 @@ impl PresentationApp {
                 }),
                 DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. }) => false,
                 DesktopEnumCommand::Engine(_)
+                | DesktopEnumCommand::Puzzle { .. }
                 | DesktopEnumCommand::Bootstrap
                 | DesktopEnumCommand::FileSelect { .. }
                 | DesktopEnumCommand::StreamSubscribe
@@ -637,6 +791,11 @@ impl PresentationApp {
 
     fn accept_value(&mut self, value: DesktopEnumValue) {
         match value {
+            DesktopEnumValue::Puzzle(_) => {
+                self.failure = Some(
+                    "An unexpected puzzle response was refused. Refresh the puzzle view".to_owned(),
+                );
+            }
             DesktopEnumValue::Engine(result) => match self.engine_panels.as_mut() {
                 Some(panels) => {
                     if let Err(error) = panels.observe_value(*result) {
@@ -970,6 +1129,9 @@ impl PresentationApp {
                 .request_discard("apply initial native theme before layout");
         }
         self.poll();
+        if let Err(error) = self.synchronize_puzzles(port) {
+            self.report_failure(error);
+        }
         if let Err(error) = self.poll_events(port) {
             self.failure = Some(error.to_string());
         }
@@ -986,10 +1148,16 @@ impl PresentationApp {
         }
         let frame = ui.ctx().cumulative_frame_nr();
         let promotion_owns_input = self.promotion_frame == Some(frame)
-            || self.games.iter().any(|game| {
-                Some(game.snapshot.id()) == self.selected_game
-                    && game.controller.is_promotion_pending()
-            });
+            || self.workspace == PresentationAppEnumWorkspace::Games
+                && self.games.iter().any(|game| {
+                    Some(game.snapshot.id()) == self.selected_game
+                        && game.controller.is_promotion_pending()
+                })
+            || self.workspace == PresentationAppEnumWorkspace::Puzzles
+                && self
+                    .puzzle_panel
+                    .as_ref()
+                    .is_some_and(PresentationPuzzlePanel::is_promotion_pending);
         if promotion_owns_input {
             self.promotion_frame = Some(frame);
             ui.disable();
@@ -999,6 +1167,7 @@ impl PresentationApp {
         let mut controller_intent = None;
         let mut actions = Vec::new();
         let mut camera_action = None;
+        let mut workspace = None;
         egui::Panel::top("chess.header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(
@@ -1020,6 +1189,7 @@ impl PresentationApp {
                         self.new_game_toggle_frame = Some(frame);
                         self.settings_open = false;
                         self.board.cancel_gesture();
+                        workspace = Some(PresentationAppEnumWorkspace::Games);
                     }
                     if ui.button("Settings").clicked() && self.settings_toggle_frame != Some(frame)
                     {
@@ -1042,6 +1212,27 @@ impl PresentationApp {
                 });
             });
             ui.horizontal_wrapped(|ui| {
+                if ui
+                    .selectable_label(
+                        self.workspace == PresentationAppEnumWorkspace::Games,
+                        "Play",
+                    )
+                    .clicked()
+                {
+                    workspace = Some(PresentationAppEnumWorkspace::Games);
+                }
+                if ui
+                    .add_enabled(
+                        self.puzzle_panel.is_some(),
+                        egui::Button::selectable(
+                            self.workspace == PresentationAppEnumWorkspace::Puzzles,
+                            "Puzzles",
+                        ),
+                    )
+                    .clicked()
+                {
+                    workspace = Some(PresentationAppEnumWorkspace::Puzzles);
+                }
                 let mut selected = self.selected_game;
                 for (index, game) in self.games.iter().enumerate() {
                     let label = format!("Game {}", index.saturating_add(1));
@@ -1050,6 +1241,7 @@ impl PresentationApp {
                         .clicked()
                     {
                         selected = Some(game.snapshot.id());
+                        workspace = Some(PresentationAppEnumWorkspace::Games);
                     }
                 }
                 if selected != self.selected_game {
@@ -1059,7 +1251,14 @@ impl PresentationApp {
                 }
             });
         });
-        if let Some(panels) = &mut self.engine_panels {
+        if let Some(workspace) = workspace
+            && let Err(error) = self.select_workspace(workspace, port)
+        {
+            self.report_failure(error);
+        }
+        if self.workspace == PresentationAppEnumWorkspace::Games
+            && let Some(panels) = &mut self.engine_panels
+        {
             let selected = self
                 .games
                 .iter()
@@ -1069,9 +1268,10 @@ impl PresentationApp {
                 self.failure = Some(error.to_string());
             }
         }
-        let is_busy = self
-            .selected_game
-            .is_some_and(|game| self.is_game_busy(game));
+        let is_busy = self.workspace == PresentationAppEnumWorkspace::Games
+            && self
+                .selected_game
+                .is_some_and(|game| self.is_game_busy(game));
         let is_create_busy = self
             .game_pending
             .iter()
@@ -1089,6 +1289,13 @@ impl PresentationApp {
             .show(ui, |ui| {
                 if self.settings_open {
                     self.show_settings(ui);
+                    return;
+                }
+                if self.workspace == PresentationAppEnumWorkspace::Puzzles {
+                    if let Some(panel) = &mut self.puzzle_panel
+                        && let Err(error) = panel.show(ui, port) {
+                        self.failure = Some(error.to_string());
+                    }
                     return;
                 }
                 if let Some(new_game) = &mut self.new_game {
@@ -1210,20 +1417,36 @@ impl PresentationApp {
             }
             self.quit_retry_frame = Some(frame);
         }
-        if let Some(game) = self
-            .games
-            .iter()
-            .find(|game| Some(game.snapshot.id()) == self.selected_game)
+        if self.workspace == PresentationAppEnumWorkspace::Games
+            && let Some(game) = self
+                .games
+                .iter()
+                .find(|game| Some(game.snapshot.id()) == self.selected_game)
         {
             self.board.set_selected(game.controller.selected());
         }
-        let can_enter_moves = self.game_snapshot().is_none_or(|snapshot| {
-            snapshot.phase() == GameEnumPhase::Active
-                && snapshot.is_viewing_live()
-                && !snapshot.is_save_required()
-                && (snapshot.seats().seat(snapshot.live_turn()) == GameEnumSeat::Human
-                    || snapshot.are_premoves_enabled())
-        });
+        let can_enter_moves = match self.workspace {
+            PresentationAppEnumWorkspace::Puzzles => self
+                .puzzle_panel
+                .as_ref()
+                .and_then(PresentationPuzzlePanel::controller)
+                .is_some_and(|controller| controller.can_input()),
+            PresentationAppEnumWorkspace::Games => self.game_snapshot().is_none_or(|snapshot| {
+                snapshot.phase() == GameEnumPhase::Active
+                    && snapshot.is_viewing_live()
+                    && !snapshot.is_save_required()
+                    && (snapshot.seats().seat(snapshot.live_turn()) == GameEnumSeat::Human
+                        || snapshot.are_premoves_enabled())
+            }),
+        };
+        if self.workspace == PresentationAppEnumWorkspace::Puzzles {
+            self.board.set_selected(
+                self.puzzle_panel
+                    .as_ref()
+                    .and_then(PresentationPuzzlePanel::controller)
+                    .and_then(|controller| controller.selected()),
+            );
+        }
         let pending_move = self
             .game_snapshot()
             .filter(|game| {
@@ -1236,19 +1459,22 @@ impl PresentationApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.strong("White");
-                    if self.selected_game.is_none() {
+                    if self.selected_game.is_none()
+                        && self.workspace == PresentationAppEnumWorkspace::Games
+                    {
                         ui.label(
                             egui::RichText::new("No active game")
                                 .color(ui.visuals().weak_text_color()),
                         );
                     }
                 });
-                let board_snapshot = self
-                    .games
-                    .iter()
-                    .find(|game| Some(game.snapshot.id()) == self.selected_game)
-                    .map(|game| game.snapshot.board())
-                    .or_else(|| self.snapshot.as_ref().map(DesktopBootstrapSnapshot::board));
+                let board_snapshot = Self::board_for_workspace(
+                    self.workspace,
+                    &self.games,
+                    self.selected_game,
+                    self.snapshot.as_ref(),
+                    self.puzzle_panel.as_ref(),
+                );
                 let result = match board_snapshot {
                     Some(snapshot) => self
                         .board
@@ -1267,7 +1493,12 @@ impl PresentationApp {
                         )
                         .map(Some),
                     None => {
-                        ui.label("Loading the saved position");
+                        ui.label(match self.workspace {
+                            PresentationAppEnumWorkspace::Games => "Loading the saved position",
+                            PresentationAppEnumWorkspace::Puzzles => {
+                                "The puzzle board is hidden until its run is ready and resumed"
+                            }
+                        });
                         Ok(None)
                     }
                 };
@@ -1373,6 +1604,7 @@ impl PresentationApp {
             && !self.quit_confirmation
             && !self.settings_open
             && self.new_game.is_none()
+            && self.workspace == PresentationAppEnumWorkspace::Games
         {
             let is_escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
             if let Some(id) = self.selected_game
@@ -1421,14 +1653,29 @@ impl PresentationApp {
                 }
             }
         }
-        if let Some(game) = self
-            .games
-            .iter()
-            .find(|game| Some(game.snapshot.id()) == self.selected_game)
+        if self.workspace == PresentationAppEnumWorkspace::Puzzles
+            && !promotion_owns_input
+            && !self.quit_confirmation
+            && !self.settings_open
+            && let (Some(panel), Some(board_frame)) = (&mut self.puzzle_panel, &board_frame)
+        {
+            for action in board_frame.actions() {
+                if let Err(error) = panel.board_action(*action, port) {
+                    self.failure = Some(error.to_string());
+                    break;
+                }
+            }
+        }
+        if self.workspace == PresentationAppEnumWorkspace::Games
+            && let Some(game) = self
+                .games
+                .iter()
+                .find(|game| Some(game.snapshot.id()) == self.selected_game)
         {
             self.board.set_selected(game.controller.selected());
         }
         if let (Some(board_frame), Some(scene)) = (&board_frame, scene)
+            && self.workspace == PresentationAppEnumWorkspace::Games
             && board_frame.has_semantic_grid()
             && !promotion_owns_input
             && !self.settings_open

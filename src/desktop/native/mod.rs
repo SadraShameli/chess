@@ -15,6 +15,8 @@ pub mod lifecycle;
 #[cfg(target_os = "macos")]
 pub mod menu;
 pub mod puzzle_runtime;
+pub mod puzzle_service;
+pub mod puzzle_window;
 pub mod recovery;
 pub mod resources;
 pub mod startup;

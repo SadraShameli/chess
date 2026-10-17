@@ -15,6 +15,7 @@ use crate::puzzle::session::{PuzzleSessionContext, PuzzleSessionId};
 use crate::puzzle::summary::PuzzleSummary;
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DesktopPuzzleBridgeEnumOperation {
     Command(PuzzlePersistenceEnumCommand),
     RetrySave,

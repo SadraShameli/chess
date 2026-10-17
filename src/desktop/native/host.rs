@@ -71,6 +71,10 @@ use crate::desktop::native::menu::{
     DesktopNativeMenu, DesktopNativeMenuEnumAction, DesktopNativeMenuError,
     DesktopNativeMenuRequests,
 };
+use crate::desktop::native::puzzle_service::DesktopNativePuzzleServicePort;
+use crate::desktop::native::puzzle_window::{
+    DesktopNativePuzzleWindow, DesktopNativePuzzleWindowError, DesktopNativePuzzleWindowFrame,
+};
 use crate::desktop::native::recovery::{
     DesktopNativeRecovery, DesktopNativeRecoveryEnumAction, DesktopNativeRecoveryEnumStage,
     DesktopNativeRecoveryError, DesktopNativeRecoveryFailure, DesktopNativeRecoveryProvider,
@@ -82,11 +86,16 @@ use crate::presentation::app::{PresentationApp, PresentationAppError};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::engine_panels::PresentationEnginePanelsConnection;
+use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::presentation::theme::font::PresentationThemeFont;
 use crate::scene::assets::{SceneAssets, SceneAssetsError};
 use crate::scene::camera::{SceneCamera, SceneCameraError};
 use crate::scene::picking::{ScenePickingViewport, ScenePickingViewportError};
 use crate::scene::renderer::{SceneRenderer, SceneRendererError, SceneRendererGeneration};
+
+#[cfg(test)]
+#[path = "../../../tests/desktop/native/host_puzzles.rs"]
+mod puzzle_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopNativeHostEvent {
@@ -108,6 +117,8 @@ pub enum DesktopNativeHostEvent {
 
 pub struct DesktopNativeHostServices {
     pub engine_panels: Option<PresentationEnginePanelsConnection>,
+    pub puzzle_panel: Option<PresentationPuzzlePanelConnection>,
+    pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
     pub resources: DesktopNativeResources,
@@ -198,6 +209,8 @@ pub enum DesktopNativeHostError {
     System(#[from] bevy::ecs::system::SystemParamValidationError),
     #[error(transparent)]
     Dialogs(#[from] DesktopNativeDialogsError),
+    #[error(transparent)]
+    PuzzleWindow(#[from] DesktopNativePuzzleWindowError),
     #[cfg(target_os = "macos")]
     #[error(transparent)]
     Menu(#[from] DesktopNativeMenuError),
@@ -207,6 +220,7 @@ pub enum DesktopNativeHostError {
 struct DesktopNativeHostState {
     services: DesktopNativeHostServices,
     presentation: PresentationApp,
+    puzzle_window: Option<DesktopNativePuzzleWindow<DesktopNativePuzzleServicePort>>,
     asset: Handle<Gltf>,
     asset_reload: Option<DesktopNativeHostEnumAssetReload>,
     camera: SceneCamera,
@@ -592,9 +606,13 @@ impl DesktopNativeHost {
         if let Some(connection) = services.engine_panels.take() {
             presentation.mount_engine(connection);
         }
+        if let Some(connection) = services.puzzle_panel.take() {
+            presentation.mount_puzzles(connection);
+        }
         app.insert_resource(DesktopNativeHostState {
             services,
             presentation,
+            puzzle_window: None,
             asset,
             asset_reload: None,
             camera: SceneCamera::initial(BoardEnumColor::White),
@@ -897,6 +915,7 @@ impl DesktopNativeHost {
         state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
         state.presentation.poll();
+        Self::update_puzzles(world, state)?;
         Self::activate_window(world, state);
         #[cfg(target_os = "macos")]
         let menu_requests = Self::poll_menu(world, state)?;
@@ -958,6 +977,31 @@ impl DesktopNativeHost {
             let outcome = Self::update_scene(world, state, &mut renderer);
             world.insert_resource(renderer);
             outcome?;
+        }
+        Ok(())
+    }
+
+    fn update_puzzles(
+        world: &mut World,
+        state: &mut DesktopNativeHostState,
+    ) -> Result<(), DesktopNativeHostError> {
+        if state.puzzle_window.is_none() {
+            let mut windows = world.query_filtered::<Entity, With<PrimaryWindow>>();
+            let window = windows
+                .single(world)
+                .map_err(|_error| DesktopNativeHostError::PrimaryWindow)?;
+            state.puzzle_window = Some(DesktopNativePuzzleWindow::new(
+                window,
+                state.services.puzzles.clone(),
+            )?);
+        }
+        if let Some(window) = &mut state.puzzle_window {
+            window.update(
+                world,
+                &mut state.presentation,
+                &state.services.port,
+                state.failure.is_some(),
+            )?;
         }
         Ok(())
     }
@@ -1140,6 +1184,13 @@ impl DesktopNativeHost {
         world: &mut World,
         state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
+        if state
+            .puzzle_window
+            .as_ref()
+            .is_some_and(|window| !window.is_settled())
+        {
+            return Ok(());
+        }
         if let Some(dialogs) = world.get_non_send::<DesktopNativeHostDialogs>() {
             if !state.dialog_admission_closed {
                 if Self::dialog_result(&state.services.port, dialogs.close_admission())?.is_none() {
@@ -1365,7 +1416,24 @@ impl DesktopNativeHost {
         if let Some(renderer) = renderer {
             world.insert_resource(renderer);
         }
-        outcome
+        outcome?;
+        if let Some(window) = &mut state.puzzle_window {
+            window.report_readiness(
+                DesktopNativePuzzleWindowFrame {
+                    world,
+                    graphics_ready: state.ready
+                        && state.failure.is_none()
+                        && state.quit == DesktopNativeHostEnumQuit::Idle
+                        && state.pending_view.is_none()
+                        && state.pending_camera.is_none()
+                        && world.contains_resource::<SceneRenderer>(),
+                    rendered_board: state.rendered_board.as_ref(),
+                },
+                &mut state.presentation,
+                &state.services.port,
+            )?;
+        }
+        Ok(())
     }
 
     fn show_presentation(
@@ -1637,6 +1705,7 @@ impl DesktopNativeHost {
             | DesktopNativeHostError::Camera(_)
             | DesktopNativeHostError::Viewport(_)
             | DesktopNativeHostError::Position(_)
+            | DesktopNativeHostError::PuzzleWindow(_)
             | DesktopNativeHostError::Presentation(_)
             | DesktopNativeHostError::System(_) => DesktopNativeRecoveryEnumStage::Renderer,
             DesktopNativeHostError::Pipeline(_)

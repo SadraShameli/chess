@@ -1,5 +1,5 @@
 use std::future::{Future, poll_fn};
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 
 use crate::board::position::BoardPosition;
@@ -42,11 +42,23 @@ use crate::desktop::messages::{
     DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
     DesktopRequest,
 };
+use crate::desktop::puzzle_bridge::DesktopPuzzleBridgeEnumOperation;
+use crate::desktop::puzzle_service::{
+    DesktopPuzzleServiceEnumActivity, DesktopPuzzleServiceEnumOperation,
+    DesktopPuzzleServiceEnumResult, DesktopPuzzleServiceError, DesktopPuzzleServiceOutcome,
+    DesktopPuzzleServiceOutcomeSender, DesktopPuzzleServiceProvider, DesktopPuzzleServiceReceipt,
+    DesktopPuzzleServiceRequest, DesktopPuzzleServiceState,
+};
 use crate::desktop::workbench_commands::DesktopWorkbenchCommandsEnumOperation;
 use crate::engine::search::identity::{
     EngineSearchContext, EngineSearchGameId, EngineSearchGeneration, EngineSearchRevision,
 };
 use crate::package::digest::PackageDigest;
+use crate::puzzle::attempt::PuzzleAttemptId;
+use crate::puzzle::identity::PuzzleDefinitionIdentity;
+use crate::puzzle::session::PuzzleSessionId;
+use crate::puzzle::session::{PuzzleSessionContext, PuzzleSessionRevision};
+use crate::puzzle::timer::PuzzleTimerEnumPauseReason;
 use crate::workbench::enums::WorkbenchEnumParameters;
 use crate::workbench::job::{WorkbenchJobDeadline, WorkbenchJobId};
 
@@ -418,6 +430,204 @@ impl DesktopCoordinatorEngineQuitFixture {
             .await?;
         Ok(())
     }
+}
+
+struct DesktopCoordinatorPuzzleReceiptRequest {
+    request: DesktopPuzzleServiceRequest,
+    response: DesktopPuzzleServiceOutcomeSender<DesktopPuzzleServiceEnumResult>,
+}
+
+struct DesktopCoordinatorPuzzleReceiptProvider {
+    requests: mpsc::Sender<DesktopCoordinatorPuzzleReceiptRequest>,
+    state: watch::Sender<DesktopPuzzleServiceState>,
+}
+
+impl DesktopCoordinatorPuzzleReceiptProvider {
+    fn new() -> (Self, mpsc::Receiver<DesktopCoordinatorPuzzleReceiptRequest>) {
+        let (requests, receiver) = mpsc::channel(2);
+        let (state, _receiver) = watch::channel(DesktopPuzzleServiceState::new(
+            None,
+            None,
+            DesktopPuzzleServiceEnumActivity::Idle,
+            None,
+            None,
+        ));
+        (Self { requests, state }, receiver)
+    }
+}
+
+impl DesktopPuzzleServiceProvider for DesktopCoordinatorPuzzleReceiptProvider {
+    fn submit(
+        &self,
+        request: DesktopPuzzleServiceRequest,
+    ) -> DesktopPuzzleServiceOutcome<DesktopPuzzleServiceReceipt> {
+        let (response, receipt) = DesktopPuzzleServiceReceipt::channel();
+        self.requests
+            .try_send(DesktopCoordinatorPuzzleReceiptRequest { request, response })
+            .map_err(|error| {
+                Arc::new(match error {
+                    mpsc::error::TrySendError::Full(_) => DesktopPuzzleServiceError::Busy,
+                    mpsc::error::TrySendError::Closed(_) => DesktopPuzzleServiceError::Closed,
+                })
+            })?;
+        Ok(receipt)
+    }
+
+    fn interrupt(
+        &self,
+        session: PuzzleSessionId,
+        _reason: PuzzleTimerEnumPauseReason,
+    ) -> DesktopPuzzleServiceOutcome<DesktopPuzzleServiceReceipt> {
+        Err(Arc::new(DesktopPuzzleServiceError::SessionMismatch {
+            expected: session,
+            selected: self.state.borrow().selected(),
+        }))
+    }
+
+    fn state(&self) -> watch::Receiver<DesktopPuzzleServiceState> {
+        self.state.subscribe()
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn puzzle_receipt_is_observed_before_quit_cleanup_at_the_original_deadline()
+-> DesktopCoordinatorEngineQuitTestResult {
+    let mut fixture = DesktopCoordinatorEngineQuitFixture::new()?;
+    let (provider, mut requests) = DesktopCoordinatorPuzzleReceiptProvider::new();
+    let owner = DesktopMessagesEntityId::new();
+    fixture.coordinator = fixture.coordinator.with_puzzles(owner, Arc::new(provider));
+    let request = fixture.port.request(DesktopCommand::puzzle(
+        owner,
+        DesktopPuzzleServiceEnumOperation::Inventory { after: None },
+    ))?;
+    let receipt = fixture.port.try_submit(&request)?;
+    assert!(!fixture.poll().await?);
+    let forwarded = requests.try_recv()?;
+    assert!(forwarded.request.receipt.shares_outcome(&receipt));
+    *fixture
+        .lifecycle
+        .required
+        .lock()
+        .map_err(|error| error.to_string())? = Some(receipt.clone());
+    let quit = fixture.quit()?;
+    let deadline = quit.runtime_received_at() + DesktopCoordinatorEngineQuitFixture::WINDOW;
+    assert!(!fixture.poll().await?);
+    assert!(fixture.lifecycle_deadlines()?.is_empty());
+    assert!(forwarded.request.receipt.is_cancellation_requested());
+    tokio::time::advance(Duration::from_secs(2)).await;
+    forwarded
+        .response
+        .send_replace(Some(Err(Arc::new(DesktopPuzzleServiceError::Cancelled))));
+    assert!(fixture.poll().await?);
+    assert_eq!(fixture.lifecycle_deadlines()?, [deadline]);
+    assert!(matches!(
+        receipt.response(),
+        Some(DesktopMessagesEnumResult::Failure(failure))
+            if matches!(failure.code(), DesktopEnumFailureCode::Cancelled)
+    ));
+    assert!(matches!(
+        quit.response(),
+        Some(DesktopMessagesEnumResult::QuitReady)
+    ));
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn puzzle_revision_mismatch_is_rejected_before_service_dispatch()
+-> DesktopCoordinatorEngineQuitTestResult {
+    let mut fixture = DesktopCoordinatorEngineQuitFixture::new()?;
+    let (provider, mut requests) = DesktopCoordinatorPuzzleReceiptProvider::new();
+    let owner = DesktopMessagesEntityId::new();
+    fixture.coordinator = fixture.coordinator.with_puzzles(owner, Arc::new(provider));
+    let request = fixture.port.request(DesktopCommand::new(
+        DesktopEnumCommand::Puzzle {
+            owner,
+            operation: DesktopPuzzleServiceEnumOperation::Inventory { after: None },
+        },
+        Some(DesktopRevision::ZERO.next()?),
+    ))?;
+    let receipt = fixture.port.try_submit(&request)?;
+    assert!(!fixture.poll().await?);
+    assert!(matches!(
+        receipt.response(),
+        Some(DesktopMessagesEnumResult::Failure(failure))
+            if matches!(failure.code(), DesktopEnumFailureCode::StaleRevision)
+    ));
+    assert!(matches!(
+        requests.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    fixture.quit()?;
+    assert!(fixture.poll().await?);
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn ready_puzzle_control_is_revisited_after_its_mutation_completes()
+-> DesktopCoordinatorEngineQuitTestResult {
+    let mut fixture = DesktopCoordinatorEngineQuitFixture::new()?;
+    let (provider, mut requests) = DesktopCoordinatorPuzzleReceiptProvider::new();
+    let owner = DesktopMessagesEntityId::new();
+    fixture.coordinator = fixture.coordinator.with_puzzles(owner, Arc::new(provider));
+    let context = PuzzleSessionContext::new(
+        PuzzleSessionId::new(NonZeroU64::MIN),
+        PuzzleAttemptId::new(NonZeroU64::MIN),
+        PuzzleDefinitionIdentity::new("coordinator".into(), "1".into(), "one".into())?,
+        PuzzleSessionRevision::ZERO,
+    );
+    let inventory = fixture.port.request(DesktopCommand::puzzle(
+        owner,
+        DesktopPuzzleServiceEnumOperation::Inventory { after: None },
+    ))?;
+    fixture.port.try_submit(&inventory)?;
+    assert!(!fixture.poll().await?);
+    let inventory = requests.try_recv()?;
+    let mutation = fixture.port.request(DesktopCommand::puzzle(
+        owner,
+        DesktopPuzzleServiceEnumOperation::Session {
+            expected: context.clone(),
+            operation: DesktopPuzzleBridgeEnumOperation::Command(
+                crate::puzzle::persistence::PuzzlePersistenceEnumCommand::Hint,
+            ),
+        },
+    ))?;
+    let mutation_receipt = fixture.port.try_submit(&mutation)?;
+    assert!(!fixture.poll().await?);
+    let mutation = requests.try_recv()?;
+    let pause = fixture.port.request(DesktopCommand::puzzle(
+        owner,
+        DesktopPuzzleServiceEnumOperation::Interrupt {
+            session: context.session_id(),
+            reason: PuzzleTimerEnumPauseReason::Manual,
+        },
+    ))?;
+    let pause_receipt = fixture.port.try_submit(&pause)?;
+    assert!(!fixture.poll().await?);
+    let pause = requests.try_recv()?;
+    inventory
+        .response
+        .send_replace(Some(Err(Arc::new(DesktopPuzzleServiceError::Missing(
+            context.session_id(),
+        )))));
+    assert!(!fixture.poll().await?);
+    pause
+        .response
+        .send_replace(Some(Err(Arc::new(DesktopPuzzleServiceError::Cancelled))));
+    assert!(!fixture.poll().await?);
+    mutation
+        .response
+        .send_replace(Some(Err(Arc::new(DesktopPuzzleServiceError::Cancelled))));
+    assert!(!fixture.poll().await?);
+    let completed_without_another_event =
+        mutation_receipt.response().is_some() && pause_receipt.response().is_some();
+    fixture.quit()?;
+    assert!(fixture.poll().await?);
+    fixture.close().await?;
+    assert!(
+        completed_without_another_event,
+        "the ready puzzle control was not revisited after its mutation completed"
+    );
+    Ok(())
 }
 
 #[tokio::test(start_paused = true)]

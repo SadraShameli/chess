@@ -88,6 +88,95 @@ impl DesktopApplicationFixture {
             Some(DesktopRevision::ZERO),
         ))
     }
+
+    fn game_stop(&self, identity: u128) -> Result<DesktopRequest, Box<dyn std::error::Error>> {
+        let game = uuid::Uuid::from_u128(identity).to_string().parse()?;
+        let operation = chess::desktop::game_bridge::DesktopGameBridgeEnumOperation::Session {
+            game,
+            revision: chess::game::enums::GameRevision::ZERO,
+            action: chess::desktop::game_commands::DesktopGameCommandsEnumAction::Stop,
+        };
+        let revision = operation.revision();
+        Ok(self.application.port().request(DesktopCommand::new(
+            DesktopEnumCommand::Game(operation),
+            Some(revision),
+        ))?)
+    }
+}
+
+#[test]
+fn distinct_game_stop_controls_have_finite_admission_and_reserved_quit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = DesktopApplicationFixture::new();
+    let port = fixture.application.port();
+    let mut receipts = Vec::new();
+    let mut refused = false;
+    for identity in 1..=10_000 {
+        match port.try_submit(&fixture.game_stop(identity)?) {
+            Ok(receipt) => receipts.push(receipt),
+            Err(DesktopApplicationError::Busy) => {
+                refused = true;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let first = receipts.first().ok_or("no game stop admitted")?;
+    fixture.clock.set(1_000_000_000);
+    let repeated = port.try_submit(&fixture.game_stop(1)?)?;
+    let retained = first.shares_outcome(&repeated)
+        && first.received_at() == ClockInstant::from_nanos(0)
+        && first.deadline() == Some(ClockInstant::from_nanos(2_000_000_000));
+    let quit = port.request(DesktopCommand::new(DesktopEnumCommand::Quit, None))?;
+    let quit_receipt = port.try_submit(&quit)?;
+    let mut completed = 0;
+    while let Some(work) = fixture.application.try_next()? {
+        fixture.application.complete_control(&work)?;
+        completed += 1;
+    }
+    assert_eq!(completed, receipts.len() + 1);
+    assert!(
+        receipts
+            .iter()
+            .all(|receipt| matches!(receipt.response(), Some(DesktopMessagesEnumResult::Stopped)))
+    );
+    assert!(matches!(
+        quit_receipt.response(),
+        Some(DesktopMessagesEnumResult::QuitReady)
+    ));
+    assert!(retained);
+    assert!(fixture.application.try_next()?.is_none());
+    assert!(
+        refused,
+        "all {} distinct unresolved Game Stop controls were admitted without Busy",
+        receipts.len()
+    );
+    Ok(())
+}
+
+#[test]
+fn completing_a_control_releases_capacity_for_a_refused_control()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = DesktopApplicationFixture::new();
+    let port = fixture.application.port();
+    for identity in 1..=u128::try_from(DesktopApplication::<DesktopApplicationFixtureClock, DesktopApplicationFixtureWake>::CONTROL_CAPACITY)? {
+        port.try_submit(&fixture.game_stop(identity)?)?;
+    }
+    let refused = fixture.game_stop(u128::MAX)?;
+    assert!(matches!(
+        port.try_submit(&refused),
+        Err(DesktopApplicationError::Busy)
+    ));
+    let work = fixture.application.try_next()?.ok_or("missing game stop")?;
+    fixture.application.complete_control(&work)?;
+    port.try_submit(&refused)?;
+    let mut completed = 1;
+    while let Some(work) = fixture.application.try_next()? {
+        fixture.application.complete_control(&work)?;
+        completed += 1;
+    }
+    assert_eq!(completed, DesktopApplication::<DesktopApplicationFixtureClock, DesktopApplicationFixtureWake>::CONTROL_CAPACITY + 1);
+    Ok(())
 }
 
 #[test]

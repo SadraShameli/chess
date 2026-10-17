@@ -161,6 +161,7 @@ impl DesktopNativeBootstrapGameFixture {
         let revision = match &command {
             DesktopEnumCommand::Engine(operation) => Some(operation.context().configuration()),
             DesktopEnumCommand::Game(operation) => Some(operation.revision()),
+            DesktopEnumCommand::Puzzle { operation, .. } => Some(operation.expected_revision()),
             DesktopEnumCommand::Bootstrap
             | DesktopEnumCommand::FileSelect { .. }
             | DesktopEnumCommand::StreamSubscribe
