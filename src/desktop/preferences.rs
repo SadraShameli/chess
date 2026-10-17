@@ -14,6 +14,25 @@ impl DesktopPreferencesEnumTheme {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopPreferencesEnumMotion {
+    Full,
+    Reduced,
+}
+
+impl DesktopPreferencesEnumMotion {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full motion",
+            Self::Reduced => "Reduced motion",
+        }
+    }
+
+    pub const fn is_reduced(self) -> bool {
+        matches!(self, Self::Reduced)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopPreferencesEnumSection {
     Appearance,
 }
@@ -29,12 +48,14 @@ impl DesktopPreferencesEnumSection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DesktopPreferences {
     theme: DesktopPreferencesEnumTheme,
+    motion: DesktopPreferencesEnumMotion,
 }
 
 impl Default for DesktopPreferences {
     fn default() -> Self {
         Self {
             theme: DesktopPreferencesEnumTheme::Dark,
+            motion: DesktopPreferencesEnumMotion::Full,
         }
     }
 }
@@ -46,6 +67,10 @@ impl DesktopPreferences {
         DesktopPreferencesEnumTheme::Dark,
         DesktopPreferencesEnumTheme::Light,
     ];
+    const MOTIONS: [DesktopPreferencesEnumMotion; 2] = [
+        DesktopPreferencesEnumMotion::Full,
+        DesktopPreferencesEnumMotion::Reduced,
+    ];
 
     pub fn sections() -> &'static [DesktopPreferencesEnumSection] {
         &Self::SECTIONS
@@ -53,6 +78,22 @@ impl DesktopPreferences {
 
     pub fn themes() -> &'static [DesktopPreferencesEnumTheme] {
         &Self::THEMES
+    }
+
+    pub fn motions() -> &'static [DesktopPreferencesEnumMotion] {
+        &Self::MOTIONS
+    }
+
+    pub const fn motion(self) -> DesktopPreferencesEnumMotion {
+        self.motion
+    }
+
+    pub fn set_motion(&mut self, motion: DesktopPreferencesEnumMotion) -> bool {
+        if self.motion == motion {
+            return false;
+        }
+        self.motion = motion;
+        true
     }
 
     pub const fn theme(self) -> DesktopPreferencesEnumTheme {

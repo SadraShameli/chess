@@ -15,6 +15,9 @@ use chess::desktop::application::{
 use chess::desktop::dto::DesktopBoardSnapshot;
 use chess::game::premove::GamePremoveIntent;
 use chess::presentation::app::PresentationApp;
+use chess::presentation::board::animation::{
+    PresentationBoardAnimation, PresentationBoardAnimationEnumOutcome,
+};
 use chess::presentation::board::scene::PresentationBoardScene;
 use chess::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use chess::presentation::board::view::{PresentationBoardView, PresentationBoardViewInput};
@@ -359,7 +362,29 @@ fn reduced_motion_camera_reset_and_selection_apply_their_final_state_in_one_fram
         .rotate_right()
         .tilt_up()
         .zoom_out();
-    assert_eq!(moved.reset(), SceneCamera::initial(BoardEnumColor::Black));
+    let clock = Arc::new(PresentationBoardAccessibilityClock::default());
+    let mut animated = PresentationBoardAnimation::new(clock.clone(), false);
+    let (_, outcome) = animated.start_camera_reset(moved)?;
+    assert_eq!(outcome, PresentationBoardAnimationEnumOutcome::Animating);
+    assert!(animated.repaint_delay().is_some());
+    let mut reduced = PresentationBoardAnimation::new(clock, true);
+    let (target, outcome) = reduced.start_camera_reset(moved)?;
+    assert_eq!(outcome, PresentationBoardAnimationEnumOutcome::Settled);
+    assert_eq!(target, SceneCamera::initial(BoardEnumColor::Black));
+    assert_eq!(target.orientation(), moved.orientation());
+    assert_eq!(
+        reduced.start_flip()?,
+        PresentationBoardAnimationEnumOutcome::Settled
+    );
+    assert_eq!(
+        reduced.set_panel_visible(false)?,
+        PresentationBoardAnimationEnumOutcome::Settled
+    );
+    let frame = reduced.frame()?;
+    assert!(frame.camera().is_none() && frame.piece().is_none());
+    assert_eq!(frame.flip_residual_degrees(), 0.0);
+    assert_eq!(frame.panel_progress(), 0.0);
+    assert!(reduced.repaint_delay().is_none());
     let mut board = PresentationBoardAccessibilityBoard::standard(BoardEnumColor::White)?;
     board.frame(Vec::new());
     let origin: BoardSquare = "e2".parse()?;
@@ -368,6 +393,7 @@ fn reduced_motion_camera_reset_and_selection_apply_their_final_state_in_one_fram
         accesskit::Action::Click,
     )]);
     assert_eq!(board.view.selected(), Some(origin));
+    assert!(reduced.repaint_delay().is_none());
     Ok(())
 }
 
