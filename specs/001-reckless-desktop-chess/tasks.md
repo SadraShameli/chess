@@ -219,7 +219,7 @@ replaces each caller. Do not reset, discard or stage them during task generation
 - [ ] T107 [US3] Implement library search/filter/favorite/tag/nested-folder controls and empty/error states in `src/presentation/library/view.rs` and `src/presentation/library/controller.rs`, including saved-game paused reopen.
 - [ ] T108 [US3] Implement import/duplicate/exclusion preview and full/mainline export UI in `src/presentation/library/import.rs` and `src/presentation/library/export.rs`, requiring confirmation and showing unsupported syntax explicitly.
 - [ ] T109 [US3] Implement Trash restore/permanent-delete/folder removal and open-game Trash confirmations in `src/presentation/library/trash.rs` and `src/presentation/library/folders.rs`.
-- [ ] T110 [US3] Implement plain-text notes with Save/Discard/Stay and variation/Save Markings controls in `src/presentation/analysis/annotations.rs` and `src/presentation/analysis/variation_tree.rs`, with temporary drawings cleared on selected-position changes.
+- [X] T110 [US3] Implement plain-text notes with Save/Discard/Stay and variation/Save Markings controls in `src/presentation/analysis/annotations.rs` and `src/presentation/analysis/variation_tree.rs`, with temporary drawings cleared on selected-position changes.
 - [ ] T111 [US3] Exercise story 3 scenarios 1 through 9, register the source-mirrored suites through `tests/domain.rs` and `tests/storage.rs`, and record exact round-trip/duplicate/Trash results in `specs/001-reckless-desktop-chess/evidence/us3.md`.
 
 **Checkpoint**: Record actual passing evidence for this increment; unavailable platform evidence and unresolved release gates remain outstanding.
