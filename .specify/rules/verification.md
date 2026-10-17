@@ -40,6 +40,11 @@
   only after failure or a subsequent change. During implementation use targeted
   checks for the affected component. Gate ordering does not cap internal CPU
   utilization; see [performance](performance.md).
+- A single task or increment needs only the narrowest check proving its change:
+  `cargo check` of the touched code and the affected test target or name filter.
+  Run `make verify`, full Clippy selections or all suites only at a planned
+  checkpoint task, before an owner-requested commit, or when the owner asks.
+  Report which focused checks ran and that the full gate did not.
 - Generate a missing lockfile before locked commands. `make tests` uses Cargo's
   default test selection so library doctests run automatically when a library
   exists. Clippy and build include all targets. Check feature alternatives

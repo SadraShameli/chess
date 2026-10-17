@@ -66,4 +66,4 @@ visible Markdown under the code-quality policy and remove it before committing.
 The initial adoption was 1.0.0. Amendment history is tracked through versioned
 changes to this document and its incorporated rules.
 
-**Version**: 1.1.2 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-16
+**Version**: 1.1.3 | **Ratified**: 2026-10-15 | **Last Amended**: 2026-10-17

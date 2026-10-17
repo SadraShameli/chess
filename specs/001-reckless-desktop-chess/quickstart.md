@@ -27,6 +27,9 @@ profile. Invalid arguments and help return before opening application services.
 ## Prerequisites after migration
 
 - The pinned Rust toolchain and locked native UI/scene dependencies.
+- For schema-drift checks only, diesel_cli 2.3.14 built with `sqlite-bundled`.
+  It regenerates `src/storage/schema.rs` from the embedded migrations and is
+  never an application or package dependency.
 - Windows 11 x86-64, macOS 14+ Apple Silicon, or Ubuntu 22.04+ x86-64;
   Linux validation includes X11 and Wayland.
 - Working hardware graphics using Bevy's selected native backend, a

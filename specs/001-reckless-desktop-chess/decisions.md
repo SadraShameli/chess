@@ -491,9 +491,21 @@ teardown. This guard must not be an independently dropped Bevy resource.
 
 ## Storage, imports, and backup recovery
 
-Use bundled SQLite via rusqlite on one dedicated async-facing storage actor;
-no blocking database work on runtime workers. WAL, foreign_keys=ON,
-synchronous=FULL, 5-second busy timeout, and transactional numbered migrations.
+Use bundled SQLite through the Diesel ORM on one dedicated async-facing storage
+actor; no blocking database work on runtime workers. Every connection applies
+WAL, foreign_keys=ON, synchronous=FULL and a 5-second busy timeout before use.
+Migrations are numbered `diesel_migrations` directories embedded in the binary
+and applied in one immediate transaction. Diesel row, table and changeset types
+stay private to the storage component; repositories return validated domain
+values. Enum columns map through one derive per enum, preserving existing
+stored spellings. The generated `schema.rs` must match the embedded migrations.
+
+Pre-Diesel databases at `user_version` 1 through 4 are adopted inside that
+first transaction by recording the matching embedded versions as applied. A
+higher legacy value, or any applied Diesel version absent from the embedded set,
+is a future schema and is rejected unchanged. After adoption the Diesel
+migration table is the only schema-version authority. Exact verified behavior
+is in [persistence research](research.md#persistence-orm-and-library-replacement).
 Tables own games, move nodes, notes/marks, clock snapshots, folders, tags,
 reports/jobs/results, datasets/provenance, puzzle definitions/attempts/runs,
 preferences, and backup history. Add foreign-key and query indexes; immutable
@@ -509,8 +521,8 @@ them Saved. Migration and restore preserve either the complete last valid
 snapshot or the complete validated replacement, with no mixed data/settings
 versions. A backup guarantees its recorded consistent revision, not later edits.
 
-Use the SQLite online-backup API and a revision-consistent manifest in a
-checksummed archive; keep credentials, update installers and datasets out.
+Use `VACUUM INTO` inside the read transaction that reads the manifest revision,
+producing a revision-consistent copy and manifest in a checksummed archive; keep credentials, update installers and datasets out.
 Validate archive paths, entry count, decompression size and checksums before
 restore. First automatic backup is due 24 hours after first successful user-data
 creation if no earlier automatic backup exists. An overdue launch schedules it
@@ -740,6 +752,9 @@ Vulkan/Direct3D where supported. No forced Vulkan or Glow/three-d path remains.
 compatibility, alternatives, source findings and native acceptance limits.
 
 Retain Rust 1.99.0 and existing domain/clock/storage/engine/capacity components.
+Persistence uses Diesel; bounded CSV records use csv-core; enum string tables use
+strum unless the enum is a database column. Owned infrastructure remains only
+where research finds no suitable maintained library.
 Share native Rust command/event types between UI and application. Serde and
 schemars remain for external/persisted files, without generated TypeScript or
 Ajv on an in-process UI boundary. Replace Tauri runtime and service ownership

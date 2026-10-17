@@ -95,8 +95,10 @@ Sources:
 **Decision**: Wrap shakmaty 0.30.2 in owning BoardPosition/GameSession types; use
 pgn-reader 0.29.1 helpers with a strict owned bounded PGN lexer, and an owned
 exporter for the supported move-tree/annotation contract. The owner selected SQLite for indexed
-data, with PGN/FEN interchange. Select bundled rusqlite and the storage actor/
-schema ownership in resolved decisions.
+data, with PGN/FEN interchange. Select Diesel over bundled SQLite and the
+storage actor/schema ownership in resolved decisions. The original rusqlite
+selection is superseded by the
+[persistence amendment](#persistence-orm-and-library-replacement).
 
 **Rationale**: Legality, FEN/SAN/UCI conversions, castling, and standard/Chess960
 support are concrete library facilities. pgn-reader moved into the shakmaty
@@ -727,6 +729,105 @@ worker-arrival allocation prevent independent reconstruction. Single-record
 full rebuilds can waste preparation work; bounded prefix reduction preserves a
 reproducible collection without promising maximum possible counts.
 
+## Persistence ORM and library replacement
+
+Recorded 2026-10-17 from published crate sources downloaded into a scratch
+directory. Source inspection establishes APIs and licenses; locked compilation,
+strict-lint compatibility and throughput remain implementation evidence.
+
+### Diesel for SQLite persistence
+
+**Decision**: The owner selected Diesel. Use diesel 2.3.14 with the `sqlite`
+feature (and `returning_clauses_for_sqlite_3_35` where `RETURNING` is used),
+diesel_migrations 2.3.2 `embed_migrations!`, and diesel-derive-enum 2.1.0
+`sqlite` for TEXT enum columns. Keep libsqlite3-sys 0.38.2 with `bundled` as
+the single SQLite link. Remove rusqlite with its last caller.
+
+**Rationale**: Typed schema, compile-checked queries and row mapping replace
+about 130 hand-written `prepare`/`query_row`/`execute` calls across 13 storage
+and puzzle persistence files, and the manual string-to-enum row parsing in
+`src/storage/library_prepared.rs`. Boxed queries (`into_boxed`) express the
+library's optional filters without string-built SQL.
+
+**Verified facts**:
+
+- diesel 2.3.14 declares `libsqlite3-sys >=0.17.2, <0.39.0`, so it unifies with
+  the 0.38.2 crate already resolved; only one crate may link `sqlite3`. Diesel
+  has no `bundled` feature; bundling stays on libsqlite3-sys. MSRV 1.86.
+- `SqliteConnection` provides `immediate_transaction` and
+  `exclusive_transaction`; nested `transaction` calls become savepoints.
+- Migration versions are the directory name before the first `_` with dashes
+  removed (`migrations_internals::version_from_string`), so `0001_core/up.sql`
+  is version `0001`. A migration directory requires only `up.sql`.
+- `MigrationHarness` exposes `applied_migrations`, `pending_migrations` and
+  `run_pending_migrations`. Diesel does not detect applied versions absent from
+  the embedded set; the storage owner checks this explicitly.
+- Diesel exposes no SQLite online-backup API. `serialize_database_to_buffer`
+  copies the whole database into memory and does not fit multi-gigabyte
+  libraries.
+- `table!` and the `Queryable`/`Selectable`/`Insertable`/`AsChangeset` derives
+  emit no `unsafe`, so `unsafe_code = "forbid"` holds. `MultiConnection` and
+  `sql_function` with user `unsafe` are not used.
+- Default `32-column-tables` covers the widest current table
+  (`library_entries`, 27 columns); a wider table requires the `64-column-tables` feature.
+- diesel_cli 2.3.14 `sqlite-bundled` provides `print-schema` as a development
+  tool only; it is never a runtime or package dependency.
+- Licenses: diesel, diesel_migrations, migrations_internals, diesel_derives,
+  diesel-derive-enum and diesel_cli are MIT OR Apache-2.0.
+
+**Continuity**: Existing databases record their schema in `PRAGMA user_version`
+(v1 to v4). Adoption runs inside one immediate transaction: when the Diesel
+migration table is absent, read `user_version`, refuse a value above the
+highest embedded legacy version as a future schema, insert the matching
+embedded versions as applied, then run pending migrations as savepoints so the
+whole upgrade stays all-or-nothing as before. The legacy SQL files move
+byte-for-byte into `migrations/000N_name/up.sql`. After adoption the Diesel
+table is the sole version authority; `user_version` is no longer written.
+
+**Backup**: Use `VACUUM INTO` through `sql_query` inside the read transaction
+that also reads the manifest revision. Under WAL this yields a consistent
+snapshot without blocking the writer, and the copy is compacted. This replaces
+the online-backup API, removes the second SQLite binding, and keeps the
+revision-consistent manifest contract. Throughput and peak disk use are
+measured during US11.
+
+**Alternatives considered**: Keeping rusqlite only for backup retains two
+bindings over one library for a single call. sqlx is async-first and would add
+a second runtime model over a synchronous actor. SeaORM builds on sqlx. Raw
+rusqlite is the current state the owner asked to replace.
+
+### Bounded CSV records
+
+**Decision**: Replace the owned byte-level quote state machine in
+`src/puzzle/csv_import.rs` with csv-core 0.1.13 (Unlicense/MIT, the parser
+under csv 1.4.0). Keep the owned header, cancellation, row-number and typed
+issue layers.
+
+**Rationale**: `csv_core::Reader::read_record` writes into caller-owned output
+and field-end buffers and returns `OutputFull` or `OutputEndsFull` instead of
+growing them, so the 1 MiB row limit is enforced before allocation. The
+higher-level `csv::Reader` grows its record buffers to fit any row, which does
+not meet the bounded-input decision; it is not selected.
+
+### Enum string tables
+
+**Decision**: Use strum 0.28.0 (MIT) `EnumString`, `AsRefStr`, `Display` and
+`EnumIter` for the roughly 33 hand-written enum string tables that are not
+database columns. Enums stored in columns use diesel-derive-enum with
+`db_rename`/`DbValueStyle`, so each persisted string is defined exactly once.
+`EnumIter` drives closed-family registries and their contract coverage.
+Explicit variant names preserve every existing persisted spelling.
+
+### Reviewed and kept
+
+- UCI parsing stays owned: vampirc-uci 0.11.1 has had no release since 2022.
+- Polyglot keys already use shakmaty `Zobrist64`; the 16-byte record codec is
+  small and format-specific.
+- The 115-line mutation request cache keeps its combined count and age bounds;
+  an LRU crate would cover only the count bound.
+- Fixed-width import-session index/disk records stay owned codecs over
+  standard byte arrays, avoiding a layout crate for two record types.
+
 ## Final resolution research
 
 The owner delegated remaining decisions on 2026-10-16. Selected policies are in
@@ -772,7 +873,9 @@ locked graph during implementation; these selections are not a built native app.
 | winit | Bevy-compatible 0.30.13; direct matching dependency for native attention types, sharing the same resolved instance |
 | Tokio / Rayon | Existing 1.53.3 / 1.12.0 |
 | shakmaty / pgn-reader | Existing 0.30.2 / 0.29.1 |
-| rusqlite / schemars / Serde | Existing 0.40.2 / 1.2.3 / 1.0.229 |
+| diesel / diesel_migrations / diesel-derive-enum | 2.3.14 `sqlite` / 2.3.2 / 2.1.0 `sqlite`, over bundled libsqlite3-sys 0.38.2; replaces rusqlite 0.40.2 |
+| csv-core / strum | 0.1.13 / 0.28.0 `derive` |
+| schemars / Serde | Existing 1.2.3 / 1.0.229 |
 | rfd / directories | 0.17.2 / 6.0.0 |
 | Profile activation | interprocess 2.4.5 with `tokio`; pinned std file locks |
 | Windows activation security | winsafe 0.0.29 with `advapi`, widestring 1.0.2; target-specific only |

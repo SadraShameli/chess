@@ -161,3 +161,11 @@ also pass. Intended-move draw controls and the reviewed shutdown/graphics recove
 follow-ups are integrated and pass their focused debug checks. Full playable-engine,
 actual GPU recovery and cross-platform acceptance are not claimed. Task completion remains governed by
 `../tasks.md`, not agent delivery or the existence of a source file.
+
+## Phase 17 orchestration, 2026-10-17
+
+Planned, not started. Five reusable implementer agents `lane-a`..`lane-e`
+(Sonnet 5.5, low effort) work in `.claude/worktrees/lane-a`..`lane-e`; the main
+checkout coordinates and integrates by patch. Wave assignments are in
+[tasks](../tasks.md#phase-17-parallel-execution). Remove each worktree when its
+lane has no further assignment.

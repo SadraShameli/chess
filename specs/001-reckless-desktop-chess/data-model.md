@@ -557,7 +557,11 @@ explicit mainline-only alternative.
 ## StorageGameDocument and preferences
 
 The owner selected SQLite for indexed game-library and opening-statistics data,
-with PGN/FEN interchange. Schema, adapter, transaction boundaries, migration,
+with PGN/FEN interchange, accessed through Diesel. Diesel table, row and
+changeset types are storage-private mappings; `StorageGameDocument`, library,
+puzzle, editor and report values remain the typed persisted owners, and their
+payload schema versions stay independent of the database migration version.
+Schema, adapter, transaction boundaries, migration,
 snapshot implementation, migration recovery and backup restore follow
 [storage decisions](decisions.md#storage-imports-and-backup-recovery). Backup Now and daily automatic backups while open are approved;
 schedule overdue backup on next launch. Include user data/settings, games/Trash,

@@ -321,7 +321,7 @@ recorded in the [checkpoint](evidence/library-editor-report-checkpoint.md).
 - [ ] T159 [US7] Add native presentation acceptance cases for findings, graph navigation, study-only continuations, missing data and selected-position tab continuity in `tests/presentation/report.rs`, using fixed local corpus/book fixtures.
 - [X] T160 [US7] Implement `ReportJob` identity/configuration/line digest/search budget/progress and `ReportMoveFinding` source/evaluation/alternatives/policy-version models in `src/report/job.rs` and `src/report/finding.rs`, preserving "Source game/line revision" and "completion/cancellation state" with a configurable 3-second-per-position default. Exact model constraints: "engine package and options, requested search budget, per-position progress, results"; "Position identity, played move, evaluations, candidate alternatives, app-calculated move labels, and the selected classification-policy version".
 - [X] T161 [US7] Implement the exact selected versioned expected-score/loss/accuracy policy in `src/report/scoring.rs`: cp clamp [-10000,10000], cp/400 logistic, mover perspective, inaccuracy/mistake/blunder thresholds .05/.10/.20, forced-move exclusion, per-player mean-loss accuracy and one-decimal display; distinguish mates, missed mates, bounds and unavailable/partial samples.
-- [ ] T162 [US7] Implement durable report job/results migrations and repository in `src/storage/migrations/0005_reports.sql` and `src/storage/report_repository.rs`, preserving completed positions across pause/cancel/relaunch and old reports as outdated after line changes.
+- [ ] T162 [US7] Implement durable report job/results migrations and repository in `src/storage/migrations/0005_reports/up.sql` and `src/storage/report_repository.rs`, preserving completed positions across pause/cancel/relaunch and old reports as outdated after line changes.
 - [ ] T163 [US7] Implement automatic app-played mainline reports, explicit imported/variation analysis and immutable-line invalidation in `src/report/service.rs`, avoiding report creation merely on reopen, import or metadata-only edits.
 - [ ] T164 [US7] Implement FIFO report scheduling and priority in `src/report/scheduler.rs`, pausing for every running live game, yielding to interactive analysis/live demand, retaining completed work and restarting interrupted positions with full budget.
 - [ ] T165 [US7] Implement `OpeningCorpus`/query/filter/result types in `src/opening/corpus.rs` and `src/opening/query.rs`, preserving "Source/version, local games/index, supported metadata, and validation state" and "Missing ratings/results are unavailable." Exact model constraints: "typed legal continuations and available outcome counts, game counts/frequencies, available average player ratings, and openable sample games".
@@ -357,7 +357,7 @@ recorded in the [checkpoint](evidence/library-editor-report-checkpoint.md).
 - [X] T184 [US8] Implement native session/per-puzzle countdown ownership and active-time accounting in `src/puzzle/timer.rs`, starting only when board ready/visible/interactive, charging replies/animations/hints/retries and excluding pause/review/exhaustion time.
 - [ ] T185 [US8] Implement shuffle-without-repeat, frozen filters, persisted listed-reply randomness and explicit exhausted-collection reshuffle in `src/puzzle/selection.rs` and `src/puzzle/random_provider.rs`, pinning the active dataset version. Exact model constraints: "state, order/visited identities, and remaining time across sleep/relaunch". Pure selection/replay boundary verified in [selection evidence](evidence/puzzle-selection.md); joint run persistence remains outstanding.
 - [X] T186 [US8] Implement all pause/resume/review/next/skip/end/expiry transitions in `src/puzzle/session.rs`, hiding paused content, requiring explicit Resume after focus/sleep/relaunch and retaining failed outcomes on skip/timeout/practice completion. Exact model constraints: "Session expiry ends the run; per-puzzle expiry records a timeout and advances."; "Keep primary outcomes non-overlapping: failed stays failed after practice completion; track practice completion and assistance separately."; "Start each new puzzle's countdown when ready, visible, and interactive, including after Next."; "a distinct skipped outcome". Accepted pure run evidence: [run lifecycle](evidence/puzzle-run-lifecycle.md); native and durable integration retain their owning tasks.
-- [ ] T187 [US8] Add puzzle/run/attempt/event/checkpoint schema and transactional repository in `src/storage/migrations/0002_puzzles.sql` and `src/storage/puzzle_repository.rs`, saving every accepted input/transition and request active countdown checkpoints every 250 ms with at most one pending/coalesced snapshot; freeze before more than one second beyond the durable checkpoint; save failure pauses with Retry Save and explicit Resume. Exact model constraints: "outcomes, assistance, elapsed time, and session summaries locally".
+- [ ] T187 [US8] Add puzzle/run/attempt/event/checkpoint schema and transactional repository in `src/storage/migrations/0002_puzzles/up.sql` (existing applied migration, content unchanged) and `src/storage/puzzle_repository.rs`, saving every accepted input/transition and request active countdown checkpoints every 250 ms with at most one pending/coalesced snapshot; freeze before more than one second beyond the durable checkpoint; save failure pauses with Retry Save and explicit Resume. Exact model constraints: "outcomes, assistance, elapsed time, and session summaries locally".
 - [X] T188 [US8] Implement non-overlapping summary counts and assisted/unassisted solve rates in `src/puzzle/summary.rs`, with all finalized failures/timeouts/skips in the denominator, unavailable zero rate and practice/hints as separate events. Exact model constraints: "counts/rates for unassisted/assisted solves, failures, timeouts, and time spent".
 - [ ] T189 [US8] Implement confirmed individual/session/all-history deletion in `src/puzzle/history.rs`, refusing active-run deletion, recomputing summaries and retaining datasets indefinitely until explicitly removed.
 - [ ] T190 [US8] Implement puzzle filter/start/move/hint/skip/next/pause/resume/end/history/delete handlers and native focus/sleep integration in `src/desktop/puzzle_commands.rs` and `src/desktop/native/lifecycle.rs`.
@@ -432,8 +432,8 @@ recorded in the [checkpoint](evidence/library-editor-report-checkpoint.md).
 - [ ] T226 [P] [US11] Add archive validation, path/option/schema preview, mandatory safety snapshot, staged migration and every interrupted-rename recovery boundary in `tests/storage/restore.rs`. Correlate restored game position/clock revisions and prove zero loss of acknowledged committed snapshots; never label uncommitted memory state saved.
 - [ ] T227 [P] [US11] Add restore ownership/exclusion races in `tests/storage/restore_ownership.rs`: `control/owner.lock`, activation records and destination-local profile identity never enter snapshots/replacement; the original root lease survives database rename/rollback and blocks a second writer throughout.
 - [ ] T228 [US11] Add native backup warning/retention/preview and blocked-safety/unsupported-schema flows in `tests/presentation/backup.rs`, including restore confirmation and paused reopened games/runs.
-- [ ] T229 [US11] Implement typed backup identity/category/manifest/checksum/dependency/recovery protection models in `src/storage/backup/manifest.rs` and backup history in `src/storage/migrations/0006_backups.sql`, preserving unencrypted local snapshots and no credential/dataset/update-installer inclusion. Exact constraint: "Backups are unencrypted in the first release." Exclude control directory/lease/activation records/destination-local profile identity. Exact model constraints: "Include user data/settings, games/Trash, annotations, reports, editor drafts, and puzzle history; exclude dataset files."; "Default to an app-data backup folder with configurable destination."
-- [ ] T230 [US11] Implement SQLite online snapshots plus revision-consistent checksummed archives in `src/storage/backup/create.rs`, validating disk space and fixed archive entry/path rules while avoiding mixed database/settings revisions.
+- [ ] T229 [US11] Implement typed backup identity/category/manifest/checksum/dependency/recovery protection models in `src/storage/backup/manifest.rs` and backup history in `src/storage/migrations/0006_backups/up.sql`, preserving unencrypted local snapshots and no credential/dataset/update-installer inclusion. Exact constraint: "Backups are unencrypted in the first release." Exclude control directory/lease/activation records/destination-local profile identity. Exact model constraints: "Include user data/settings, games/Trash, annotations, reports, editor drafts, and puzzle history; exclude dataset files."; "Default to an app-data backup folder with configurable destination."
+- [ ] T230 [US11] Implement `VACUUM INTO` snapshots through Diesel, taken in the read transaction that reads the manifest revision, plus revision-consistent checksummed archives in `src/storage/backup/create.rs`, validating disk space and fixed archive entry/path rules while avoiding mixed database/settings revisions.
 - [ ] T231 [US11] Implement manual Backup Now, first due at 24 hours from initial successful user-data creation and subsequent 24-hour successful-automatic scheduling in `src/storage/backup/scheduler.rs`, with overdue launch handling and no in-session automatic retry loop. Exact model constraints: "Automatic backups are due 24 hours after the last successful automatic backup."
 - [ ] T232 [US11] Implement category-specific retention in `src/storage/backup/retention.rs`, retaining latest 30 automatic/all manual and separate latest-five pre-restore/pre-update safety categories plus unresolved-recovery protection. Exact constraint: "Keep the latest 30 automatic backups and all manual backups."
 - [ ] T233 [US11] Implement archive/path/count/decoded-size/checksum/schema validation and cross-platform path/unavailable-option/dependency previews in `src/storage/backup/preview.rs`, keeping destination machine locations by default and rejecting unsupported schemas unchanged.
@@ -491,7 +491,7 @@ recorded in the [checkpoint](evidence/library-editor-report-checkpoint.md).
 - [X] T263 [P] [US13] Add old/current Lichess CSV headers, optional DailyDate, quoted UTF-8/unknown fields, setup-first-move and invalid-row preview fixtures in `tests/puzzle/csv_import.rs`. Accepted boundary and actual executor-cancellation evidence: [CSV source boundary](evidence/puzzle-csv-import.md).
 - [ ] T264 [P] [US13] Add manual dataset staged-replace/cancel/delete, active-version pinning, removed-source history and offline/no-auto-download tests in `tests/storage/datasets.rs`.
 - [ ] T265 [P] [US13] Add missing/corrupt starter-manifest/index/book/puzzle behavior tests in `tests/storage/dataset_integrity.rs`: affected queries/training refuse with integrity findings, library/history and unaffected play remain intact, and no fabricated empty/partial statistics are returned.
-- [ ] T266 [US13] Implement dataset format/source/version/license/checksum/location/validation and preparation-manifest types in `src/storage/dataset_package.rs` and schema in `src/storage/migrations/0007_datasets.sql`, preserving "format, checksum, local location, and validation state" across corpus/book/puzzle versions. Extend the working foundational descriptor owner; do not add a second provenance/type registry. Exact model constraints: "policy version, frozen source digests, observed typed strata/counts, selected prefix lengths, selection-sequence digests and ordered byte-cap reductions."; "Each selected record retains its canonical source identity, full game identity where applicable, source metadata and derived preparation stratum."
+- [ ] T266 [US13] Implement dataset format/source/version/license/checksum/location/validation and preparation-manifest types in `src/storage/dataset_package.rs` and schema in `src/storage/migrations/0007_datasets/up.sql`, preserving "format, checksum, local location, and validation state" across corpus/book/puzzle versions. Extend the working foundational descriptor owner; do not add a second provenance/type registry. Exact model constraints: "policy version, frozen source digests, observed typed strata/counts, selected prefix lengths, selection-sequence digests and ordered byte-cap reductions."; "Each selected record retains its canonical source identity, full game identity where applicable, source metadata and derived preparation stratum."
 - [ ] T267 [US13] Implement reproducible source acquisition/provenance through `tools/data/acquire.rs` and `resources/datasets/sources.json`, freezing December 2025 CC0 standard games, the puzzle export advertised 2026-10-05 and openings revision a6189a30dc273ccb21fc2536a9a2fefd5592a67a; record actual URLs/licenses/SHA-256 and fail if the selected source is missing/changed.
 - [ ] T268 [US13] Implement one pure shared preparation owner in `src/storage/dataset_selection.rs` and the master/broad game adapter in `tools/data/select.rs`, reusing normalized game identity from `src/notation/game_identity.rs` and the T266 provenance types. The shared owner provides the single game/puzzle identity encoder, typed classification/stratum keys, hash/tie ordering, flat round-robin prefix selection, framed sequence digest and checked cap-reduction transition from `decisions.md#starter-subset-selection-v1`; T270/T272 consume its supported API. Require both master title tags in GM/IM/FM/WGM/WIM/WFM, exclude broadcasts, select the specified duplicate representative, classify both-player exact rating bands and full-string TimeControl, and retain raw metadata/quality reasons. Exact model constraint: "Missing metadata remains typed unavailable with a reason, not a fabricated rating, time class or theme." Pure owner progress and adapter boundaries: [selection foundation](evidence/dataset-selection.md). The master/broad adapter and full task acceptance remain open.
 - [X] T269 [US13] Implement Lichess-compatible CSV streaming in `src/puzzle/csv_import.rs`: "PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags", optional DailyDate, quoted UTF-8, validated full lines, preserved unknown metadata and missing optional rating/theme availability; apply Moves[0] before displaying the player solution beginning at Moves[1]. Accepted streaming, resource-boundary and persistence-consistency evidence: [CSV source boundary](evidence/puzzle-csv-import.md). Acquisition, preparation, install and native Start remain with their owning tasks.
@@ -535,6 +535,35 @@ recorded in the [checkpoint](evidence/library-editor-report-checkpoint.md).
 
 **Checkpoint**: Record actual passing evidence for this increment; unavailable platform evidence and unresolved release gates remain outstanding.
 
+## Phase 17: Persistence and Library Migration (2026-10-17 plan amendment)
+
+**Goal**: Replace hand-written rusqlite access with Diesel, and owned infrastructure with csv-core, strum and diesel-derive-enum, per [plan](plan.md#persistence-and-library-migration) and [research](research.md#persistence-orm-and-library-replacement), with no behavior or persisted-format change.
+
+**Dependencies**: Runs next, before any pending task that adds a migration or repository (T162, T187, T229, T266). Numbering follows the existing list; execution order is set in the dependency section. Each task runs only the focused check it names; the full gate runs once, in T313.
+
+**Independent Test**: Existing v1..v4 databases open and upgrade unchanged, every pre-existing storage/desktop/puzzle suite passes unmodified in behavior, the schema-drift gate passes, rusqlite is absent from `Cargo.lock`, and measured throughput is not worse than the recorded rusqlite baseline.
+
+- [ ] T296 Resolve diesel 2.3.14 (`sqlite`, `returning_clauses_for_sqlite_3_35`), diesel_migrations 2.3.2, diesel-derive-enum 2.1.0 (`sqlite`), csv-core 0.1.13 and strum 0.28.0 (`derive`) in `Cargo.toml` and `Cargo.lock`, keeping libsqlite3-sys 0.38.2 `bundled` as the only SQLite link alongside the still-present rusqlite; confirm one resolved libsqlite3-sys, locked compilation, `unsafe_code = "forbid"` and every denied Clippy lint against a minimal `table!`/derive probe, and record versions, licenses and any incompatibility in `specs/001-reckless-desktop-chess/evidence/persistence-migration.md` before relying on the APIs.
+- [ ] T297 Record the rusqlite throughput baseline in `benches/storage.rs` and `specs/001-reckless-desktop-chess/evidence/persistence-migration.md` before any repository changes: populated PGN import commit, library metadata page/filter queries, game document save/open, puzzle event append and editor draft save on fixed fixtures, optimized build, five runs with p95 under the [measurement protocol](decisions.md#acceptance-measurement-protocol), one worker and detected maximum.
+- [ ] T298 [P] Add red-first migration continuity fixtures in `tests/storage/migration_continuity.rs` and `tests/fixtures/migrations/legacy_v1.sqlite` through `legacy_v4.sqlite` (generated by applying the current SQL files, with row content): each legacy `user_version` database adopts into the Diesel migration table in one transaction with data byte-identical, a fresh database applies all migrations, `user_version` above 4 and an applied Diesel version absent from the embedded set are rejected unchanged as future schemas, and a failing later migration leaves the prior version intact. Observe the adoption cases failing against the current runner before T300.
+- [ ] T299 [P] Add connection policy fixtures in `tests/storage/connection.rs` asserting WAL journal mode, foreign_keys=ON, synchronous=FULL and a 5000 ms busy timeout on every connection the storage actor opens, and that a commit receipt is emitted only after the Diesel transaction commits.
+- [ ] T300 Implement the Diesel connection owner in `src/storage/connection.rs` and move the four SQL files byte-for-byte into `src/storage/migrations/0001_core/up.sql` through `0004_editor/up.sql`; replace the hand-written runner in `src/storage/migration.rs` with `embed_migrations!` plus legacy adoption inside one `immediate_transaction`, running pending migrations as savepoints, with typed `StorageDocumentError` future-schema outcomes. Wire the connection into `src/storage/document_store.rs` while repositories still use their existing access; focused check: `cargo test --test storage -- migration_continuity connection`.
+- [ ] T301 Generate `src/storage/schema.rs` with diesel_cli 2.3.14 `sqlite-bundled` `print-schema` from a database built by the embedded migrations, and add a `schema-check` Makefile target included in `make verify` that regenerates into a temporary path and fails on any difference; document the development-only prerequisite in `specs/001-reckless-desktop-chess/quickstart.md`.
+- [ ] T302 Convert game document, move-node, clock-snapshot and preferences access in `src/storage/document_store.rs` and `src/storage/game_document.rs` to Diesel table/row/changeset types private to `src/storage`, keeping `StorageGameDocument` payload schemas and durable-receipt semantics; Focused check: `cargo test --test storage document_`.
+- [ ] T303 Convert puzzle collection/run/event/checkpoint/attempt access in `src/storage/puzzle_repository.rs` and `src/puzzle/persistence.rs` to Diesel, preserving the immutability triggers, append ordering and checkpoint coalescing; Focused check: `cargo test --test storage puzzle_repository`.
+- [ ] T304 Convert editor draft access in `src/storage/editor_repository.rs` and `src/storage/editor_repository/transaction.rs` to Diesel, preserving invalid-draft storage, stale save/delete refusal, tombstones and bounded pages; Focused check: `cargo test --test storage editor_repository`.
+- [ ] T305 Convert library entry/folder/tag/state writes in `src/storage/library_repository.rs` and `src/storage/library_transaction.rs` with its `content.rs`, `destruction.rs`, `import.rs`, `metadata.rs`, `organization.rs` and `rows.rs` modules to Diesel, preserving revisions, atomic import commit and Trash semantics; Focused check: `cargo test --lib library_transaction` and `cargo test --test storage library_`.
+- [ ] T306 Convert library search/filter/sort queries in `src/storage/library_query.rs` to Diesel boxed queries with typed optional filters and no string-built SQL, preserving ordering, pagination bounds and empty-versus-error outcomes; focused check: `cargo test --test storage library_metadata`.
+- [ ] T307 Convert import space and page-limit inspection in `src/storage/library_import/page_limit.rs`, `src/storage/library_import/space.rs` and `src/storage/library_import/space/{layout,trees}.rs` to Diesel `sql_query` with typed rows where SQLite pragmas have no DSL form, preserving the populated import budgets; focused check: `cargo test --test storage library_import`.
+- [ ] T308 Map database enum columns through diesel-derive-enum `DbEnum` with `db_rename`/`DbValueStyle` on their owning enums, removing the manual `parse_kind`, `parse_variant`, `parse_mode` and `parse_result` row parsers in `src/storage/library_prepared.rs` and their equivalents in converted repositories; every stored spelling stays identical, verified by the legacy fixtures from T298.
+- [ ] T309 Remove rusqlite with its final callers: convert schema/row inspection helpers in `tests/storage/schema.rs` and every remaining test that imports rusqlite (the desktop and storage fixture files listed in `specs/001-reckless-desktop-chess/evidence/persistence-migration.md`) to Diesel, then delete rusqlite from `Cargo.toml` and `Cargo.lock` and confirm libsqlite3-sys 0.38.2 is still the single bundled link.
+- [ ] T310 Replace the owned quote state machine in `src/puzzle/csv_import.rs` with `csv_core::Reader::read_record` over a fixed 1 MiB output buffer and bounded field-end buffer, mapping `OutputFull`/`OutputEndsFull` to the existing typed row-limit issues; keep the header, cancellation, row-number and typed-issue layers and the accepted [T269 evidence](evidence/puzzle-csv-import.md) contract, with `tests/puzzle/csv_import.rs` unchanged; focused check: `cargo test csv_import`.
+- [ ] T311 Replace hand-written enum string tables that are not database columns with strum `EnumString`, `AsRefStr`, `Display` and `EnumIter` on their owning enums across `src/`, preserving every persisted and displayed spelling through explicit `serialize` names, mapping `strum::ParseError` into the owner's typed error, and driving closed-family registries and their contract coverage from `EnumIter`; list each converted table in `specs/001-reckless-desktop-chess/evidence/persistence-migration.md`.
+- [ ] T312 Rerun the T297 workloads on the Diesel implementation in `benches/storage.rs` and record before/after throughput, p95 latency and peak memory at one and maximum workers in `specs/001-reckless-desktop-chess/evidence/persistence-migration.md`; any regression beyond run-to-run variance is a defect fixed in its owning repository, not an accepted cost.
+- [ ] T313 Run the canonical `make verify` including `schema-check`, plus `make native-test-build`, and record actual test counts, legacy-profile continuity results, the absence of rusqlite, remaining warnings and unperformed checks in `specs/001-reckless-desktop-chess/evidence/persistence-migration.md`.
+
+**Checkpoint**: Record actual passing evidence for this increment; story work resumes on the Diesel storage owners.
+
 ## Dependencies and Execution Order
 
 Phase 1 precedes Phase 2. Phase 2 blocks every story integration. Tests can be
@@ -552,6 +581,11 @@ Within US13, serialize T266 provenance schema, T267 frozen acquisition, T268
 shared selector/game adapter, T269 CSV parser, T270 puzzle adapter, T271 book and
 T272 build/cap loop. T268 and T270 share one preparation owner and feed T272;
 T279 registers their completed suites through the existing test roots.
+Phase 17 (T296..T313) executes before resuming pending story work and before
+any task adding a migration or repository (T162, T187, T229, T266); within it
+follow numbered order, with T298 + T299 as one disjoint test-authoring batch.
+T297 must record its baseline before T302 changes any repository. T230 depends
+on T300 for its Diesel `VACUUM INTO` snapshot.
 These are explicit milestones, not assertions of full story completion. Full
 story acceptance includes its later cross-cutting integration owners below.
 
@@ -617,6 +651,39 @@ prerequisite. Keep release automation inert if its gate cannot be established.
 
 ## Parallel Opportunities and Examples
 
+### Phase 17 parallel execution
+
+The owner authorized orchestrated parallel implementation on 2026-10-17: five
+reusable Sonnet 5.5 low-effort implementer agents, each in its own git worktree
+under `.claude/worktrees/`, with the main session as sole coordinator. Agents
+are named `lane-a` through `lane-e` and are reused across waves by message.
+
+- **Coordinator**: runs T296 itself first (shared `Cargo.toml`/`Cargo.lock`),
+  then creates worktrees from that base. It assigns file ownership, merges each
+  delivery with `git diff --cached --binary` into `git apply --3way`, runs the
+  focused check after merge, marks tasks, and runs T312/T313. It alone edits
+  manifests, test roots, `Makefile`, `src/storage/schema.rs` after T301, and
+  task markers. Merges are patches, never agent commits.
+- **Agents**: edit only their owned files, run only their task's focused check
+  in their worktree, stage explicit paths, never commit or push, and report the
+  staged diff, checks run and anything unverified. A needed edit outside the
+  owned set is reported to the coordinator instead of made.
+- **Cargo cost**: each worktree has its own target directory, so the first
+  build per worktree is a full dependency build; later waves reuse it.
+
+| Wave | lane-a | lane-b | lane-c | lane-d | lane-e |
+| --- | --- | --- | --- | --- | --- |
+| 1 | T298..T301 storage core (`src/storage/{connection,migration,document_store}.rs`, migrations, new tests) | T297 baseline (`benches/storage.rs`) on the unconverted base | T310 csv-core (`src/puzzle/csv_import.rs`) | T062 mate proof (`src/game/mate_proof.rs`) | T118 camera (`src/scene/camera.rs`) |
+| 2 | T302 documents | T303 puzzles | T304 editor drafts | T305 library writes | T306 library queries |
+| 3 | T307 import space, then T308 enum columns | T309 rusqlite removal after T307/T308 merge | T311 strum, alone after T309 merge | idle or next story lane | idle or next story lane |
+
+Wave 2 starts only after wave 1 lane-a is merged, because every repository
+needs the T300 connection and T301 `schema.rs`. Its five owned file sets are
+disjoint. T311 touches files across `src/`, so it runs with no other lane
+editing source. Idle lanes take the next pending task whose files are disjoint
+from every active lane.
+
+
 Only the following test-authoring tasks carry active `[P]` markers. They use
 different files after their foundation/story contracts exist. Register their
 module roots once, serially, after the independent files are ready. Execution
@@ -636,6 +703,7 @@ must still follow the canonical authorization/worktree rules.
 | US10 | T208 + T209 + T210 | `tests/desktop/preferences.rs`, `tests/presentation/{settings,shortcuts,audio}.rs` |
 | US11 | T225 + T226 + T227 | `tests/storage/{backup,restore,restore_ownership}.rs` |
 | US12 | T239 + T240 + T241 + T242 | `tests/update/{discovery,download,install,helper}.rs` |
+| Phase 17 | T298 + T299 | `tests/storage/{migration_continuity,connection}.rs` |
 | US13 | T262 + T263 + T264 + T265 | T262: `tests/storage/dataset_selection.rs` and `tests/opening/starter_data.rs`; T263: `tests/puzzle/csv_import.rs`; T264/T265: `tests/storage/{datasets,dataset_integrity}.rs` |
 
 Foundational T032 + T033 + T034 are a separate disjoint test-authoring batch.
@@ -835,8 +903,9 @@ publication or external contact occurs as part of generating this list.
 | US12 | 23 | T239..T261 |
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
+| Phase 17 | 18 | T296..T313 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 4 local and library tasks completed, 8 puzzle tasks completed, 2 dataset tasks completed and 205 pending.
+**Total**: 313 tasks: 102 completed (28 historical plus 74 native-stack rows, counted from checked boxes on 2026-10-17) and 211 pending, including the 18 Phase 17 persistence and library migration tasks.
 **Pending parallel tasks**: 33 across disjoint contract-test files; 13 additional
 `[P]` markers belong to completed rows, including three historical rows. No native task is accepted
 merely by this generation.
