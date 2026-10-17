@@ -401,6 +401,20 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
         if found.as_path() != archive.path() {
             return Err(BackupError::PreviewMismatch.into());
         }
+        let known = StorageMigrationRunner::embedded_versions().map_err(BackupError::from)?;
+        let verified = BackupPreview::inspect_blocking(
+            &found,
+            &BackupPreviewContext {
+                known_schema_versions: &known,
+                destination_platform: BackupEnumPlatform::current(),
+                available_dependencies: &self.available_dependencies,
+            },
+        )?;
+        if verified.manifest() != archive.manifest()
+            || verified.manifest().category() != BackupEnumCategory::PreUpdate
+        {
+            return Err(BackupError::PreviewMismatch.into());
+        }
         Ok(archive.manifest().id())
     }
 
