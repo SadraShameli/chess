@@ -13,6 +13,8 @@ pub enum ReportServiceError {
     Rejected(#[from] ReportSchedulerRejectedJob),
     #[error(transparent)]
     Source(#[from] ReportJobSourceError),
+    #[error("The replacement report identity is already retained")]
+    DuplicateReplacement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +77,27 @@ impl ReportService {
                     && retained.source().is_same_line(job.source())
             })
         })
+    }
+
+    pub fn ids(&mut self) -> Vec<ReportJobId> {
+        self.live();
+        self.retained.clone()
+    }
+
+    pub fn replace(
+        &mut self,
+        previous: ReportJobId,
+        replacement: ReportJob,
+    ) -> Result<ReportJobId, ReportServiceError> {
+        self.live();
+        if self.scheduler.job(replacement.id()).is_ok() {
+            return Err(ReportServiceError::DuplicateReplacement);
+        }
+        self.scheduler.take(previous)?;
+        self.retained.retain(|id| *id != previous);
+        let id = self.scheduler.enqueue(replacement)?;
+        self.retained.push(id);
+        Ok(id)
     }
 
     pub fn request(

@@ -4,6 +4,9 @@ mod fixture;
 #[path = "analysis_update_review.rs"]
 mod analysis_update_review;
 
+#[path = "commands.rs"]
+mod commands;
+
 #[path = "service.rs"]
 mod service;
 

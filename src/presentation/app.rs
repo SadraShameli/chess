@@ -71,6 +71,7 @@ use crate::presentation::game::play::{
     PresentationGamePlayError, PresentationGamePlayIntent,
 };
 use crate::presentation::puzzle::controller::PresentationPuzzleController;
+use crate::presentation::study::PresentationStudy;
 use crate::presentation::puzzle::panel::{
     PresentationPuzzlePanel, PresentationPuzzlePanelConnection, PresentationPuzzlePanelError,
 };
@@ -252,6 +253,7 @@ pub struct PresentationApp {
     selected_game: Option<GameId>,
     engine_panels: Option<PresentationEnginePanels>,
     puzzle_panel: Option<PresentationPuzzlePanel>,
+    study: PresentationStudy,
     library: Option<PresentationAppLibrary>,
     editor: Option<PresentationAppEditor>,
     workspace: PresentationAppEnumWorkspace,
@@ -303,6 +305,7 @@ impl PresentationApp {
             selected_game: None,
             engine_panels: None,
             puzzle_panel: None,
+            study: PresentationStudy::new(),
             library: None,
             editor: None,
             workspace: PresentationAppEnumWorkspace::Games,
@@ -431,6 +434,14 @@ impl PresentationApp {
             self.apply_library_navigation(target, port)?;
         }
         Ok(())
+    }
+
+    pub const fn study(&self) -> &PresentationStudy {
+        &self.study
+    }
+
+    pub const fn study_mut(&mut self) -> &mut PresentationStudy {
+        &mut self.study
     }
 
     pub const fn puzzle_panel(&self) -> Option<&PresentationPuzzlePanel> {

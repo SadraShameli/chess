@@ -27,6 +27,9 @@ use crate::presentation::puzzle::controller::{
     PresentationPuzzleController, PresentationPuzzleControllerEnumAction,
     PresentationPuzzleControllerError, PresentationPuzzleControllerIntent,
 };
+use crate::presentation::puzzle::history::{
+    PresentationPuzzleHistory, PresentationPuzzleHistoryEnumChoice,
+};
 use crate::presentation::puzzle::setup::PresentationPuzzleSetup;
 use crate::presentation::puzzle::summary::PresentationPuzzleSummary;
 use crate::presentation::puzzle::view::PresentationPuzzleView;
@@ -1054,23 +1057,14 @@ impl PresentationPuzzlePanel {
         let Some(scope) = self.deletion else {
             return Ok(());
         };
-        let mut confirm = false;
-        let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::new("puzzle.history.deletion")).show(ui.ctx(), |ui| {
-            ui.heading("Delete puzzle history?");
-            ui.label(match scope {
-                PuzzleHistoryEnumScope::Attempt { .. } => "This attempt is permanently removed from history.",
-                PuzzleHistoryEnumScope::Session(_) => "This saved run and its attempts are permanently removed. Puzzle datasets are kept.",
-                PuzzleHistoryEnumScope::All => "All saved puzzle runs are permanently removed. Puzzle datasets are kept.",
-            });
-            ui.label("A run in progress cannot be deleted.");
-            cancel = ui.button("Keep History").clicked();
-            confirm = ui.button("Confirm Delete").clicked();
-        });
-        if cancel || modal.should_close() {
-            self.cancel_history_deletion();
-        } else if confirm {
-            self.request_history_deletion(scope, PuzzleHistoryEnumConfirmation::Confirmed, port)?;
+        match PresentationPuzzleHistory::confirm_deletion(ui, scope) {
+            PresentationPuzzleHistoryEnumChoice::Cancel => self.cancel_history_deletion(),
+            PresentationPuzzleHistoryEnumChoice::Confirm => self.request_history_deletion(
+                scope,
+                PuzzleHistoryEnumConfirmation::Confirmed,
+                port,
+            )?,
+            PresentationPuzzleHistoryEnumChoice::Pending => {}
         }
         Ok(())
     }

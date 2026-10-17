@@ -25,6 +25,7 @@ pub mod library_commands;
 pub mod library_service;
 pub mod messages;
 pub mod native;
+pub mod opening_commands;
 pub mod preferences;
 pub mod preferences_import;
 pub mod preferences_reset;
@@ -33,7 +34,11 @@ pub mod puzzle_bridge;
 pub mod puzzle_commands;
 pub mod puzzle_service;
 pub mod puzzle_snapshot;
+<<<<<<< ours
 pub mod renderer_commands;
+=======
+pub mod report_commands;
+>>>>>>> theirs
 pub mod request_cache;
 pub mod stream;
 pub mod workbench_commands;
