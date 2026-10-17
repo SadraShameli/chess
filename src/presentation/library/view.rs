@@ -207,7 +207,7 @@ impl PresentationLibraryPanel {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
-            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash { .. }
             | DesktopLibraryServiceEnumAction::Import(_)
             | DesktopLibraryServiceEnumAction::Export(_)
             | DesktopLibraryServiceEnumAction::Editor { .. } => {

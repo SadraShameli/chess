@@ -4,16 +4,21 @@ use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::application::{
     DesktopApplicationError, DesktopApplicationPort, DesktopApplicationWakeProvider,
 };
+use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::dto::DesktopEnumValue;
+use crate::desktop::file_handle::DesktopFileEnumPurpose;
+use crate::desktop::game_editor::DesktopGameEditorEnumSource;
+use crate::desktop::identity::DesktopRevision;
 use crate::desktop::library_service::{
     DesktopLibraryServiceEnumDisposition, DesktopLibraryServiceEnumResult,
 };
-use crate::desktop::messages::{DesktopCommand, DesktopMessagesEnumResult};
+use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult};
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumEditor, PresentationAppLibraryEnumOwner,
     PresentationAppLibraryError, PresentationAppLibraryPending,
 };
 use crate::presentation::library::intent::PresentationLibraryIntent;
+use crate::presentation::library::view::PresentationLibraryEnumEffect;
 
 impl PresentationAppLibrary {
     pub(in crate::presentation::app) fn dispatch_panel<
@@ -57,10 +62,109 @@ impl PresentationAppLibrary {
         self.admit(port)
     }
 
+    pub(in crate::presentation::app) fn select_file<
+        C: ClockTimeProvider,
+        W: DesktopApplicationWakeProvider,
+    >(
+        &mut self,
+        file: PresentationLibraryEnumFileRequest,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppLibraryError> {
+        if self.file_selection.is_some() {
+            return Err(PresentationAppLibraryError::Busy);
+        }
+        let purpose = match file {
+            PresentationLibraryEnumFileRequest::ImportSource => DesktopFileEnumPurpose::ReadFile,
+            PresentationLibraryEnumFileRequest::ExportDestination { .. } => {
+                DesktopFileEnumPurpose::WriteFile
+            }
+        };
+        let request = port.request(DesktopCommand::new(
+            DesktopEnumCommand::FileSelect {
+                owner: self.workspace,
+                purpose,
+            },
+            Some(DesktopRevision::ZERO),
+        ))?;
+        self.file_selection = Some(PresentationAppLibraryFileSelection {
+            request,
+            receipt: None,
+            file,
+        });
+        self.admit(port)
+    }
+
+    fn poll_file_selection<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppLibraryError> {
+        let Some(selection) = &self.file_selection else {
+            return Ok(());
+        };
+        let Some(response) = selection
+            .receipt
+            .as_ref()
+            .and_then(DesktopApplicationReceipt::response)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let file = selection.file;
+        self.file_selection = None;
+        match response {
+            DesktopMessagesEnumResult::Value {
+                value: DesktopEnumValue::FileSelect(Some(handle)),
+                ..
+            } => {
+                for effect in self.panel.file_selected(file, handle) {
+                    match effect {
+                        PresentationLibraryEnumEffect::Dispatch(intent) => {
+                            self.dispatch_panel(intent, port)?
+                        }
+                        PresentationLibraryEnumEffect::OpenSaved(_)
+                        | PresentationLibraryEnumEffect::SelectFile(_) => {
+                            return Err(PresentationAppLibraryError::UnexpectedResult);
+                        }
+                    }
+                }
+            }
+            DesktopMessagesEnumResult::Value {
+                value: DesktopEnumValue::FileSelect(None),
+                ..
+            }
+            | DesktopMessagesEnumResult::Cancelled => {}
+            DesktopMessagesEnumResult::Failure(failure) => {
+                self.failure = Some(failure.to_string());
+            }
+            DesktopMessagesEnumResult::Value { .. }
+            | DesktopMessagesEnumResult::LibraryFailure(_)
+            | DesktopMessagesEnumResult::EditorFailure(_)
+            | DesktopMessagesEnumResult::Stopped
+            | DesktopMessagesEnumResult::Paused
+            | DesktopMessagesEnumResult::QuitReady
+            | DesktopMessagesEnumResult::ReconciliationRequired => {
+                self.failure = Some(PresentationAppLibraryError::UnexpectedResult.to_string());
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn admit<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
         &mut self,
         port: &DesktopApplicationPort<C, W>,
     ) -> Result<(), PresentationAppLibraryError> {
+        if let Some(selection) = &mut self.file_selection
+            && selection.receipt.is_none()
+        {
+            match port.try_submit(&selection.request) {
+                Ok(receipt) => selection.receipt = Some(receipt),
+                Err(DesktopApplicationError::Busy | DesktopApplicationError::EntityBusy) => {}
+                Err(error) => {
+                    self.file_selection = None;
+                    return Err(error.into());
+                }
+            }
+        }
         for pending in &mut self.pending {
             if pending.receipt.is_some() || pending.observed {
                 continue;
@@ -198,6 +302,7 @@ impl PresentationAppLibrary {
                 self.annotation_effect(effect, port)?;
             }
         }
+        self.poll_file_selection(port)?;
         Ok(())
     }
 
@@ -230,6 +335,13 @@ impl PresentationAppLibrary {
         if matches!(result, DesktopLibraryServiceEnumResult::Opened(_)) {
             self.source_changed = false;
         }
+        let open_game = match snapshot.context().source() {
+            DesktopGameEditorEnumSource::Played { revision } => {
+                Some((snapshot.context().game(), revision))
+            }
+            DesktopGameEditorEnumSource::Notation { .. } => None,
+        };
+        self.panel.controller_mut().observe_open_game(open_game);
         self.annotations.synchronize(snapshot, pending);
         self.tree.synchronize(snapshot, pending);
         self.publication = Some(snapshot.clone());

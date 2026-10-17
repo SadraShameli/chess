@@ -273,7 +273,10 @@ async fn confirm_game_trash_uses_the_registry_close_certificate_for_move_and_del
         return Err("missing move plan".into());
     };
     let DesktopLibraryServiceEnumResult::Trashed(receipt) = fixture
-        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan))
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+            plan,
+            open_revision: None,
+        })
         .await?
     else {
         return Err("missing move receipt".into());
@@ -288,7 +291,10 @@ async fn confirm_game_trash_uses_the_registry_close_certificate_for_move_and_del
         return Err("missing second move plan".into());
     };
     fixture
-        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan))
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+            plan,
+            open_revision: None,
+        })
         .await?;
     let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
         .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
@@ -299,7 +305,10 @@ async fn confirm_game_trash_uses_the_registry_close_certificate_for_move_and_del
         return Err("missing delete plan".into());
     };
     let DesktopLibraryServiceEnumResult::Trashed(receipt) = fixture
-        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan))
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+            plan,
+            open_revision: None,
+        })
         .await?
     else {
         return Err("missing delete receipt".into());

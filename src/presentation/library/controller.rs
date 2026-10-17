@@ -11,7 +11,7 @@ use crate::desktop::library_service::{
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceError, DesktopLibraryServiceOperation,
 };
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
-use crate::game::enums::GameId;
+use crate::game::enums::{GameId, GameRevision};
 use crate::game::library_organization::{
     GameLibraryOrganizationEnumMutation, GameLibraryOrganizationFolderId,
     GameLibraryOrganizationGameTarget,
@@ -83,9 +83,11 @@ pub struct PresentationLibraryController {
     trash_plan: Option<StorageTrashPlan>,
     import: PresentationLibraryImport,
     export_bytes: Option<u64>,
+    open_game: Option<(GameId, GameRevision)>,
 }
 
 impl PresentationLibraryController {
+    pub const LANES: usize = PresentationLibraryEnumLane::COUNT;
     const RECENT_INPUT_CAPACITY: usize = 256;
 
     pub fn new(workspace: DesktopMessagesEntityId) -> Self {
@@ -104,6 +106,7 @@ impl PresentationLibraryController {
             trash_plan: None,
             import: PresentationLibraryImport::default(),
             export_bytes: None,
+            open_game: None,
         }
     }
 
@@ -329,10 +332,25 @@ impl PresentationLibraryController {
                 )
             })
             .ok_or(PresentationLibraryError::MissingPlan)?;
+        let open_revision = match plan.action() {
+            StorageTrashPreviewRequest::MoveToTrash(game)
+            | StorageTrashPreviewRequest::PermanentlyDelete(game) => self
+                .open_game
+                .filter(|(open, _revision)| *open == game)
+                .map(|(_open, revision)| revision),
+            StorageTrashPreviewRequest::RemoveFolder(_) => None,
+        };
         self.begin(
             input,
-            DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan),
+            DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+                plan,
+                open_revision,
+            },
         )
+    }
+
+    pub fn observe_open_game(&mut self, open: Option<(GameId, GameRevision)>) {
+        self.open_game = open;
     }
 
     pub const fn trash_plan(&self) -> Option<&StorageTrashPlan> {

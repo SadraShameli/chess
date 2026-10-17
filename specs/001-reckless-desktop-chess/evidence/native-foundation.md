@@ -299,3 +299,21 @@ uses the owner's requested incremental debug checks. Windows/Linux execution,
 actual graphics-loss recovery, native power integration, active native-dialog
 cancellation and complete product stories remain open. The macOS debug-linker
 unwind-table warning remains visible and unresolved.
+
+## Phase 2 audit, 2026-10-17 (code inspection only, nothing compiled or run)
+
+- T038: `src/desktop/application.rs` (256 ordinary commands, control capacity,
+  1024-result cache), `messages.rs`, `identity.rs`, `stream.rs` (64 unacknowledged
+  events) and `request_cache.rs` exist, with rfd dialogs in
+  `src/desktop/native/dialogs.rs` and `dialogs_proxy.rs`; no Tauri reference remains.
+- T039: `src/capacity/phase.rs` and `src/desktop/native/task_pools.rs` set IO, async
+  compute and compute to one thread each, and `host.rs` disables pipelined rendering.
+- T044: `event_loop.rs` coalesces wakes, `src/presentation/accessibility.rs` forwards
+  AccessKit action requests to egui, and `semantic_grid.rs` labels the squares.
+- T045: renderer recovery lives in `desktop/native/recovery.rs`,
+  `desktop/renderer_commands.rs`, `presentation/board/recovery.rs` and the host
+  readiness budget of ten seconds; there is no `src/scene/recovery.rs`.
+- T046 is only partly present: the host disables automatic close and exit and routes
+  Quit through the application with the three-second shutdown windows, but Sleep
+  (`AppLifecycle::Suspended`) interrupts only the puzzle timer. Live games and
+  searches are not interrupted on sleep.

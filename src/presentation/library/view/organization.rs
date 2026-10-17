@@ -25,14 +25,22 @@ impl PresentationLibraryPanel {
             .controller
             .is_pending(PresentationLibraryEnumLane::Organize);
         ui.horizontal(|ui| {
-            ui.label("New folder");
+            let label = if self.controller.folder_parent().is_some() {
+                "New folder inside the browsed folder"
+            } else {
+                "New folder"
+            };
+            ui.label(label);
             ui.text_edit_singleline(&mut self.new_folder_name);
             let create = ui.add_enabled(!busy, egui::Button::new("Create folder"));
             if self.frame.clicked(ui, &create) {
-                let result = Self::folder_mutation(&self.new_folder_name).and_then(|mutation| {
-                    self.controller
-                        .organize(DesktopRequestId::new(), mutation)
-                });
+                let result = self
+                    .folder_parent_target()
+                    .and_then(|parent| Self::folder_mutation(&self.new_folder_name, parent))
+                    .and_then(|mutation| {
+                        self.controller
+                            .organize(DesktopRequestId::new(), mutation)
+                    });
                 if result.is_ok() {
                     self.new_folder_name.clear();
                 }
@@ -56,13 +64,31 @@ impl PresentationLibraryPanel {
         });
     }
 
+    fn folder_parent_target(
+        &self,
+    ) -> Result<Option<GameLibraryOrganizationFolderTarget>, PresentationLibraryError> {
+        let Some(parent) = self.controller.folder_parent() else {
+            return Ok(None);
+        };
+        let read = self
+            .controller
+            .folder()
+            .filter(|read| read.folder().id() == parent)
+            .ok_or(PresentationLibraryError::ParentNotLoaded)?;
+        Ok(Some(GameLibraryOrganizationFolderTarget::new(
+            parent,
+            read.folder().revision(),
+        )))
+    }
+
     fn folder_mutation(
         name: &str,
+        parent: Option<GameLibraryOrganizationFolderTarget>,
     ) -> Result<GameLibraryOrganizationEnumMutation, PresentationLibraryError> {
         let id: GameLibraryOrganizationFolderId = uuid::Uuid::new_v4().to_string().parse()?;
         Ok(GameLibraryOrganizationEnumMutation::CreateFolder(
             id,
-            None,
+            parent,
             GameLibraryOrganizationName::new(name.to_owned())?,
         ))
     }

@@ -109,8 +109,6 @@ pub enum DesktopLibraryServiceError {
     ImportNotActive,
     #[error("The import failed: {0}")]
     Import(#[source] Arc<StorageImportSessionError>),
-    #[error("Saved played games cannot be exported from the library yet")]
-    ExportUnsupported,
     #[error("The PGN export failed: {0}")]
     Export(#[source] Arc<NotationPgnExportError>),
     #[error("The selected file is unavailable: {0}")]
@@ -158,7 +156,6 @@ impl DesktopLibraryServiceError {
             | Self::ImportActive
             | Self::ImportNotActive
             | Self::Import(_)
-            | Self::ExportUnsupported
             | Self::Export(_)
             | Self::FileSelection(_)
             | Self::AtomicFile(_)

@@ -25,11 +25,8 @@ impl PresentationAppLibrary {
                 PresentationLibraryEnumEffect::Dispatch(intent) => {
                     self.dispatch_panel(intent, port)?
                 }
-                PresentationLibraryEnumEffect::SelectFile(_) => {
-                    self.failure = Some(
-                        "Choosing a file is not connected to the native dialog in this build"
-                            .to_owned(),
-                    );
+                PresentationLibraryEnumEffect::SelectFile(file) => {
+                    self.select_file(file, port)?;
                 }
                 PresentationLibraryEnumEffect::OpenSaved(intent) => {
                     if let Some(PresentationAppLibraryEnumNavigation::OpenSaved(intent)) = self

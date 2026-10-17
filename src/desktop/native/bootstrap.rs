@@ -851,6 +851,12 @@ impl DesktopNativeBootstrapSupervisor {
                     wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
                     identities: Arc::new(DesktopEditorCommandsStudyUuidIdentities),
                 });
+        let library_imports = crate::desktop::native::library_import::DesktopNativeLibraryImport::imports(
+            storage_client.clone(),
+            Arc::clone(&executor),
+            Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
+            self.lease.identity().data_directory(),
+        )?;
         let library = DesktopNativeLibraryService::new(
             DesktopLibraryServiceOptions {
                 workspace: library_workspace,
@@ -858,7 +864,7 @@ impl DesktopNativeBootstrapSupervisor {
                 executor: Arc::clone(&executor),
                 games: game_port.registry_port().clone(),
                 wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
-                imports: None,
+                imports: library_imports,
             },
             tokio::runtime::Handle::current(),
         );

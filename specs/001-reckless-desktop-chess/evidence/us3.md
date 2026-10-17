@@ -48,21 +48,31 @@ has no executed evidence and no task marker was changed for it.
   backend state machine, export of full and mainline PGN, stale refusal, no backend),
   game trash and folder tests in `pagination.rs`, and panel and controller tests.
 
+## Follow-up written without compiling (second no-cargo batch)
+
+- Production import backend: `src/desktop/native/library_import.rs` builds the staging
+  and library anchor directories under the profile data directory, the Unix space
+  provider, an unfiled destination, a v4 identity provider and the storage import
+  repository, and `src/desktop/native/bootstrap.rs` passes the result to the library
+  service. It is unix-only; other targets keep import unavailable.
+- Native file dialog: the library panel's `SelectFile` effect sends `FileSelect` with
+  the library workspace as owner, admits and polls it like other library requests, and
+  hands the selected handle to `PresentationLibraryPanel::file_selected`. A cancelled
+  dialog is silent; a failure is shown.
+- Export of saved played games uses `NotationPgnExport::from_played`; the
+  `ExportUnsupported` error was removed.
+- Nested folder creation: Create folder uses the browsed folder and its loaded
+  revision as the parent, and refuses when that folder is not loaded.
+- Open-game Trash: `ConfirmGameTrash` carries the live game revision, supplied from the
+  library publication through `observe_open_game`, so the registry closes the open game
+  with `try_close_target` before the Trash commit.
+
+All of this is uncompiled and unrun.
+
 ## Not done
 
-- Production composition of the import backend. `DesktopLibraryServiceOptions::imports`
-  is `None` in `src/desktop/native/bootstrap.rs` because the stage directory file,
-  library anchor file, space provider, destination and identity provider are not
-  constructed anywhere in production yet. Import therefore reports that it is
-  unavailable at runtime.
-- The app side of `SelectFile`: dispatching `DesktopEnumCommand::FileSelect` with the
-  library workspace as owner, and calling `PresentationLibraryPanel::file_selected`
-  with the returned handle. `src/presentation/app/library/view.rs` currently shows an
-  explicit failure message instead.
-- Closing and Trash confirmation for a game that is open in the editor: the action
-  refuses an open game (the registry reports a close conflict). Passing the live game
-  revision to `try_close_target` is not wired.
-- Exporting saved played games.
 - Story scenarios 1 through 9 and exact round-trip, duplicate and Trash results.
+- A test for the open-game Trash path and for the native file-selection round trip.
+- Windows import backend (needs the extra filesystem directory argument).
 - T097 and T100 remaining items are physical staging, space and measurement
   acceptance: external evidence.

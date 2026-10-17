@@ -28,7 +28,10 @@ use crate::presentation::analysis::variation_tree::PresentationAnalysisVariation
 use crate::presentation::app::PresentationAppEnumWorkspace;
 use crate::presentation::library::error::PresentationLibraryError;
 use crate::presentation::library::intent::PresentationLibraryIntent;
-use crate::presentation::library::view::PresentationLibraryPanel;
+use crate::presentation::library::controller::PresentationLibraryController;
+use crate::presentation::library::view::{
+    PresentationLibraryEnumFileRequest, PresentationLibraryPanel,
+};
 
 #[derive(Debug, Error)]
 pub enum PresentationAppLibraryError {
@@ -81,6 +84,12 @@ pub(super) struct PresentationAppLibraryPending {
     failure: Option<Arc<DesktopLibraryServiceError>>,
 }
 
+pub(super) struct PresentationAppLibraryFileSelection {
+    request: DesktopRequest,
+    receipt: Option<DesktopApplicationReceipt>,
+    file: PresentationLibraryEnumFileRequest,
+}
+
 pub(super) struct PresentationAppLibraryNavigation {
     token: DesktopRequestId,
     expected: DesktopGameEditorContext,
@@ -105,10 +114,11 @@ pub(super) struct PresentationAppLibrary {
     service_failure: Option<Arc<DesktopLibraryServiceError>>,
     modal: PresentationAnalysisEditorModal,
     guard_visible: bool,
+    file_selection: Option<PresentationAppLibraryFileSelection>,
 }
 
 impl PresentationAppLibrary {
-    const MAX_PANEL_LANES: usize = 5;
+    const MAX_PANEL_LANES: usize = PresentationLibraryController::LANES;
     const MAX_EDITOR_ACTIONS: usize = 1;
 
     pub(super) fn new(workspace: DesktopMessagesEntityId) -> Self {
@@ -129,6 +139,7 @@ impl PresentationAppLibrary {
             service_failure: None,
             modal: PresentationAnalysisEditorModal::default(),
             guard_visible: false,
+            file_selection: None,
         }
     }
 
@@ -139,7 +150,8 @@ impl PresentationAppLibrary {
     }
 
     pub(super) fn has_pending_work(&self) -> bool {
-        self.pending.iter().any(|pending| !pending.observed)
+        self.file_selection.is_some()
+            || self.pending.iter().any(|pending| !pending.observed)
             || self
                 .navigation
                 .as_ref()

@@ -289,7 +289,10 @@ impl DesktopLibraryServiceWork {
                     _ => Err(StorageLibraryError::Protocol.into()),
                 }
             }
-            DesktopLibraryServiceEnumAction::ConfirmGameTrash(plan) => {
+            DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+                plan,
+                open_revision,
+            } => {
                 let (StorageTrashPreviewRequest::MoveToTrash(game)
                 | StorageTrashPreviewRequest::PermanentlyDelete(game)) = plan.action()
                 else {
@@ -302,7 +305,10 @@ impl DesktopLibraryServiceWork {
                     .wall_time
                     .now()
                     .map_err(DesktopAnnotationOwnerError::from)?;
-                let target = games.try_not_open_close_target(game, revision)?;
+                let target = match open_revision {
+                    Some(live) => games.try_close_target(game, live, revision)?,
+                    None => games.try_not_open_close_target(game, revision)?,
+                };
                 let mut closing = games.try_close_game(target)?;
                 let certificate = closing
                     .wait()

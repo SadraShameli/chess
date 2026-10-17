@@ -62,7 +62,7 @@ impl PresentationLibraryController {
             (
                 DesktopLibraryServiceEnumAction::ApplyTrash(_)
                 | DesktopLibraryServiceEnumAction::RemoveFolder(_)
-                | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_),
+                | DesktopLibraryServiceEnumAction::ConfirmGameTrash { .. },
                 DesktopLibraryServiceEnumResult::Trashed(_),
             )
             | (
@@ -94,7 +94,7 @@ impl PresentationLibraryController {
                 | DesktopLibraryServiceEnumAction::ApplyTrash(_)
                 | DesktopLibraryServiceEnumAction::Restore(_)
                 | DesktopLibraryServiceEnumAction::RemoveFolder(_)
-                | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_)
+                | DesktopLibraryServiceEnumAction::ConfirmGameTrash { .. }
                 | DesktopLibraryServiceEnumAction::Import(_)
                 | DesktopLibraryServiceEnumAction::Export(_)
                 | DesktopLibraryServiceEnumAction::Editor { .. },
@@ -294,7 +294,6 @@ impl PresentationLibraryController {
             | DesktopLibraryServiceError::ImportActive
             | DesktopLibraryServiceError::ImportNotActive
             | DesktopLibraryServiceError::Import(_)
-            | DesktopLibraryServiceError::ExportUnsupported
             | DesktopLibraryServiceError::Export(_)
             | DesktopLibraryServiceError::FileSelection(_)
             | DesktopLibraryServiceError::AtomicFile(_)

@@ -70,9 +70,6 @@ impl DesktopLibraryServiceExport {
             }
             .into());
         }
-        if matches!(loaded.record().content(), StorageLibraryEnumContent::Played(_)) {
-            return Err(DesktopLibraryServiceError::ExportUnsupported);
-        }
         let selection = self.destination.take()?;
         let scope = self.selection;
         let record = loaded.into_record();
@@ -85,10 +82,13 @@ impl DesktopLibraryServiceExport {
                 let stage = StorageAtomicFileStage::new(target)
                     .map_err(|error| DesktopLibraryServiceError::AtomicFile(Arc::new(error)))?;
                 let mut sink = DesktopLibraryServiceExportSink { stage };
-                let StorageLibraryEnumContent::Notation(game) = record.content() else {
-                    return Err(DesktopLibraryServiceError::ExportUnsupported);
+                let export = match record.content() {
+                    StorageLibraryEnumContent::Notation(game) => NotationPgnExport::new(game),
+                    StorageLibraryEnumContent::Played(session) => {
+                        NotationPgnExport::from_played(session)
+                    }
                 };
-                NotationPgnExport::new(game)
+                export
                     .with_selection(scope)
                     .write(&mut sink, || worker.is_cancelled())
                     .map_err(|error| DesktopLibraryServiceError::Export(Arc::new(error)))?;

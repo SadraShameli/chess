@@ -36,7 +36,7 @@ impl PresentationLibraryEnumLane {
             | DesktopLibraryServiceEnumAction::ApplyTrash(_)
             | DesktopLibraryServiceEnumAction::Restore(_)
             | DesktopLibraryServiceEnumAction::RemoveFolder(_)
-            | DesktopLibraryServiceEnumAction::ConfirmGameTrash(_) => Self::Trash,
+            | DesktopLibraryServiceEnumAction::ConfirmGameTrash { .. } => Self::Trash,
             DesktopLibraryServiceEnumAction::Import(_) => Self::Import,
             DesktopLibraryServiceEnumAction::Export(_) => Self::Export,
             DesktopLibraryServiceEnumAction::Editor { .. } => {

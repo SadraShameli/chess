@@ -31,6 +31,8 @@ pub enum PresentationLibraryError {
     MissingGame,
     #[error("Preview the Trash action and confirm the exact plan first")]
     MissingPlan,
+    #[error("Load the browsed folder before creating a folder inside it")]
+    ParentNotLoaded,
     #[error("Review and freeze the import preview before committing")]
     MissingConfirmation,
     #[error("Reload the library from the first page")]
