@@ -13,6 +13,7 @@ use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
+use crate::puzzle::history::PuzzleHistoryDeletion;
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
 use crate::storage::connection::StorageConnection;
@@ -165,6 +166,11 @@ enum StorageDocumentEnumCommand {
         id: PuzzleSessionId,
         _admission: OwnedSemaphorePermit,
         result: oneshot::Sender<Result<Option<StoragePuzzleRecovered>, StoragePuzzleError>>,
+    },
+    PuzzleDelete {
+        deletion: PuzzleHistoryDeletion,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<usize, StoragePuzzleError>>,
     },
     Save {
         id: Uuid,
@@ -432,6 +438,20 @@ impl StorageDocumentClient {
         receiver.await?
     }
 
+    pub(crate) async fn delete_puzzle_history(
+        &self,
+        deletion: PuzzleHistoryDeletion,
+    ) -> Result<usize, StoragePuzzleError> {
+        let admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::PuzzleDelete {
+            deletion,
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub async fn save(
         &self,
         id: Uuid,
@@ -661,6 +681,18 @@ impl StorageDocumentActor {
                 } => {
                     let outcome =
                         StoragePuzzleTransaction::load(self.connection.diesel(), id, &self.memory);
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
+                StorageDocumentEnumCommand::PuzzleDelete {
+                    deletion,
+                    _admission,
+                    result,
+                } => {
+                    let outcome =
+                        StoragePuzzleTransaction::delete(self.connection.diesel(), &deletion);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);

@@ -18,6 +18,7 @@ use chess::presentation::app::PresentationApp;
 use chess::presentation::board::animation::{
     PresentationBoardAnimation, PresentationBoardAnimationEnumOutcome,
 };
+use chess::presentation::board::enums::PresentationBoardEnumCameraAction;
 use chess::presentation::board::scene::PresentationBoardScene;
 use chess::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use chess::presentation::board::view::{PresentationBoardView, PresentationBoardViewInput};
@@ -635,5 +636,23 @@ fn promotion_dialog_contains_focus_on_its_choices_and_escape_returns_to_the_orig
         app.context.memory(|memory| memory.focused()),
         Some(PresentationBoardSemanticGrid::square_id("a7".parse()?))
     );
+    Ok(())
+}
+
+#[test]
+fn camera_actions_queued_before_graphics_are_ready_apply_in_order_once_drained()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut app = PresentationBoardAccessibilityApp::new();
+    let camera = SceneCamera::initial(BoardEnumColor::White);
+    assert!(!app.presentation.has_queued_camera_actions());
+    app.presentation
+        .queue_camera_action(PresentationBoardEnumCameraAction::RotateRight);
+    app.presentation
+        .queue_camera_action(PresentationBoardEnumCameraAction::Flip);
+    assert!(app.presentation.has_queued_camera_actions());
+    let drained = app.presentation.drain_camera_actions(camera)?;
+    assert_eq!(drained.orientation(), BoardEnumColor::Black);
+    assert!(!app.presentation.has_queued_camera_actions());
+    assert_eq!(app.presentation.drain_camera_actions(drained)?, drained);
     Ok(())
 }

@@ -60,6 +60,8 @@ mod puzzle_csv_import;
 mod puzzle_definition;
 #[path = "puzzle/fixture.rs"]
 mod puzzle_fixture;
+#[path = "puzzle/history.rs"]
+mod puzzle_history;
 #[path = "puzzle/persistence.rs"]
 mod puzzle_persistence;
 #[path = "puzzle/run.rs"]

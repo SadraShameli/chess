@@ -236,6 +236,18 @@ impl PresentationBoardView {
         }
     }
 
+    pub fn camera_animation(
+        &mut self,
+        context: &egui::Context,
+    ) -> Result<Option<PresentationBoardAnimationFrame>, PresentationBoardViewError> {
+        let Some(animation) = &mut self.animation else {
+            return Ok(None);
+        };
+        let frame = animation.frame()?;
+        animation.request_repaint(context);
+        Ok(Some(frame))
+    }
+
     pub fn request_repaint(&self, context: &egui::Context) {
         if let Some(animation) = &self.animation {
             animation.request_repaint(context);

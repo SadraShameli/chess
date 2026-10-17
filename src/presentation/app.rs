@@ -274,7 +274,9 @@ pub struct PresentationApp {
     preferences: DesktopPreferences,
     settings_open: bool,
     settings_toggle_frame: Option<u64>,
-    library_panel_open: bool,
+    inspector_open: bool,
+    inspector_toggle_frame: Option<u64>,
+    camera_queue: Vec<PresentationBoardEnumCameraAction>,
     navigation_frame: Option<u64>,
 }
 
@@ -285,7 +287,7 @@ impl PresentationApp {
         let preferences = DesktopPreferences::default();
         let mut board =
             PresentationBoardView::with_animation(clock, preferences.motion().is_reduced());
-        board.rest_panel(false);
+        board.rest_panel(true);
         Self {
             snapshot: None,
             board,
@@ -322,7 +324,9 @@ impl PresentationApp {
             preferences,
             settings_open: false,
             settings_toggle_frame: None,
-            library_panel_open: false,
+            inspector_open: true,
+            inspector_toggle_frame: None,
+            camera_queue: Vec::new(),
             navigation_frame: None,
         }
     }
@@ -1410,6 +1414,7 @@ impl PresentationApp {
         let mut controller_intent = None;
         let mut actions = Vec::new();
         let mut camera_action = None;
+        let mut inspector_toggle = false;
         let mut workspace = None;
         let mut navigation = None;
         egui::Panel::top("chess.header").show(ui, |ui| {
@@ -1431,6 +1436,16 @@ impl PresentationApp {
                     {
                         self.new_game_toggle_frame = Some(frame);
                         navigation = Some(PresentationAppLibraryEnumNavigation::NewGame);
+                    }
+                    if ui
+                        .button(if self.inspector_open {
+                            "Hide inspector"
+                        } else {
+                            "Show inspector"
+                        })
+                        .clicked()
+                    {
+                        inspector_toggle = true;
                     }
                     if ui.button("Settings").clicked() && self.settings_toggle_frame != Some(frame)
                     {
@@ -1556,24 +1571,9 @@ impl PresentationApp {
                         DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. })
                     )
             });
-        let library_open = self.workspace == PresentationAppEnumWorkspace::Library;
-        if library_open != self.library_panel_open {
-            self.library_panel_open = library_open;
-            if let Err(error) = self.board.set_panel_visible(library_open) {
-                self.failure = Some(error.to_string());
-            }
-        }
-        let panel_progress = match self.board.panel_progress() {
-            Ok(progress) => progress,
-            Err(error) => {
-                self.failure = Some(error.to_string());
-                f32::from(u8::from(library_open))
-            }
-        };
-        self.board.request_repaint(ui.ctx());
-        if panel_progress > 0.0 {
+        if self.workspace == PresentationAppEnumWorkspace::Library {
             egui::Panel::left("chess.library.query")
-                .exact_size(PresentationThemeTokens::PANEL_WIDTH * panel_progress)
+                .default_size(PresentationThemeTokens::PANEL_WIDTH)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         let positions = if let Some(editor) = &mut self.editor {
@@ -1603,9 +1603,23 @@ impl PresentationApp {
                     });
                 });
         }
-        egui::Panel::right("chess.inspector")
-            .default_size(PresentationThemeTokens::PANEL_WIDTH)
-            .min_size(PresentationThemeTokens::PANEL_WIDTH)
+        if inspector_toggle && self.toggle_frame_is_new(frame) {
+            self.inspector_open = !self.inspector_open;
+            if let Err(error) = self.board.set_panel_visible(self.inspector_open) {
+                self.failure = Some(error.to_string());
+            }
+        }
+        let inspector_progress = match self.board.panel_progress() {
+            Ok(progress) => progress,
+            Err(error) => {
+                self.failure = Some(error.to_string());
+                f32::from(u8::from(self.inspector_open))
+            }
+        };
+        self.board.request_repaint(ui.ctx());
+        if inspector_progress > 0.0 {
+            egui::Panel::right("chess.inspector")
+            .exact_size(PresentationThemeTokens::PANEL_WIDTH * inspector_progress)
             .show(ui, |ui| {
                 if self.settings_open {
                     self.show_settings(ui);
@@ -1697,6 +1711,7 @@ impl PresentationApp {
                 ui.separator();
                 ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(ui.visuals().weak_text_color()));
             });
+        }
         let retry_quit = self.failure.is_some()
             && self
                 .pending
@@ -2030,15 +2045,49 @@ impl PresentationApp {
         {
             game.controller.restore_board_focus(ui.ctx(), scene);
         }
-        let animation = board_frame
-            .as_ref()
-            .and_then(PresentationBoardViewFrame::animation);
+        let animation = if self.workspace == PresentationAppEnumWorkspace::Editor {
+            match self.board.camera_animation(ui.ctx()) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    self.failure = Some(error.to_string());
+                    None
+                }
+            }
+        } else {
+            board_frame
+                .as_ref()
+                .and_then(PresentationBoardViewFrame::animation)
+        };
         Ok(PresentationAppFrame {
             viewport: editor_viewport
                 .or_else(|| board_frame.as_ref().map(|frame| frame.viewport())),
             board_actions: board_frame.map_or_else(Vec::new, |frame| frame.actions().to_vec()),
             camera_action,
             animation,
+        })
+    }
+
+    fn toggle_frame_is_new(&mut self, frame: u64) -> bool {
+        let is_new = self.inspector_toggle_frame != Some(frame);
+        self.inspector_toggle_frame = Some(frame);
+        is_new
+    }
+
+    pub fn queue_camera_action(&mut self, action: PresentationBoardEnumCameraAction) {
+        self.camera_queue.push(action);
+    }
+
+    pub fn has_queued_camera_actions(&self) -> bool {
+        !self.camera_queue.is_empty()
+    }
+
+    pub fn drain_camera_actions(
+        &mut self,
+        camera: SceneCamera,
+    ) -> Result<SceneCamera, PresentationAppError> {
+        let queued = std::mem::take(&mut self.camera_queue);
+        queued.into_iter().try_fold(camera, |camera, action| {
+            self.apply_camera_action(camera, action)
         })
     }
 

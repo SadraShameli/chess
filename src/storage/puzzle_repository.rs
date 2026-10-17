@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
+use crate::puzzle::history::{PuzzleHistoryDeletion, PuzzleHistoryEnumScope};
 use crate::puzzle::persistence::{
     PuzzlePersistenceCodec, PuzzlePersistenceError, PuzzlePersistenceJournalProof,
     PuzzlePersistenceReceipt, PuzzlePersistenceRun, PuzzlePersistenceSaveRequest,
@@ -44,6 +45,10 @@ pub enum StoragePuzzleError {
     CollectionConflict,
     #[error("The saved puzzle repository rows are incomplete or inconsistent")]
     Corrupt,
+    #[error(
+        "Individual puzzle attempts cannot be deleted from a saved run without invalidating it"
+    )]
+    AttemptDeletionUnsupported,
     #[error("The puzzle storage revision is exhausted")]
     RevisionOverflow,
     #[error("The puzzle write completion has already been consumed")]
@@ -204,6 +209,13 @@ impl StoragePuzzleRepository {
         id: PuzzleSessionId,
     ) -> Result<Option<StoragePuzzleRecovered>, StoragePuzzleError> {
         self.client.read_puzzle(id).await
+    }
+
+    pub async fn delete_history(
+        &self,
+        deletion: PuzzleHistoryDeletion,
+    ) -> Result<usize, StoragePuzzleError> {
+        self.client.delete_puzzle_history(deletion).await
     }
 
     pub async fn inventory(
@@ -468,6 +480,43 @@ impl StoragePuzzleTransaction {
             request,
             PuzzlePersistenceStorageRevision::new(revision),
         ))
+    }
+
+    pub(super) fn delete(
+        connection: &mut SqliteConnection,
+        deletion: &PuzzleHistoryDeletion,
+    ) -> Result<usize, StoragePuzzleError> {
+        connection.immediate_transaction(|connection| match deletion.scope() {
+            PuzzleHistoryEnumScope::Attempt { .. } => {
+                Err(StoragePuzzleError::AttemptDeletionUnsupported)
+            }
+            PuzzleHistoryEnumScope::Session(session) => {
+                let id = session.value().get().to_string();
+                diesel::delete(puzzle_attempts::table.filter(puzzle_attempts::run_id.eq(&id)))
+                    .execute(connection)?;
+                diesel::delete(
+                    puzzle_checkpoints::table.filter(puzzle_checkpoints::run_id.eq(&id)),
+                )
+                .execute(connection)?;
+                diesel::delete(puzzle_events::table.filter(puzzle_events::run_id.eq(&id)))
+                    .execute(connection)?;
+                let runs = diesel::delete(puzzle_runs::table.filter(puzzle_runs::run_id.eq(&id)))
+                    .execute(connection)?;
+                diesel::delete(
+                    puzzle_collections::table.filter(puzzle_collections::collection_id.eq(&id)),
+                )
+                .execute(connection)?;
+                Ok(runs)
+            }
+            PuzzleHistoryEnumScope::All => {
+                diesel::delete(puzzle_attempts::table).execute(connection)?;
+                diesel::delete(puzzle_checkpoints::table).execute(connection)?;
+                diesel::delete(puzzle_events::table).execute(connection)?;
+                let runs = diesel::delete(puzzle_runs::table).execute(connection)?;
+                diesel::delete(puzzle_collections::table).execute(connection)?;
+                Ok(runs)
+            }
+        })
     }
 
     pub(super) fn load(

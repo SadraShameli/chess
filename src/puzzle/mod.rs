@@ -3,6 +3,7 @@ pub mod checkpoint;
 pub mod csv_import;
 pub mod definition;
 pub mod enums;
+pub mod history;
 pub mod identity;
 pub mod metadata;
 pub mod persistence;

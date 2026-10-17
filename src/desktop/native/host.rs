@@ -1440,6 +1440,9 @@ impl DesktopNativeHost {
             context.request_discard("install bundled native typography");
             return Ok(());
         }
+        if state.ready && state.presentation.has_queued_camera_actions() {
+            state.camera = state.presentation.drain_camera_actions(state.camera)?;
+        }
         let renderer = world.remove_resource::<SceneRenderer>();
         let outcome = Self::show_presentation(world, state, &context, renderer.as_ref());
         if let Some(renderer) = renderer {
@@ -1517,13 +1520,12 @@ impl DesktopNativeHost {
         }
         state.animation = frame.animation();
         if let Some(action) = frame.camera_action() {
-            let camera = state
-                .presentation
-                .apply_camera_action(state.camera, action)?;
             if state.ready {
-                state.camera = camera;
+                state.camera = state
+                    .presentation
+                    .apply_camera_action(state.camera, action)?;
             } else {
-                state.pending_camera = Some(camera);
+                state.presentation.queue_camera_action(action);
             }
             context.request_repaint();
         }

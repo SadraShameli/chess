@@ -9,12 +9,16 @@ use std::time::Duration;
 use chess::board::position::BoardPosition;
 use chess::capacity::budget::CapacityBudget;
 use chess::clock::duration::ClockInstant;
+use chess::puzzle::attempt::PuzzleAttemptId;
 use chess::puzzle::checkpoint::{
     PuzzleCheckpoint, PuzzleCheckpointEnumAdvance, PuzzleCheckpointEnumFreezeCause,
     PuzzleCheckpointEnumTrigger, PuzzleCheckpointObservation, PuzzleCheckpointSnapshot,
 };
 use chess::puzzle::definition::PuzzleDefinition;
 use chess::puzzle::enums::PuzzleEnumCountdownMode;
+use chess::puzzle::history::{
+    PuzzleHistory, PuzzleHistoryEntry, PuzzleHistoryEnumConfirmation, PuzzleHistoryEnumScope,
+};
 use chess::puzzle::identity::PuzzleDefinitionIdentity;
 use chess::puzzle::metadata::PuzzleDefinitionMetadata;
 use chess::puzzle::persistence::{
@@ -25,7 +29,7 @@ use chess::puzzle::persistence::{
 use chess::puzzle::random_provider::PuzzleRandomProviderSeeded;
 use chess::puzzle::run::{PuzzleRunEnumContent, PuzzleRunEnumStatus};
 use chess::puzzle::selection::PuzzleSelectionFilter;
-use chess::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
+use chess::puzzle::session::{PuzzleSession, PuzzleSessionConfig, PuzzleSessionId};
 use chess::puzzle::storage_repository::PuzzleStorageDriver;
 use chess::puzzle::timer::PuzzleTimerEnumReadiness;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
@@ -61,17 +65,21 @@ impl StoragePuzzleFixture {
         ))
     }
 
-    fn owner_with_id(
-        id: PuzzleSessionId,
-    ) -> Result<PuzzlePersistenceRun, Box<dyn std::error::Error>> {
+    fn definition() -> Result<PuzzleDefinition, Box<dyn std::error::Error>> {
         let initial = BoardPosition::standard();
         let movement = initial.parse_uci("e2e4")?;
-        let definition = PuzzleDefinition::new(
+        Ok(PuzzleDefinition::new(
             PuzzleDefinitionIdentity::new("fixture".into(), "v1".into(), "first".into())?,
             initial,
             vec![vec![movement]],
             PuzzleDefinitionMetadata::default(),
-        )?;
+        )?)
+    }
+
+    fn owner_with_id(
+        id: PuzzleSessionId,
+    ) -> Result<PuzzlePersistenceRun, Box<dyn std::error::Error>> {
+        let definition = Self::definition()?;
         Ok(PuzzlePersistenceRun::new(
             id,
             PuzzleSessionConfig::defaults(PuzzleEnumCountdownMode::Session),
@@ -1283,5 +1291,53 @@ async fn saved_run_inventory_borrowed_wait_allows_shutdown_and_preserves_accepte
         repository.inventory(None).await,
         Err(StoragePuzzleError::Document(StorageDocumentError::Closed))
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn confirmed_history_deletion_removes_only_the_selected_saved_runs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let store = StorageDocumentStore::open(
+        directory.path().join("puzzles.sqlite3"),
+        CapacityBudget::discover()?,
+    )
+    .await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let first = StoragePuzzleFixture::id(1)?;
+    let second = StoragePuzzleFixture::id(2)?;
+    StoragePuzzleFixture::save_initial(&repository, first).await?;
+    StoragePuzzleFixture::save_initial(&repository, second).await?;
+    let mut entries = Vec::new();
+    for id in [first, second] {
+        let session = PuzzleSession::new(
+            id,
+            PuzzleAttemptId::new(NonZeroU64::MIN),
+            StoragePuzzleFixture::definition()?,
+            PuzzleSessionConfig::defaults(PuzzleEnumCountdownMode::Session),
+        );
+        entries.push(PuzzleHistoryEntry::new(
+            id,
+            session.attempt().clone(),
+            Duration::ZERO,
+        ));
+    }
+    let mut history = PuzzleHistory::new(entries)?;
+    let deletion = history.delete(
+        PuzzleHistoryEnumScope::Session(first),
+        PuzzleHistoryEnumConfirmation::Confirmed,
+        None,
+    )?;
+    assert_eq!(repository.delete_history(deletion).await?, 1);
+    assert!(repository.load(first).await?.is_none());
+    assert!(repository.load(second).await?.is_some());
+    let deletion = history.delete(
+        PuzzleHistoryEnumScope::All,
+        PuzzleHistoryEnumConfirmation::Confirmed,
+        None,
+    )?;
+    assert_eq!(repository.delete_history(deletion).await?, 1);
+    assert!(repository.inventory(None).await?.entries().is_empty());
+    store.close().await?;
     Ok(())
 }
