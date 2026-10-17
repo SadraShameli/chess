@@ -1415,72 +1415,132 @@
       "story": 12,
       "scenario": 1,
       "summary": "**Given** startup or Check for Updates, **When** the check runs, **Then**",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/discovery.rs",
+        "tests/update/credentials.rs",
+        "tests/presentation/update.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-2",
       "story": 12,
       "scenario": 2,
       "summary": "**Given** an available update, **When** download starts on a known unmetered",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/download.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-3",
       "story": 12,
       "scenario": 3,
       "summary": "**Given** an active download, **When** canceled, failed, timed out or observed",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/download.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-4",
       "story": 12,
       "scenario": 4,
       "summary": "**Given** a completed download, **When** the app relaunches or a newer stable",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/download.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-5",
       "story": 12,
       "scenario": 5,
       "summary": "**Given** explicit confirmed Install, **When** any save, safety backup or",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/install.rs",
+        "tests/update/security.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-6",
       "story": 12,
       "scenario": 6,
       "summary": "**Given** migration or installation failure, **When** recovery is presented,",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/helper.rs",
+        "tests/update/security.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-7",
       "story": 12,
       "scenario": 7,
       "summary": "**Given** a matching stable version tag and verified zero-cost automation,",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/desktop/release_workflow.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US12-8",
       "story": 12,
       "scenario": 8,
       "summary": "**Given** an unavailable operating-system credential service, **When** update",
-      "fixtures": [],
-      "tests": [],
-      "coverage": "pending"
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/credentials.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
     },
     {
       "id": "US13-1",

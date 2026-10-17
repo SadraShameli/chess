@@ -12,3 +12,6 @@ mod update_install;
 
 #[path = "update/credentials.rs"]
 mod update_credentials;
+
+#[path = "update/security.rs"]
+mod update_security;

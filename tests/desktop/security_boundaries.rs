@@ -7,14 +7,19 @@ struct SecurityBoundaries;
 
 impl SecurityBoundaries {
     const ARGUMENT_OWNER: &str = "src/desktop/native/bootstrap.rs";
-    const FORBIDDEN: [&str; 9] = [
+    const ENVIRONMENT_READ: (&str, &str) = ("src/update/manifest.rs", "var_os(\"APPIMAGE\")");
+    const EXPOSURE_OWNERS: [&str; 3] = [
+        "src/update/discovery.rs",
+        "src/update/download.rs",
+        "src/desktop/native/credentials.rs",
+    ];
+    const LOGGING: [&str; 6] = ["println!", "eprintln!", "dbg!", "tracing::", "log::", "info!("];
+    const FORBIDDEN: [&str; 7] = [
         "TcpListener",
         "UdpSocket",
         "localhost",
         "127.0.0.1",
         "0.0.0.0",
-        "env::var",
-        "env::var_os",
         "option_env!",
         "danger_accept_invalid",
     ];
@@ -55,6 +60,67 @@ fn shipped_sources_open_no_network_listener_and_read_no_environment_or_test_swit
         for marker in SecurityBoundaries::FORBIDDEN {
             assert!(!text.contains(marker), "{name} contains forbidden '{marker}'");
         }
+        let reads = text.matches("env::var").count();
+        let (owner, call) = SecurityBoundaries::ENVIRONMENT_READ;
+        if name == owner {
+            assert_eq!(reads, 1, "{name} must read exactly one environment variable");
+            assert!(text.contains(call));
+        } else {
+            assert_eq!(reads, 0, "{name} reads the environment");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn update_and_credential_code_never_logs_and_exposes_the_token_only_to_its_transport_owners()
+-> SecurityResult {
+    for (name, text) in SecurityBoundaries::library()? {
+        let secret_code = name.starts_with("src/update/")
+            || name == "src/desktop/update_commands.rs"
+            || name == "src/desktop/native/credentials.rs";
+        if secret_code {
+            for marker in SecurityBoundaries::LOGGING {
+                assert!(!text.contains(marker), "{name} writes output with '{marker}'");
+            }
+        }
+        if text.contains(".expose()") {
+            assert!(
+                SecurityBoundaries::EXPOSURE_OWNERS.contains(&name.as_str()),
+                "{name} reads the raw update credential"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn credentials_never_reach_storage_backups_exports_or_the_installer_helper() -> SecurityResult {
+    for (name, text) in SecurityBoundaries::library()? {
+        let outside = name.starts_with("src/storage/")
+            || name.starts_with("src/workbench/")
+            || name == "src/desktop/backup_commands.rs"
+            || name == "src/desktop/preferences.rs"
+            || name == "src/desktop/workbench_export.rs";
+        if outside {
+            for marker in ["UpdateCredential", "keyring", "bearer"] {
+                assert!(!text.contains(marker), "{name} references '{marker}'");
+            }
+        }
+        if name.starts_with("src/presentation/") {
+            for marker in ["keyring", "bearer", ".expose()"] {
+                assert!(!text.contains(marker), "{name} references '{marker}'");
+            }
+        }
+    }
+    let helper = fs::read_to_string(
+        SecurityBoundaries::root().join("tools/packaging/update_helper.rs"),
+    )?;
+    for marker in ["credential", "bearer", "token", "keyring"] {
+        assert!(
+            !helper.to_ascii_lowercase().contains(marker),
+            "the installer helper handles '{marker}'"
+        );
     }
     Ok(())
 }

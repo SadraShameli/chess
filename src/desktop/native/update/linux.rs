@@ -35,8 +35,15 @@ impl DesktopNativeUpdateLinux {
         let parent = destination
             .parent()
             .ok_or_else(|| DesktopNativeUpdateError::UnsafePath(destination.clone()))?;
-        let staged = parent.join(format!(".chess-update-{}.AppImage", std::process::id()));
-        fs::copy(package, &staged)?;
+        let staged = parent.join(format!(".chess-update-{}.AppImage", uuid::Uuid::new_v4()));
+        let mut input = fs::File::open(package)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staged)?;
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -146,7 +146,7 @@ impl UpdateCache {
         let target = wire.target.parse::<UpdateTarget>().map_err(|_error| invalid("target"))?;
         let manifest_digest = UpdateManifest::hex32(&wire.manifest_sha256).ok_or_else(|| invalid("manifest digest"))?;
         let package_sha256 = UpdateManifest::hex32(&wire.package_sha256).ok_or_else(|| invalid("package digest"))?;
-        if wire.asset_name.contains(['/', '\\']) || wire.asset_name == ".." {
+        if !UpdateManifest::is_safe_asset_name(&wire.asset_name) {
             return Err(invalid("asset name"));
         }
         let package = self.completed_dir().join(&wire.asset_name);

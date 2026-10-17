@@ -15,11 +15,22 @@ pub enum UpdateHttpError {
     Timeout,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UpdateHttpRequest {
     pub url: Url,
     pub bearer: Option<String>,
     pub accept: &'static str,
+}
+
+impl std::fmt::Debug for UpdateHttpRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("UpdateHttpRequest")
+            .field("url", &self.url)
+            .field("bearer", &self.bearer.as_ref().map(|_token| "redacted"))
+            .field("accept", &self.accept)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

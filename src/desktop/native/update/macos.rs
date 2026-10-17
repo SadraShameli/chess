@@ -30,7 +30,10 @@ impl DesktopNativeUpdateMacos {
         let parent = bundle
             .parent()
             .ok_or_else(|| DesktopNativeUpdateError::UnsafePath(bundle.to_path_buf()))?;
-        if !bundle.is_absolute() || bundle.extension().is_none_or(|extension| extension != "app") {
+        if !package.is_absolute()
+            || !bundle.is_absolute()
+            || bundle.extension().is_none_or(|extension| extension != "app")
+        {
             return Err(DesktopNativeUpdateError::UnsafePath(bundle.to_path_buf()));
         }
         let staging = parent.join(format!(".chess-update-{}", Uuid::new_v4()));

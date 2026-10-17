@@ -24,6 +24,9 @@ impl DesktopNativeUpdateWindows {
         package: &Path,
         destination: &Path,
     ) -> Result<DesktopNativeUpdateEnumOutcome, DesktopNativeUpdateError> {
+        if !package.is_absolute() {
+            return Err(DesktopNativeUpdateError::UnsafePath(package.to_path_buf()));
+        }
         let destination = Self::validate_destination(destination)?;
         let status = Command::new(package)
             .arg("/S")

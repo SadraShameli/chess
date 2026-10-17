@@ -215,15 +215,7 @@ impl UpdateManifest {
 
     fn asset(wire: UpdateManifestWireAsset) -> Result<UpdateManifestAsset, UpdateManifestError> {
         let invalid = || UpdateManifestError::Asset(wire.name.clone());
-        if wire.name.is_empty()
-            || wire.name.len() > 255
-            || wire
-                .name
-                .chars()
-                .any(|character| character == '/' || character == '\\' || character.is_control())
-            || wire.name == "."
-            || wire.name == ".."
-        {
+        if !Self::is_safe_asset_name(&wire.name) {
             return Err(invalid());
         }
         if wire.length == 0 || wire.length > Self::MAX_PACKAGE_BYTES {
@@ -238,6 +230,26 @@ impl UpdateManifest {
             length: wire.length,
             sha256,
         })
+    }
+
+    pub fn is_safe_asset_name(name: &str) -> bool {
+        const RESERVED: [&str; 22] = [
+            "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+            "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
+            "LPT9",
+        ];
+        let stem = name.split('.').next().unwrap_or(name);
+        !name.is_empty()
+            && name.len() <= 255
+            && !name.chars().any(|character| {
+                matches!(character, '/' | '\\' | ':') || character.is_control()
+            })
+            && name != "."
+            && name != ".."
+            && !name.ends_with(['.', ' '])
+            && !RESERVED
+                .iter()
+                .any(|reserved| reserved.eq_ignore_ascii_case(stem))
     }
 
     pub(crate) fn hex32(text: &str) -> Option<[u8; 32]> {

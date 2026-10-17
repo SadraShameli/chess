@@ -6,6 +6,7 @@ use chess::board::enums::BoardEnumVariant;
 use chess::board::position::BoardPosition;
 use chess::clock::duration::ClockDuration;
 use chess::game::enums::{GameIdentityError, GameMoveId};
+use chess::game::tree::GameTree;
 use chess::notation::pgn_import::NotationPgnImport;
 use chess::puzzle::csv_import::PuzzleCsvImport;
 use chess::puzzle::identity::PuzzleDefinitionIdentity;
@@ -170,5 +171,123 @@ fn truncated_puzzle_csv_never_panics_and_reports_typed_rows() -> BoundaryResult 
             }
         }
     }
+    Ok(())
+}
+
+struct TreeBoundaries;
+
+impl TreeBoundaries {
+    const CANDIDATES: [&'static str; 14] = [
+        "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "d2d4", "d7d5", "c2c4", "e7e6", "b1c3",
+        "f8b4", "c1g5", "d8d7",
+    ];
+    const APPENDS: usize = 160;
+
+    fn id(value: u128) -> BoundaryResult<GameMoveId> {
+        Ok(uuid::Uuid::from_u128(value).to_string().parse()?)
+    }
+
+    fn grow(seed: u64) -> BoundaryResult<GameTree> {
+        let mut tree = GameTree::new(Self::id(1)?, BoardPosition::standard(), None);
+        let mut next = 2_u128;
+        for roll in DomainBoundaries::sample(seed, Self::APPENDS) {
+            let nodes: Vec<GameMoveId> = tree.nodes().map(|node| node.id()).collect();
+            let parent = nodes[usize::try_from(roll % u64::try_from(nodes.len())?)?];
+            let uci = Self::CANDIDATES[usize::try_from((roll >> 17) % 14)?];
+            let movement = match tree.node(parent)?.position().parse_uci(uci) {
+                Ok(movement) => movement,
+                Err(_illegal) => continue,
+            };
+            let before = tree.len();
+            let appended = tree.append(parent, Self::id(next)?, movement, None)?;
+            next += 1;
+            assert!(tree.len() == before || tree.len() == before + 1);
+            assert!(tree.node(appended).is_ok());
+        }
+        Ok(tree)
+    }
+
+    fn subtree_size(tree: &GameTree, id: GameMoveId) -> BoundaryResult<usize> {
+        let mut pending = vec![id];
+        let mut count = 0;
+        while let Some(current) = pending.pop() {
+            count += 1;
+            pending.extend_from_slice(tree.node(current)?.children());
+        }
+        Ok(count)
+    }
+
+    fn check(tree: &GameTree) -> BoundaryResult {
+        assert_eq!(tree.nodes().count(), tree.len());
+        assert!(tree.node(tree.root())?.parent().is_none());
+        for node in tree.nodes() {
+            let children = node.children();
+            let unique: std::collections::HashSet<_> = children.iter().collect();
+            assert_eq!(unique.len(), children.len());
+            for child in children {
+                assert_eq!(tree.node(*child)?.parent(), Some(node.id()));
+            }
+            let path = tree.path_to(node.id())?;
+            assert_eq!(path.first().copied(), Some(tree.root()));
+            assert_eq!(path.last().copied(), Some(node.id()));
+            assert!(path.len() <= tree.len());
+            for pair in path.windows(2) {
+                assert!(tree.node(pair[0])?.children().contains(&pair[1]));
+            }
+        }
+        assert_eq!(Self::subtree_size(tree, tree.root())?, tree.len());
+        Ok(())
+    }
+}
+
+#[test]
+fn random_trees_keep_parent_child_path_and_uniqueness_invariants() -> BoundaryResult {
+    for seed in [0x1234_5678_9abc_def1, 0xdead_beef_cafe_f00d, 7, 0x0123_4567_89ab_cdef] {
+        let tree = TreeBoundaries::grow(seed)?;
+        assert!(tree.len() > 1, "seed {seed} grew no branch");
+        TreeBoundaries::check(&tree)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn deleting_any_branch_removes_exactly_its_subtree_and_never_the_root() -> BoundaryResult {
+    let mut tree = TreeBoundaries::grow(0x5eed_5eed_5eed_5eed)?;
+    assert!(tree.delete_branch(tree.root()).is_err());
+    let mut targets: Vec<GameMoveId> = tree
+        .nodes()
+        .map(|node| node.id())
+        .filter(|id| *id != tree.root())
+        .collect();
+    targets.reverse();
+    for target in targets {
+        if tree.node(target).is_err() {
+            continue;
+        }
+        let expected = TreeBoundaries::subtree_size(&tree, target)?;
+        let before = tree.len();
+        assert_eq!(tree.delete_branch(target)?, expected);
+        assert_eq!(tree.len(), before - expected);
+        assert!(tree.node(target).is_err());
+        TreeBoundaries::check(&tree)?;
+    }
+    assert_eq!(tree.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn unknown_nodes_and_foreign_moves_are_refused_without_changing_the_tree() -> BoundaryResult {
+    let mut tree = TreeBoundaries::grow(11)?;
+    let before = tree.len();
+    let unknown = TreeBoundaries::id(u128::MAX)?;
+    assert!(tree.node(unknown).is_err());
+    assert!(tree.path_to(unknown).is_err());
+    assert!(tree.delete_branch(unknown).is_err());
+    let foreign = BoardPosition::standard().parse_uci("e2e4")?;
+    let root = tree.root();
+    let reused_or_refused = tree.append(root, TreeBoundaries::id(1)?, foreign, None);
+    assert!(reused_or_refused.is_err() || tree.len() == before);
+    assert_eq!(tree.len(), before);
+    TreeBoundaries::check(&tree)?;
     Ok(())
 }
