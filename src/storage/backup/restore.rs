@@ -26,7 +26,17 @@ pub trait BackupLeaseProof {
     fn verify(&self) -> Result<(), BackupError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupDestinationLocation {
+    pub name: String,
+    pub version: String,
+    pub checksum: String,
+    pub location: String,
+    pub integrity_verified: bool,
+}
+
 pub struct BackupRestoreRequest<'a> {
+    pub locations: &'a [BackupDestinationLocation],
     pub lease: &'a dyn BackupLeaseProof,
     pub database: &'a Path,
     pub preview: &'a BackupPreview,
@@ -193,16 +203,38 @@ impl BackupRestorer {
         if PackageDigest::read(File::open(staged)?)? != request.preview.digest() {
             return Err(BackupError::ChecksumMismatch);
         }
-        Self::migrate_and_verify(staged)?;
+        Self::migrate_and_verify(staged, request.locations)?;
         File::open(staged)?.sync_all()?;
         Ok(())
     }
 
-    fn migrate_and_verify(staged: &Path) -> Result<(), BackupError> {
+    fn migrate_and_verify(
+        staged: &Path,
+        locations: &[BackupDestinationLocation],
+    ) -> Result<(), BackupError> {
         use diesel::Connection;
         let mut connection = SqliteConnection::establish(&staged.to_string_lossy())?;
         connection.batch_execute("PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE;")?;
         StorageMigrationRunner::run_embedded(&mut connection)?;
+        connection.batch_execute(
+            "DELETE FROM dataset_leases; UPDATE datasets SET validation = 'unchecked';",
+        )?;
+        for item in locations {
+            let validation = if item.integrity_verified {
+                "integrity_verified"
+            } else {
+                "unchecked"
+            };
+            diesel::sql_query(
+                "UPDATE datasets SET location = ?1, validation = ?5 WHERE name = ?2 AND version = ?3 AND checksum = ?4",
+            )
+            .bind::<Text, _>(item.location.as_str())
+            .bind::<Text, _>(item.name.as_str())
+            .bind::<Text, _>(item.version.as_str())
+            .bind::<Text, _>(item.checksum.as_str())
+            .bind::<Text, _>(validation)
+            .execute(&mut connection)?;
+        }
         let rows = diesel::sql_query("PRAGMA integrity_check")
             .load::<BackupRestoreIntegrity>(&mut connection)?;
         let verdict = rows

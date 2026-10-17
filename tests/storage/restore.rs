@@ -99,6 +99,7 @@ impl StorageRestoreFixture {
         id: u128,
     ) -> Result<chess::storage::backup::restore::BackupRestoreOutcome, BackupError> {
         BackupRestorer::restore_blocking(BackupRestoreRequest {
+            locations: &[],
             lease: &*self.lease,
             database: &self.database(),
             preview,
@@ -168,6 +169,7 @@ async fn restore_requires_the_exact_previewed_archive_and_a_pre_restore_safety_b
     ));
     let safety = fixture.archive(BackupEnumCategory::PreRestore, 13, 3_000)?;
     let wrong = BackupRestoreRequest {
+        locations: &[],
         lease: &*fixture.lease,
         database: &database,
         preview: &preview,
@@ -182,6 +184,7 @@ async fn restore_requires_the_exact_previewed_archive_and_a_pre_restore_safety_b
     ));
     let other = PackageDigest::hash_slice(b"other");
     let tampered = BackupRestoreRequest {
+        locations: &[],
         lease: &*fixture.lease,
         database: &database,
         preview: &preview,
@@ -394,6 +397,7 @@ async fn a_staged_restore_changes_nothing_until_the_next_launch_installs_it()
     let preview = StorageBackupFixture::inspect(archive.path())?;
     let safety = fixture.archive(BackupEnumCategory::PreRestore, 11, 2_000)?;
     BackupRestorer::stage_for_restart_blocking(BackupRestoreRequest {
+        locations: &[],
         lease: &*fixture.lease,
         database: &database,
         preview: &preview,
@@ -438,5 +442,354 @@ fn a_pending_restore_whose_staged_copy_vanished_rolls_back_to_the_untouched_data
     assert_eq!(fixture.recover()?, BackupRecoveryEnumOutcome::RolledBack);
     assert_eq!(fs::read_to_string(fixture.live())?, "old");
     assert!(!fixture.journal_present()?);
+    Ok(())
+}
+
+struct StorageRestoreDatasetFixture;
+
+impl StorageRestoreDatasetFixture {
+    fn entry(
+        name: &str,
+        location: &str,
+    ) -> chess::storage::dataset_registry::StorageDatasetRegistryNew {
+        use chess::storage::dataset_package::{
+            StorageDatasetPackageEnumFormat, StorageDatasetPackageEnumValidation,
+        };
+        use chess::storage::dataset_registry::{
+            StorageDatasetRegistryEnumKind, StorageDatasetRegistryEnumOrigin,
+            StorageDatasetRegistryNew,
+        };
+        StorageDatasetRegistryNew {
+            kind: StorageDatasetRegistryEnumKind::Book,
+            origin: StorageDatasetRegistryEnumOrigin::Personal,
+            name: name.to_owned(),
+            version: "1".to_owned(),
+            format: StorageDatasetPackageEnumFormat::Polyglot,
+            license: "test".to_owned(),
+            checksum: PackageDigest::hash_slice(name.as_bytes()),
+            location: location.to_owned(),
+            validation: StorageDatasetPackageEnumValidation::IntegrityVerified,
+            records: Some(1),
+        }
+    }
+
+    fn register(
+        database: &Path,
+        entries: &[(&str, &str)],
+        lease_first: bool,
+    ) -> StorageBackupTestResult {
+        use chess::storage::dataset_registry::{
+            StorageDatasetRegistry, StorageDatasetRegistryEnumHolder,
+        };
+        let mut connection = SqliteConnection::establish(&database.to_string_lossy())?;
+        for (index, (name, location)) in entries.iter().enumerate() {
+            let id =
+                StorageDatasetRegistry::register(&mut connection, &Self::entry(name, location))?;
+            if lease_first && index == 0 {
+                StorageDatasetRegistry::lease(
+                    &mut connection,
+                    id,
+                    StorageDatasetRegistryEnumHolder::Run,
+                    "run-1",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn scalar(database: &Path, sql: &str) -> StorageBackupTestResult<String> {
+        let mut connection = SqliteConnection::establish(&database.to_string_lossy())?;
+        Ok(diesel::sql_query(sql)
+            .get_result::<StorageRestoreText>(&mut connection)?
+            .value)
+    }
+}
+
+#[tokio::test]
+async fn restore_drops_leases_keeps_this_machines_dataset_locations_and_flags_missing_datasets()
+-> StorageBackupTestResult {
+    use chess::desktop::backup_commands::{
+        DesktopBackupCommands, DesktopBackupCommandsPrerequisites,
+    };
+    use chess::storage::backup::preview::BackupPreviewEnumFinding;
+    let fixture = StorageRestoreFixture::new()?;
+    let destination = fixture.database();
+    StorageBackupFixture::write(&destination, 1, r#"{"v":"destination"}"#).await?;
+    StorageRestoreDatasetFixture::register(
+        &destination,
+        &[("shared-book", "/destination/machine/shared.bin")],
+        false,
+    )?;
+
+    let source_directory = TempDir::new()?;
+    let source = source_directory.path().join("library.sqlite3");
+    StorageBackupFixture::write(&source, 1, r#"{"v":"source"}"#).await?;
+    StorageRestoreDatasetFixture::register(
+        &source,
+        &[
+            ("shared-book", "/source/machine/shared.bin"),
+            ("source-only", "/source/machine/only.bin"),
+        ],
+        true,
+    )?;
+    let source_commands = DesktopBackupCommands::new(
+        source.clone(),
+        source_directory.path().join("backups"),
+        BackupSpaceNative,
+        Vec::new(),
+        Vec::new(),
+    );
+    let archive =
+        source_commands.create_blocking(BackupEnumCategory::Manual, Uuid::from_u128(40), 1_000)?;
+    assert_eq!(archive.manifest().dependencies().len(), 2);
+    assert!(
+        archive
+            .manifest()
+            .portable_paths()
+            .contains(&"/source/machine/only.bin".to_owned())
+    );
+
+    let mut commands = DesktopBackupCommands::new(
+        destination.clone(),
+        fixture.backups(),
+        BackupSpaceNative,
+        Vec::new(),
+        Vec::new(),
+    );
+    let (handle, findings) = commands.preview_blocking(archive.path())?;
+    let referenced = findings
+        .iter()
+        .filter(|finding| matches!(finding, BackupPreviewEnumFinding::DatasetReferenced(_)))
+        .count();
+    let unavailable: Vec<_> = findings
+        .iter()
+        .filter_map(|finding| match finding {
+            BackupPreviewEnumFinding::DependencyUnavailable(dependency) => {
+                Some(dependency.name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(referenced, 2);
+    assert_eq!(unavailable, vec!["source-only 1".to_owned()]);
+    assert!(findings.iter().any(|finding| matches!(
+        finding,
+        BackupPreviewEnumFinding::DestinationLocationsKept { stored } if stored.len() == 2
+    )));
+
+    commands.restore_blocking(
+        &fixture.lease,
+        handle,
+        DesktopBackupCommandsPrerequisites {
+            games_paused_and_saved: true,
+            editors_have_no_unsaved_edits: true,
+        },
+        Uuid::from_u128(41),
+        Uuid::from_u128(42),
+        2_000,
+    )?;
+    assert_eq!(
+        StorageRestoreFixture::body(&destination)?,
+        r#"{"v":"source"}"#
+    );
+    let location = |name: &str| {
+        StorageRestoreDatasetFixture::scalar(
+            &destination,
+            &format!("SELECT location AS value FROM datasets WHERE name = '{name}'"),
+        )
+    };
+    let validation = |name: &str| {
+        StorageRestoreDatasetFixture::scalar(
+            &destination,
+            &format!("SELECT validation AS value FROM datasets WHERE name = '{name}'"),
+        )
+    };
+    assert_eq!(location("shared-book")?, "/destination/machine/shared.bin");
+    assert_eq!(validation("shared-book")?, "integrity_verified");
+    assert_eq!(location("source-only")?, "/source/machine/only.bin");
+    assert_eq!(validation("source-only")?, "unchecked");
+    assert_eq!(
+        StorageRestoreDatasetFixture::scalar(
+            &destination,
+            "SELECT CAST(count(*) AS TEXT) AS value FROM dataset_leases"
+        )?,
+        "0"
+    );
+    Ok(())
+}
+
+struct StorageRestoreGameFixture;
+
+impl StorageRestoreGameFixture {
+    async fn save(
+        database: &Path,
+        session: &chess::game::session::GameSession,
+        expected: chess::game::storage_repository::GameStorageRevision,
+        change: chess::game::storage_repository::GameStorageEnumContentChange,
+    ) -> StorageBackupTestResult<chess::game::storage_repository::GameStorageReceipt> {
+        use chess::capacity::budget::CapacityBudget;
+        use chess::capacity::executor::CapacityExecutor;
+        use chess::clock::duration::ClockInstant;
+        use chess::game::storage_repository::{GameStorageRepository, GameStorageSaveRequest};
+        use chess::storage::document_store::StorageDocumentStore;
+        use chess::storage::library_played::StorageLibraryPlayedRepository;
+        let budget = CapacityBudget::new(std::num::NonZeroUsize::new(2).ok_or("empty budget")?)?;
+        let executor = CapacityExecutor::new(budget.clone())?;
+        let store = StorageDocumentStore::open(database.to_path_buf(), budget).await?;
+        let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
+        let receipt = repository
+            .save(GameStorageSaveRequest::capture_with_change(
+                session,
+                ClockInstant::from_millis(2_000)?,
+                expected,
+                change,
+            )?)
+            .await?;
+        drop(repository);
+        store.close().await?;
+        executor.shutdown().await?;
+        Ok(receipt)
+    }
+
+    async fn load(
+        database: &Path,
+        game: chess::game::enums::GameId,
+    ) -> StorageBackupTestResult<chess::game::storage_repository::GameStorageRecovered> {
+        use chess::capacity::budget::CapacityBudget;
+        use chess::capacity::executor::CapacityExecutor;
+        use chess::game::storage_repository::GameStorageRepository;
+        use chess::storage::document_store::StorageDocumentStore;
+        use chess::storage::library_played::StorageLibraryPlayedRepository;
+        let budget = CapacityBudget::new(std::num::NonZeroUsize::new(2).ok_or("empty budget")?)?;
+        let executor = CapacityExecutor::new(budget.clone())?;
+        let store = StorageDocumentStore::open(database.to_path_buf(), budget).await?;
+        let repository = StorageLibraryPlayedRepository::new(store.client(), &executor);
+        let recovered = repository.load(game).await?;
+        drop(repository);
+        store.close().await?;
+        executor.shutdown().await?;
+        recovered.ok_or_else(|| "the restored game is missing".into())
+    }
+}
+
+#[tokio::test]
+async fn a_restored_game_reopens_paused_at_the_backed_up_position_clock_and_revision()
+-> StorageBackupTestResult {
+    use chess::clock::duration::ClockInstant;
+    use chess::game::enums::GameEnumPhase;
+    use chess::game::library_organization::GameLibraryOrganizationTimestamp;
+    use chess::game::storage_repository::{
+        GameStorageContentEdit, GameStorageEnumContentChange, GameStorageEnumEditCause,
+        GameStorageRevision,
+    };
+    let fixture = StorageRestoreFixture::new()?;
+    let database = fixture.database();
+    let session = crate::storage_game_document::StorageGameDocumentFixture::annotated()?;
+    let created = GameStorageEnumContentChange::Changed(GameStorageContentEdit::new(
+        session.revision(),
+        session.revision(),
+        GameStorageEnumEditCause::Created,
+        GameLibraryOrganizationTimestamp::new(10)?,
+    )?);
+    let first =
+        StorageRestoreGameFixture::save(&database, &session, GameStorageRevision::INITIAL, created)
+            .await?;
+    let archive = fixture.archive(BackupEnumCategory::Manual, 60, 1_000)?;
+    let second = StorageRestoreGameFixture::save(
+        &database,
+        &session,
+        first.storage_revision(),
+        GameStorageEnumContentChange::Checkpoint,
+    )
+    .await?;
+    assert!(second.storage_revision().value() > first.storage_revision().value());
+
+    let preview = StorageBackupFixture::inspect(archive.path())?;
+    let safety = fixture.archive(BackupEnumCategory::PreRestore, 61, 2_000)?;
+    fixture.restore(&preview, &safety, 62)?;
+
+    let recovered = StorageRestoreGameFixture::load(&database, session.id()).await?;
+    assert_eq!(recovered.storage_revision(), first.storage_revision());
+    let restored = recovered.session();
+    assert_eq!(restored.id(), session.id());
+    assert_eq!(restored.revision(), session.revision());
+    assert_eq!(restored.live(), session.live());
+    assert_eq!(restored.tree().len(), session.tree().len());
+    assert_eq!(
+        restored.tree().node(restored.live())?.position().fen(),
+        session.tree().node(session.live())?.position().fen()
+    );
+    assert_eq!(restored.phase(), GameEnumPhase::Interrupted);
+    assert!(!restored.clock().is_running());
+    let saved_elapsed = session
+        .clock()
+        .snapshot(ClockInstant::from_millis(2_000)?)?
+        .elapsed();
+    assert_eq!(
+        restored
+            .clock()
+            .snapshot(ClockInstant::from_millis(900_000)?)?
+            .elapsed(),
+        saved_elapsed
+    );
+    let safety_preview = StorageBackupFixture::inspect(safety.path())?;
+    let kept = StorageBackupFixture::payload_scalar(
+        &safety_preview,
+        fixture.directory.path(),
+        "SELECT CAST(count(*) AS TEXT) AS value FROM documents",
+    )?;
+    assert_eq!(kept, "1");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_older_schema_backup_is_migrated_in_the_staged_copy_before_it_replaces_anything()
+-> StorageBackupTestResult {
+    use diesel::connection::SimpleConnection;
+    let fixture = StorageRestoreFixture::new()?;
+    let destination = fixture.database();
+    StorageBackupFixture::write(&destination, 1, r#"{"v":"destination"}"#).await?;
+
+    let old_directory = TempDir::new()?;
+    let old = old_directory.path().join("library.sqlite3");
+    StorageBackupFixture::write(&old, 1, r#"{"v":"old"}"#).await?;
+    let versions = StorageBackupFixture::contexts()?;
+    let newest = versions
+        .get(5)
+        .ok_or("the backup migration is missing")?
+        .clone();
+    {
+        let mut connection = SqliteConnection::establish(&old.to_string_lossy())?;
+        connection.batch_execute(&format!(
+            "DROP TABLE backup_state; DELETE FROM __diesel_schema_migrations WHERE version = '{newest}';"
+        ))?;
+    }
+    let owner = StorageBackupFixture::new()?;
+    let backups = old_directory.path().join("backups");
+    let archive = BackupCreator::create_blocking(
+        owner.request(&old, &backups, BackupEnumCategory::Manual, 70, 1_000),
+        &BackupSpaceNative,
+    )?;
+    assert!(!archive.manifest().schema_versions().contains(&newest));
+    let preview = StorageBackupFixture::inspect(archive.path())?;
+    assert!(preview.findings().iter().any(|finding| matches!(
+        finding,
+        chess::storage::backup::preview::BackupPreviewEnumFinding::OlderSchemaWillMigrate { pending }
+            if pending.contains(&newest)
+    )));
+
+    let safety = fixture.archive(BackupEnumCategory::PreRestore, 71, 2_000)?;
+    fixture.restore(&preview, &safety, 72)?;
+    assert_eq!(StorageRestoreFixture::body(&destination)?, r#"{"v":"old"}"#);
+    let applied = StorageRestoreDatasetFixture::scalar(
+        &destination,
+        "SELECT CAST(count(*) AS TEXT) AS value FROM __diesel_schema_migrations",
+    )?;
+    assert_eq!(applied, versions.len().to_string());
+    let state = StorageRestoreDatasetFixture::scalar(
+        &destination,
+        "SELECT CAST(count(*) AS TEXT) AS value FROM backup_state",
+    )?;
+    assert_eq!(state, "1");
     Ok(())
 }

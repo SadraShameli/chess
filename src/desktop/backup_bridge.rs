@@ -14,6 +14,8 @@ use crate::desktop::backup_commands::{
     DesktopBackupCommandsPrerequisites, DesktopBackupCommandsPreviewHandle,
 };
 use crate::desktop::error::{DesktopEnumFailureCode, DesktopFailure};
+use crate::desktop::file_handle::{DesktopFileEnumSelection, DesktopFileHandleId};
+use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::desktop::profile::DesktopProfileLease;
 use crate::storage::backup::create::BackupSpaceNative;
 use crate::storage::backup::preview::BackupPreviewEnumFinding;
@@ -26,6 +28,10 @@ pub enum DesktopBackupBridgeEnumOperation {
     RetryAutomatic,
     Preview {
         backup: Uuid,
+    },
+    Import {
+        owner: DesktopMessagesEntityId,
+        file: DesktopFileHandleId,
     },
     Restore {
         preview: DesktopBackupCommandsPreviewHandle,
@@ -55,6 +61,7 @@ pub enum DesktopBackupBridgeEnumResult {
 pub struct DesktopBackupBridgeRequest {
     pub received_at: ClockInstant,
     pub operation: DesktopBackupBridgeEnumOperation,
+    pub selection: Option<DesktopFileEnumSelection>,
 }
 
 pub type DesktopBackupBridgeFuture = Pin<
@@ -205,7 +212,27 @@ impl DesktopBackupBridgeProvider for DesktopBackupService {
         let lease = Arc::clone(&self.lease);
         let now_ms = Self::now_ms();
         let operation = request.operation;
+        let selection = request.selection;
         Box::pin(async move {
+            let source = match (&operation, selection) {
+                (DesktopBackupBridgeEnumOperation::Import { .. }, Some(selection)) => {
+                    Some(selection.into_source().map_err(|error| {
+                        DesktopFailure::new(
+                            DesktopEnumFailureCode::FileUnavailable,
+                            error.to_string(),
+                            true,
+                        )
+                    })?)
+                }
+                (DesktopBackupBridgeEnumOperation::Import { .. }, None) => {
+                    return Err(DesktopFailure::new(
+                        DesktopEnumFailureCode::FileUnavailable,
+                        "Select a backup file first".to_owned(),
+                        true,
+                    ));
+                }
+                _ => None,
+            };
             Self::blocking(executor, move || {
                 let mut guard = commands.lock().map_err(|_poisoned| poisoned_error())?;
                 match operation {
@@ -233,6 +260,11 @@ impl DesktopBackupBridgeProvider for DesktopBackupService {
                     DesktopBackupBridgeEnumOperation::Preview { backup } => {
                         let path = guard.find_blocking(backup)?;
                         let (handle, findings) = guard.preview_blocking(&path)?;
+                        Ok(DesktopBackupBridgeEnumResult::Preview { handle, findings })
+                    }
+                    DesktopBackupBridgeEnumOperation::Import { .. } => {
+                        let source = source.ok_or_else(poisoned_error)?;
+                        let (handle, findings) = guard.import_blocking(source, Uuid::new_v4())?;
                         Ok(DesktopBackupBridgeEnumResult::Preview { handle, findings })
                     }
                     DesktopBackupBridgeEnumOperation::Restore {

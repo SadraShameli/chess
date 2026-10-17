@@ -43,12 +43,18 @@ pub enum DesktopFileHandleError {
 #[serde(rename_all = "snake_case")]
 pub enum DesktopFileEnumPurpose {
     ReadFile,
+    BackupArchive,
     WriteFile,
     Directory,
 }
 
 impl DesktopFileEnumPurpose {
-    pub const ALL: [Self; 3] = [Self::ReadFile, Self::WriteFile, Self::Directory];
+    pub const ALL: [Self; 4] = [
+        Self::ReadFile,
+        Self::BackupArchive,
+        Self::WriteFile,
+        Self::Directory,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -99,7 +105,7 @@ impl DesktopFileEnumSelection {
         purpose: DesktopFileEnumPurpose,
     ) -> Result<Self, DesktopFileHandleError> {
         match purpose {
-            DesktopFileEnumPurpose::ReadFile => {
+            DesktopFileEnumPurpose::ReadFile | DesktopFileEnumPurpose::BackupArchive => {
                 let path = path.canonicalize()?;
                 let identity = StorageFileIdentity::capture(&path)?;
                 Ok(Self::Source { path, identity })

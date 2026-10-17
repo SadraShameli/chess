@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -12,15 +14,19 @@ use crate::storage::backup::create::{
 use crate::storage::backup::error::BackupError;
 use crate::storage::backup::journal::BackupRestoreJournal;
 use crate::storage::backup::manifest::{
-    BackupDependency, BackupEnumCategory, BackupEnumPlatform, BackupManifest,
+    BackupDependency, BackupEnumCategory, BackupEnumDependencyKind, BackupEnumPlatform,
+    BackupManifest,
 };
 use crate::storage::backup::preview::{BackupPreview, BackupPreviewContext};
 use crate::storage::backup::restore::{
-    BackupLeaseProof, BackupRestoreOutcome, BackupRestoreRequest, BackupRestorer,
+    BackupDestinationLocation, BackupLeaseProof, BackupRestoreOutcome, BackupRestoreRequest,
+    BackupRestorer,
 };
 use crate::storage::backup::retention::BackupRetention;
 use crate::storage::backup::scheduler::{BackupScheduler, BackupState};
 use crate::storage::connection::StorageConnection;
+use crate::storage::dataset_package::StorageDatasetPackageEnumValidation;
+use crate::storage::dataset_registry::StorageDatasetRegistry;
 use crate::storage::migration::StorageMigrationRunner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +129,7 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
         id: Uuid,
         created_ms: u64,
     ) -> Result<BackupArchive, DesktopBackupCommandsError> {
+        let (dependencies, portable_paths, _locations) = self.dataset_metadata_blocking()?;
         Ok(BackupCreator::create_blocking(
             BackupRequest {
                 database: &self.database,
@@ -130,11 +137,113 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
                 category,
                 id,
                 created_ms,
-                dependencies: self.available_dependencies.clone(),
-                portable_paths: self.portable_paths.clone(),
+                dependencies,
+                portable_paths,
             },
             &self.space,
         )?)
+    }
+
+    fn dataset_metadata_blocking(
+        &self,
+    ) -> Result<
+        (
+            Vec<BackupDependency>,
+            Vec<String>,
+            Vec<BackupDestinationLocation>,
+        ),
+        DesktopBackupCommandsError,
+    > {
+        let mut dependencies = self.available_dependencies.clone();
+        let mut paths = self.portable_paths.clone();
+        let mut locations = Vec::new();
+        let mut connection = StorageConnection::open(&self.database).map_err(BackupError::from)?;
+        let entries =
+            StorageDatasetRegistry::list(connection.diesel()).map_err(BackupError::from)?;
+        for entry in entries.into_iter().filter(|entry| !entry.superseded) {
+            let checksum = entry.checksum.to_string();
+            dependencies.push(BackupDependency {
+                kind: BackupEnumDependencyKind::Dataset,
+                name: format!("{} {}", entry.name, entry.version),
+                digest: Some(checksum.clone()),
+            });
+            if !paths.contains(&entry.location) {
+                paths.push(entry.location.clone());
+            }
+            locations.push(BackupDestinationLocation {
+                name: entry.name,
+                version: entry.version,
+                checksum,
+                location: entry.location,
+                integrity_verified: entry.validation
+                    == StorageDatasetPackageEnumValidation::IntegrityVerified,
+            });
+        }
+        Ok((dependencies, paths, locations))
+    }
+
+    pub fn import_blocking(
+        &mut self,
+        source: impl Read,
+        id: Uuid,
+    ) -> Result<
+        (
+            DesktopBackupCommandsPreviewHandle,
+            Vec<crate::storage::backup::preview::BackupPreviewEnumFinding>,
+        ),
+        DesktopBackupCommandsError,
+    > {
+        fs::create_dir_all(&self.directory).map_err(BackupError::from)?;
+        let partial = self.directory.join(format!("{id}.import"));
+        let limit = BackupManifest::MAX_PAYLOAD_BYTES
+            + u64::try_from(
+                crate::storage::backup::archive::BackupArchiveFormat::MAX_MANIFEST_BYTES,
+            )
+            .unwrap_or(u64::MAX)
+            + 16;
+        let copied = Self::copy_bounded(source, &partial, limit);
+        let inspected = copied.and_then(|()| self.inspect(&partial));
+        let preview = match inspected {
+            Ok(preview) => preview,
+            Err(error) => {
+                drop(fs::remove_file(&partial));
+                return Err(error.into());
+            }
+        };
+        let destination = self
+            .directory
+            .join(BackupCreator::file_name(preview.manifest()));
+        if destination.exists() {
+            fs::remove_file(&partial).map_err(BackupError::from)?;
+        } else {
+            fs::rename(&partial, &destination).map_err(BackupError::from)?;
+        }
+        self.preview_blocking(&destination)
+    }
+
+    fn copy_bounded(source: impl Read, target: &Path, limit: u64) -> Result<(), BackupError> {
+        let mut file = fs::File::create(target)?;
+        let copied = std::io::copy(&mut source.take(limit), &mut file)?;
+        if copied >= limit {
+            return Err(BackupError::InvalidArchive("archive size"));
+        }
+        file.sync_all()?;
+        Ok(())
+    }
+
+    fn inspect(&self, path: &Path) -> Result<BackupPreview, BackupError> {
+        let known = StorageMigrationRunner::embedded_versions()?;
+        let (available, _paths, _locations) = self
+            .dataset_metadata_blocking()
+            .map_err(|_error| BackupError::InvalidArchive("destination registry"))?;
+        BackupPreview::inspect_blocking(
+            path,
+            &BackupPreviewContext {
+                known_schema_versions: &known,
+                destination_platform: BackupEnumPlatform::current(),
+                available_dependencies: &available,
+            },
+        )
     }
 
     pub fn list_blocking(
@@ -159,15 +268,7 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
         ),
         DesktopBackupCommandsError,
     > {
-        let known = StorageMigrationRunner::embedded_versions().map_err(BackupError::from)?;
-        let preview = BackupPreview::inspect_blocking(
-            path,
-            &BackupPreviewContext {
-                known_schema_versions: &known,
-                destination_platform: BackupEnumPlatform::current(),
-                available_dependencies: &self.available_dependencies,
-            },
-        )?;
+        let preview = self.inspect(path)?;
         let handle = DesktopBackupCommandsPreviewHandle {
             id: preview.id(),
             digest: preview.digest(),
@@ -196,19 +297,10 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
         if preview.digest() != handle.digest {
             return Err(BackupError::PreviewMismatch.into());
         }
-        let safety = BackupCreator::create_blocking(
-            BackupRequest {
-                database: &self.database,
-                directory: &self.directory,
-                category: BackupEnumCategory::PreRestore,
-                id: safety_id,
-                created_ms: now_ms,
-                dependencies: self.available_dependencies.clone(),
-                portable_paths: self.portable_paths.clone(),
-            },
-            &self.space,
-        )?;
+        let safety = self.create_blocking(BackupEnumCategory::PreRestore, safety_id, now_ms)?;
+        let (_dependencies, _paths, locations) = self.dataset_metadata_blocking()?;
         let outcome = BackupRestorer::restore_blocking(BackupRestoreRequest {
+            locations: &locations,
             lease,
             database: &self.database,
             preview,
@@ -315,7 +407,9 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
             return Err(BackupError::PreviewMismatch.into());
         }
         let safety = self.create_blocking(BackupEnumCategory::PreRestore, safety_id, now_ms)?;
+        let (_dependencies, _paths, locations) = self.dataset_metadata_blocking()?;
         let outcome = BackupRestorer::stage_for_restart_blocking(BackupRestoreRequest {
+            locations: &locations,
             lease,
             database: &self.database,
             preview,

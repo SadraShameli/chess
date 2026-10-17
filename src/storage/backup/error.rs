@@ -11,6 +11,8 @@ pub enum BackupError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Storage(#[from] StorageDocumentError),
+    #[error(transparent)]
+    Datasets(#[from] crate::storage::dataset_registry::StorageDatasetRegistryError),
     #[error("The backup database cannot be opened: {0}")]
     Connection(#[from] diesel::ConnectionError),
     #[error("The backup database operation failed: {0}")]

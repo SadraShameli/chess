@@ -79,6 +79,7 @@ impl DesktopBackupBridgeFixture {
             .execute(DesktopBackupBridgeRequest {
                 received_at: ClockInstant::from_nanos(0),
                 operation,
+                selection: None,
             })
             .await
     }

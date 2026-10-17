@@ -24,8 +24,13 @@ impl PresentationSettingsRestore {
                 "This backup was made on {archive:?} and will be restored on {destination:?}."
             ),
             BackupPreviewEnumFinding::DestinationLocationsKept { stored } => format!(
-                "{} stored locations are kept as this computer's defaults.",
-                stored.len()
+                "{} stored locations ({}) are replaced by this computer's own locations where they exist.",
+                stored.len(),
+                stored.first().map_or("none", String::as_str)
+            ),
+            BackupPreviewEnumFinding::DatasetReferenced(dependency) => format!(
+                "The backup references {}; its files are not part of the backup.",
+                dependency.name
             ),
             BackupPreviewEnumFinding::DependencyUnavailable(dependency) => format!(
                 "{:?} {} is not installed here; the related options will be unavailable.",

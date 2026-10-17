@@ -13,8 +13,11 @@ use crate::desktop::backup_commands::{
     DesktopBackupCommandsPrerequisites, DesktopBackupCommandsPreviewHandle,
 };
 use crate::desktop::dto::DesktopEnumValue;
+use crate::desktop::file_handle::DesktopFileEnumPurpose;
+use crate::desktop::identity::DesktopRevision;
 use crate::desktop::messages::{
-    DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult, DesktopRequest,
+    DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
+    DesktopRequest,
 };
 use crate::presentation::settings::backup::{
     PresentationSettingsBackup, PresentationSettingsBackupEnumIntent,
@@ -24,9 +27,16 @@ use crate::presentation::settings::restore::{
 };
 use crate::storage::backup::preview::BackupPreviewEnumFinding;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PresentationAppBackupEnumKind {
+    Operation,
+    FileSelect,
+}
+
 struct PresentationAppBackupPending {
     request: DesktopRequest,
     receipt: Option<DesktopApplicationReceipt>,
+    kind: PresentationAppBackupEnumKind,
 }
 
 pub(in crate::presentation::app) struct PresentationAppBackup {
@@ -39,6 +49,7 @@ pub(in crate::presentation::app) struct PresentationAppBackup {
     notice: Option<String>,
     pending: Option<PresentationAppBackupPending>,
     requested: bool,
+    file_owner: DesktopMessagesEntityId,
 }
 
 impl PresentationAppBackup {
@@ -50,6 +61,7 @@ impl PresentationAppBackup {
             notice: None,
             pending: None,
             requested: false,
+            file_owner: DesktopMessagesEntityId::new(),
         }
     }
 
@@ -62,17 +74,45 @@ impl PresentationAppBackup {
         port: &DesktopApplicationPort<C, W>,
         operation: DesktopBackupBridgeEnumOperation,
     ) {
+        self.submit_command(
+            port,
+            DesktopCommand::new(DesktopEnumCommand::Backup(operation), None),
+            PresentationAppBackupEnumKind::Operation,
+        );
+    }
+
+    fn select_archive_file<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) {
+        self.submit_command(
+            port,
+            DesktopCommand::new(
+                DesktopEnumCommand::FileSelect {
+                    owner: self.file_owner,
+                    purpose: DesktopFileEnumPurpose::BackupArchive,
+                },
+                Some(DesktopRevision::ZERO),
+            ),
+            PresentationAppBackupEnumKind::FileSelect,
+        );
+    }
+
+    fn submit_command<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+        command: DesktopCommand,
+        kind: PresentationAppBackupEnumKind,
+    ) {
         if self.pending.is_some() {
             return;
         }
-        match port.request(DesktopCommand::new(
-            DesktopEnumCommand::Backup(operation),
-            None,
-        )) {
+        match port.request(command) {
             Ok(request) => {
                 self.pending = Some(PresentationAppBackupPending {
                     request,
                     receipt: None,
+                    kind,
                 })
             }
             Err(error) => self.notice = Some(error.to_string()),
@@ -107,8 +147,22 @@ impl PresentationAppBackup {
         let Some(response) = response else {
             return;
         };
+        let kind = pending.kind;
         self.pending = None;
         match response {
+            DesktopMessagesEnumResult::Value {
+                value: DesktopEnumValue::FileSelect(selection),
+                ..
+            } if kind == PresentationAppBackupEnumKind::FileSelect => match selection {
+                Some(file) => self.submit(
+                    port,
+                    DesktopBackupBridgeEnumOperation::Import {
+                        owner: self.file_owner,
+                        file,
+                    },
+                ),
+                None => self.notice = Some("No backup file was selected".to_owned()),
+            },
             DesktopMessagesEnumResult::Value {
                 value: DesktopEnumValue::Backup(result),
                 ..
@@ -196,6 +250,9 @@ impl PresentationAppBackup {
                     } else {
                         self.notice = Some("Select a backup in the list first".to_owned());
                     }
+                }
+                Some(PresentationSettingsBackupEnumIntent::ImportArchive) => {
+                    self.select_archive_file(port)
                 }
                 Some(PresentationSettingsBackupEnumIntent::ChooseDestination) => {
                     self.notice = Some(

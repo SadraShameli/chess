@@ -191,6 +191,12 @@ impl DesktopNativeDialogsBackend for DesktopNativeDialogsRfd {
         let parent = self.parent.clone();
         let operation = match purpose {
             DesktopFileEnumPurpose::ReadFile => Self::operation(parent, builder.pick_file()),
+            DesktopFileEnumPurpose::BackupArchive => Self::operation(
+                parent,
+                builder
+                    .add_filter("Chess backup", &["chessbackup"])
+                    .pick_file(),
+            ),
             DesktopFileEnumPurpose::WriteFile => Self::operation(parent, builder.save_file()),
             DesktopFileEnumPurpose::Directory => Self::operation(parent, builder.pick_folder()),
         };

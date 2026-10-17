@@ -19,13 +19,14 @@ use crate::desktop::application::{
     DesktopApplication, DesktopApplicationError, DesktopApplicationWakeProvider,
     DesktopApplicationWork,
 };
+use crate::desktop::backup_bridge::{
+    DesktopBackupBridgeEnumOperation, DesktopBackupBridgeEnumResult, DesktopBackupBridgeProvider,
+    DesktopBackupBridgeRequest,
+};
 use crate::desktop::coordinator::editor::{
     DesktopCoordinatorEditor, DesktopCoordinatorEditorPending,
 };
 use crate::desktop::coordinator::library::DesktopCoordinatorLibrary;
-use crate::desktop::backup_bridge::{
-    DesktopBackupBridgeEnumResult, DesktopBackupBridgeProvider, DesktopBackupBridgeRequest,
-};
 use crate::desktop::dto::{DesktopBootstrapSnapshot, DesktopEnumEvent, DesktopEnumValue};
 use crate::desktop::engine_bridge::{
     DesktopEngineBridgeEnumResult, DesktopEngineBridgeProvider, DesktopEngineBridgeRequest,
@@ -520,7 +521,7 @@ where
             }
             DesktopEnumCommand::Engine(operation) => self.dispatch_engine(work, operation).await?,
             DesktopEnumCommand::Backup(operation) => {
-                let failure = if self.backup.is_none() {
+                let mut failure = if self.backup.is_none() {
                     Some(DesktopFailure::new(
                         DesktopEnumFailureCode::ResourceRefusal,
                         "The backup service is unavailable".to_owned(),
@@ -529,6 +530,34 @@ where
                 } else {
                     None
                 };
+                let mut selection = None;
+                if failure.is_none()
+                    && let DesktopBackupBridgeEnumOperation::Import { owner, file } = &operation
+                {
+                    let now = self.clock.now()?;
+                    let selected = self
+                        .files
+                        .as_mut()
+                        .ok_or(DesktopFileHandleError::Saturated)
+                        .and_then(|files| {
+                            files.registry.consume(
+                                *file,
+                                owner.file_handle_owner(),
+                                DesktopFileEnumPurpose::BackupArchive,
+                                now,
+                            )
+                        });
+                    match selected {
+                        Ok(selected) => selection = Some(selected),
+                        Err(error) => {
+                            failure = Some(DesktopFailure::new(
+                                DesktopEnumFailureCode::FileUnavailable,
+                                error.to_string(),
+                                true,
+                            ))
+                        }
+                    }
+                }
                 match Self::retry(|| self.application.begin_commit(&work)).await {
                     Ok(()) => {}
                     Err(DesktopApplicationError::CancellationRequested) => {
@@ -541,6 +570,7 @@ where
                     (Some(backup), None) => Some(backup.execute(DesktopBackupBridgeRequest {
                         received_at: work.receipt().received_at(),
                         operation,
+                        selection,
                     })),
                     (Some(_), Some(_)) | (None, _) => None,
                 };

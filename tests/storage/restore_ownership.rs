@@ -76,6 +76,7 @@ async fn a_refused_restore_keeps_the_lease_the_exclusion_and_every_original_byte
     let outside = fixture.directory.path().join("elsewhere.sqlite3");
     fs::write(&outside, b"other")?;
     let request = BackupRestoreRequest {
+        locations: &[],
         lease: &*fixture.lease,
         database: &outside,
         preview: &preview,

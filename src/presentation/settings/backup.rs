@@ -10,6 +10,7 @@ pub enum PresentationSettingsBackupEnumIntent {
     RetryAutomatic,
     ChooseDestination,
     SelectArchive,
+    ImportArchive,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +95,9 @@ impl PresentationSettingsBackup {
             }
             if ui.button("Restore from backup").clicked() {
                 intent = Some(PresentationSettingsBackupEnumIntent::SelectArchive);
+            }
+            if ui.button("Restore from a backup file").clicked() {
+                intent = Some(PresentationSettingsBackupEnumIntent::ImportArchive);
             }
         });
         for row in &status.rows {

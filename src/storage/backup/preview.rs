@@ -7,7 +7,9 @@ use uuid::Uuid;
 use crate::package::digest::PackageDigest;
 use crate::storage::backup::archive::BackupArchiveFormat;
 use crate::storage::backup::error::BackupError;
-use crate::storage::backup::manifest::{BackupDependency, BackupEnumPlatform, BackupManifest};
+use crate::storage::backup::manifest::{
+    BackupDependency, BackupEnumDependencyKind, BackupEnumPlatform, BackupManifest,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupPreviewEnumFinding {
@@ -19,6 +21,7 @@ pub enum BackupPreviewEnumFinding {
         stored: Vec<String>,
     },
     DependencyUnavailable(BackupDependency),
+    DatasetReferenced(BackupDependency),
     OlderSchemaWillMigrate {
         pending: Vec<String>,
     },
@@ -94,6 +97,11 @@ impl BackupPreview {
             });
         }
         for dependency in manifest.dependencies() {
+            if dependency.kind == BackupEnumDependencyKind::Dataset {
+                findings.push(BackupPreviewEnumFinding::DatasetReferenced(
+                    dependency.clone(),
+                ));
+            }
             if !context.available_dependencies.contains(dependency) {
                 findings.push(BackupPreviewEnumFinding::DependencyUnavailable(
                     dependency.clone(),

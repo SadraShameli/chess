@@ -442,7 +442,7 @@ impl PresentationEnginePanelsComposition {
             let path = match purpose {
                 DesktopFileEnumPurpose::WriteFile => self.directory.path().join("diagnostic.json"),
                 DesktopFileEnumPurpose::Directory => self.directory.path().to_path_buf(),
-                DesktopFileEnumPurpose::ReadFile => {
+                DesktopFileEnumPurpose::ReadFile | DesktopFileEnumPurpose::BackupArchive => {
                     return Err("this fixture does not select source files".into());
                 }
             };
