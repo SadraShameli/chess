@@ -21,6 +21,7 @@ use crate::puzzle::persistence::PuzzlePersistenceStorageRevision;
 use crate::puzzle::session::{PuzzleSessionContext, PuzzleSessionId};
 use crate::puzzle::summary::PuzzleSummary;
 use crate::puzzle::timer::PuzzleTimerEnumPauseReason;
+use crate::storage::dataset_registry::StorageDatasetRegistryError;
 use crate::storage::puzzle_repository::{StoragePuzzleError, StoragePuzzleRunPage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +155,8 @@ pub enum DesktopPuzzleServiceError {
     Cancelled,
     #[error(transparent)]
     History(#[from] PuzzleHistoryError),
+    #[error(transparent)]
+    Datasets(#[from] StorageDatasetRegistryError),
     #[error("The saved puzzle run {0:?} is missing")]
     Missing(PuzzleSessionId),
     #[error("The saved puzzle run {id:?} changed from revision {expected:?} to {actual:?}")]

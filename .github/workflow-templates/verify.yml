@@ -1,0 +1,33 @@
+name: verify
+on:
+  pull_request:
+    branches: [release]
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: macos-arm64
+          - os: windows-2022
+            target: windows-x86_64
+          - os: ubuntu-22.04
+            target: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@0000000000000000000000000000000000000000
+        with:
+          persist-credentials: false
+      - run: make verify
+      - uses: actions/upload-artifact@0000000000000000000000000000000000000000
+        with:
+          name: verify-${{ matrix.target }}
+          path: target/verify-report
+          retention-days: 1

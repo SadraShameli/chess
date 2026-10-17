@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::desktop::error::DesktopError;
@@ -31,7 +31,7 @@ pub enum DesktopProfileInstallationError {
     NonstableVersion,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopProfileInstallationEnumOutcome {
     Succeeded,
@@ -39,7 +39,7 @@ pub enum DesktopProfileInstallationEnumOutcome {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DesktopProfileInstallationEnumState {
     Prepared,
@@ -49,7 +49,7 @@ pub enum DesktopProfileInstallationEnumState {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DesktopProfileInstallationWireIntent {
     profile_id: String,
@@ -60,6 +60,16 @@ struct DesktopProfileInstallationWireIntent {
     safety_backup_id: String,
     data_schema: NonZeroU32,
     state: DesktopProfileInstallationEnumState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopProfileInstallationSpec {
+    pub owner_generation: DesktopRequestId,
+    pub helper_generation: DesktopRequestId,
+    pub package_digest: PackageDigest,
+    pub package_version: Version,
+    pub safety_backup_id: DesktopRequestId,
+    pub data_schema: NonZeroU32,
 }
 
 #[derive(Debug)]
@@ -100,6 +110,55 @@ impl DesktopProfileInstallationIntent {
                 }
                 Ok(DesktopProfileInstallationEnumStartup::Blocked(intent))
             }
+        }
+    }
+
+    pub fn read_current(
+        lease: &DesktopProfileLease,
+    ) -> Result<Option<Self>, DesktopProfileInstallationError> {
+        match Self::inspect(lease)? {
+            DesktopProfileInstallationEnumStartup::Normal => Ok(None),
+            DesktopProfileInstallationEnumStartup::Blocked(intent) => Ok(Some(intent)),
+        }
+    }
+
+    pub fn write(
+        lease: &DesktopProfileLease,
+        spec: &DesktopProfileInstallationSpec,
+        state: DesktopProfileInstallationEnumState,
+    ) -> Result<(), DesktopProfileInstallationError> {
+        if spec.owner_generation == spec.helper_generation {
+            return Err(DesktopProfileInstallationError::HelperGenerationMismatch);
+        }
+        if !spec.package_version.pre.is_empty() || !spec.package_version.build.is_empty() {
+            return Err(DesktopProfileInstallationError::NonstableVersion);
+        }
+        let wire = DesktopProfileInstallationWireIntent {
+            profile_id: lease.identity().profile_id().to_string(),
+            owner_generation: String::from(spec.owner_generation),
+            helper_generation: String::from(spec.helper_generation),
+            package_digest: String::from(spec.package_digest),
+            package_version: spec.package_version.to_string(),
+            safety_backup_id: String::from(spec.safety_backup_id),
+            data_schema: spec.data_schema,
+            state,
+        };
+        DesktopProfileControlRecord::replace(
+            lease,
+            DesktopProfileControlRecordEnumKind::Installation,
+            &wire,
+        )?;
+        Ok(())
+    }
+
+    pub fn spec(&self) -> DesktopProfileInstallationSpec {
+        DesktopProfileInstallationSpec {
+            owner_generation: self.owner_generation,
+            helper_generation: self.helper_generation,
+            package_digest: self.package_digest,
+            package_version: self.package_version.clone(),
+            safety_backup_id: self.safety_backup_id,
+            data_schema: self.data_schema,
         }
     }
 

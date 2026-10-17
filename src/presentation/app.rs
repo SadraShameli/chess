@@ -45,6 +45,8 @@ use crate::presentation::app::editor::{
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumNavigation,
 };
+use crate::presentation::audio::observer::PresentationAudioObserver;
+use crate::presentation::audio::router::PresentationAudioEvent;
 use crate::presentation::settings::controller::{
     PresentationSettingsConnection, PresentationSettingsController, PresentationSettingsOutcome,
 };
@@ -298,6 +300,7 @@ pub struct PresentationApp {
     quit_retry_frame: Option<u64>,
     theme_initialized: bool,
     settings: PresentationSettingsController,
+    audio_observer: PresentationAudioObserver,
     settings_open: bool,
     settings_toggle_frame: Option<u64>,
     markings_identity: Option<(PresentationAppEnumWorkspace, Option<GameId>, Option<GameId>)>,
@@ -359,6 +362,7 @@ impl PresentationApp {
             quit_retry_frame: None,
             theme_initialized: false,
             settings,
+            audio_observer: PresentationAudioObserver::default(),
             settings_open: false,
             settings_toggle_frame: None,
             markings_identity: None,
@@ -840,6 +844,15 @@ impl PresentationApp {
 
     pub const fn preferences(&self) -> &DesktopPreferences {
         self.settings.effective()
+    }
+
+    pub fn audio_events(&mut self) -> Vec<PresentationAudioEvent> {
+        self.audio_observer
+            .observe(self.games.iter().map(|game| &game.snapshot))
+    }
+
+    pub const fn selected_game_id(&self) -> Option<GameId> {
+        self.selected_game
     }
 
     pub fn mount_settings(&mut self, connection: PresentationSettingsConnection) {
@@ -1459,6 +1472,8 @@ impl PresentationApp {
             self.quality_mode_changed = true;
         }
         let outcome = PresentationSettingsView::show(ui, &mut self.settings);
+        ui.separator();
+        self.study.show_panels(ui);
         self.apply_settings_outcome(&ui.ctx().clone(), outcome);
     }
 

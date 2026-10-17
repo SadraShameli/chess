@@ -45,3 +45,6 @@ mod presentation_settings;
 mod presentation_shortcuts;
 #[path = "presentation/audio.rs"]
 mod presentation_audio;
+
+#[path = "presentation/update.rs"]
+mod presentation_update;

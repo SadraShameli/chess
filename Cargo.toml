@@ -9,6 +9,10 @@ default-run = "chess"
 name = "chess-tools"
 path = "tools/main.rs"
 
+[[bin]]
+name = "chess-update-helper"
+path = "tools/packaging/update_helper.rs"
+
 [[test]]
 name = "native"
 path = "tests/native.rs"
@@ -24,7 +28,7 @@ required-features = ["asset-tools"]
 asset-tools = ["dep:boolmesh", "dep:earcutr", "dep:gltf-json"]
 
 [dependencies]
-bevy = { version = "=0.20.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_gltf", "bevy_pbr", "bevy_winit", "png", "scene", "mesh_picking", "mouse", "keyboard", "reflect_auto_register", "tonemapping_luts", "zstd_rust", "x11", "wayland", "accesskit_unix"] }
+bevy = { version = "=0.20.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_gltf", "bevy_pbr", "bevy_winit", "bevy_audio", "wav", "png", "scene", "mesh_picking", "mouse", "keyboard", "reflect_auto_register", "tonemapping_luts", "zstd_rust", "x11", "wayland", "accesskit_unix"] }
 bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "accesskit", "manage_clipboard"] }
 boolmesh = { version = "=0.2.1", default-features = false, optional = true }
 csv-core = "=0.1.13"
@@ -37,10 +41,13 @@ hashbrown = { version = "=0.16.1", default-features = false, features = ["defaul
 icu_casemap = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 interprocess = { version = "=2.4.5", default-features = false, features = ["tokio"] }
+keyring = "=4.2.0"
+minisign-verify = "=0.3.0"
 pgn-reader = "=0.29.1"
 rand = "=0.10.3"
 rayon = "=1.12.0"
 rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls"] }
 same-file = "=1.0.6"
 libsqlite3-sys = { version = "=0.38.2", features = ["bundled"] }
 semver = "=1.0.28"
@@ -52,6 +59,7 @@ shakmaty = "=0.30.2"
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tokio = { version = "=1.53.3", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+url = "=2.5.8"
 uuid = { version = "=1.28.0", features = ["serde", "v4"] }
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
@@ -165,4 +173,8 @@ strip = "none"
 
 [[bench]]
 name = "storage"
+harness = false
+
+[[bench]]
+name = "opening"
 harness = false

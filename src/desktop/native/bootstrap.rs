@@ -115,6 +115,7 @@ use crate::presentation::app::editor::{
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::presentation::settings::controller::PresentationSettingsConnection;
 use crate::desktop::preferences_store::DesktopPreferencesStore;
+use crate::engine::configuration::EngineConfigurationOverrides;
 use crate::storage::preferences_repository::StoragePreferencesRepository;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::desktop::layout::DesktopLayout;
@@ -763,8 +764,28 @@ impl DesktopNativeBootstrapSupervisor {
             .workers()
             .checked_sub(CapacityPhase::STEADY_RESERVED_WORKERS)
             .ok_or(CapacityBudgetError::InvalidAllocation)?;
+        let preferences_client = self
+            .lifecycle
+            .services
+            .lock()
+            .await
+            .storage
+            .as_ref()
+            .ok_or(DesktopNativeBootstrapError::HostServices)?
+            .client();
+        let preferences_store = Arc::new(DesktopPreferencesStore::new(
+            StoragePreferencesRepository::new(preferences_client),
+            tokio::runtime::Handle::current(),
+        ));
+        let preferences_loaded = preferences_store.load().await;
+        let saved_preferences = preferences_loaded.preferences();
         let policy =
-            DesktopNativeGameResourcesPolicy::automatic(workload_workers, available_memory)?;
+            DesktopNativeGameResourcesPolicy::automatic(workload_workers, available_memory)?
+                .with_overrides(EngineConfigurationOverrides {
+                    threads: saved_preferences.engine_threads(),
+                    hash_mib: saved_preferences.engine_hash_mib(),
+                    move_overhead_ms: saved_preferences.engine_move_overhead_ms(),
+                })?;
         let engine_resources = Arc::new(DesktopNativeGameResources::new(
             DesktopNativeGameResourcesOptions {
                 budget: self.budget.clone(),
@@ -786,11 +807,6 @@ impl DesktopNativeBootstrapSupervisor {
             .ok_or(DesktopNativeBootstrapError::HostServices)?
             .client();
         let layout_client = storage_client.clone();
-        let preferences_store = Arc::new(DesktopPreferencesStore::new(
-            StoragePreferencesRepository::new(storage_client.clone()),
-            tokio::runtime::Handle::current(),
-        ));
-        let preferences_loaded = preferences_store.load().await;
         let puzzles = DesktopNativePuzzleService::new(DesktopNativePuzzleServiceOptions {
             repository: StoragePuzzleRepository::new(storage_client.clone()),
             executor: Arc::clone(&executor),

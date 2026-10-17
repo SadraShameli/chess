@@ -14,6 +14,10 @@ use uuid::Uuid;
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::history::PuzzleHistoryAuthorization;
+use crate::storage::dataset_registry::{
+    StorageDatasetRegistry, StorageDatasetRegistryEnumRequest, StorageDatasetRegistryEnumResponse,
+    StorageDatasetRegistryError,
+};
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
 use crate::storage::connection::StorageConnection;
@@ -175,6 +179,13 @@ enum StorageDocumentEnumCommand {
         id: PuzzleSessionId,
         _admission: OwnedSemaphorePermit,
         result: oneshot::Sender<Result<Option<StoragePuzzleRecovered>, StoragePuzzleError>>,
+    },
+    DatasetRegistry {
+        request: StorageDatasetRegistryEnumRequest,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<
+            Result<StorageDatasetRegistryEnumResponse, StorageDatasetRegistryError>,
+        >,
     },
     PuzzleDelete {
         authorization: PuzzleHistoryAuthorization,
@@ -461,6 +472,20 @@ impl StorageDocumentClient {
         receiver.await?
     }
 
+    pub(crate) async fn dataset_registry(
+        &self,
+        request: StorageDatasetRegistryEnumRequest,
+    ) -> Result<StorageDatasetRegistryEnumResponse, StorageDatasetRegistryError> {
+        let admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::DatasetRegistry {
+            request,
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub(crate) async fn delete_puzzle_history(
         &self,
         authorization: PuzzleHistoryAuthorization,
@@ -716,6 +741,17 @@ impl StorageDocumentActor {
                 } => {
                     let outcome =
                         StoragePuzzleTransaction::load(self.connection.diesel(), id, &self.memory);
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
+                    }
+                }
+                StorageDocumentEnumCommand::DatasetRegistry {
+                    request,
+                    _admission,
+                    result,
+                } => {
+                    let outcome = StorageDatasetRegistry::execute(self.connection.diesel(), request);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);

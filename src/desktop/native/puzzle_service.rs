@@ -35,6 +35,9 @@ use crate::puzzle::history::PuzzleHistoryAuthorization;
 use crate::puzzle::run::PuzzleRunEnumStatus;
 use crate::puzzle::session::PuzzleSessionId;
 use crate::puzzle::timer::PuzzleTimerEnumPauseReason;
+use crate::storage::dataset_registry::{
+    StorageDatasetLeaseId, StorageDatasetRegistryEnumHolder, StorageDatasetRegistryEnumKind,
+};
 use crate::storage::puzzle_repository::{StoragePuzzleRecovered, StoragePuzzleRepository};
 
 pub struct DesktopNativePuzzleServiceOptions<C, W, S> {
@@ -189,6 +192,7 @@ enum DesktopNativePuzzleServiceEnumPrepared {
     Owner {
         commands: Box<DesktopPuzzleCommands<StoragePuzzleRepository>>,
         failure: Option<Arc<DesktopPuzzleServiceError>>,
+        leases: Vec<StorageDatasetLeaseId>,
     },
     Ended(DesktopPuzzleServiceEnumResult),
 }
@@ -267,6 +271,7 @@ struct DesktopNativePuzzleServiceOwner<C, W, S> {
     replies: Vec<DesktopNativePuzzleServiceReply>,
     cleanup: Option<DesktopNativePuzzleServiceEnumCleanup>,
     runtime_cleanup: Option<DesktopPuzzleBridgeReceipt<()>>,
+    dataset_leases: Vec<StorageDatasetLeaseId>,
     failure: Option<Arc<DesktopPuzzleServiceError>>,
     activity: DesktopPuzzleServiceEnumActivity,
     closing: bool,
@@ -321,6 +326,7 @@ where
                 replies: Vec::new(),
                 cleanup: None,
                 runtime_cleanup: None,
+                dataset_leases: Vec::new(),
                 failure: None,
                 activity: DesktopPuzzleServiceEnumActivity::Idle,
                 closing: false,
@@ -609,6 +615,7 @@ where
             }
         };
         let repository = self.options.repository.clone();
+        let datasets = repository.datasets();
         let executor = Arc::clone(&self.options.executor);
         let clock = Arc::clone(&self.options.clock);
         self.activity = DesktopPuzzleServiceEnumActivity::Loading { id };
@@ -637,7 +644,25 @@ where
                         Self::prepare(recovered, repository, now, &cancellation)
                     })
                     .await?;
-                job.join().await?
+                match job.join().await?? {
+                    DesktopNativePuzzleServiceEnumPrepared::Owner {
+                        commands, failure, ..
+                    } => {
+                        let leases = datasets
+                            .lease_active(
+                                StorageDatasetRegistryEnumKind::Puzzles,
+                                StorageDatasetRegistryEnumHolder::Run,
+                                id.value().get().to_string(),
+                            )
+                            .await?;
+                        Ok(DesktopNativePuzzleServiceEnumPrepared::Owner {
+                            commands,
+                            failure,
+                            leases,
+                        })
+                    }
+                    ended @ DesktopNativePuzzleServiceEnumPrepared::Ended(_) => Ok(ended),
+                }
             }
             .await
             .map_err(Arc::new);
@@ -689,6 +714,7 @@ where
         Ok(DesktopNativePuzzleServiceEnumPrepared::Owner {
             commands: Box::new(commands),
             failure,
+            leases: Vec::new(),
         })
     }
 
@@ -700,7 +726,12 @@ where
         ),
     ) {
         match result {
-            Ok(DesktopNativePuzzleServiceEnumPrepared::Owner { commands, failure }) => {
+            Ok(DesktopNativePuzzleServiceEnumPrepared::Owner {
+                commands,
+                failure,
+                leases,
+            }) => {
+                self.dataset_leases = leases;
                 let (runtime, port) = DesktopNativePuzzleRuntime::new(
                     *commands,
                     Arc::clone(&self.options.clock),
@@ -1055,6 +1086,15 @@ where
     }
 
     fn clear_selected(&mut self) {
+        let leases = std::mem::take(&mut self.dataset_leases);
+        if !leases.is_empty() {
+            let datasets = self.options.repository.datasets();
+            drop(self.options.runtime.spawn(async move {
+                if let Err(error) = datasets.release(leases).await {
+                    drop(error);
+                }
+            }));
+        }
         self.retained = None;
         self.port = None;
         let (_, snapshots) = watch::channel(None);

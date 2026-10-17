@@ -47,3 +47,67 @@ unverified until that file says otherwise.
   release tag of the AppImage toolchain; rolling and prerelease tags are refused.
 - Check a staged package with `chess-tools package-verify <platform> <directory>` and
   the notices with `chess-tools notices-check`.
+
+## Current implementation state
+
+
+This describes what works in the current source tree. Packaged installers, the
+signed update channel and the production starter data package are not available
+yet, so installation today means building from source.
+
+## Build and run
+
+- `make run` builds and starts the optimized application.
+- `make debug` starts a debuggable build.
+- `make run ARGS="--profile-directory <path>"` keeps all data in an isolated
+  directory, which is the safest way to try the application.
+- `make verify` runs the complete verification sequence.
+
+## Study data
+
+The application never downloads or updates datasets by itself. Opening
+statistics, the reference book and puzzles read only data you install.
+
+- Settings, Data lists the packaged starter sources and every installed dataset
+  with its source, version, license and record count.
+- Import Games (PGN), Import Opening Book (Polyglot) and Import Puzzles (CSV)
+  each show a preview with accepted and rejected counts and the available disk
+  space. Nothing is installed until you confirm.
+- Replacing a dataset installs the new version and keeps the old one until the
+  runs, queries and history that use it finish.
+- Deleting a dataset asks for confirmation and is refused while active work uses
+  it. Saved history keeps its game and puzzle snapshots.
+- If installed starter data fails its integrity check, only the affected feature
+  (explorer, reference book or puzzles) is unavailable. Your library, history
+  and unaffected play continue, and no partial statistics are shown.
+
+Reference books are Standard chess only. In Chess960 and DFRC the book shows an
+unsupported state instead of guessing a hash convention.
+
+## Puzzle history
+
+Saved puzzle runs are listed under Puzzles. Delete Run and Delete All History ask
+for confirmation. A run that is in progress cannot be deleted. Puzzle datasets
+are kept when history is deleted.
+
+## Preparing starter data (developers)
+
+The starter data is prepared offline with `chess-tools`:
+
+- `data-verify <sources.json> <cache-directory>` checks the frozen CC0 sources.
+  It refuses until each source's SHA-256 is recorded in
+  `resources/datasets/sources.json` and the cached file matches.
+- `data-select-games <pgn> <output-directory>` and
+  `data-select-puzzles <csv> <output-directory> <source> <version>` apply the
+  subset selection policy to uncompressed input. Decompress `.zst` downloads
+  first.
+- `data-build <selection-directory> <output-directory>` applies the installed
+  byte caps and records every reduction.
+- `benchmark-evaluate <measurements.json>` checks collected latency, frame,
+  startup and idle measurements against the acceptance thresholds.
+
+## Not available yet
+
+Packaged installers for Windows, macOS and Linux, the private update channel,
+backup and restore of datasets, and measured performance figures. These are
+tracked in the specification evidence and are not claimed here.

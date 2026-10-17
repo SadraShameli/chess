@@ -17,6 +17,7 @@ use crate::puzzle::persistence::{
 };
 use crate::puzzle::session::PuzzleSessionId;
 use crate::puzzle::storage_repository::{PuzzleStorageRepository, PuzzleStorageWrite};
+use crate::storage::dataset_registry::StorageDatasetRepository;
 use crate::storage::document_store::{
     StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
 };
@@ -201,6 +202,10 @@ impl StoragePuzzleRepository {
 
     pub const fn new(client: StorageDocumentClient) -> Self {
         Self { client }
+    }
+
+    pub fn datasets(&self) -> StorageDatasetRepository {
+        StorageDatasetRepository::new(self.client.clone())
     }
 
     pub fn begin_save(

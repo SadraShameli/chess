@@ -8,13 +8,30 @@ use crate::desktop::opening_commands::{
     DesktopOpeningCommands, DesktopOpeningCommandsError, DesktopOpeningExplorerView,
 };
 use crate::desktop::report_commands::{DesktopReportCommands, DesktopReportCommandsError};
-use crate::game::enums::GameId;
+use crate::capacity::lease::CapacityLease;
+use crate::engine::process_provider::EngineProcess;
+use crate::engine::search::session::{
+    EngineSearchSession, EngineSearchSessionEnumEvent, EngineSearchSessionError,
+};
+use crate::engine::session::EngineSession;
+use crate::game::enums::{GameId, GameMoveId, GameRevision};
+use crate::game::tree::GameTree;
+use crate::report::configuration::{ReportJobBudget, ReportJobConfiguration, ReportJobConfigurationError};
+use crate::report::job::{ReportJobError, ReportJobId};
+use crate::report::scheduler::ReportSchedulerError;
+use crate::report::scheduler::policy::ReportSchedulerEnumDecision;
+use crate::report::scoring::ReportScoringEnumPolicyVersion;
+use crate::report::source::ReportJobSourceLimits;
 use crate::report::job::ReportJob;
 use crate::report::scheduler::ReportScheduler;
 use crate::report::scheduler::policy::{ReportSchedulerDemand, ReportSchedulerEnumActivity};
 use crate::report::service::{ReportService, ReportServiceEnumOutcome};
 use crate::report::source::{ReportJobSource, ReportJobSourceError};
 use crate::storage::document_store::StorageDocumentClient;
+use crate::storage::dataset_registry::{
+    StorageDatasetRegistryEnumHolder, StorageDatasetRegistryEnumKind, StorageDatasetRegistryError,
+    StorageDatasetRepository,
+};
 use crate::storage::opening_repository::StorageOpeningRepository;
 
 #[derive(Debug, Error)]
@@ -23,11 +40,34 @@ pub enum DesktopNativeReportHostError {
     Reports(#[from] DesktopReportCommandsError),
     #[error(transparent)]
     Openings(#[from] DesktopOpeningCommandsError),
+    #[error(transparent)]
+    Source(#[from] ReportJobSourceError),
+    #[error(transparent)]
+    Configuration(#[from] ReportJobConfigurationError),
+    #[error(transparent)]
+    Job(#[from] ReportJobError),
+    #[error(transparent)]
+    Scheduler(#[from] ReportSchedulerError),
+    #[error(transparent)]
+    Search(#[from] EngineSearchSessionError),
+    #[error(transparent)]
+    Datasets(#[from] StorageDatasetRegistryError),
+}
+
+pub struct DesktopNativeReportHostFinishedGame<'a, P: EngineProcess> {
+    pub id: ReportJobId,
+    pub game: GameId,
+    pub revision: GameRevision,
+    pub tree: &'a GameTree,
+    pub tip: GameMoveId,
+    pub engine: &'a EngineSession<P>,
+    pub limits: ReportJobSourceLimits,
 }
 
 pub struct DesktopNativeReportHost {
     reports: Mutex<DesktopReportCommands>,
     openings: StorageOpeningRepository,
+    datasets: StorageDatasetRepository,
 }
 
 impl DesktopNativeReportHost {
@@ -45,7 +85,8 @@ impl DesktopNativeReportHost {
         );
         Self {
             reports: Mutex::new(DesktopReportCommands::new(ReportService::new(scheduler))),
-            openings: StorageOpeningRepository::new(client),
+            openings: StorageOpeningRepository::new(client.clone()),
+            datasets: StorageDatasetRepository::new(client),
         }
     }
 
@@ -90,6 +131,74 @@ impl DesktopNativeReportHost {
         &self,
         position: &BoardPosition,
     ) -> Result<DesktopOpeningExplorerView, DesktopNativeReportHostError> {
-        Ok(DesktopOpeningCommands::explore_indexed(&self.openings, position).await?)
+        let leases = self
+            .datasets
+            .lease_active(
+                StorageDatasetRegistryEnumKind::Corpus,
+                StorageDatasetRegistryEnumHolder::Query,
+                "explorer".to_owned(),
+            )
+            .await?;
+        let outcome = DesktopOpeningCommands::explore_indexed(&self.openings, position).await;
+        self.datasets.release(leases).await?;
+        Ok(outcome?)
+    }
+
+    pub async fn game_finished<P: EngineProcess>(
+        &self,
+        finished: DesktopNativeReportHostFinishedGame<'_, P>,
+    ) -> Result<ReportServiceEnumOutcome, DesktopNativeReportHostError> {
+        let source = ReportJobSource::capture(
+            finished.game,
+            finished.revision,
+            finished.tree,
+            finished.tip,
+            finished.limits,
+        )?;
+        let configuration = ReportJobConfiguration::capture(
+            finished.engine,
+            ReportJobBudget::default_per_position()?,
+            ReportScoringEnumPolicyVersion::ExpectedScoreV1,
+        )?;
+        let job = ReportJob::new(finished.id, source, configuration)?;
+        self.game_completed(job).await
+    }
+
+    pub async fn run_next<P: EngineProcess>(
+        &self,
+        session: &mut EngineSearchSession<P>,
+        lease: CapacityLease,
+    ) -> Result<bool, DesktopNativeReportHostError> {
+        let tag = {
+            let mut reports = self.reports.lock().await;
+            let scheduler = reports.service_mut().scheduler_mut();
+            if !matches!(scheduler.decision(), ReportSchedulerEnumDecision::Ready(_)) {
+                return Ok(false);
+            }
+            let mut dispatch = scheduler.prepare(session, lease)?;
+            let tag = match dispatch.start(session).await {
+                Ok(tag) => tag,
+                Err(error) => {
+                    scheduler.settle_dispatch(&mut dispatch, session)?;
+                    return Err(error.into());
+                }
+            };
+            scheduler.bind(session)?;
+            tag
+        };
+        let terminal = loop {
+            if let EngineSearchSessionEnumEvent::Finished(terminal) =
+                session.next_event(tag).await?
+            {
+                break terminal;
+            }
+        };
+        self.reports
+            .lock()
+            .await
+            .service_mut()
+            .scheduler_mut()
+            .record_terminal(&terminal)?;
+        Ok(true)
     }
 }

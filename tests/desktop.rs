@@ -99,3 +99,6 @@ mod desktop_editor_commands_write_recovery_review;
 
 #[path = "desktop/preferences.rs"]
 mod desktop_preferences;
+
+#[path = "desktop/release_workflow.rs"]
+mod desktop_release_workflow;

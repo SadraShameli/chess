@@ -6,6 +6,7 @@ use crate::package::digest::PackageDigest;
 use crate::storage::dataset_package::{
     StorageDatasetPackageEnumFormat, StorageDatasetPackageEnumValidation,
 };
+use crate::storage::document_store::{StorageDocumentClient, StorageDocumentError};
 use crate::storage::schema::{dataset_leases, datasets};
 
 #[derive(Debug, Error)]
@@ -22,6 +23,10 @@ pub enum StorageDatasetRegistryError {
     ReplacementMismatch,
     #[error("The saved dataset registry rows are inconsistent")]
     Corrupt,
+    #[error(transparent)]
+    Document(#[from] StorageDocumentError),
+    #[error("The dataset registry reply channel closed: {0}")]
+    Channel(#[from] tokio::sync::oneshot::error::RecvError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -331,20 +336,29 @@ impl StorageDatasetRegistry {
         reference: &str,
     ) -> Result<StorageDatasetLeaseId, StorageDatasetRegistryError> {
         connection.immediate_transaction(|connection| {
-            Self::require(connection, dataset)?;
-            diesel::insert_into(dataset_leases::table)
-                .values((
-                    dataset_leases::dataset_id.eq(dataset.0),
-                    dataset_leases::holder.eq(holder.text()),
-                    dataset_leases::holder_ref.eq(reference),
-                ))
-                .execute(connection)?;
-            let id = dataset_leases::table
-                .select(diesel::dsl::max(dataset_leases::lease_id))
-                .first::<Option<i32>>(connection)?
-                .ok_or(StorageDatasetRegistryError::Corrupt)?;
-            Ok(StorageDatasetLeaseId(id))
+            Self::insert_lease(connection, dataset, holder, reference)
         })
+    }
+
+    fn insert_lease(
+        connection: &mut SqliteConnection,
+        dataset: StorageDatasetId,
+        holder: StorageDatasetRegistryEnumHolder,
+        reference: &str,
+    ) -> Result<StorageDatasetLeaseId, StorageDatasetRegistryError> {
+        Self::require(connection, dataset)?;
+        diesel::insert_into(dataset_leases::table)
+            .values((
+                dataset_leases::dataset_id.eq(dataset.0),
+                dataset_leases::holder.eq(holder.text()),
+                dataset_leases::holder_ref.eq(reference),
+            ))
+            .execute(connection)?;
+        let id = dataset_leases::table
+            .select(diesel::dsl::max(dataset_leases::lease_id))
+            .first::<Option<i32>>(connection)?
+            .ok_or(StorageDatasetRegistryError::Corrupt)?;
+        Ok(StorageDatasetLeaseId(id))
     }
 
     pub fn release(
@@ -421,5 +435,130 @@ impl StorageDatasetRegistry {
             }
             Ok(purged)
         })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum StorageDatasetRegistryEnumRequest {
+    List,
+    LeaseActive {
+        kind: StorageDatasetRegistryEnumKind,
+        holder: StorageDatasetRegistryEnumHolder,
+        reference: String,
+    },
+    Release(Vec<StorageDatasetLeaseId>),
+}
+
+#[derive(Debug)]
+pub(crate) enum StorageDatasetRegistryEnumResponse {
+    Entries(Vec<StorageDatasetRegistryEntry>),
+    Leases(Vec<StorageDatasetLeaseId>),
+    Released,
+}
+
+impl StorageDatasetRegistry {
+    pub(crate) fn execute(
+        connection: &mut SqliteConnection,
+        request: StorageDatasetRegistryEnumRequest,
+    ) -> Result<StorageDatasetRegistryEnumResponse, StorageDatasetRegistryError> {
+        match request {
+            StorageDatasetRegistryEnumRequest::List => {
+                Ok(StorageDatasetRegistryEnumResponse::Entries(Self::list(connection)?))
+            }
+            StorageDatasetRegistryEnumRequest::LeaseActive {
+                kind,
+                holder,
+                reference,
+            } => connection.immediate_transaction(|connection| {
+                let active = datasets::table
+                    .filter(datasets::kind.eq(kind.text()))
+                    .filter(datasets::superseded.eq(0))
+                    .select(datasets::dataset_id)
+                    .load::<i32>(connection)?;
+                let mut leases = Vec::with_capacity(active.len());
+                for id in active {
+                    leases.push(Self::insert_lease(
+                        connection,
+                        StorageDatasetId(id),
+                        holder,
+                        &reference,
+                    )?);
+                }
+                Ok(StorageDatasetRegistryEnumResponse::Leases(leases))
+            }),
+            StorageDatasetRegistryEnumRequest::Release(leases) => {
+                connection.immediate_transaction(|connection| {
+                    for lease in leases {
+                        Self::release(connection, lease)?;
+                    }
+                    Ok(StorageDatasetRegistryEnumResponse::Released)
+                })
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct StorageDatasetRepository {
+    client: StorageDocumentClient,
+}
+
+impl StorageDatasetRepository {
+    pub const fn new(client: StorageDocumentClient) -> Self {
+        Self { client }
+    }
+
+    pub async fn list(&self) -> Result<Vec<StorageDatasetRegistryEntry>, StorageDatasetRegistryError> {
+        match self
+            .client
+            .dataset_registry(StorageDatasetRegistryEnumRequest::List)
+            .await?
+        {
+            StorageDatasetRegistryEnumResponse::Entries(entries) => Ok(entries),
+            StorageDatasetRegistryEnumResponse::Leases(_)
+            | StorageDatasetRegistryEnumResponse::Released => {
+                Err(StorageDatasetRegistryError::Corrupt)
+            }
+        }
+    }
+
+    pub async fn lease_active(
+        &self,
+        kind: StorageDatasetRegistryEnumKind,
+        holder: StorageDatasetRegistryEnumHolder,
+        reference: String,
+    ) -> Result<Vec<StorageDatasetLeaseId>, StorageDatasetRegistryError> {
+        match self
+            .client
+            .dataset_registry(StorageDatasetRegistryEnumRequest::LeaseActive {
+                kind,
+                holder,
+                reference,
+            })
+            .await?
+        {
+            StorageDatasetRegistryEnumResponse::Leases(leases) => Ok(leases),
+            StorageDatasetRegistryEnumResponse::Entries(_)
+            | StorageDatasetRegistryEnumResponse::Released => {
+                Err(StorageDatasetRegistryError::Corrupt)
+            }
+        }
+    }
+
+    pub async fn release(
+        &self,
+        leases: Vec<StorageDatasetLeaseId>,
+    ) -> Result<(), StorageDatasetRegistryError> {
+        match self
+            .client
+            .dataset_registry(StorageDatasetRegistryEnumRequest::Release(leases))
+            .await?
+        {
+            StorageDatasetRegistryEnumResponse::Released => Ok(()),
+            StorageDatasetRegistryEnumResponse::Entries(_)
+            | StorageDatasetRegistryEnumResponse::Leases(_) => {
+                Err(StorageDatasetRegistryError::Corrupt)
+            }
+        }
     }
 }

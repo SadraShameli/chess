@@ -18,6 +18,10 @@ use crate::desktop::native::game_engine::{
     DesktopNativeGameEngineAllocation, DesktopNativeGameEngineAllocationActivity,
     DesktopNativeGameEngineAllocationError, DesktopNativeGameEngineResources,
 };
+use crate::clock::duration::ClockDuration;
+use crate::engine::configuration::{
+    EngineConfiguration, EngineConfigurationEnumBoundary, EngineConfigurationOverrides,
+};
 use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use crate::engine::package::manifest::EnginePackageManifest;
 use crate::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
@@ -45,6 +49,7 @@ pub struct DesktopNativeGameResourcesPolicy {
     workers: usize,
     hash_mib: u32,
     startup_hash_mib: u32,
+    move_overhead: ClockDuration,
 }
 
 impl DesktopNativeGameResourcesPolicy {
@@ -90,6 +95,37 @@ impl DesktopNativeGameResourcesPolicy {
             workers,
             hash_mib,
             startup_hash_mib,
+            move_overhead: GameEngineSearchConfig::initial_default().move_overhead(),
+        })
+    }
+
+    pub fn with_overrides(
+        self,
+        overrides: EngineConfigurationOverrides,
+    ) -> Result<Self, DesktopNativeGameResourcesPolicyError> {
+        let base = EngineResourceConfig::new(self.workers, self.hash_mib, self.move_overhead)?;
+        let threads = match overrides.threads {
+            Some(requested) => usize::try_from(requested)?.min(self.workers),
+            None => self.workers,
+        };
+        let move_overhead = match overrides.move_overhead_ms {
+            Some(milliseconds) => ClockDuration::from_millis(u64::from(milliseconds))
+                .map_err(EngineResourceConfigError::from)?,
+            None => self.move_overhead,
+        };
+        let requested = EngineResourceConfig::new(
+            threads,
+            overrides.hash_mib.unwrap_or(self.hash_mib),
+            move_overhead,
+        )?;
+        let mut configuration = EngineConfiguration::new(base);
+        configuration.request(requested, EngineConfigurationEnumBoundary::Idle);
+        let applied = configuration.effective();
+        Ok(Self {
+            workers: usize::try_from(applied.threads())?,
+            hash_mib: applied.hash_mib(),
+            startup_hash_mib: self.startup_hash_mib,
+            move_overhead: applied.move_overhead(),
         })
     }
 
@@ -119,11 +155,7 @@ impl DesktopNativeGameResourcesPolicy {
         workers: usize,
         hash_mib: u32,
     ) -> Result<EngineResourceConfig, EngineResourceConfigError> {
-        EngineResourceConfig::new(
-            workers,
-            hash_mib,
-            GameEngineSearchConfig::initial_default().move_overhead(),
-        )
+        EngineResourceConfig::new(workers, hash_mib, self.move_overhead)
     }
 }
 

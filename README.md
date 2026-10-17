@@ -24,6 +24,8 @@ The application and its asset tools use Cargo only. Development checks use the
 debug profile and select the affected Cargo target. The full optimized build
 belongs to the final verification command.
 
+Setup, study data and support limits are described in [docs/install.md](docs/install.md).
+
 ## Spec Kit
 
 [GitHub Spec Kit](https://github.com/github/spec-kit) v1.2.0 is initialized here

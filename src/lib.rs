@@ -12,6 +12,7 @@ pub mod puzzle;
 pub mod report;
 pub mod scene;
 pub mod storage;
+pub mod update;
 pub mod workbench;
 
 #[cfg(test)]

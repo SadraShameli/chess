@@ -98,6 +98,8 @@ use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::engine_panels::PresentationEnginePanelsConnection;
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::presentation::theme::font::PresentationThemeFont;
+use crate::desktop::native::audio::{DesktopNativeAudio, DesktopNativeAudioBevy};
+use crate::presentation::audio::router::{PresentationAudioContext, PresentationAudioRouter};
 use crate::scene::assets::{SceneAssets, SceneAssetsError};
 use crate::scene::camera::{SceneCamera, SceneCameraError};
 use crate::scene::picking::{ScenePickingViewport, ScenePickingViewportError};
@@ -244,7 +246,24 @@ pub enum DesktopNativeHostError {
 }
 
 #[derive(Resource)]
+struct DesktopNativeHostAudio {
+    router: PresentationAudioRouter,
+    output: DesktopNativeAudio<DesktopNativeAudioBevy>,
+    epoch: Instant,
+}
+
+impl DesktopNativeHostAudio {
+    fn new(server: &AssetServer) -> Self {
+        Self {
+            router: PresentationAudioRouter::default(),
+            output: DesktopNativeAudio::new(DesktopNativeAudioBevy::load(server)),
+            epoch: Instant::now(),
+        }
+    }
+}
+
 struct DesktopNativeHostState {
+    audio: DesktopNativeHostAudio,
     services: DesktopNativeHostServices,
     presentation: PresentationApp,
     puzzle_window: Option<DesktopNativePuzzleWindow<DesktopNativePuzzleServicePort>>,
@@ -693,7 +712,9 @@ impl DesktopNativeHost {
         if let Some(connection) = services.preferences.take() {
             presentation.mount_settings(connection);
         }
+        let audio = DesktopNativeHostAudio::new(app.world().resource::<AssetServer>());
         app.insert_resource(DesktopNativeHostState {
+            audio,
             services,
             presentation,
             puzzle_window: None,
@@ -1007,6 +1028,36 @@ impl DesktopNativeHost {
         }
     }
 
+    fn route_audio(world: &mut World, state: &mut DesktopNativeHostState) {
+        let events = state.presentation.audio_events();
+        state
+            .audio
+            .output
+            .port_mut()
+            .refresh(world.resource::<AssetServer>());
+        if !events.is_empty() {
+            let focused = world
+                .query::<&Window>()
+                .iter(world)
+                .any(|window| window.focused);
+            let now_ms = u64::try_from(state.audio.epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
+            let context = PresentationAudioContext {
+                selected_game: state.presentation.selected_game_id(),
+                app_focused: focused,
+                now_ms,
+            };
+            if let Some(playback) =
+                state
+                    .audio
+                    .router
+                    .submit(&events, *state.presentation.preferences(), context)
+            {
+                state.audio.output.play(playback);
+            }
+        }
+        state.audio.output.port_mut().drain(world);
+    }
+
     fn update(world: &mut World) {
         let Some(mut state) = world.remove_resource::<DesktopNativeHostState>() else {
             return;
@@ -1024,6 +1075,7 @@ impl DesktopNativeHost {
     ) -> Result<(), DesktopNativeHostError> {
         state.presentation.poll();
         Self::observe_sleep(world, state);
+        Self::route_audio(world, state);
         Self::update_puzzles(world, state)?;
         Self::activate_window(world, state);
         #[cfg(target_os = "macos")]

@@ -4,4 +4,6 @@ pub mod datasets;
 pub mod backup;
 pub mod restore;
 pub mod shortcuts;
+pub mod update;
+pub mod update_install;
 pub mod view;

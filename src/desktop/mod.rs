@@ -41,5 +41,6 @@ pub mod renderer_commands;
 pub mod report_commands;
 pub mod request_cache;
 pub mod stream;
+pub mod update_commands;
 pub mod workbench_commands;
 pub mod workbench_export;

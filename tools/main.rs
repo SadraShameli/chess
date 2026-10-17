@@ -11,14 +11,17 @@ use thiserror::Error;
 
 #[cfg(feature = "asset-tools")]
 mod assets;
+mod benchmark;
 mod data;
 mod engine;
 mod packaging;
+#[path = "packaging/release_check.rs"]
+mod release_check;
 
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools data-verify <sources.json> <cache-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa|apple-neon] | engine-check | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools benchmark-evaluate <measurements.json> | data-verify <sources.json> <cache-directory> | data-select-games <pgn> <output-directory> | data-select-puzzles <csv> <output-directory> <source> <version> | data-build <selection-directory> <output-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa|apple-neon] | engine-check | release-check <tag> | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
     #[error(transparent)]
@@ -150,9 +153,14 @@ impl ToolsEnumEngineWorkflow {
 
 enum ToolsEnumCommand {
     VerifyData { sources: PathBuf, cache: PathBuf },
+    SelectGames { pgn: PathBuf, output: PathBuf },
+    SelectPuzzles { csv: PathBuf, output: PathBuf, source: String, version: String },
+    BuildData { input: PathBuf, output: PathBuf },
+    EvaluateBenchmark { measurements: PathBuf },
     BuildEngine(chess::engine::package::manifest::EnginePackageEnumProfile),
     Packaging(packaging::ToolsPackagingEnumCommand),
     CheckEngine,
+    CheckRelease(String),
     RunEngineWorkflow(ToolsEnumEngineWorkflow),
     #[cfg(feature = "asset-tools")]
     GenerateAssets {
@@ -170,11 +178,39 @@ impl ToolsEnumCommand {
     fn parse() -> Result<Self, ToolsCommandError> {
         let supplied: Vec<OsString> = std::env::args_os().skip(1).collect();
         match supplied.as_slice() {
+            [command, pgn, output] if command == "data-select-games" => {
+                return Ok(Self::SelectGames {
+                    pgn: pgn.into(),
+                    output: output.into(),
+                });
+            }
+            [command, csv, output, source, version] if command == "data-select-puzzles" => {
+                return Ok(Self::SelectPuzzles {
+                    csv: csv.into(),
+                    output: output.into(),
+                    source: source.to_string_lossy().into_owned(),
+                    version: version.to_string_lossy().into_owned(),
+                });
+            }
+            [command, input, output] if command == "data-build" => {
+                return Ok(Self::BuildData {
+                    input: input.into(),
+                    output: output.into(),
+                });
+            }
+            [command, measurements] if command == "benchmark-evaluate" => {
+                return Ok(Self::EvaluateBenchmark {
+                    measurements: measurements.into(),
+                });
+            }
             [command, sources, cache] if command == "data-verify" => {
                 return Ok(Self::VerifyData {
                     sources: sources.into(),
                     cache: cache.into(),
                 });
+            }
+            [command, tag] if command == "release-check" => {
+                return Ok(Self::CheckRelease(tag.to_string_lossy().into_owned()));
             }
             [command, package, output, reports @ ..] if command == "engine-coverage" => {
                 return Ok(Self::RunEngineWorkflow(ToolsEnumEngineWorkflow::Coverage(
@@ -274,6 +310,68 @@ impl ToolsEnumCommand {
 
     fn execute(self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
+            Self::SelectGames { pgn, output } => {
+                let summary = data::ToolsDataSelect::run(
+                    &pgn,
+                    &output,
+                    false,
+                    chess::storage::dataset_selection::StorageDatasetSelectionEnumSubset::Master
+                        .upper_target(),
+                    chess::storage::dataset_selection::StorageDatasetSelectionEnumSubset::Broad
+                        .upper_target(),
+                )?;
+                println!(
+                    "Parsed {} games ({} rejected, {} unique); master {} (sha256 {}), broad {} (sha256 {})",
+                    summary.parsed,
+                    summary.rejected,
+                    summary.unique,
+                    summary.master,
+                    summary.master_digest,
+                    summary.broad,
+                    summary.broad_digest
+                );
+            }
+            Self::SelectPuzzles {
+                csv,
+                output,
+                source,
+                version,
+            } => {
+                let summary = data::ToolsDataPuzzles::run(
+                    &csv,
+                    &output,
+                    &source,
+                    &version,
+                    chess::storage::dataset_selection::StorageDatasetSelectionEnumSubset::Puzzles
+                        .upper_target(),
+                )?;
+                println!(
+                    "Accepted {} puzzles ({} rejected, {} unique, {} identical copies); selected {} (sha256 {})",
+                    summary.accepted,
+                    summary.rejected,
+                    summary.unique,
+                    summary.identical_copies,
+                    summary.selected,
+                    summary.digest
+                );
+            }
+            Self::BuildData { input, output } => {
+                let initial = chess::storage::dataset_selection::StorageDatasetSelectionPrefixes::new(
+                    100_000, 250_000, 200_000,
+                )?;
+                let summary = data::ToolsDataBuild::run(&input, &output, initial)?;
+                println!(
+                    "Final prefixes: master {}, broad {}, puzzles {}; {} installed bytes; {} reductions",
+                    summary.prefixes.master(),
+                    summary.prefixes.broad(),
+                    summary.prefixes.puzzles(),
+                    summary.total_bytes,
+                    summary.reductions.len()
+                );
+            }
+            Self::EvaluateBenchmark { measurements } => {
+                println!("{}", benchmark::ToolsBenchmarkRun::evaluate(&measurements)?);
+            }
             Self::VerifyData { sources, cache } => {
                 let verified = data::ToolsDataAcquire::verify(&sources, &cache)?;
                 println!("Verified {verified} frozen dataset sources");
@@ -297,6 +395,9 @@ impl ToolsEnumCommand {
             Self::Packaging(command) => {
                 let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
                 println!("{}", command.execute(&root)?);
+            }
+            Self::CheckRelease(tag) => {
+                release_check::ToolsPackagingReleaseCheck::run(&tag)?;
             }
             Self::CheckEngine => {
                 let runtime = tokio::runtime::Builder::new_multi_thread()
