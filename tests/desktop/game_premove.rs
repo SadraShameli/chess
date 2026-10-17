@@ -60,6 +60,7 @@ use crate::game::storage_repository::GameStorageRepository;
 use crate::presentation::app::PresentationApp;
 use crate::storage::document_store::StorageDocumentStore;
 use crate::storage::game_document::{StorageGameDocument, StorageGameDocumentRepository};
+use crate::storage_document_write_fixture::StorageDocumentWriteFixtureEnumOperation;
 
 type DesktopGamePremoveTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -238,6 +239,13 @@ struct DesktopGamePremoveScenario {
 }
 
 impl DesktopGamePremoveFixture {
+    fn failure_trigger(operation: StorageDocumentWriteFixtureEnumOperation) -> String {
+        let name = operation.name();
+        let operation = operation.sql();
+        format!(
+            "CREATE TRIGGER premove_{name}_failure BEFORE {operation} ON documents WHEN CAST(json_extract(NEW.body, '$.game.revision') AS INTEGER) >= CAST((SELECT revision FROM premove_failure) AS INTEGER) BEGIN SELECT RAISE(FAIL, 'injected premove checkpoint failure'); END;"
+        )
+    }
     const BASE: u64 = 10_000_000_000;
     const BONUS: u64 = 5_000_000;
     async fn new() -> DesktopGamePremoveTestResult<Self> {
@@ -402,7 +410,7 @@ impl DesktopGamePremoveFixture {
         } = scenario;
         let fixture = Self::new().await?;
         let (scripts, receiver) = mpsc::channel(1);
-        let (mut registry, port) = DesktopGameRegistry::new(DesktopGameRegistryOptions {
+        let (registry, port) = DesktopGameRegistry::new(DesktopGameRegistryOptions {
             factory_provider: DesktopGamePremoveFactory(Some(DesktopGamePremoveEngine {
                 scripts: receiver,
                 clock: Arc::clone(&fixture.clock),
@@ -416,6 +424,7 @@ impl DesktopGamePremoveFixture {
             proof: Arc::new(DesktopGamePremoveProof),
             random: StdRng::seed_from_u64(81),
         });
+        let mut registry = Box::new(registry);
         let worker = tokio::spawn(async move {
             let result = registry.run().await;
             (registry, result)
@@ -476,11 +485,21 @@ impl DesktopGamePremoveFixture {
                 if matches!(storage, DesktopGamePremoveEnumStorage::FailPremove) {
                     revision = revision.next()?;
                 }
-                fixture.sql(move |connection| {
-                    connection.execute_batch("CREATE TABLE premove_failure (revision TEXT NOT NULL); CREATE TRIGGER premove_save_failure BEFORE INSERT ON documents WHEN CAST(json_extract(NEW.body, '$.game.revision') AS INTEGER) >= CAST((SELECT revision FROM premove_failure) AS INTEGER) BEGIN SELECT RAISE(FAIL, 'injected premove checkpoint failure'); END;")?;
-                    connection.execute("INSERT INTO premove_failure(revision) VALUES (?1)", [revision.to_string()])?;
-                    Ok(())
-                }).await?;
+                fixture
+                    .sql(move |connection| {
+                        connection.execute_batch(
+                            "CREATE TABLE premove_failure (revision TEXT NOT NULL)",
+                        )?;
+                        for operation in StorageDocumentWriteFixtureEnumOperation::ALL {
+                            connection.execute_batch(&Self::failure_trigger(operation))?;
+                        }
+                        connection.execute(
+                            "INSERT INTO premove_failure(revision) VALUES (?1)",
+                            [revision.to_string()],
+                        )?;
+                        Ok(())
+                    })
+                    .await?;
                 None
             }
             DesktopGamePremoveEnumStorage::Healthy => None,

@@ -21,6 +21,8 @@ use crate::capacity::phase::CapacityPhaseGeneration;
 use crate::clock::duration::{ClockDurationError, ClockInstant};
 use crate::clock::state::ClockState;
 use crate::clock::time_provider::ClockTimeProvider;
+use crate::desktop::annotation_commands::DesktopAnnotationCommands;
+use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::error::{DesktopEnumFailureCode, DesktopFailure};
 use crate::desktop::game_bridge::{
     DesktopGameBridgeEnumOperation, DesktopGameBridgeFuture, DesktopGameBridgeProvider,
@@ -29,9 +31,9 @@ use crate::desktop::game_bridge::{
 use crate::desktop::game_commands::{DesktopGameCommandsEnumAction, DesktopGameCommandsRequest};
 use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::game_supervisor::{
-    DesktopGameSupervisor, DesktopGameSupervisorEngineFactory, DesktopGameSupervisorError,
-    DesktopGameSupervisorEvent, DesktopGameSupervisorOptions, DesktopGameSupervisorPort,
-    DesktopGameSupervisorReceipt,
+    DesktopGameSupervisor, DesktopGameSupervisorEditorReceipt, DesktopGameSupervisorEngineFactory,
+    DesktopGameSupervisorError, DesktopGameSupervisorEvent, DesktopGameSupervisorOptions,
+    DesktopGameSupervisorPort, DesktopGameSupervisorReceipt,
 };
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::adjudication::GameAdjudicationMateProofProvider;
@@ -258,6 +260,40 @@ pub struct DesktopGameRegistryPort {
 impl DesktopGameRegistryPort {
     const CREATE_CAPACITY: usize = 32;
     const CONTROL_CAPACITY: usize = 5;
+
+    pub fn try_open_editor(
+        &self,
+        game: GameId,
+        receipt: DesktopApplicationReceipt,
+    ) -> Result<DesktopGameSupervisorEditorReceipt, DesktopGameRegistryError> {
+        self.editor_port(game)?
+            .try_open_editor(receipt)
+            .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
+    }
+
+    pub fn try_submit_editor(
+        &self,
+        command: DesktopAnnotationCommands,
+    ) -> Result<DesktopGameSupervisorEditorReceipt, DesktopGameRegistryError> {
+        self.editor_port(command.expected().game())?
+            .try_submit_editor(command)
+            .map_err(|error| DesktopGameRegistryError::Supervisor(Arc::new(error)))
+    }
+
+    fn editor_port(
+        &self,
+        game: GameId,
+    ) -> Result<DesktopGameSupervisorPort, DesktopGameRegistryError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(DesktopGameRegistryError::Closed);
+        }
+        self.sessions
+            .try_read()
+            .map_err(|_busy| DesktopGameRegistryError::Busy)?
+            .get(&game)
+            .cloned()
+            .ok_or(DesktopGameRegistryError::UnknownGame)
+    }
 
     pub fn quiesce_all(
         &self,

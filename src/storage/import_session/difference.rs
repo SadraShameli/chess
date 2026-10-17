@@ -15,10 +15,10 @@ use crate::storage::import_session::disk::StorageImportSessionDiskEnumFile;
 use crate::storage::import_session::index::StorageImportSessionIndex;
 use crate::storage::import_session::model::{
     StorageImportSessionCandidate, StorageImportSessionCandidateBody,
-    StorageImportSessionCandidateQuery, StorageImportSessionError,
-    StorageImportSessionFilesystemProvider, StorageImportSessionIdentityProvider,
-    StorageImportSessionPageRequest, StorageImportSessionRepository,
-    StorageImportSessionRepositoryError,
+    StorageImportSessionCandidateCursor, StorageImportSessionCandidateQuery,
+    StorageImportSessionError, StorageImportSessionFilesystemProvider,
+    StorageImportSessionIdentityProvider, StorageImportSessionPageRequest,
+    StorageImportSessionRepository, StorageImportSessionRepositoryError,
 };
 use crate::storage::import_session::stage::StorageImportSessionStage;
 use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRecord};
@@ -26,7 +26,10 @@ use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRe
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StorageImportSessionDetailEnumCursor {
     Staged(u64),
-    Library { page: u64, offset: usize },
+    Library {
+        page: StorageImportSessionCandidateCursor,
+        offset: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -449,7 +452,10 @@ impl StorageImportSessionStage {
         let cursor = if index < end {
             StorageImportSessionDetailEnumCursor::Staged(index - begin)
         } else {
-            StorageImportSessionDetailEnumCursor::Library { page: 0, offset: 0 }
+            StorageImportSessionDetailEnumCursor::Library {
+                page: StorageImportSessionCandidateCursor::start(),
+                offset: 0,
+            }
         };
         Ok(StorageImportSessionDetailPage {
             relationships,

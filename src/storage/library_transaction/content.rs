@@ -57,22 +57,67 @@ impl StorageLibraryTransactionContent {
                 .checked_add(1)
                 .ok_or(StorageLibraryError::ContentExhausted)?,
         );
-        transaction.execute("INSERT INTO documents(id, revision, body) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET revision = excluded.revision, body = excluded.body", params![id.as_uuid().to_string(), revision.value().to_string(), prepared.body()])?;
-        Self::project(
-            transaction,
-            StorageLibraryTransactionContentProjection {
-                id,
-                revision,
-                projection: prepared.projection(),
-                identity: prepared.identity(),
-                modified: modified.map(|timestamp| timestamp.value()),
-            },
-        )?;
+        if actual.is_none() {
+            Self::insert_new(
+                transaction,
+                StorageLibraryTransactionContentInsert {
+                    id,
+                    body: prepared.body(),
+                    projection: prepared.projection(),
+                    identity: prepared.identity(),
+                    modified: modified.map(|timestamp| timestamp.value()),
+                    folder: None,
+                },
+            )?;
+        } else {
+            transaction.execute(
+                "UPDATE documents SET revision = ?2, body = ?3 WHERE id = ?1",
+                params![
+                    id.as_uuid().to_string(),
+                    revision.value().to_string(),
+                    prepared.body()
+                ],
+            )?;
+            Self::project(
+                transaction,
+                StorageLibraryTransactionContentProjection {
+                    id,
+                    revision,
+                    projection: prepared.projection(),
+                    identity: prepared.identity(),
+                    modified: modified.map(|timestamp| timestamp.value()),
+                    folder: None,
+                },
+            )?;
+        }
         Ok(StorageLibraryContentReceipt::new(
             id,
             revision,
             StorageLibraryTransaction::bump_catalog(transaction)?,
         ))
+    }
+    pub(super) fn insert_new(
+        transaction: &Transaction<'_>,
+        insert: StorageLibraryTransactionContentInsert<'_>,
+    ) -> Result<(), StorageLibraryError> {
+        if StorageLibraryTransactionRows::document_revision(transaction, insert.id)?.is_some() {
+            return Err(StorageLibraryError::ImportExisting);
+        }
+        transaction.execute(
+            "INSERT INTO documents(id, revision, body) VALUES (?1, '1', ?2)",
+            params![insert.id.as_uuid().to_string(), insert.body],
+        )?;
+        Self::project(
+            transaction,
+            StorageLibraryTransactionContentProjection {
+                id: insert.id,
+                revision: GameStorageRevision::new(1),
+                projection: insert.projection,
+                identity: insert.identity,
+                modified: insert.modified,
+                folder: insert.folder,
+            },
+        )
     }
     pub(super) fn adopt(
         transaction: &Transaction<'_>,
@@ -99,6 +144,7 @@ impl StorageLibraryTransactionContent {
                 projection: prepared.projection(),
                 identity: prepared.identity(),
                 modified: None,
+                folder: None,
             },
         )?;
         Ok(StorageLibraryEnumAdoptionOutcome::Inserted(
@@ -113,14 +159,14 @@ impl StorageLibraryTransactionContent {
         let date = p.date();
         transaction.execute(
             "INSERT INTO library_entries(game_id, content_revision, organization_revision, content_kind, rules_variant, start_kind, mode, result, white_display, white_key, black_display, black_key, date_year, date_month, date_day, opening_display, opening_key, opening_code, plies, identity_initial_fen, identity_mainline_uci, content_sha256, modified_ms, favorite, folder_id, location, trashed_ms)
-             VALUES (?1, ?2, '0', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 0, NULL, 'library', NULL)
+             VALUES (?1, ?2, '0', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 0, ?23, 'library', NULL)
              ON CONFLICT(game_id) DO UPDATE SET content_revision = excluded.content_revision, content_kind = excluded.content_kind, rules_variant = excluded.rules_variant, start_kind = excluded.start_kind, mode = excluded.mode, result = excluded.result, white_display = excluded.white_display, white_key = excluded.white_key, black_display = excluded.black_display, black_key = excluded.black_key, date_year = excluded.date_year, date_month = excluded.date_month, date_day = excluded.date_day, opening_display = excluded.opening_display, opening_key = excluded.opening_key, opening_code = excluded.opening_code, plies = excluded.plies, identity_initial_fen = excluded.identity_initial_fen, identity_mainline_uci = excluded.identity_mainline_uci, content_sha256 = excluded.content_sha256, modified_ms = excluded.modified_ms",
             params![write.id.as_uuid().to_string(), write.revision.value().to_string(), StorageLibraryProjection::kind_sql(p.kind()),
                 StorageLibraryProjection::variant_sql(p.variant()), p.start().sql(), p.mode().map(StorageLibraryProjection::mode_sql), p.result().pgn_token(),
                 p.white().map(|text| text.as_str()), p.white_key(), p.black().map(|text| text.as_str()), p.black_key(),
                 date.and_then(|date| date.year()), date.and_then(|date| date.month()), date.and_then(|date| date.day()),
                 p.opening().map(|text| text.as_str()), p.opening_key(), p.code().map(|code| code.as_str()), p.plies(),
-                write.identity.initial_fen(), write.identity.mainline(), write.identity.body_digest().bytes().as_slice(), write.modified],
+                write.identity.initial_fen(), write.identity.mainline(), write.identity.body_digest().bytes().as_slice(), write.modified, write.folder.map(|folder| folder.to_string())],
         )?;
         Ok(())
     }
@@ -132,4 +178,14 @@ struct StorageLibraryTransactionContentProjection<'a> {
     projection: &'a StorageLibraryProjection,
     identity: &'a StorageLibraryPreparedIdentity,
     modified: Option<i64>,
+    folder: Option<uuid::Uuid>,
+}
+
+pub(super) struct StorageLibraryTransactionContentInsert<'a> {
+    pub(super) id: crate::game::enums::GameId,
+    pub(super) body: &'a str,
+    pub(super) projection: &'a StorageLibraryProjection,
+    pub(super) identity: &'a StorageLibraryPreparedIdentity,
+    pub(super) modified: Option<i64>,
+    pub(super) folder: Option<uuid::Uuid>,
 }

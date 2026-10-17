@@ -62,6 +62,44 @@ pub enum StorageLibraryError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Channel(#[from] oneshot::error::RecvError),
+    #[error(transparent)]
+    Import(#[from] crate::storage::import_session::StorageImportSessionError),
+    #[error("Invalid stored import value: {0}")]
+    ImportValue(#[from] rusqlite::types::FromSqlError),
+    #[error("The import catalog changed")]
+    ImportCatalog,
+    #[error("The import destination changed")]
+    ImportDestination,
+    #[error("An import identifier already exists")]
+    ImportExisting,
+    #[error("The duplicate candidate changed")]
+    ImportCandidate,
+    #[error("The private import projection proof is invalid")]
+    ImportProof,
+    #[error("The SQLite layout cannot satisfy the import space contract")]
+    ImportLayout,
+    #[error("The SQLite space allowance increased after confirmation")]
+    ImportSpaceIncreased,
+    #[error("SQLite page ceiling differs: requested {requested}, actual {actual}")]
+    ImportPageCeiling { requested: u64, actual: u64 },
+    #[error("The import page ceiling cannot be restored before transaction cleanup is observed")]
+    ImportScopeTransaction,
+    #[error("Import failed ({primary}); page ceiling restoration failed ({restore})")]
+    ImportScopeCleanup {
+        #[source]
+        primary: Box<Self>,
+        restore: Box<Self>,
+    },
+    #[error("Import committed; page ceiling restoration failed ({restore})")]
+    ImportScopeCommittedCleanup {
+        #[source]
+        restore: Box<Self>,
+    },
+    #[error("Library operation failed ({primary}); rollback also failed ({rollback})")]
+    Rollback {
+        primary: Box<Self>,
+        rollback: rusqlite::Error,
+    },
     #[error("The library response does not match its request")]
     Protocol,
     #[error("The library operation result was already observed")]
@@ -128,6 +166,13 @@ pub enum StorageLibraryError {
 }
 
 impl StorageLibraryError {
+    pub(crate) fn requires_connection_retirement(&self) -> bool {
+        matches!(
+            self,
+            Self::ImportScopeCleanup { .. } | Self::ImportScopeCommittedCleanup { .. }
+        )
+    }
+
     pub(crate) fn check_cancellation(
         cancellation: &CapacityExecutorCancellation,
     ) -> Result<(), Self> {
@@ -373,6 +418,10 @@ impl StorageLibraryMutation {
             return Err(StorageLibraryError::Protocol);
         }
         match response {
+            #[cfg(test)]
+            StorageLibraryEnumTransactionResponse::ImportTestSql => {
+                Err(StorageLibraryError::Protocol)
+            }
             StorageLibraryEnumTransactionResponse::Saved(receipt) => {
                 Ok(StorageLibraryEnumMutationReceipt::Saved(receipt))
             }
@@ -388,10 +437,17 @@ impl StorageLibraryMutation {
             StorageLibraryEnumTransactionResponse::Adopted(outcome) => {
                 Ok(StorageLibraryEnumMutationReceipt::Adopted(outcome))
             }
-            StorageLibraryEnumTransactionResponse::Loaded(_)
+            StorageLibraryEnumTransactionResponse::Metadata(_)
+            | StorageLibraryEnumTransactionResponse::Loaded(_)
             | StorageLibraryEnumTransactionResponse::Page(_)
             | StorageLibraryEnumTransactionResponse::DestructionPreview(_)
-            | StorageLibraryEnumTransactionResponse::AdoptionPage(_) => {
+            | StorageLibraryEnumTransactionResponse::AdoptionPage(_)
+            | StorageLibraryEnumTransactionResponse::AdoptionCertification(_)
+            | StorageLibraryEnumTransactionResponse::ImportSnapshot(_)
+            | StorageLibraryEnumTransactionResponse::ImportCandidates(_)
+            | StorageLibraryEnumTransactionResponse::ImportCandidate(_)
+            | StorageLibraryEnumTransactionResponse::ImportEstimate(_)
+            | StorageLibraryEnumTransactionResponse::ImportCommitted(_) => {
                 Err(StorageLibraryError::Protocol)
             }
         }
@@ -503,6 +559,39 @@ impl StorageLibraryAdoptionIssue {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StorageLibraryAdoptionCertification {
+    catalog: StorageLibraryCatalogRevision,
+    certified: bool,
+}
+
+impl StorageLibraryAdoptionCertification {
+    pub(crate) const fn new(catalog: StorageLibraryCatalogRevision, certified: bool) -> Self {
+        Self { catalog, certified }
+    }
+    pub(crate) const fn is_certified(self) -> bool {
+        self.certified
+    }
+    pub(crate) const fn catalog(self) -> StorageLibraryCatalogRevision {
+        self.catalog
+    }
+}
+
+pub(crate) struct StorageLibraryAdoptionCertificationPending(StorageLibraryPending);
+
+impl StorageLibraryAdoptionCertificationPending {
+    pub(crate) async fn wait(
+        &mut self,
+    ) -> Result<StorageLibraryAdoptionCertification, StorageLibraryError> {
+        let StorageLibraryEnumTransactionResponse::AdoptionCertification(certification) =
+            self.0.wait().await?
+        else {
+            return Err(StorageLibraryError::Protocol);
+        };
+        Ok(certification)
+    }
+}
+
 pub struct StorageLibraryRepository<'a> {
     client: StorageDocumentClient,
     executor: &'a CapacityExecutor,
@@ -511,6 +600,25 @@ pub struct StorageLibraryRepository<'a> {
 impl<'a> StorageLibraryRepository<'a> {
     pub const fn new(client: StorageDocumentClient, executor: &'a CapacityExecutor) -> Self {
         Self { client, executor }
+    }
+    pub(crate) fn begin_certify_adoption(
+        &self,
+        expected: StorageLibraryCatalogRevision,
+    ) -> Result<StorageLibraryAdoptionCertificationPending, StorageLibraryError> {
+        Ok(StorageLibraryAdoptionCertificationPending(
+            self.client
+                .begin_library(StorageLibraryEnumTransactionRequest::CertifyAdoption(
+                    expected,
+                ))?,
+        ))
+    }
+    pub(crate) fn begin_revoke_adoption(
+        &self,
+    ) -> Result<StorageLibraryAdoptionCertificationPending, StorageLibraryError> {
+        Ok(StorageLibraryAdoptionCertificationPending(
+            self.client
+                .begin_library(StorageLibraryEnumTransactionRequest::RevokeAdoption)?,
+        ))
     }
     pub async fn load(
         &self,

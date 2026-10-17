@@ -32,13 +32,13 @@ pub use crate::storage::import_session::filesystem::{
 };
 pub use crate::storage::import_session::model::{
     StorageImportSessionBodyProof, StorageImportSessionCancellation, StorageImportSessionCandidate,
-    StorageImportSessionCandidateBody, StorageImportSessionCandidatePage,
-    StorageImportSessionCandidateQuery, StorageImportSessionCatalogStamp,
-    StorageImportSessionCommitFootprint, StorageImportSessionCommitReceipt,
-    StorageImportSessionConfirmation, StorageImportSessionDestination,
-    StorageImportSessionEnumCancelOutcome, StorageImportSessionEnumChoice,
-    StorageImportSessionEnumCommitOutcome, StorageImportSessionEnumVolume,
-    StorageImportSessionError, StorageImportSessionExclusion,
+    StorageImportSessionCandidateBody, StorageImportSessionCandidateCursor,
+    StorageImportSessionCandidatePage, StorageImportSessionCandidateQuery,
+    StorageImportSessionCatalogStamp, StorageImportSessionCommitFootprint,
+    StorageImportSessionCommitReceipt, StorageImportSessionConfirmation,
+    StorageImportSessionDestination, StorageImportSessionEnumCancelOutcome,
+    StorageImportSessionEnumChoice, StorageImportSessionEnumCommitOutcome,
+    StorageImportSessionEnumVolume, StorageImportSessionError, StorageImportSessionExclusion,
     StorageImportSessionFilesystemProvider, StorageImportSessionIdentityProvider,
     StorageImportSessionPage, StorageImportSessionPageRequest, StorageImportSessionRepository,
     StorageImportSessionRepositoryError, StorageImportSessionRepositoryFuture,
@@ -298,7 +298,8 @@ impl<
             let Some(mut query) = self
                 .worker(move |work, token, cancellation| {
                     StorageImportSessionStage::check(token, cancellation)?;
-                    work.stage.query(ordinal, 0, token)
+                    work.stage
+                        .query(ordinal, StorageImportSessionCandidateCursor::start(), token)
                 })
                 .await?
             else {

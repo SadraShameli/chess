@@ -12,10 +12,12 @@ use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::library_prepared::StorageLibraryPreparedAdoption;
 use crate::storage::library_repository::{
-    StorageLibraryAdoptionCandidate, StorageLibraryAdoptionCursor, StorageLibraryAdoptionIssue,
-    StorageLibraryAdoptionPage, StorageLibraryCatalogRevision, StorageLibraryEnumAdoptionOutcome,
-    StorageLibraryEnumAdoptionPreparation, StorageLibraryEnumMutationReceipt, StorageLibraryError,
-    StorageLibraryMutation, StorageLibraryRepository,
+    StorageLibraryAdoptionCandidate, StorageLibraryAdoptionCertification,
+    StorageLibraryAdoptionCertificationPending, StorageLibraryAdoptionCursor,
+    StorageLibraryAdoptionIssue, StorageLibraryAdoptionPage, StorageLibraryCatalogRevision,
+    StorageLibraryEnumAdoptionOutcome, StorageLibraryEnumAdoptionPreparation,
+    StorageLibraryEnumMutationReceipt, StorageLibraryError, StorageLibraryMutation,
+    StorageLibraryRepository,
 };
 
 #[derive(Debug, Error)]
@@ -31,6 +33,7 @@ pub enum DesktopNativeLibraryStartupEnumStage {
     ReadingPage,
     Preparing,
     Adopting,
+    Certifying,
     Complete,
 }
 
@@ -138,6 +141,10 @@ type DesktopNativeLibraryStartupPrepareFuture = Pin<
 >;
 
 enum DesktopNativeLibraryStartupEnumOperation {
+    Certification {
+        pending: StorageLibraryAdoptionCertificationPending,
+        granting: bool,
+    },
     Page(DesktopNativeLibraryStartupPageFuture),
     Prepare(
         StorageLibraryAdoptionCandidate,
@@ -147,6 +154,10 @@ enum DesktopNativeLibraryStartupEnumOperation {
 }
 
 enum DesktopNativeLibraryStartupEnumObservation {
+    Certification {
+        result: Result<StorageLibraryAdoptionCertification, StorageLibraryError>,
+        granting: bool,
+    },
     Page(Result<StorageLibraryAdoptionPage, StorageLibraryError>),
     Prepared(
         StorageLibraryAdoptionCandidate,
@@ -161,6 +172,12 @@ enum DesktopNativeLibraryStartupEnumObservation {
 impl DesktopNativeLibraryStartupEnumOperation {
     async fn wait(&mut self) -> DesktopNativeLibraryStartupEnumObservation {
         match self {
+            Self::Certification { pending, granting } => {
+                DesktopNativeLibraryStartupEnumObservation::Certification {
+                    result: pending.wait().await,
+                    granting: *granting,
+                }
+            }
             Self::Page(future) => DesktopNativeLibraryStartupEnumObservation::Page(future.await),
             Self::Prepare(candidate, future) => {
                 DesktopNativeLibraryStartupEnumObservation::Prepared(*candidate, future.await)
@@ -188,6 +205,8 @@ pub struct DesktopNativeLibraryStartup {
     index: usize,
     cursor: StorageLibraryAdoptionCursor,
     catalog: Option<StorageLibraryCatalogRevision>,
+    finish_catalog: Option<StorageLibraryCatalogRevision>,
+    revocation: Option<StorageLibraryAdoptionCertificationPending>,
     sweep_changed: bool,
     progress: DesktopNativeLibraryStartupProgress,
     summary: DesktopNativeLibraryStartupSummary,
@@ -222,6 +241,8 @@ impl DesktopNativeLibraryStartup {
             index: 0,
             cursor: StorageLibraryAdoptionCursor::start(),
             catalog: None,
+            finish_catalog: None,
+            revocation: None,
             sweep_changed: false,
             progress,
             summary: DesktopNativeLibraryStartupSummary::default(),
@@ -242,7 +263,7 @@ impl DesktopNativeLibraryStartup {
         self.readiness.subscribe()
     }
     pub fn has_pending(&self) -> bool {
-        self.operation.is_some()
+        self.operation.is_some() || self.revocation.is_some()
     }
 
     pub async fn run(&mut self) -> Result<(), DesktopNativeLibraryStartupError> {
@@ -254,7 +275,7 @@ impl DesktopNativeLibraryStartup {
         if self.progress.stage == DesktopNativeLibraryStartupEnumStage::Complete {
             return Ok(false);
         }
-        self.begin_operation();
+        self.begin_operation()?;
         if self.operation.is_some() {
             self.observe_operation(self.deadline).await?;
         }
@@ -265,6 +286,7 @@ impl DesktopNativeLibraryStartup {
         &mut self,
         deadline: Instant,
     ) -> Result<(), DesktopNativeLibraryStartupError> {
+        self.observe_revocation(deadline).await?;
         while self.operation.is_some() {
             self.observe_operation(deadline).await?;
         }
@@ -282,9 +304,23 @@ impl DesktopNativeLibraryStartup {
             ));
     }
 
-    fn begin_operation(&mut self) {
+    fn begin_operation(&mut self) -> Result<(), StorageLibraryError> {
         if self.operation.is_some() {
-            return;
+            return Ok(());
+        }
+        if let Some(catalog) = self.finish_catalog {
+            let granting = self.summary.issue_count == 0 && !self.summary.catalog_changed;
+            let pending = if granting {
+                self.repository().begin_certify_adoption(catalog)?
+            } else {
+                self.repository().begin_revoke_adoption()?
+            };
+            self.operation =
+                Some(DesktopNativeLibraryStartupEnumOperation::Certification { pending, granting });
+            self.finish_catalog = None;
+            self.progress.stage = DesktopNativeLibraryStartupEnumStage::Certifying;
+            self.publish_progress();
+            return Ok(());
         }
         if let Some((candidate, prepared)) = self.prepared.take() {
             let admission = self.repository().begin_adopt(prepared);
@@ -302,7 +338,7 @@ impl DesktopNativeLibraryStartup {
                     self.complete_candidate(candidate);
                 }
             }
-            return;
+            return Ok(());
         }
         let candidate = self
             .page
@@ -332,6 +368,7 @@ impl DesktopNativeLibraryStartup {
             }))
         });
         self.publish_progress();
+        Ok(())
     }
 
     async fn observe_operation(
@@ -347,6 +384,28 @@ impl DesktopNativeLibraryStartup {
             .map_err(DesktopNativeLibraryStartupError::Deadline)?;
         self.operation = None;
         match observation {
+            DesktopNativeLibraryStartupEnumObservation::Certification { result, granting } => {
+                let certification = result?;
+                if granting
+                    && !certification.is_certified()
+                    && self.progress.sweep < Self::MAX_SWEEPS
+                {
+                    self.progress.sweep += 1;
+                    self.progress.last = None;
+                    self.cursor = StorageLibraryAdoptionCursor::start();
+                    self.catalog = Some(certification.catalog());
+                    self.sweep_changed = false;
+                    self.progress.stage = DesktopNativeLibraryStartupEnumStage::ReadingPage;
+                    self.publish_progress();
+                } else if granting && !certification.is_certified() {
+                    self.summary.catalog_changed = true;
+                    self.finish_catalog = Some(certification.catalog());
+                    self.publish_progress();
+                } else {
+                    self.progress.stage = DesktopNativeLibraryStartupEnumStage::Complete;
+                    self.publish_complete(certification.catalog());
+                }
+            }
             DesktopNativeLibraryStartupEnumObservation::Page(result) => self.observe_page(result?),
             DesktopNativeLibraryStartupEnumObservation::Prepared(candidate, result) => {
                 self.observe_preparation(candidate, result)
@@ -416,8 +475,8 @@ impl DesktopNativeLibraryStartup {
                 self.publish_progress();
             } else {
                 self.summary.catalog_changed = self.sweep_changed;
-                self.progress.stage = DesktopNativeLibraryStartupEnumStage::Complete;
-                self.publish_complete(catalog);
+                self.finish_catalog = Some(catalog);
+                self.publish_progress();
             }
         } else {
             self.index = 0;
@@ -488,8 +547,12 @@ impl DesktopNativeLibraryStartup {
         self.readiness.send_replace(readiness);
     }
 
-    pub(crate) fn observe_recovery_catalog(&mut self, catalog: StorageLibraryCatalogRevision) {
+    pub(crate) fn observe_recovery_catalog(
+        &mut self,
+        catalog: StorageLibraryCatalogRevision,
+    ) -> Result<(), StorageLibraryError> {
         if self.catalog != Some(catalog) {
+            self.begin_recovery_revocation()?;
             self.summary.catalog_changed = true;
             self.readiness.send_replace(
                 DesktopNativeLibraryStartupEnumReadiness::RecoveryRequired(Arc::new(
@@ -497,6 +560,30 @@ impl DesktopNativeLibraryStartup {
                 )),
             );
         }
+        Ok(())
+    }
+
+    fn begin_recovery_revocation(&mut self) -> Result<(), StorageLibraryError> {
+        if self.revocation.is_none() {
+            self.revocation = Some(self.repository().begin_revoke_adoption()?);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn observe_revocation(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<(), DesktopNativeLibraryStartupError> {
+        if let Some(pending) = &mut self.revocation {
+            let certification = timeout_at(deadline, pending.wait())
+                .await
+                .map_err(DesktopNativeLibraryStartupError::Deadline)??;
+            if certification.is_certified() {
+                return Err(StorageLibraryError::Protocol.into());
+            }
+            self.revocation = None;
+        }
+        Ok(())
     }
 
     pub(crate) fn record_recovery_issue(
@@ -504,7 +591,8 @@ impl DesktopNativeLibraryStartup {
         id: Uuid,
         revision: GameStorageRevision,
         cause: DesktopNativeLibraryStartupEnumIssueCause,
-    ) {
+    ) -> Result<(), StorageLibraryError> {
+        self.begin_recovery_revocation()?;
         self.summary.record(DesktopNativeLibraryStartupIssue {
             id,
             revision,
@@ -514,5 +602,6 @@ impl DesktopNativeLibraryStartup {
             .send_replace(DesktopNativeLibraryStartupEnumReadiness::RecoveryRequired(
                 Arc::new(self.summary.clone()),
             ));
+        Ok(())
     }
 }

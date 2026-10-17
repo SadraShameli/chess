@@ -1,3 +1,8 @@
+mod import;
+
+pub use crate::storage::library_prepared::import::StorageLibraryImportPreparedProjection;
+pub(crate) use crate::storage::library_prepared::import::StorageLibraryImportRecoveredProjection;
+
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer};
 use serde_json::value::RawValue;
@@ -530,7 +535,7 @@ impl StorageLibraryPreparedIdentity {
         let structural = identity.structural_key();
         let prepared = Self {
             initial_fen: structural.initial_fen().to_owned(),
-            mainline: serde_json::to_string(structural.mainline_uci())?,
+            mainline: Self::encode_mainline(structural)?,
             body_digest: PackageDigest::hash_slice(body.as_bytes()),
         };
         StorageLibraryError::check_cancellation(cancellation)?;
@@ -538,6 +543,11 @@ impl StorageLibraryPreparedIdentity {
     }
     pub(crate) fn initial_fen(&self) -> &str {
         &self.initial_fen
+    }
+    pub(crate) fn encode_mainline(
+        key: &crate::notation::game_identity::NotationGameIdentityStructuralKey,
+    ) -> Result<String, StorageLibraryError> {
+        Ok(serde_json::to_string(key.mainline_uci())?)
     }
     pub(crate) fn mainline(&self) -> &str {
         &self.mainline

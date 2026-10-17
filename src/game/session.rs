@@ -18,7 +18,7 @@ use crate::game::adjudication::{
 use crate::game::annotations::{
     GameAnnotationsEnumChange, GameAnnotationsEnumVariationRequest,
     GameAnnotationsSessionConfirmation, GameAnnotationsSessionPreview,
-    GameAnnotationsVariationPreview,
+    GameAnnotationsVariationApplied, GameAnnotationsVariationPreview,
 };
 use crate::game::draw_claim::{
     GameDrawClaimEnumAvailability, GameDrawClaimEnumIntent, GameDrawClaimEnumKind,
@@ -1775,7 +1775,7 @@ impl GameSession {
         expected: GameRevision,
         node: GameMoveId,
         movement: BoardMove,
-    ) -> Result<GameMoveId, GameSessionError> {
+    ) -> Result<GameAnnotationsVariationApplied, GameSessionError> {
         self.validate_study_edit(expected)?;
         let revision = self.revision.next()?;
         let advances_study = self.view == self.study_mainline_tip;
@@ -1785,11 +1785,22 @@ impl GameSession {
         } else {
             self.study_mainline_tip
         };
+        let change = if insertion.insertion_change() == GameAnnotationsEnumChange::Changed
+            || study_mainline_tip != self.study_mainline_tip
+        {
+            GameAnnotationsEnumChange::Changed
+        } else {
+            GameAnnotationsEnumChange::Unchanged
+        };
         let inserted = insertion.commit().id();
         self.view = inserted;
         self.study_mainline_tip = study_mainline_tip;
         self.revision = revision;
-        Ok(inserted)
+        Ok(GameAnnotationsVariationApplied::new(
+            change,
+            study_mainline_tip,
+            inserted,
+        ))
     }
 
     pub fn start<P: GameAdjudicationMateProofProvider + ?Sized>(

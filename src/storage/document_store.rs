@@ -39,6 +39,10 @@ pub enum StorageDocumentError {
     StoredIdentity(#[from] uuid::Error),
     #[error("Document revision changed: expected {expected}, found {actual}")]
     Conflict { expected: u64, actual: u64 },
+    #[error("The storage actor stopped with an unresolved transaction")]
+    UnresolvedTransaction,
+    #[error("The storage actor stopped with an unresolved import page ceiling")]
+    UnresolvedImportPageCeiling,
     #[error("Document revision is exhausted")]
     RevisionOverflow,
     #[error("Indexed library document {id} requires an atomic content and projection write")]
@@ -150,6 +154,7 @@ pub struct StorageDocumentClient {
     commands: mpsc::WeakSender<StorageDocumentEnumCommand>,
     memory: Arc<Semaphore>,
     admission: Arc<Semaphore>,
+    library_preparation_origin: Uuid,
 }
 
 impl StorageDocumentStore {
@@ -178,7 +183,10 @@ impl StorageDocumentStore {
             drop(initialization_lease);
             match initialized {
                 Ok(actor) => {
-                    if ready_sender.send(Ok(())).is_err() {
+                    if ready_sender
+                        .send(Ok(actor.library_preparation_origin))
+                        .is_err()
+                    {
                         return Ok(());
                     }
                     actor.run(receiver)
@@ -192,11 +200,12 @@ impl StorageDocumentStore {
             }
         });
         match ready_receiver.await {
-            Ok(Ok(())) => {
+            Ok(Ok(library_preparation_origin)) => {
                 let client = StorageDocumentClient {
                     commands: commands.downgrade(),
                     memory,
                     admission: Arc::new(Semaphore::new(Self::QUEUE_CAPACITY)),
+                    library_preparation_origin,
                 };
                 Ok(Self {
                     commands: Some(commands),
@@ -266,6 +275,10 @@ impl StorageDocumentStore {
 }
 
 impl StorageDocumentClient {
+    pub(crate) const fn library_preparation_origin(&self) -> Uuid {
+        self.library_preparation_origin
+    }
+
     pub(crate) fn begin_library(
         &self,
         request: StorageLibraryEnumTransactionRequest,
@@ -421,6 +434,8 @@ struct StorageDocumentActor {
     memory: Arc<Semaphore>,
     budget: CapacityBudget,
     runtime: tokio::runtime::Handle,
+    library_certified: bool,
+    library_preparation_origin: Uuid,
 }
 
 impl StorageDocumentActor {
@@ -450,6 +465,8 @@ impl StorageDocumentActor {
             memory,
             budget,
             runtime,
+            library_certified: false,
+            library_preparation_origin: Uuid::new_v4(),
         })
     }
 
@@ -470,10 +487,23 @@ impl StorageDocumentActor {
                         &mut self.connection,
                         *request,
                         &self.memory,
+                        &mut self.library_certified,
+                        self.library_preparation_origin,
                     );
-                    drop((_memory_reservation, _admission, lease));
+                    let unresolved = !self.connection.is_autocommit();
+                    let unresolved_import_limit = outcome
+                        .as_ref()
+                        .err()
+                        .is_some_and(StorageLibraryError::requires_connection_retirement);
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);
+                    }
+                    drop((_memory_reservation, _admission, lease));
+                    if unresolved {
+                        return Err(StorageDocumentError::UnresolvedTransaction);
+                    }
+                    if unresolved_import_limit {
+                        return Err(StorageDocumentError::UnresolvedImportPageCeiling);
                     }
                 }
                 StorageDocumentEnumCommand::PuzzleInventory {
@@ -595,6 +625,7 @@ impl StorageDocumentActor {
                 .map_err(|error| StorageDocumentError::Library(Box::new(error)))?;
         }
         transaction.commit()?;
+        self.library_certified = false;
         Ok(StorageDocumentReceipt { id, revision })
     }
 

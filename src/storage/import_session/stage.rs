@@ -19,10 +19,10 @@ use crate::storage::import_session::index::{
 };
 use crate::storage::import_session::model::{
     StorageImportSessionCancellation, StorageImportSessionCandidateBody,
-    StorageImportSessionCandidateQuery, StorageImportSessionCommitFootprint,
-    StorageImportSessionConfirmation, StorageImportSessionEnumChoice,
-    StorageImportSessionEnumVolume, StorageImportSessionError, StorageImportSessionExclusion,
-    StorageImportSessionIdentityProvider, StorageImportSessionPage,
+    StorageImportSessionCandidateCursor, StorageImportSessionCandidateQuery,
+    StorageImportSessionCommitFootprint, StorageImportSessionConfirmation,
+    StorageImportSessionEnumChoice, StorageImportSessionEnumVolume, StorageImportSessionError,
+    StorageImportSessionExclusion, StorageImportSessionIdentityProvider, StorageImportSessionPage,
     StorageImportSessionPageRequest, StorageImportSessionRepository,
     StorageImportSessionRepositoryError, StorageImportSessionRow, StorageImportSessionSnapshot,
     StorageImportSessionSummary,
@@ -269,6 +269,7 @@ impl StorageImportSessionStage {
                     Self::check(token, cancellation)?;
                     let body_proof =
                         crate::storage::import_session::model::StorageImportSessionBodyProof::new(
+                            &library_record,
                             &body,
                             || Self::check(token, cancellation),
                         )?;
@@ -497,14 +498,14 @@ impl StorageImportSessionStage {
     pub(crate) fn query(
         &mut self,
         ordinal: u64,
-        cursor: u64,
+        cursor: StorageImportSessionCandidateCursor,
         token: &CapacityExecutorCancellation,
     ) -> Result<Option<StorageImportSessionCandidateQuery>, StorageImportSessionError> {
         let record = self.disk.record(ordinal)?;
         if record.game.is_none() {
             return Ok(None);
         }
-        if cursor == 0 {
+        if cursor.boundary().is_none() {
             self.active_identity = Some((
                 ordinal,
                 Arc::new(self.read_record(ordinal, token)?.identity()?),

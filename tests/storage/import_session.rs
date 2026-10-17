@@ -8,6 +8,7 @@ use crate::capacity::executor::CapacityExecutor;
 use crate::game::enums::{GameId, GameIdentityError, GameMoveId};
 use crate::notation::game_identity::NotationGameIdentityEnumMatch;
 use crate::storage::game_document::StorageGameDocument;
+use crate::storage::import_session::StorageImportSessionCandidateCursor;
 use crate::storage::import_session::{
     StorageImportSession, StorageImportSessionCancellation, StorageImportSessionCandidate,
     StorageImportSessionCandidateBody, StorageImportSessionCandidatePage,
@@ -192,8 +193,11 @@ impl StorageImportSessionRepository for StorageImportSessionTestRepository {
         query: StorageImportSessionCandidateQuery,
     ) -> StorageImportSessionRepositoryFuture<'_, StorageImportSessionCandidatePage> {
         Box::pin(async move {
-            let start = usize::try_from(query.cursor())
-                .map_err(|error| StorageImportSessionRepositoryError::Effect(Box::new(error)))?;
+            let start = self.bodies.partition_point(|body| {
+                query.cursor().boundary().is_some_and(|after| {
+                    body.candidate().game().as_uuid().as_bytes() <= after.as_uuid().as_bytes()
+                })
+            });
             let candidates = self
                 .bodies
                 .iter()
@@ -204,13 +208,20 @@ impl StorageImportSessionRepository for StorageImportSessionTestRepository {
             let end = start
                 .checked_add(candidates.len())
                 .ok_or(StorageImportSessionRepositoryError::InvalidResponse)?;
+            let next = (end < self.bodies.len())
+                .then(|| {
+                    candidates.last().map(|candidate| {
+                        StorageImportSessionCandidateCursor::after(candidate.game())
+                    })
+                })
+                .flatten();
             StorageImportSessionCandidatePage::new(
                 StorageImportSessionCatalogStamp::new(
                     self.stamp.load(Ordering::SeqCst)
                         + u64::from(self.stale_page.load(Ordering::SeqCst)),
                 ),
                 candidates,
-                (end < self.bodies.len()).then_some(query.cursor() + 100),
+                next,
             )
         })
     }
@@ -1624,7 +1635,9 @@ fn candidate_query_borrows_the_canonical_validated_structural_key()
     let query = StorageImportSessionCandidateQuery::new(
         StorageImportSessionCatalogStamp::new(9),
         Arc::clone(&identity),
-        7,
+        StorageImportSessionCandidateCursor::after(
+            StorageImportSessionTestFixture::notation("*", 7)?.id(),
+        ),
     )?;
     let continued = query.clone();
     assert!(std::ptr::eq(
@@ -1649,8 +1662,16 @@ fn candidate_query_borrows_the_canonical_validated_structural_key()
         StorageImportSessionCandidateQuery::structural_digest_for(identity.structural_key())?
     );
     assert_eq!(
-        (query.catalog_stamp().value(), query.cursor(), query.limit()),
-        (9, 7, 100)
+        (
+            query.catalog_stamp().value(),
+            query.cursor().boundary(),
+            query.limit()
+        ),
+        (
+            9,
+            Some(StorageImportSessionTestFixture::notation("*", 7)?.id()),
+            100
+        )
     );
     Ok(())
 }

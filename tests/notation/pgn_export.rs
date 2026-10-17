@@ -1167,11 +1167,13 @@ impl NotationPgnExportPlayedFixture {
     ) -> Result<GameMoveId, Box<dyn std::error::Error>> {
         session.select_view(parent)?;
         let movement = session.tree().node(parent)?.position().parse_uci(uci)?;
-        Ok(session.append_study_variation(
-            session.revision(),
-            NotationPgnExportFixture::id(id)?,
-            movement,
-        )?)
+        Ok(session
+            .append_study_variation(
+                session.revision(),
+                NotationPgnExportFixture::id(id)?,
+                movement,
+            )?
+            .view())
     }
 
     fn output(

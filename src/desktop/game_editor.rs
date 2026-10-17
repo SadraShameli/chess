@@ -1,4 +1,5 @@
 mod context;
+mod publication;
 mod snapshot;
 mod tree;
 
@@ -7,6 +8,9 @@ use thiserror::Error;
 pub use crate::desktop::game_editor::context::{
     DesktopGameEditorBinding, DesktopGameEditorContext, DesktopGameEditorEnumSource,
     DesktopGameEditorEpoch, DesktopGameEditorGeneration,
+};
+pub use crate::desktop::game_editor::publication::{
+    DesktopGameEditorPublication, DesktopGameEditorPublicationError,
 };
 pub use crate::desktop::game_editor::snapshot::{
     DesktopGameEditorSnapshot, DesktopGameEditorSnapshotEnumState,
@@ -19,6 +23,7 @@ use crate::game::enums::{GameId, GameMoveId, GameRevision};
 use crate::game::session::{GameMetadata, GameSession};
 use crate::game::tree::{GameTree, GameTreeError};
 use crate::notation::game::NotationGame;
+use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRecord};
 
 #[derive(Debug, Error)]
@@ -124,6 +129,14 @@ impl<'a> DesktopGameEditor<'a> {
         expected: DesktopGameEditorContext,
     ) -> Result<DesktopGameEditorSnapshot, DesktopGameEditorError> {
         DesktopGameEditorSnapshot::capture(self, expected)
+    }
+
+    pub fn publish(
+        &self,
+        expected: DesktopGameEditorContext,
+        client: &StorageDocumentClient,
+    ) -> Result<DesktopGameEditorPublication, DesktopGameEditorPublicationError> {
+        DesktopGameEditorPublication::capture(self, expected, client)
     }
 
     pub fn tree_page(

@@ -96,7 +96,13 @@ impl StorageLibraryTransactionFixture {
         &mut self,
         request: StorageLibraryEnumTransactionRequest,
     ) -> Result<StorageLibraryEnumTransactionResponse, StorageLibraryError> {
-        StorageLibraryTransaction::execute(&mut self.connection, request, &self.memory)
+        StorageLibraryTransaction::execute(
+            &mut self.connection,
+            request,
+            &self.memory,
+            &mut false,
+            uuid::Uuid::nil(),
+        )
     }
 
     fn prepared_memory(
@@ -1029,7 +1035,9 @@ async fn output_memory_is_retained_by_pages_and_saturation_is_explicit()
         StorageLibraryTransaction::execute(
             &mut fixture.connection,
             StorageLibraryEnumTransactionRequest::Load(id),
-            &small
+            &small,
+            &mut false,
+            uuid::Uuid::nil(),
         ),
         Err(StorageLibraryError::Store(
             crate::storage::document_store::StorageDocumentError::Saturated
@@ -1062,6 +1070,8 @@ fn migration_preserves_generic_document_identity_revision_and_body()
             crate::storage::library_repository::StorageLibraryAdoptionCursor::start(),
         ),
         &Arc::new(Semaphore::new(4096)),
+        &mut false,
+        uuid::Uuid::nil(),
     )?;
     let StorageLibraryEnumTransactionResponse::AdoptionPage(page) = response else {
         return Err("expected adoption inventory".into());

@@ -166,17 +166,9 @@ impl NotationGame {
         node: GameMoveId,
         movement: BoardMove,
     ) -> Result<GameAnnotationsVariationApplied, NotationGameError> {
-        let previous_length = self.tree.len();
-        let selected = self
-            .tree
-            .prepare_study(parent, node, movement)?
-            .commit()
-            .id();
-        let change = if self.tree.len() == previous_length {
-            GameAnnotationsEnumChange::Unchanged
-        } else {
-            GameAnnotationsEnumChange::Changed
-        };
+        let prepared = self.tree.prepare_study(parent, node, movement)?;
+        let change = prepared.insertion_change();
+        let selected = prepared.commit().id();
         Ok(GameAnnotationsVariationApplied::new(
             change,
             self.mainline_tip,

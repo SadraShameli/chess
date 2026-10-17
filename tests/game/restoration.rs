@@ -202,8 +202,9 @@ fn study_extension_advances_only_the_current_study_leaf_and_preserves_live_state
         .node(session.view())?
         .position()
         .parse_uci("e2e4")?;
-    let alternative =
-        session.append_study_variation(session.revision(), GameTransitionFixture::id(10)?, e4)?;
+    let alternative = session
+        .append_study_variation(session.revision(), GameTransitionFixture::id(10)?, e4)?
+        .view();
     assert_eq!(session.study_mainline_tip(), live);
     let mut saved = session.restoration(ClockInstant::from_millis(2_000)?)?;
     saved.study_mainline_tip = alternative;
@@ -213,8 +214,9 @@ fn study_extension_advances_only_the_current_study_leaf_and_preserves_live_state
         .node(restored.view())?
         .position()
         .parse_uci("e7e5")?;
-    let extended =
-        restored.append_study_variation(restored.revision(), GameTransitionFixture::id(11)?, e5)?;
+    let extended = restored
+        .append_study_variation(restored.revision(), GameTransitionFixture::id(11)?, e5)?
+        .view();
     assert_eq!(restored.study_mainline_tip(), extended);
     assert_eq!(restored.live(), live);
     assert_eq!(restored.live_moves()?, history);

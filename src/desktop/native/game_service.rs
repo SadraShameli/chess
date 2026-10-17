@@ -260,7 +260,7 @@ where
                 StorageLibraryInventoryCursor::after,
             );
             let page = inventory.page(cursor).await?;
-            library.observe_recovery_catalog(page.catalog_revision());
+            library.observe_recovery_catalog(page.catalog_revision())?;
             for document in page.entries() {
                 let loaded = repository.load(document.id()).await;
                 match loaded {
@@ -274,7 +274,7 @@ where
                             DesktopNativeLibraryStartupEnumIssueCause::Changed(Some(
                                 restored.content_revision(),
                             )),
-                        );
+                        )?;
                     }
                     Ok(Some(restored)) => {
                         let storage_revision = restored.content_revision();
@@ -294,28 +294,34 @@ where
                                         .await?;
                                 }
                             }
-                            StorageLibraryEnumContent::Notation(_) => library
-                                .record_recovery_issue(
+                            StorageLibraryEnumContent::Notation(_) => {
+                                library.record_recovery_issue(
                                     document.id().as_uuid(),
                                     document.content_revision(),
                                     DesktopNativeLibraryStartupEnumIssueCause::ContentKind,
-                                ),
+                                )?;
+                            }
                         }
                     }
-                    Ok(None) => library.record_recovery_issue(
-                        document.id().as_uuid(),
-                        document.content_revision(),
-                        DesktopNativeLibraryStartupEnumIssueCause::Missing,
-                    ),
-                    Err(error) => library.record_recovery_issue(
-                        document.id().as_uuid(),
-                        document.content_revision(),
-                        DesktopNativeLibraryStartupEnumIssueCause::Storage(Arc::new(error)),
-                    ),
+                    Ok(None) => {
+                        library.record_recovery_issue(
+                            document.id().as_uuid(),
+                            document.content_revision(),
+                            DesktopNativeLibraryStartupEnumIssueCause::Missing,
+                        )?;
+                    }
+                    Err(error) => {
+                        library.record_recovery_issue(
+                            document.id().as_uuid(),
+                            document.content_revision(),
+                            DesktopNativeLibraryStartupEnumIssueCause::Storage(Arc::new(error)),
+                        )?;
+                    }
                 }
                 *after = Some(document.id());
             }
             if page.entries().is_empty() {
+                library.observe_revocation(library.deadline()).await?;
                 return Ok(());
             }
         }

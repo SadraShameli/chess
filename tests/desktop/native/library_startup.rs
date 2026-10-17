@@ -447,6 +447,7 @@ async fn repeated_catalog_changes_exhaust_bounded_sweeps_without_false_ready()
             .await?;
         owner.advance().await?;
     }
+    owner.run().await?;
     let DesktopNativeLibraryStartupEnumReadiness::RecoveryRequired(summary) = owner.readiness()
     else {
         return Err("unstable generations were certified ready".into());
@@ -457,6 +458,92 @@ async fn repeated_catalog_changes_exhaust_bounded_sweeps_without_false_ready()
         owner.progress().sweep(),
         DesktopNativeLibraryStartup::MAX_SWEEPS
     );
+    drop(owner);
+    fixture.close().await
+}
+
+struct DesktopNativeLibraryStartupCertificationWall;
+
+impl chess::game::storage_repository::GameStorageWallTimeProvider
+    for DesktopNativeLibraryStartupCertificationWall
+{
+    fn now(
+        &self,
+    ) -> Result<
+        chess::game::library_organization::GameLibraryOrganizationTimestamp,
+        chess::game::storage_repository::GameStorageWallTimeError,
+    > {
+        Ok(chess::game::library_organization::GameLibraryOrganizationTimestamp::new(100)?)
+    }
+}
+
+#[tokio::test]
+async fn settled_startup_certifies_actor_with_legitimate_unrelated_documents()
+-> DesktopGameRegistryTestResult {
+    use chess::storage::import_session::{
+        StorageImportSessionDestination, StorageImportSessionRepository,
+    };
+    use chess::storage::library_import::StorageLibraryImportRepository;
+
+    let fixture =
+        DesktopGameRegistryFixtureRuntime::new(DesktopGameRegistryFixtureProof::default()).await?;
+    let client = fixture.store.client();
+    client
+        .save(
+            uuid::Uuid::from_u128(90_000),
+            0,
+            "{\"preferences\":true}".to_owned(),
+        )
+        .await?;
+    let repository = StorageLibraryImportRepository::new(
+        client.clone(),
+        StorageImportSessionDestination::unfiled(),
+        Arc::new(DesktopNativeLibraryStartupCertificationWall),
+    );
+    assert!(!repository.snapshot().await?.is_adoption_complete());
+    let mut owner = DesktopNativeLibraryStartupFixture::owner(&fixture);
+    owner.run().await?;
+    assert!(matches!(
+        owner.readiness(),
+        DesktopNativeLibraryStartupEnumReadiness::Ready(_)
+    ));
+    assert!(repository.snapshot().await?.is_adoption_complete());
+    assert!(client.read(uuid::Uuid::from_u128(90_000)).await?.is_some());
+    drop(owner);
+    fixture.close().await
+}
+
+#[tokio::test]
+async fn recovery_required_startup_never_certifies_a_recognized_broken_game()
+-> DesktopGameRegistryTestResult {
+    use chess::storage::import_session::{
+        StorageImportSessionDestination, StorageImportSessionRepository,
+    };
+    use chess::storage::library_import::StorageLibraryImportRepository;
+
+    let fixture =
+        DesktopGameRegistryFixtureRuntime::new(DesktopGameRegistryFixtureProof::default()).await?;
+    fixture
+        .store
+        .client()
+        .save(
+            uuid::Uuid::from_u128(90_001),
+            0,
+            "{\"schema_version\":3,\"kind\":\"played\",\"game\":null}".to_owned(),
+        )
+        .await?;
+    let mut owner = DesktopNativeLibraryStartupFixture::owner(&fixture);
+    owner.run().await?;
+    assert!(matches!(
+        owner.readiness(),
+        DesktopNativeLibraryStartupEnumReadiness::RecoveryRequired(_)
+    ));
+    let repository = StorageLibraryImportRepository::new(
+        fixture.store.client(),
+        StorageImportSessionDestination::unfiled(),
+        Arc::new(DesktopNativeLibraryStartupCertificationWall),
+    );
+    assert!(!repository.snapshot().await?.is_adoption_complete());
     drop(owner);
     fixture.close().await
 }

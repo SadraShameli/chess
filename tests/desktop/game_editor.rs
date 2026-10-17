@@ -520,11 +520,13 @@ fn played_completed_result_and_independent_study_tip_are_preserved()
         .node(session.view())?
         .position()
         .parse_uci("d2d4")?;
-    let branch = session.append_study_variation(
-        session.revision(),
-        DesktopGameEditorFixture::node(500)?,
-        movement,
-    )?;
+    let branch = session
+        .append_study_variation(
+            session.revision(),
+            DesktopGameEditorFixture::node(500)?,
+            movement,
+        )?
+        .view();
     let confirmation = session
         .preview_variation(
             session.revision(),

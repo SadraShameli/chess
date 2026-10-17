@@ -3,6 +3,9 @@ use chess::game;
 #[path = "game/storage_wall_time_fixture.rs"]
 mod game_storage_wall_time_fixture;
 
+#[path = "storage/document_write_fixture.rs"]
+mod storage_document_write_fixture;
+
 #[path = "desktop/activation.rs"]
 mod desktop_activation;
 #[cfg(unix)]

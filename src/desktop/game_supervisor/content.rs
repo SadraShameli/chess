@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::clock::duration::ClockInstant;
 use crate::desktop::game_commands::DesktopGameCommandsEnumAction;
 use crate::desktop::game_supervisor::DesktopGameSupervisorError;
+use crate::desktop::game_supervisor::editor::DesktopGameSupervisorEditor;
 use crate::desktop::game_transition::{
     DesktopGameTransition, DesktopGameTransitionEnumEffect, DesktopGameTransitionOptions,
 };
@@ -38,6 +39,7 @@ pub(super) struct DesktopGameSupervisorPendingResult {
 
 pub(super) struct DesktopGameSupervisorContent {
     pub(super) session: GameSession,
+    pub(super) editor: DesktopGameSupervisorEditor,
     pub(super) accepted_edit: Option<GameStorageContentEdit>,
     pub(super) pending_result: Option<DesktopGameSupervisorPendingResult>,
     pub(super) storage_failure: Option<Arc<DesktopGameSupervisorError>>,
@@ -48,6 +50,7 @@ impl DesktopGameSupervisorContent {
     pub(super) fn new(session: GameSession) -> Self {
         Self {
             session,
+            editor: DesktopGameSupervisorEditor::new(),
             accepted_edit: None,
             pending_result: None,
             storage_failure: None,
@@ -116,7 +119,8 @@ impl DesktopGameSupervisorContent {
     }
 
     pub(super) fn is_current(&self) -> bool {
-        self.pending_result.is_none()
+        !self.editor.is_publishing()
+            && self.pending_result.is_none()
             && self.accepted_edit.is_none()
             && self.storage_failure.is_none()
             && self.session.save_status() == GameSaveEnumStatus::Current

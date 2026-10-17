@@ -262,15 +262,19 @@ type DesktopGameSupervisorFixtureActor = DesktopGameSupervisor<
 impl DesktopGameSupervisorFixtureStorage {
     pub(crate) async fn set_save_failure(&self, enabled: bool) -> DesktopGameSupervisorTestResult {
         let path = self.directory.path().join("library.sqlite3");
-        let sql = if enabled {
-            "CREATE TRIGGER game_supervisor_save_failure BEFORE INSERT ON documents BEGIN SELECT RAISE(FAIL, 'injected autosave failure'); END;"
-        } else {
-            "DROP TRIGGER game_supervisor_save_failure;"
-        };
+        let sql = crate::storage_document_write_fixture::StorageDocumentWriteFixtureEnumOperation::ALL.map(|operation| {
+            let name = operation.name();
+            if enabled {
+                let operation = operation.sql();
+                format!("CREATE TRIGGER game_supervisor_{name}_save_failure BEFORE {operation} ON documents BEGIN SELECT RAISE(FAIL, 'injected autosave failure'); END;")
+            } else {
+                format!("DROP TRIGGER game_supervisor_{name}_save_failure;")
+            }
+        }).join("\n");
         self.executor
             .submit_waiting(move |_cancellation| {
                 let connection = rusqlite::Connection::open(path)?;
-                connection.execute_batch(sql)
+                connection.execute_batch(&sql)
             })
             .await?
             .join()

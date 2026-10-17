@@ -49,11 +49,9 @@ impl DesktopEngineSelectionFixture {
             .node(session.view())?
             .position()
             .parse_uci(uci)?;
-        Ok(session.append_study_variation(
-            session.revision(),
-            GameTransitionFixture::id(id)?,
-            movement,
-        )?)
+        Ok(session
+            .append_study_variation(session.revision(), GameTransitionFixture::id(id)?, movement)?
+            .view())
     }
 
     fn snapshot(session: &GameSession) -> DesktopEngineSelectionTestResult<DesktopGameSnapshot> {

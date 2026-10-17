@@ -25,6 +25,7 @@ pub type StorageImportSessionRepositoryFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, StorageImportSessionRepositoryError>> + Send + 'a>>;
 
 pub struct StorageImportSessionBodyProof<'a> {
+    record: &'a StorageLibraryRecord,
     body: &'a str,
     digest: [u8; 32],
     length: u64,
@@ -32,6 +33,7 @@ pub struct StorageImportSessionBodyProof<'a> {
 
 impl<'a> StorageImportSessionBodyProof<'a> {
     pub(super) fn new(
+        record: &'a StorageLibraryRecord,
         body: &'a str,
         mut check: impl FnMut() -> Result<(), StorageImportSessionError>,
     ) -> Result<Self, StorageImportSessionError> {
@@ -44,11 +46,15 @@ impl<'a> StorageImportSessionBodyProof<'a> {
             digest.update(chunk);
         }
         Ok(Self {
+            record,
             body,
             digest: digest.finalize().into(),
             length: u64::try_from(body.len())
                 .map_err(|_error| StorageImportSessionError::Arithmetic)?,
         })
+    }
+    pub(crate) fn proves_record(&self, record: &StorageLibraryRecord) -> bool {
+        std::ptr::eq(self.record, record)
     }
     pub const fn body(&self) -> &str {
         self.body
@@ -67,6 +73,10 @@ pub enum StorageImportSessionRepositoryError {
     StaleCatalog,
     #[error("The import destination changed after preview")]
     StaleDestination,
+    #[error("The duplicate candidate changed after it was listed")]
+    StaleCandidate,
+    #[error("Library adoption is not certified")]
+    IncompleteAdoption,
     #[error("The import game identifier is already in use")]
     ExistingGame,
     #[error("The repository returned an invalid or unbounded response")]
@@ -309,7 +319,19 @@ impl StorageImportSessionCandidate {
 #[derive(Debug, Clone)]
 pub struct StorageImportSessionCandidateBody {
     candidate: StorageImportSessionCandidate,
-    body: Arc<str>,
+    body: StorageImportSessionCandidateEnumBody,
+}
+
+#[derive(Debug, Clone)]
+enum StorageImportSessionCandidateEnumBody {
+    Owned(Arc<str>),
+    Reserved(Arc<StorageImportSessionCandidateReservedBody>),
+}
+
+#[derive(Debug)]
+struct StorageImportSessionCandidateReservedBody {
+    body: String,
+    _reservation: tokio::sync::OwnedSemaphorePermit,
 }
 
 impl StorageImportSessionCandidateBody {
@@ -320,13 +342,63 @@ impl StorageImportSessionCandidateBody {
         if body.len() > crate::storage::document_store::StorageDocumentStore::MEMORY_BUDGET {
             return Err(StorageImportSessionRepositoryError::InvalidResponse);
         }
-        Ok(Self { candidate, body })
+        Ok(Self {
+            candidate,
+            body: StorageImportSessionCandidateEnumBody::Owned(body),
+        })
+    }
+    pub(crate) fn from_reserved(
+        candidate: StorageImportSessionCandidate,
+        body: String,
+        reservation: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<Self, StorageImportSessionRepositoryError> {
+        let required = body
+            .capacity()
+            .checked_add(std::mem::size_of::<StorageImportSessionCandidateReservedBody>())
+            .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<usize>()))
+            .ok_or(StorageImportSessionRepositoryError::InvalidResponse)?;
+        if reservation.num_permits() < required {
+            return Err(StorageImportSessionRepositoryError::InvalidResponse);
+        }
+        Ok(Self {
+            candidate,
+            body: StorageImportSessionCandidateEnumBody::Reserved(Arc::new(
+                StorageImportSessionCandidateReservedBody {
+                    body,
+                    _reservation: reservation,
+                },
+            )),
+        })
     }
     pub const fn candidate(&self) -> StorageImportSessionCandidate {
         self.candidate
     }
     pub fn body(&self) -> &str {
-        &self.body
+        match &self.body {
+            StorageImportSessionCandidateEnumBody::Owned(body) => body,
+            StorageImportSessionCandidateEnumBody::Reserved(body) => &body.body,
+        }
+    }
+    pub(crate) const fn reserved_overhead() -> usize {
+        std::mem::size_of::<StorageImportSessionCandidateReservedBody>()
+            + 2 * std::mem::size_of::<usize>()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageImportSessionCandidateCursor {
+    after: Option<GameId>,
+}
+
+impl StorageImportSessionCandidateCursor {
+    pub const fn start() -> Self {
+        Self { after: None }
+    }
+    pub const fn after(game: GameId) -> Self {
+        Self { after: Some(game) }
+    }
+    pub const fn boundary(self) -> Option<GameId> {
+        self.after
     }
 }
 
@@ -335,14 +407,14 @@ pub struct StorageImportSessionCandidateQuery {
     stamp: StorageImportSessionCatalogStamp,
     identity: Arc<NotationGameIdentity>,
     structural_digest: [u8; 32],
-    cursor: u64,
+    cursor: StorageImportSessionCandidateCursor,
 }
 
 impl StorageImportSessionCandidateQuery {
     pub(crate) fn new(
         stamp: StorageImportSessionCatalogStamp,
         identity: Arc<NotationGameIdentity>,
-        cursor: u64,
+        cursor: StorageImportSessionCandidateCursor,
     ) -> Result<Self, StorageImportSessionError> {
         Ok(Self {
             stamp,
@@ -364,13 +436,22 @@ impl StorageImportSessionCandidateQuery {
     pub fn structural_key(&self) -> &NotationGameIdentityStructuralKey {
         self.identity.structural_key()
     }
+    pub(crate) fn identity_bytes(&self) -> Result<usize, StorageImportSessionError> {
+        [self.identity.white(), self.identity.black()]
+            .into_iter()
+            .flatten()
+            .try_fold(std::mem::size_of::<NotationGameIdentity>(), |sum, text| {
+                sum.checked_add(text.len())
+                    .ok_or(StorageImportSessionError::Arithmetic)
+            })
+    }
     pub const fn catalog_stamp(&self) -> StorageImportSessionCatalogStamp {
         self.stamp
     }
     pub const fn structural_digest(&self) -> [u8; 32] {
         self.structural_digest
     }
-    pub const fn cursor(&self) -> u64 {
+    pub const fn cursor(&self) -> StorageImportSessionCandidateCursor {
         self.cursor
     }
     pub const fn limit(&self) -> usize {
@@ -381,14 +462,15 @@ impl StorageImportSessionCandidateQuery {
 pub struct StorageImportSessionCandidatePage {
     stamp: StorageImportSessionCatalogStamp,
     candidates: Vec<StorageImportSessionCandidate>,
-    next: Option<u64>,
+    next: Option<StorageImportSessionCandidateCursor>,
+    _reservation: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl StorageImportSessionCandidatePage {
     pub fn new(
         stamp: StorageImportSessionCatalogStamp,
         candidates: Vec<StorageImportSessionCandidate>,
-        next: Option<u64>,
+        next: Option<StorageImportSessionCandidateCursor>,
     ) -> Result<Self, StorageImportSessionRepositoryError> {
         if candidates.len() > StorageImportSessionPageRequest::MAX_ITEMS
             || (next.is_some() && candidates.is_empty())
@@ -402,7 +484,18 @@ impl StorageImportSessionCandidatePage {
             stamp,
             candidates,
             next,
+            _reservation: None,
         })
+    }
+    pub(crate) fn from_reserved(
+        stamp: StorageImportSessionCatalogStamp,
+        candidates: Vec<StorageImportSessionCandidate>,
+        next: Option<StorageImportSessionCandidateCursor>,
+        reservation: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<Self, StorageImportSessionRepositoryError> {
+        let mut page = Self::new(stamp, candidates, next)?;
+        page._reservation = Some(reservation);
+        Ok(page)
     }
     pub const fn catalog_stamp(&self) -> StorageImportSessionCatalogStamp {
         self.stamp
@@ -410,7 +503,7 @@ impl StorageImportSessionCandidatePage {
     pub fn candidates(&self) -> &[StorageImportSessionCandidate] {
         &self.candidates
     }
-    pub const fn next_cursor(&self) -> Option<u64> {
+    pub const fn next_cursor(&self) -> Option<StorageImportSessionCandidateCursor> {
         self.next
     }
     pub(crate) fn validate(
@@ -420,7 +513,13 @@ impl StorageImportSessionCandidatePage {
         if self.stamp != query.stamp {
             return Err(StorageImportSessionRepositoryError::StaleCatalog.into());
         }
-        if self.next.is_some_and(|next| next <= query.cursor) {
+        if self.candidates.first().is_some_and(|first| {
+            query.cursor.boundary().is_some_and(|after| {
+                first.game().as_uuid().as_bytes() <= after.as_uuid().as_bytes()
+            })
+        }) || self.next.is_some_and(|next| {
+            next.boundary() != self.candidates.last().map(|candidate| candidate.game())
+        }) {
             return Err(StorageImportSessionRepositoryError::InvalidResponse.into());
         }
         Ok(())

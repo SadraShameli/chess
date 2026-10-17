@@ -252,6 +252,13 @@ impl GameTreePreparedVariation<'_> {
 }
 
 impl GameTreePreparedMove<'_> {
+    pub(crate) const fn insertion_change(&self) -> GameAnnotationsEnumChange {
+        match self.insertion {
+            GameTreeEnumInsertion::Insert { .. } => GameAnnotationsEnumChange::Changed,
+            GameTreeEnumInsertion::Reuse { .. } => GameAnnotationsEnumChange::Unchanged,
+        }
+    }
+
     pub(crate) fn id(&self) -> GameMoveId {
         self.node.id()
     }
