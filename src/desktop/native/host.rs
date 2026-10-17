@@ -257,6 +257,15 @@ struct DesktopNativeHostAudio {
 }
 
 impl DesktopNativeHostAudio {
+    #[cfg(test)]
+    fn detached() -> Self {
+        Self {
+            router: PresentationAudioRouter::default(),
+            output: DesktopNativeAudio::new(DesktopNativeAudioBevy::detached()),
+            epoch: Instant::now(),
+        }
+    }
+
     fn new(server: &AssetServer) -> Self {
         Self {
             router: PresentationAudioRouter::default(),

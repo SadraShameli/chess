@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::asset::{Assets, Handle};
+use bevy::ecs::message::MessageCursor;
 use bevy::gltf::{GltfMaterial, GltfMesh, GltfNode, GltfPrimitive, gltf};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::{Entity, Image, Mesh, StandardMaterial, Transform, World};
@@ -26,9 +27,11 @@ use crate::desktop::dto::DesktopEnumValue;
 use crate::desktop::messages::{DesktopEnumCommand, DesktopMessagesEntityId};
 use crate::desktop::native::event_loop::DesktopNativeEventLoopWake;
 use crate::desktop::native::host::{
-    DesktopNativeHost, DesktopNativeHostEnumQuit, DesktopNativeHostEnumTeardown,
-    DesktopNativeHostServices, DesktopNativeHostState,
+    DesktopNativeHost, DesktopNativeHostAdaptive, DesktopNativeHostAudio,
+    DesktopNativeHostEnumQuit, DesktopNativeHostEnumTeardown, DesktopNativeHostServices,
+    DesktopNativeHostState,
 };
+use crate::presentation::timing::PresentationTimingSampler;
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
 use crate::desktop::native::puzzle_service::{
     DesktopNativePuzzleService, DesktopNativePuzzleServiceOptions,
@@ -293,6 +296,11 @@ impl DesktopNativeHostPuzzleFixture {
         let (events, _events) = DesktopNativeHost::event_channel();
         let (dialog_ready, _dialogs) = watch::channel(None);
         let state = DesktopNativeHostState {
+            audio: DesktopNativeHostAudio::detached(),
+            lifecycle_events: MessageCursor::default(),
+            sleeping: false,
+            timing: PresentationTimingSampler::new(),
+            timing_exported: false,
             services: DesktopNativeHostServices {
                 engine_panels: None,
                 puzzle_panel: None,

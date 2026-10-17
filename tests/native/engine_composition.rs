@@ -82,6 +82,7 @@ impl NativeEngineCompositionHarness {
             | DesktopEnumCommand::StreamAcknowledge { .. }
             | DesktopEnumCommand::StreamResync { .. }
             | DesktopEnumCommand::Backup(_)
+            | DesktopEnumCommand::Update(_)
             | DesktopEnumCommand::Stop { .. }
             | DesktopEnumCommand::Pause { .. }
             | DesktopEnumCommand::Quit => None,

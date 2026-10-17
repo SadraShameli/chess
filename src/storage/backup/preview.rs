@@ -62,7 +62,7 @@ impl BackupPreview {
         if digest != manifest.payload_sha256() {
             return Err(BackupError::ChecksumMismatch);
         }
-        let findings = Self::findings(&manifest, context)?;
+        let findings = Self::derive_findings(&manifest, context)?;
         Ok(Self {
             path: path.to_path_buf(),
             manifest,
@@ -71,7 +71,7 @@ impl BackupPreview {
         })
     }
 
-    fn findings(
+    fn derive_findings(
         manifest: &BackupManifest,
         context: &BackupPreviewContext<'_>,
     ) -> Result<Vec<BackupPreviewEnumFinding>, BackupError> {

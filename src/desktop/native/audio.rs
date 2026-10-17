@@ -104,6 +104,14 @@ impl DesktopNativeAudioBevy {
     pub const RESULT_ASSET: &'static str = "sounds/result.wav";
     pub const LOW_TIME_ASSET: &'static str = "sounds/low-time.wav";
 
+    pub fn detached() -> Self {
+        Self {
+            handles: std::array::from_fn(|_index| bevy::asset::Handle::default()),
+            pending: Vec::new(),
+            failed: false,
+        }
+    }
+
     pub fn load(server: &bevy::asset::AssetServer) -> Self {
         Self {
             handles: [
