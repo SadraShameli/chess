@@ -8,7 +8,7 @@ use crate::engine::package::manifest::{
     EnginePackageEntry, EnginePackageEnumProfile, EnginePackageEnumTarget, EnginePackageManifest,
     EnginePackageManifestError,
 };
-use crate::engine::package::platform::EnginePackagePlatform;
+use crate::engine::package::platform::{EnginePackagePlatform, EnginePackagePlatformGlibc};
 use crate::package::digest::{PackageDigest, PackageDigestError};
 
 #[derive(Debug, Error)]
@@ -138,6 +138,14 @@ impl EnginePackageSelector {
             if !platform.has_libnuma() {
                 reasons.push("libnuma is not installed".to_owned());
             }
+        }
+        if let Some(glibc) = platform.glibc()
+            && glibc < EnginePackagePlatformGlibc::REQUIRED
+        {
+            reasons.push(format!(
+                "glibc {glibc} is older than the required {}",
+                EnginePackagePlatformGlibc::REQUIRED
+            ));
         }
         reasons
     }

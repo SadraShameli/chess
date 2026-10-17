@@ -20,3 +20,15 @@ system; each row stays outstanding until the exact result is recorded here.
 Automated coverage that supports these checks: `tests/engine/package.rs`,
 `tests/desktop/game_recovery_policy.rs`, `tests/desktop/migration_continuity.rs`,
 `tests/native/installation.rs` and the unit tests under `tools/packaging/`.
+
+## Linux glibc compatibility check (written, not compiled or run)
+
+`EnginePackagePlatform` now carries the detected glibc version (from
+`/usr/bin/getconf GNU_LIBC_VERSION` on Linux) and `EnginePackageSelector::incompatibilities`
+rejects every profile with the reason "glibc X is older than the required 2.35" when a
+detected version is below the packaged baseline. An undetectable version does not block
+selection because the host version check already requires Ubuntu 22.04 or later. The
+libnuma check keeps its `libnuma.so.1` soname. The oldest-glibc symbol check on the Linux
+binary and the Ubuntu 22.04 run stay outstanding. Test:
+`glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason` in
+`tests/engine/package.rs`.

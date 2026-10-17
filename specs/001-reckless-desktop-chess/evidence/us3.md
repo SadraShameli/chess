@@ -76,11 +76,18 @@ All of this is uncompiled and unrun.
 - `file_selection_round_trip_sends_file_select_then_dispatches_import_with_the_handle`
   in `tests/presentation/app_library.rs`.
 
+## Windows import backend (written without a Windows host, never compiled)
+
+`StorageImportSessionWindowsSpace` in `src/storage/import_session/filesystem.rs`
+identifies the stage and library anchors by volume serial and file index, and reports
+free bytes of the anchor's volume through `GetVolumePathName` and `GetDiskFreeSpaceEx`.
+`DesktopNativeLibraryImport` opens both directories with backup semantics and passes
+the staging directory to the filesystem adapter, whose Windows spool uses
+`tempfile_in`. It has no Windows execution evidence and the `winsafe` call shapes are
+unchecked until a Windows build.
+
 ## Not done
 
 - Story scenarios 1 through 9 and exact round-trip, duplicate and Trash results.
-- Windows import backend: it needs a space and volume-identity provider built on
-  Windows-only calls and the extra directory argument of the filesystem adapter; it
-  cannot be written or checked without a Windows host, so import stays unavailable there.
 - T097 and T100 remaining items are physical staging, space and measurement
   acceptance: external evidence.

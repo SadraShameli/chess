@@ -229,6 +229,69 @@ impl StorageImportSessionSpaceProvider for StorageImportSessionUnixSpace {
     }
 }
 
+#[cfg(windows)]
+pub struct StorageImportSessionWindowsSpace {
+    anchors: [StorageImportSessionWindowsAnchor; 2],
+}
+
+#[cfg(windows)]
+struct StorageImportSessionWindowsAnchor {
+    path: std::path::PathBuf,
+    volume: u64,
+    index: u64,
+}
+
+#[cfg(windows)]
+impl StorageImportSessionWindowsSpace {
+    pub fn new(
+        stage: &std::path::Path,
+        library: &std::path::Path,
+    ) -> Result<Self, StorageImportSessionError> {
+        Ok(Self {
+            anchors: [Self::anchor(stage)?, Self::anchor(library)?],
+        })
+    }
+
+    fn anchor(
+        path: &std::path::Path,
+    ) -> Result<StorageImportSessionWindowsAnchor, StorageImportSessionError> {
+        let handle = winapi_util::Handle::from_path_any(path)?;
+        let information = winapi_util::file::information(&handle)?;
+        Ok(StorageImportSessionWindowsAnchor {
+            path: path.to_path_buf(),
+            volume: information.volume_serial_number(),
+            index: information.file_index(),
+        })
+    }
+}
+
+#[cfg(windows)]
+impl StorageImportSessionSpaceProvider for StorageImportSessionWindowsSpace {
+    fn observe(
+        &self,
+        anchor: &File,
+    ) -> Result<StorageImportSessionSpace, StorageImportSessionError> {
+        let information = winapi_util::file::information(anchor)?;
+        let known = self
+            .anchors
+            .iter()
+            .find(|known| {
+                known.volume == information.volume_serial_number()
+                    && known.index == information.file_index()
+            })
+            .ok_or(StorageImportSessionError::State)?;
+        let text = known
+            .path
+            .to_str()
+            .ok_or(StorageImportSessionError::State)?;
+        let root = winsafe::GetVolumePathName(text).map_err(std::io::Error::other)?;
+        let mut available = 0_u64;
+        winsafe::GetDiskFreeSpaceEx(Some(&root), Some(&mut available), None, None)
+            .map_err(std::io::Error::other)?;
+        Ok(StorageImportSessionSpace::new(known.volume, available))
+    }
+}
+
 #[cfg(all(test, unix))]
 #[path = "../../../tests/storage/import_session_review/filesystem.rs"]
 mod review_tests;

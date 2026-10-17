@@ -27,6 +27,8 @@ pub use crate::storage::import_session::difference::{
 };
 #[cfg(unix)]
 pub use crate::storage::import_session::filesystem::StorageImportSessionUnixSpace;
+#[cfg(windows)]
+pub use crate::storage::import_session::filesystem::StorageImportSessionWindowsSpace;
 pub use crate::storage::import_session::filesystem::{
     StorageImportSessionFilesystem, StorageImportSessionSpaceProvider,
 };

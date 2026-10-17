@@ -54,12 +54,41 @@ impl EnginePackagePlatformEnumOsState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EnginePackagePlatformGlibc {
+    major: u16,
+    minor: u16,
+}
+
+impl EnginePackagePlatformGlibc {
+    pub const REQUIRED: Self = Self::new(2, 35);
+
+    pub const fn new(major: u16, minor: u16) -> Self {
+        Self { major, minor }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let token = text.split_whitespace().last()?;
+        let mut parts = token.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        Some(Self::new(major, minor))
+    }
+}
+
+impl std::fmt::Display for EnginePackagePlatformGlibc {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}.{}", self.major, self.minor)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnginePackagePlatform {
     features: BTreeSet<EnginePackagePlatformEnumFeature>,
     os_states: BTreeSet<EnginePackagePlatformEnumOsState>,
     numa_nodes: u16,
     libnuma: bool,
+    glibc: Option<EnginePackagePlatformGlibc>,
 }
 
 impl EnginePackagePlatform {
@@ -74,7 +103,17 @@ impl EnginePackagePlatform {
             os_states: os_states.into_iter().collect(),
             numa_nodes,
             libnuma,
+            glibc: None,
         }
+    }
+
+    pub fn with_glibc(mut self, glibc: Option<EnginePackagePlatformGlibc>) -> Self {
+        self.glibc = glibc;
+        self
+    }
+
+    pub const fn glibc(&self) -> Option<EnginePackagePlatformGlibc> {
+        self.glibc
     }
 
     pub const fn numa_nodes(&self) -> u16 {
@@ -119,6 +158,25 @@ impl EnginePackagePlatform {
         let (features, os_states) = Self::detect_cpu();
         let (numa_nodes, libnuma) = Self::detect_topology();
         Self::from_observation(features, os_states, numa_nodes, libnuma)
+            .with_glibc(Self::detect_glibc())
+    }
+
+    fn detect_glibc() -> Option<EnginePackagePlatformGlibc> {
+        #[cfg(target_os = "linux")]
+        {
+            let output = std::process::Command::new("/usr/bin/getconf")
+                .arg("GNU_LIBC_VERSION")
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            EnginePackagePlatformGlibc::parse(&String::from_utf8(output.stdout).ok()?)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
     }
 
     fn detect_cpu() -> (

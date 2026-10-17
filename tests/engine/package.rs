@@ -4,6 +4,7 @@ use chess::engine::package::manifest::{
 };
 use chess::engine::package::platform::{
     EnginePackagePlatform, EnginePackagePlatformEnumFeature, EnginePackagePlatformEnumOsState,
+    EnginePackagePlatformGlibc,
 };
 use chess::engine::package::selector::{EnginePackageEnumPreference, EnginePackageSelector};
 use chess::package::digest::PackageDigest;
@@ -308,6 +309,46 @@ fn every_profile_has_a_distinct_path_and_serialization() -> EnginePackageResult 
     assert_eq!(
         TARGET.profile_path(EnginePackageEnumProfile::Portable),
         TARGET.relative_path()
+    );
+    Ok(())
+}
+
+#[test]
+fn glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason() -> EnginePackageResult {
+    assert_eq!(
+        EnginePackagePlatformGlibc::parse("glibc 2.35\n"),
+        Some(EnginePackagePlatformGlibc::new(2, 35))
+    );
+    assert_eq!(EnginePackagePlatformGlibc::parse("getconf: unknown"), None);
+    assert!(EnginePackagePlatformGlibc::new(2, 34) < EnginePackagePlatformGlibc::REQUIRED);
+    let old = platform(None, 1, false).with_glibc(Some(EnginePackagePlatformGlibc::new(2, 34)));
+    let reasons = EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::Portable, &old);
+    assert_eq!(
+        reasons,
+        vec!["glibc 2.34 is older than the required 2.35".to_owned()]
+    );
+    let current =
+        platform(None, 1, false).with_glibc(Some(EnginePackagePlatformGlibc::new(2, 39)));
+    assert!(
+        EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::Portable, &current)
+            .is_empty()
+    );
+    let unknown = platform(None, 1, false);
+    assert!(unknown.glibc().is_none());
+    assert!(
+        EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::Portable, &unknown)
+            .is_empty()
+    );
+    let (directory, manifest) = package(&[EnginePackageEnumProfile::Portable])?;
+    assert!(
+        EnginePackageSelector::select_with(
+            directory.path(),
+            &manifest,
+            host()?,
+            &old,
+            EnginePackageEnumPreference::Automatic
+        )
+        .is_err()
     );
     Ok(())
 }
