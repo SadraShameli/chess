@@ -1,4 +1,5 @@
 mod error;
+mod generate;
 mod identity;
 mod limits;
 mod record;
@@ -6,6 +7,10 @@ mod study;
 mod validation;
 
 pub use crate::opening::book::error::OpeningBookError;
+pub use crate::opening::book::generate::{
+    OpeningBookGenerated, OpeningBookGeneratedMove, OpeningBookGenerationError,
+    OpeningBookGenerator,
+};
 pub use crate::opening::book::identity::OpeningBookIdentity;
 pub use crate::opening::book::limits::OpeningBookLimits;
 pub use crate::opening::book::study::{OpeningBookShare, OpeningBookStudy, OpeningBookStudyMove};

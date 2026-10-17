@@ -9,6 +9,32 @@ diesel::table! {
 }
 
 diesel::table! {
+    dataset_leases (lease_id) {
+        lease_id -> Integer,
+        dataset_id -> Integer,
+        holder -> Text,
+        holder_ref -> Text,
+    }
+}
+
+diesel::table! {
+    datasets (dataset_id) {
+        dataset_id -> Integer,
+        kind -> Text,
+        origin -> Text,
+        name -> Text,
+        version -> Text,
+        format -> Text,
+        license -> Text,
+        checksum -> Text,
+        location -> Text,
+        validation -> Text,
+        records -> Nullable<Integer>,
+        superseded -> Integer,
+    }
+}
+
+diesel::table! {
     documents (id) {
         id -> Text,
         revision -> Text,
@@ -223,6 +249,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(dataset_leases -> datasets (dataset_id));
 diesel::joinable!(games -> documents (game_id));
 diesel::joinable!(library_entries -> documents (game_id));
 diesel::joinable!(library_entries -> library_folders (folder_id));
@@ -238,6 +265,8 @@ diesel::joinable!(report_results -> report_jobs (job_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     clock_snapshots,
+    dataset_leases,
+    datasets,
     documents,
     editor_drafts,
     games,

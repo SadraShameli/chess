@@ -1,7 +1,12 @@
 pub mod atomic_file;
 pub mod connection;
+pub mod dataset_import;
+pub mod dataset_integrity;
 pub mod dataset_package;
+pub mod dataset_preparation;
+pub mod dataset_registry;
 pub mod dataset_selection;
+pub mod dataset_sources;
 pub mod document_store;
 pub mod editor_repository;
 pub mod game_document;

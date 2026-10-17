@@ -102,6 +102,8 @@ mod opening_fixture;
 mod opening_index;
 #[path = "opening/query.rs"]
 mod opening_query;
+#[path = "opening/starter_data.rs"]
+mod opening_starter_data;
 #[path = "opening/statistics.rs"]
 mod opening_statistics;
 #[path = "report/job.rs"]

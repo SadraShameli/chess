@@ -1,9 +1,11 @@
 use thiserror::Error;
 
 use crate::board::position::BoardPosition;
-use crate::board::r#move::BoardMove;
+use crate::board::r#move::{BoardMove, BoardMoveError};
 use crate::opening::book::{OpeningBook, OpeningBookError, OpeningBookStudy};
 use crate::opening::corpus::{OpeningCorpus, OpeningCorpusError, OpeningCorpusLimits};
+use crate::opening::index::{OpeningIndexError, OpeningIndexKey};
+use crate::storage::opening_repository::{StorageOpeningError, StorageOpeningRepository};
 use crate::opening::query::{OpeningQuery, OpeningQueryFilters};
 use crate::opening::statistics::{
     OpeningStatistics, OpeningStatisticsAverage, OpeningStatisticsOutcomes, OpeningStatisticsRatio,
@@ -17,6 +19,12 @@ pub enum DesktopOpeningCommandsError {
     Corpus(#[from] OpeningCorpusError),
     #[error(transparent)]
     Book(#[from] OpeningBookError),
+    #[error(transparent)]
+    Index(#[from] OpeningIndexError),
+    #[error(transparent)]
+    Storage(#[from] StorageOpeningError),
+    #[error(transparent)]
+    Move(#[from] BoardMoveError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +127,78 @@ impl DesktopOpeningCommands {
         let query = OpeningQuery::new(position, filters)?;
         let result = OpeningStatistics::query(corpora, &query, limits, cancelled)?;
         Ok(Self::view(&result, position, sample_offset)?)
+    }
+
+    pub async fn explore_indexed(
+        repository: &StorageOpeningRepository,
+        position: &BoardPosition,
+    ) -> Result<DesktopOpeningExplorerView, DesktopOpeningCommandsError> {
+        let key = OpeningIndexKey::of(position)?;
+        let stored = repository.continuations(key.clone()).await?;
+        let hits = repository.hits(key, None).await?;
+        let mut continuations = Vec::new();
+        let mut moving: u64 = 0;
+        let mut ending: u64 = 0;
+        for continuation in &stored {
+            if continuation.next_move().is_some() {
+                moving = moving.saturating_add(continuation.games());
+            } else {
+                ending = ending.saturating_add(continuation.games());
+            }
+        }
+        for continuation in &stored {
+            let Some(next) = continuation.next_move() else {
+                continue;
+            };
+            continuations.push(DesktopOpeningContinuation {
+                movement: position.parse_uci(next)?,
+                uci: next.to_owned(),
+                games: continuation.games(),
+                frequency: DesktopOpeningRatio {
+                    numerator: continuation.games(),
+                    denominator: moving.max(1),
+                },
+                outcomes: DesktopOpeningOutcomes {
+                    white: 0,
+                    draws: 0,
+                    black: 0,
+                    unknown: continuation.games(),
+                },
+                white_rating: None,
+                black_rating: None,
+            });
+        }
+        let games = moving.saturating_add(ending);
+        let samples = hits
+            .iter()
+            .map(|hit| DesktopOpeningSample {
+                game: hit.game(),
+                sources: 1,
+                white: None,
+                black: None,
+                white_rating: None,
+                black_rating: None,
+                partial_date: false,
+            })
+            .collect();
+        Ok(DesktopOpeningExplorerView {
+            games,
+            next_move_games: moving,
+            ending_games: ending,
+            partial_date_matches: 0,
+            potential_duplicate_pairs: 0,
+            outcomes: DesktopOpeningOutcomes {
+                white: 0,
+                draws: 0,
+                black: 0,
+                unknown: games,
+            },
+            white_rating: None,
+            black_rating: None,
+            continuations,
+            samples,
+            next_sample_offset: None,
+        })
     }
 
     pub fn study_book(

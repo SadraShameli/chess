@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "lichess-standard-games",
+      "kind": "standard_games",
+      "version": "2025-12",
+      "url": "https://database.lichess.org/standard/lichess_db_standard_rated_2025-12.pgn.zst",
+      "file": "lichess_db_standard_rated_2025-12.pgn.zst",
+      "license": "CC0-1.0",
+      "sha256": null
+    },
+    {
+      "id": "lichess-puzzles",
+      "kind": "puzzles",
+      "version": "2026-10-05",
+      "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst",
+      "file": "lichess_db_puzzle.csv.zst",
+      "license": "CC0-1.0",
+      "sha256": null
+    },
+    {
+      "id": "lichess-chess-openings",
+      "kind": "openings",
+      "version": "a6189a30dc273ccb21fc2536a9a2fefd5592a67a",
+      "url": "https://github.com/lichess-org/chess-openings/archive/a6189a30dc273ccb21fc2536a9a2fefd5592a67a.tar.gz",
+      "file": "chess-openings-a6189a30dc273ccb21fc2536a9a2fefd5592a67a.tar.gz",
+      "license": "CC0-1.0",
+      "sha256": null
+    }
+  ]
+}

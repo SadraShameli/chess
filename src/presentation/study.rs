@@ -9,12 +9,17 @@ use crate::presentation::report::controller::{
     PresentationReportController, PresentationReportIntent,
 };
 use crate::presentation::report::view::PresentationReportView;
+use crate::presentation::settings::datasets::{
+    PresentationSettingsDatasets, PresentationSettingsDatasetsIntent,
+};
+use crate::desktop::dataset_commands::{DesktopDatasetRow, DesktopDatasetStarter};
 
 #[derive(Default)]
 pub struct PresentationStudy {
     cursor: PresentationStudyCursor,
     report: PresentationReportController,
     opening: PresentationOpeningController,
+    datasets: PresentationSettingsDatasets,
 }
 
 impl PresentationStudy {
@@ -23,6 +28,7 @@ impl PresentationStudy {
             cursor: PresentationStudyCursor::new(),
             report: PresentationReportController::new(),
             opening: PresentationOpeningController::new(),
+            datasets: PresentationSettingsDatasets::new(),
         }
     }
 
@@ -44,5 +50,14 @@ impl PresentationStudy {
 
     pub fn show_opening(&mut self, ui: &mut Ui) -> Option<PresentationOpeningIntent> {
         PresentationOpeningExplorer::show_tabs(ui, &mut self.opening, self.cursor)
+    }
+
+    pub fn show_datasets(
+        &mut self,
+        ui: &mut Ui,
+        starters: &[DesktopDatasetStarter],
+        rows: &[DesktopDatasetRow],
+    ) -> Option<PresentationSettingsDatasetsIntent> {
+        self.datasets.show(ui, starters, rows)
     }
 }

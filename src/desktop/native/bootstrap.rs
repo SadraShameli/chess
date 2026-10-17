@@ -73,6 +73,7 @@ use crate::desktop::native::library_service::{
     DesktopNativeLibraryService, DesktopNativeLibraryServiceError,
 };
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
+use crate::desktop::native::report_host::DesktopNativeReportHost;
 use crate::desktop::native::puzzle_service::{
     DesktopNativePuzzleService, DesktopNativePuzzleServiceOptions,
 };
@@ -312,6 +313,7 @@ struct DesktopNativeBootstrapServices {
     games: Option<DesktopNativeGameService>,
     puzzles: Option<DesktopNativeBootstrapPuzzleService>,
     puzzle_cleanup: Option<DesktopNativeBootstrapCleanup<DesktopNativeBootstrapPuzzleService>>,
+    reports: Option<Arc<DesktopNativeReportHost>>,
     library: Option<DesktopNativeLibraryService>,
     library_cleanup: Option<DesktopNativeBootstrapCleanup<DesktopNativeLibraryService>>,
     analysis: Option<
@@ -323,6 +325,7 @@ struct DesktopNativeBootstrapServices {
 impl DesktopNativeBootstrapServices {
     fn is_shutdown_complete(&self) -> bool {
         self.puzzle_cleanup.is_none()
+            && self.reports.as_ref().is_none_or(|host| Arc::strong_count(host) == 1)
             && self.library_cleanup.is_none()
             && self
                 .library
@@ -812,6 +815,9 @@ impl DesktopNativeBootstrapSupervisor {
                 .start()?
         };
         let puzzle_owner = DesktopMessagesEntityId::new();
+        self.lifecycle.services.lock().await.reports = Some(Arc::new(DesktopNativeReportHost::new(
+            storage_client.clone(),
+        )));
         let games = DesktopNativeGameService::new(DesktopNativeGameServiceOptions {
             factory_provider: DesktopNativeGameFactories::new(
                 package.clone(),

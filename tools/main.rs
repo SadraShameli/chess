@@ -11,12 +11,13 @@ use thiserror::Error;
 
 #[cfg(feature = "asset-tools")]
 mod assets;
+mod data;
 mod engine;
 
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools engine-build | engine-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools data-verify <sources.json> <cache-directory> | engine-build | engine-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
     #[error(transparent)]
@@ -145,6 +146,7 @@ impl ToolsEnumEngineWorkflow {
 }
 
 enum ToolsEnumCommand {
+    VerifyData { sources: PathBuf, cache: PathBuf },
     BuildEngine,
     CheckEngine,
     RunEngineWorkflow(ToolsEnumEngineWorkflow),
@@ -164,6 +166,12 @@ impl ToolsEnumCommand {
     fn parse() -> Result<Self, ToolsCommandError> {
         let supplied: Vec<OsString> = std::env::args_os().skip(1).collect();
         match supplied.as_slice() {
+            [command, sources, cache] if command == "data-verify" => {
+                return Ok(Self::VerifyData {
+                    sources: sources.into(),
+                    cache: cache.into(),
+                });
+            }
             [command, package, output, reports @ ..] if command == "engine-coverage" => {
                 return Ok(Self::RunEngineWorkflow(ToolsEnumEngineWorkflow::Coverage(
                     engine::ToolsEngineCoverageCommandConfig::new(
@@ -248,6 +256,10 @@ impl ToolsEnumCommand {
 
     fn execute(self) -> Result<(), Box<dyn std::error::Error>> {
         match self {
+            Self::VerifyData { sources, cache } => {
+                let verified = data::ToolsDataAcquire::verify(&sources, &cache)?;
+                println!("Verified {verified} frozen dataset sources");
+            }
             Self::RunEngineWorkflow(workflow) => workflow.execute()?,
             Self::BuildEngine => {
                 let temporary = tempfile::tempdir()?;

@@ -24,10 +24,16 @@ mod storage_atomic_file;
 #[path = "storage/retained_shutdown.rs"]
 mod storage_retained_shutdown;
 
+#[path = "storage/dataset_integrity.rs"]
+mod storage_dataset_integrity;
 #[path = "storage/dataset_package.rs"]
 mod storage_dataset_package;
 #[path = "storage/dataset_selection.rs"]
 mod storage_dataset_selection;
+#[path = "storage/dataset_sources.rs"]
+mod storage_dataset_sources;
+#[path = "storage/datasets.rs"]
+mod storage_datasets;
 #[path = "storage/editor_repository.rs"]
 mod storage_editor_repository;
 #[path = "storage/game_document.rs"]

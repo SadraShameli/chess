@@ -2,6 +2,7 @@ pub mod annotation_commands;
 pub mod annotation_owner;
 pub mod application;
 pub mod coordinator;
+pub mod dataset_commands;
 pub mod dto;
 pub mod editor_commands;
 pub mod engine_bridge;
