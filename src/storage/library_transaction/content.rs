@@ -4,8 +4,8 @@ use diesel::upsert::excluded;
 
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::library_prepared::{
-    StorageLibraryEnumContentChange, StorageLibraryPreparedIdentity, StorageLibraryPreparedWrite,
-    StorageLibraryProjection,
+    StorageLibraryEnumContentChange, StorageLibraryEnumResult, StorageLibraryPreparedIdentity,
+    StorageLibraryPreparedWrite, StorageLibraryProjection,
 };
 use crate::storage::library_repository::{StorageLibraryContentReceipt, StorageLibraryError};
 use crate::storage::library_transaction::StorageLibraryTransaction;
@@ -134,11 +134,11 @@ impl StorageLibraryTransactionContent {
             library_entries::game_id.eq(write.id.as_uuid().to_string()),
             library_entries::content_revision.eq(write.revision.value().to_string()),
             library_entries::organization_revision.eq("0"),
-            library_entries::content_kind.eq(StorageLibraryProjection::kind_sql(p.kind())),
-            library_entries::rules_variant.eq(StorageLibraryProjection::variant_sql(p.variant())),
-            library_entries::start_kind.eq(p.start().sql()),
-            library_entries::mode.eq(p.mode().map(StorageLibraryProjection::mode_sql)),
-            library_entries::result.eq(p.result().pgn_token()),
+            library_entries::content_kind.eq(p.kind()),
+            library_entries::rules_variant.eq(p.variant()),
+            library_entries::start_kind.eq(p.start()),
+            library_entries::mode.eq(p.mode()),
+            library_entries::result.eq(StorageLibraryEnumResult::from(p.result())),
             library_entries::white_display.eq(p.white().map(|text| text.as_str())),
             library_entries::white_key.eq(p.white_key()),
             library_entries::black_display.eq(p.black().map(|text| text.as_str())),
@@ -156,7 +156,7 @@ impl StorageLibraryTransactionContent {
             library_entries::modified_ms.eq(write.modified),
             library_entries::favorite.eq(0),
             library_entries::folder_id.eq(write.folder.map(|folder| folder.to_string())),
-            library_entries::location.eq(StorageTrashEnumLocation::Library.sql()),
+            library_entries::location.eq(StorageTrashEnumLocation::Library),
             library_entries::trashed_ms.eq(None::<i64>),
         );
         diesel::insert_into(library_entries::table)

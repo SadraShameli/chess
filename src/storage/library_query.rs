@@ -14,7 +14,10 @@ use crate::game::library_organization::{
 use crate::game::session::{GameMetadataDate, GameMetadataOpeningCode, GameMetadataText};
 use crate::game::storage_repository::GameStorageRevision;
 use crate::notation::game_identity::{NotationGameIdentity, NotationGameIdentityEnumResult};
-use crate::storage::library_prepared::{StorageLibraryEnumStartKind, StorageLibraryProjection};
+use crate::storage::game_document::StorageGameDocumentEnumContentKind;
+use crate::storage::library_prepared::{
+    StorageLibraryEnumResult, StorageLibraryEnumStartKind, StorageLibraryProjection,
+};
 use crate::storage::library_repository::{
     StorageLibraryCatalogRevision, StorageLibraryError, StorageLibraryMemory,
 };
@@ -58,11 +61,11 @@ pub(crate) struct StorageLibraryQueryRow {
     pub(crate) game_id: String,
     pub(crate) content_revision: String,
     pub(crate) organization_revision: String,
-    pub(crate) content_kind: String,
-    pub(crate) rules_variant: String,
-    pub(crate) start_kind: String,
-    pub(crate) mode: Option<String>,
-    pub(crate) result: String,
+    pub(crate) content_kind: StorageGameDocumentEnumContentKind,
+    pub(crate) rules_variant: BoardEnumVariant,
+    pub(crate) start_kind: StorageLibraryEnumStartKind,
+    pub(crate) mode: Option<GameEnumMode>,
+    pub(crate) result: StorageLibraryEnumResult,
     pub(crate) white_display: Option<String>,
     pub(crate) white_key: Option<String>,
     pub(crate) black_display: Option<String>,
@@ -77,7 +80,7 @@ pub(crate) struct StorageLibraryQueryRow {
     pub(crate) modified_ms: Option<i64>,
     pub(crate) favorite: i32,
     pub(crate) folder_id: Option<String>,
-    pub(crate) location: String,
+    pub(crate) location: StorageTrashEnumLocation,
     pub(crate) trashed_ms: Option<i64>,
 }
 
@@ -513,7 +516,7 @@ impl StorageLibraryQuery {
         let mut query = library_entries::table
             .inner_join(documents::table)
             .filter(library_entries::content_revision.eq(documents::revision))
-            .filter(library_entries::location.eq(c.location.sql()))
+            .filter(library_entries::location.eq(c.location))
             .select(StorageLibraryQueryRow::as_select())
             .into_boxed();
         if let Some(key) = &c.white {
@@ -537,19 +540,17 @@ impl StorageLibraryQuery {
             query = query.filter(Self::date_predicate(windows)?);
         }
         if let StorageLibraryEnumFilter::Value(result) = c.result {
-            query = query.filter(library_entries::result.eq(result.pgn_token()));
+            query =
+                query.filter(library_entries::result.eq(StorageLibraryEnumResult::from(result)));
         }
         if let StorageLibraryEnumFilter::Value(variant) = c.variant {
-            query = query.filter(
-                library_entries::rules_variant.eq(StorageLibraryProjection::variant_sql(variant)),
-            );
+            query = query.filter(library_entries::rules_variant.eq(variant));
         }
         if let StorageLibraryEnumFilter::Value(start) = c.start {
-            query = query.filter(library_entries::start_kind.eq(start.sql()));
+            query = query.filter(library_entries::start_kind.eq(start));
         }
         if let StorageLibraryEnumFilter::Value(mode) = c.mode {
-            query =
-                query.filter(library_entries::mode.eq(StorageLibraryProjection::mode_sql(mode)));
+            query = query.filter(library_entries::mode.eq(mode));
         }
         if let StorageLibraryEnumFilter::Value(favorite) = c.favorite {
             query = query.filter(library_entries::favorite.eq(i32::from(favorite)));

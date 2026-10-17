@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
+use crate::puzzle::attempt::PuzzleAttemptId;
 use crate::puzzle::history::{PuzzleHistoryDeletion, PuzzleHistoryEnumScope};
 use crate::puzzle::persistence::{
     PuzzlePersistenceCodec, PuzzlePersistenceError, PuzzlePersistenceJournalProof,
@@ -20,7 +21,8 @@ use crate::storage::document_store::{
     StorageDocumentClient, StorageDocumentError, StorageDocumentStore,
 };
 use crate::storage::schema::{
-    puzzle_attempts, puzzle_checkpoints, puzzle_collections, puzzle_events, puzzle_runs,
+    puzzle_attempts, puzzle_checkpoints, puzzle_collections, puzzle_deleted_attempts,
+    puzzle_events, puzzle_runs,
 };
 
 mod rows;
@@ -89,6 +91,7 @@ pub struct StoragePuzzleRecovered {
     owner: PuzzlePersistenceRun,
     storage_revision: PuzzlePersistenceStorageRevision,
     persisted_event_count: usize,
+    deleted_attempts: Vec<PuzzleAttemptId>,
     _memory_reservation: OwnedSemaphorePermit,
 }
 
@@ -101,6 +104,9 @@ impl StoragePuzzleRecovered {
     }
     pub const fn persisted_event_count(&self) -> usize {
         self.persisted_event_count
+    }
+    pub fn deleted_attempts(&self) -> &[PuzzleAttemptId] {
+        &self.deleted_attempts
     }
     pub fn into_owner(self) -> PuzzlePersistenceRun {
         self.owner
@@ -443,8 +449,15 @@ impl StoragePuzzleTransaction {
                     .values(&rows)
                     .execute(connection)?;
             }
+            let deleted = puzzle_deleted_attempts::table
+                .filter(puzzle_deleted_attempts::run_id.eq(&id))
+                .select(puzzle_deleted_attempts::attempt_id)
+                .load::<String>(connection)?;
             for (attempt, body) in snapshot.attempt_rows()? {
                 let attempt = attempt.to_string();
+                if deleted.contains(&attempt) {
+                    continue;
+                }
                 diesel::insert_into(puzzle_attempts::table)
                     .values(&StoragePuzzleNewAttempt {
                         run_id: &id,
@@ -487,11 +500,31 @@ impl StoragePuzzleTransaction {
         deletion: &PuzzleHistoryDeletion,
     ) -> Result<usize, StoragePuzzleError> {
         connection.immediate_transaction(|connection| match deletion.scope() {
-            PuzzleHistoryEnumScope::Attempt { .. } => {
-                Err(StoragePuzzleError::AttemptDeletionUnsupported)
+            PuzzleHistoryEnumScope::Attempt { session, attempt } => {
+                let run = session.value().get().to_string();
+                let attempt = attempt.value().get().to_string();
+                let removed = diesel::delete(
+                    puzzle_attempts::table
+                        .filter(puzzle_attempts::run_id.eq(&run))
+                        .filter(puzzle_attempts::attempt_id.eq(&attempt)),
+                )
+                .execute(connection)?;
+                if removed > 0 {
+                    diesel::insert_into(puzzle_deleted_attempts::table)
+                        .values((
+                            puzzle_deleted_attempts::run_id.eq(&run),
+                            puzzle_deleted_attempts::attempt_id.eq(&attempt),
+                        ))
+                        .execute(connection)?;
+                }
+                Ok(removed)
             }
             PuzzleHistoryEnumScope::Session(session) => {
                 let id = session.value().get().to_string();
+                diesel::delete(
+                    puzzle_deleted_attempts::table.filter(puzzle_deleted_attempts::run_id.eq(&id)),
+                )
+                .execute(connection)?;
                 diesel::delete(puzzle_attempts::table.filter(puzzle_attempts::run_id.eq(&id)))
                     .execute(connection)?;
                 diesel::delete(
@@ -509,6 +542,7 @@ impl StoragePuzzleTransaction {
                 Ok(runs)
             }
             PuzzleHistoryEnumScope::All => {
+                diesel::delete(puzzle_deleted_attempts::table).execute(connection)?;
                 diesel::delete(puzzle_attempts::table).execute(connection)?;
                 diesel::delete(puzzle_checkpoints::table).execute(connection)?;
                 diesel::delete(puzzle_events::table).execute(connection)?;
@@ -595,7 +629,18 @@ impl StoragePuzzleTransaction {
             {
                 return Err(StoragePuzzleError::Corrupt);
             }
-            let expected_attempts = owner.attempt_rows()?;
+            let deleted_attempts = puzzle_deleted_attempts::table
+                .filter(puzzle_deleted_attempts::run_id.eq(&id_value))
+                .select(puzzle_deleted_attempts::attempt_id)
+                .load::<String>(connection)?
+                .into_iter()
+                .map(|attempt| attempt.parse::<u64>())
+                .collect::<Result<Vec<_>, _>>()?;
+            let expected_attempts = owner
+                .attempt_rows()?
+                .into_iter()
+                .filter(|(attempt, _body)| !deleted_attempts.contains(attempt))
+                .collect::<Vec<_>>();
             let rows = diesel::sql_query(
                 "SELECT attempt_id, CASE WHEN length(CAST(body AS BLOB)) <= ?2 THEN body END AS body FROM puzzle_attempts WHERE run_id = ?1 ORDER BY attempt_id LIMIT ?3",
             )
@@ -623,6 +668,14 @@ impl StoragePuzzleTransaction {
                 owner,
                 storage_revision,
                 persisted_event_count: count,
+                deleted_attempts: deleted_attempts
+                    .into_iter()
+                    .map(|attempt| {
+                        NonZeroU64::new(attempt)
+                            .map(PuzzleAttemptId::new)
+                            .ok_or(StoragePuzzleError::Corrupt)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
                 _memory_reservation: memory_reservation,
             }))
         })

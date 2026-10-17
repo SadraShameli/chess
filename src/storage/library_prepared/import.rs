@@ -3,6 +3,7 @@ use std::io::Write;
 use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::board::enums::BoardEnumVariant;
 use crate::board::position::BoardPosition;
 use crate::capacity::executor::CapacityExecutorCancellation;
 use crate::game::enums::GameId;
@@ -14,7 +15,7 @@ use crate::storage::import_session::{
     StorageImportSessionBodyProof, StorageImportSessionPreparedFrame,
 };
 use crate::storage::library_prepared::{
-    StorageLibraryEnumStartKind, StorageLibraryPreparedIdentity, StorageLibraryPreparedMemory,
+    StorageLibraryEnumResult, StorageLibraryPreparedIdentity, StorageLibraryPreparedMemory,
     StorageLibraryProjection, StorageLibraryProjectionOptions,
 };
 use crate::storage::library_record::StorageLibraryRecord;
@@ -82,10 +83,10 @@ impl StorageLibraryImportPreparedProjection {
             return Err(StorageLibraryError::Identity);
         }
         let discriminants = [
-            StorageLibraryProjection::kind_sql(projection.kind()),
-            StorageLibraryProjection::variant_sql(projection.variant()),
-            projection.start().sql(),
-            projection.result().pgn_token(),
+            projection.kind().as_ref(),
+            projection.variant().as_ref(),
+            projection.start().as_ref(),
+            StorageLibraryEnumResult::from(projection.result()).as_ref(),
         ]
         .into_iter()
         .try_fold(uuid::fmt::Hyphenated::LENGTH, |sum, value| {
@@ -144,13 +145,13 @@ impl StorageLibraryImportProjectionWire {
             game: game.as_uuid().to_string(),
             body_bytes: proof.byte_length(),
             body_digest: proof.digest(),
-            kind: StorageLibraryProjection::kind_sql(projection.kind()).to_owned(),
-            mode: projection
-                .mode()
-                .map(|mode| StorageLibraryProjection::mode_sql(mode).to_owned()),
-            variant: StorageLibraryProjection::variant_sql(projection.variant()).to_owned(),
-            start: projection.start().sql().to_owned(),
-            result: projection.result().pgn_token().to_owned(),
+            kind: projection.kind().as_ref().to_owned(),
+            mode: projection.mode().map(|mode| mode.as_ref().to_owned()),
+            variant: projection.variant().as_ref().to_owned(),
+            start: projection.start().as_ref().to_owned(),
+            result: StorageLibraryEnumResult::from(projection.result())
+                .as_ref()
+                .to_owned(),
             white: projection.white().map(|text| text.as_str().to_owned()),
             white_key: projection.white_key().map(str::to_owned),
             black: projection.black().map(|text| text.as_str().to_owned()),
@@ -224,11 +225,17 @@ impl StorageLibraryImportRecoveredProjection {
         {
             return Err(StorageLibraryError::ImportProof);
         }
-        let kind = StorageLibraryProjection::parse_kind(&wire.kind)?;
+        let kind = wire
+            .kind
+            .parse::<StorageGameDocumentEnumContentKind>()
+            .map_err(|_error| StorageLibraryError::StoredDiscriminant)?;
         if kind != StorageGameDocumentEnumContentKind::Notation || wire.mode.is_some() {
             return Err(StorageLibraryError::ContentKind);
         }
-        let variant = StorageLibraryProjection::parse_variant(&wire.variant)?;
+        let variant = wire
+            .variant
+            .parse::<BoardEnumVariant>()
+            .map_err(|_error| StorageLibraryError::StoredDiscriminant)?;
         let position = BoardPosition::from_fen(&wire.initial_fen, variant)
             .map_err(|_position| StorageLibraryError::ImportProof)?;
         if position.fen() != wire.initial_fen {
@@ -241,9 +248,16 @@ impl StorageLibraryImportRecoveredProjection {
         let projection = StorageLibraryProjection::new(StorageLibraryProjectionOptions {
             kind,
             variant,
-            start: StorageLibraryEnumStartKind::parse(&wire.start)?,
+            start: wire
+                .start
+                .parse()
+                .map_err(|_error| StorageLibraryError::StoredDiscriminant)?,
             mode: None,
-            result: StorageLibraryProjection::parse_result(&wire.result)?,
+            result: wire
+                .result
+                .parse::<StorageLibraryEnumResult>()
+                .map_err(|_error| StorageLibraryError::StoredDiscriminant)?
+                .into(),
             white: wire.white.map(GameMetadataText::new).transpose()?,
             black: wire.black.map(GameMetadataText::new).transpose()?,
             date: wire

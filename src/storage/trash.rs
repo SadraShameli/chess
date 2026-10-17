@@ -6,27 +6,26 @@ use crate::game::library_organization::{
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::library_repository::{StorageLibraryCatalogRevision, StorageLibraryError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageTrashEnumLocation {
     #[default]
+    #[strum(serialize = "library")]
     Library,
+    #[strum(serialize = "trash")]
     Trash,
-}
-
-impl StorageTrashEnumLocation {
-    pub(crate) const fn sql(self) -> &'static str {
-        match self {
-            Self::Library => "library",
-            Self::Trash => "trash",
-        }
-    }
-    pub(crate) fn parse(value: &str) -> Result<Self, StorageLibraryError> {
-        match value {
-            "library" => Ok(Self::Library),
-            "trash" => Ok(Self::Trash),
-            _ => Err(StorageLibraryError::StoredDiscriminant),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

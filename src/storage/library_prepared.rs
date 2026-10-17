@@ -22,30 +22,80 @@ use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRe
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryEnumTransactionRequest;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageLibraryEnumStartKind {
+    #[strum(serialize = "standard")]
     Standard,
+    #[strum(serialize = "chess960")]
     Chess960,
+    #[strum(serialize = "dfrc")]
     Dfrc,
+    #[strum(serialize = "custom")]
     Custom,
 }
 
-impl StorageLibraryEnumStartKind {
-    pub(crate) const fn sql(self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::Chess960 => "chess960",
-            Self::Dfrc => "dfrc",
-            Self::Custom => "custom",
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
+pub enum StorageLibraryEnumResult {
+    #[strum(serialize = "*")]
+    Unfinished,
+    #[strum(serialize = "1-0")]
+    WhiteVictory,
+    #[strum(serialize = "0-1")]
+    BlackVictory,
+    #[strum(serialize = "1/2-1/2")]
+    Draw,
+}
+
+impl From<NotationGameIdentityEnumResult> for StorageLibraryEnumResult {
+    fn from(value: NotationGameIdentityEnumResult) -> Self {
+        match value {
+            NotationGameIdentityEnumResult::Unfinished => Self::Unfinished,
+            NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(
+                BoardEnumColor::White,
+            )) => Self::WhiteVictory,
+            NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(
+                BoardEnumColor::Black,
+            )) => Self::BlackVictory,
+            NotationGameIdentityEnumResult::Completed(GameEnumResult::Draw) => Self::Draw,
         }
     }
-    pub(crate) fn parse(value: &str) -> Result<Self, StorageLibraryError> {
+}
+
+impl From<StorageLibraryEnumResult> for NotationGameIdentityEnumResult {
+    fn from(value: StorageLibraryEnumResult) -> Self {
         match value {
-            "standard" => Ok(Self::Standard),
-            "chess960" => Ok(Self::Chess960),
-            "dfrc" => Ok(Self::Dfrc),
-            "custom" => Ok(Self::Custom),
-            _ => Err(StorageLibraryError::StoredDiscriminant),
+            StorageLibraryEnumResult::Unfinished => Self::Unfinished,
+            StorageLibraryEnumResult::WhiteVictory => {
+                Self::Completed(GameEnumResult::Victory(BoardEnumColor::White))
+            }
+            StorageLibraryEnumResult::BlackVictory => {
+                Self::Completed(GameEnumResult::Victory(BoardEnumColor::Black))
+            }
+            StorageLibraryEnumResult::Draw => Self::Completed(GameEnumResult::Draw),
         }
     }
 }
@@ -224,64 +274,6 @@ impl StorageLibraryProjection {
     }
     pub(crate) const fn plies(&self) -> u32 {
         self.plies
-    }
-    pub(crate) const fn kind_sql(kind: StorageGameDocumentEnumContentKind) -> &'static str {
-        match kind {
-            StorageGameDocumentEnumContentKind::Played => "played",
-            StorageGameDocumentEnumContentKind::Notation => "notation",
-        }
-    }
-    pub(crate) fn parse_kind(
-        value: &str,
-    ) -> Result<StorageGameDocumentEnumContentKind, StorageLibraryError> {
-        match value {
-            "played" => Ok(StorageGameDocumentEnumContentKind::Played),
-            "notation" => Ok(StorageGameDocumentEnumContentKind::Notation),
-            _ => Err(StorageLibraryError::StoredDiscriminant),
-        }
-    }
-    pub(crate) const fn variant_sql(variant: BoardEnumVariant) -> &'static str {
-        match variant {
-            BoardEnumVariant::Standard => "standard",
-            BoardEnumVariant::Chess960 => "chess960",
-        }
-    }
-    pub(crate) fn parse_variant(value: &str) -> Result<BoardEnumVariant, StorageLibraryError> {
-        match value {
-            "standard" => Ok(BoardEnumVariant::Standard),
-            "chess960" => Ok(BoardEnumVariant::Chess960),
-            _ => Err(StorageLibraryError::StoredDiscriminant),
-        }
-    }
-    pub(crate) const fn mode_sql(mode: GameEnumMode) -> &'static str {
-        match mode {
-            GameEnumMode::HumanVersusEngine => "human_versus_engine",
-            GameEnumMode::LocalTwoPlayer => "local_two_player",
-        }
-    }
-    pub(crate) fn parse_mode(value: &str) -> Result<GameEnumMode, StorageLibraryError> {
-        match value {
-            "human_versus_engine" => Ok(GameEnumMode::HumanVersusEngine),
-            "local_two_player" => Ok(GameEnumMode::LocalTwoPlayer),
-            _ => Err(StorageLibraryError::StoredDiscriminant),
-        }
-    }
-    pub(crate) fn parse_result(
-        value: &str,
-    ) -> Result<NotationGameIdentityEnumResult, StorageLibraryError> {
-        match value {
-            "*" => Ok(NotationGameIdentityEnumResult::Unfinished),
-            "1-0" => Ok(NotationGameIdentityEnumResult::Completed(
-                GameEnumResult::Victory(BoardEnumColor::White),
-            )),
-            "0-1" => Ok(NotationGameIdentityEnumResult::Completed(
-                GameEnumResult::Victory(BoardEnumColor::Black),
-            )),
-            "1/2-1/2" => Ok(NotationGameIdentityEnumResult::Completed(
-                GameEnumResult::Draw,
-            )),
-            _ => Err(StorageLibraryError::StoredDiscriminant),
-        }
     }
     pub(crate) fn transport_bytes(&self) -> usize {
         std::mem::size_of::<Self>()

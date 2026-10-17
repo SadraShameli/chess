@@ -57,60 +57,54 @@ pub enum StorageReportError {
     QueueExhausted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageReportEnumState {
+    #[strum(serialize = "queued")]
     Queued,
+    #[strum(serialize = "paused")]
     Paused,
+    #[strum(serialize = "cancelled")]
     Cancelled,
+    #[strum(serialize = "completed")]
     Completed,
 }
 
 impl StorageReportEnumState {
-    const fn sql(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Paused => "paused",
-            Self::Cancelled => "cancelled",
-            Self::Completed => "completed",
-        }
-    }
-
-    fn parse(value: &str) -> Result<Self, StorageReportError> {
-        match value {
-            "queued" => Ok(Self::Queued),
-            "paused" => Ok(Self::Paused),
-            "cancelled" => Ok(Self::Cancelled),
-            "completed" => Ok(Self::Completed),
-            _ => Err(StorageReportError::Corrupt),
-        }
-    }
-
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Cancelled | Self::Completed)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageReportEnumFreshness {
+    #[strum(serialize = "current")]
     Current,
+    #[strum(serialize = "outdated")]
     Outdated,
-}
-
-impl StorageReportEnumFreshness {
-    const fn sql(self) -> &'static str {
-        match self {
-            Self::Current => "current",
-            Self::Outdated => "outdated",
-        }
-    }
-
-    fn parse(value: &str) -> Result<Self, StorageReportError> {
-        match value {
-            "current" => Ok(Self::Current),
-            "outdated" => Ok(Self::Outdated),
-            _ => Err(StorageReportError::Corrupt),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -419,8 +413,8 @@ impl StorageReportTransaction {
                 source_revision: &revision,
                 line_digest: record.line_digest.as_slice(),
                 queue_ordinal: ordinal,
-                state: StorageReportEnumState::Queued.sql(),
-                freshness: StorageReportEnumFreshness::Current.sql(),
+                state: StorageReportEnumState::Queued,
+                freshness: StorageReportEnumFreshness::Current,
                 position_count: i32::try_from(record.position_count)?,
                 configuration: &record.configuration,
                 source: &record.source,
@@ -435,7 +429,7 @@ impl StorageReportTransaction {
         result: &StorageReportResultRecord,
     ) -> Result<(), StorageReportError> {
         let row = Self::row(connection, job)?;
-        let state = StorageReportEnumState::parse(&row.state)?;
+        let state = row.state;
         let count = u32::try_from(row.position_count)?;
         if result.index >= count {
             return Err(StorageReportError::PositionIndex {
@@ -476,7 +470,7 @@ impl StorageReportTransaction {
         to: StorageReportEnumState,
     ) -> Result<(), StorageReportError> {
         let row = Self::row(connection, job)?;
-        let from = StorageReportEnumState::parse(&row.state)?;
+        let from = row.state;
         if from == to {
             return Ok(());
         }
@@ -491,13 +485,12 @@ impl StorageReportTransaction {
             }
         }
         if to == StorageReportEnumState::Queued
-            && StorageReportEnumFreshness::parse(&row.freshness)?
-                == StorageReportEnumFreshness::Outdated
+            && row.freshness == StorageReportEnumFreshness::Outdated
         {
             return Err(StorageReportError::Transition { from, to });
         }
         diesel::update(report_jobs::table.filter(report_jobs::job_id.eq(job.to_string())))
-            .set(report_jobs::state.eq(to.sql()))
+            .set(report_jobs::state.eq(to))
             .execute(connection)?;
         Ok(())
     }
@@ -509,19 +502,19 @@ impl StorageReportTransaction {
     ) -> Result<u64, StorageReportError> {
         let target = report_jobs::table
             .filter(report_jobs::game_id.eq(game.to_string()))
-            .filter(report_jobs::freshness.eq(StorageReportEnumFreshness::Current.sql()))
+            .filter(report_jobs::freshness.eq(StorageReportEnumFreshness::Current))
             .filter(report_jobs::line_digest.ne(current_digest.as_slice()));
         let ids: Vec<String> = target.select(report_jobs::job_id).load(connection)?;
         for id in &ids {
             diesel::update(report_jobs::table.filter(report_jobs::job_id.eq(id)))
-                .set(report_jobs::freshness.eq(StorageReportEnumFreshness::Outdated.sql()))
+                .set(report_jobs::freshness.eq(StorageReportEnumFreshness::Outdated))
                 .execute(connection)?;
             diesel::update(
                 report_jobs::table
                     .filter(report_jobs::job_id.eq(id))
-                    .filter(report_jobs::state.eq(StorageReportEnumState::Queued.sql())),
+                    .filter(report_jobs::state.eq(StorageReportEnumState::Queued)),
             )
-            .set(report_jobs::state.eq(StorageReportEnumState::Paused.sql()))
+            .set(report_jobs::state.eq(StorageReportEnumState::Paused))
             .execute(connection)?;
         }
         Ok(u64::try_from(ids.len())?)
@@ -529,9 +522,9 @@ impl StorageReportTransaction {
 
     fn recover(connection: &mut SqliteConnection) -> Result<u64, StorageReportError> {
         let count = diesel::update(
-            report_jobs::table.filter(report_jobs::state.eq(StorageReportEnumState::Queued.sql())),
+            report_jobs::table.filter(report_jobs::state.eq(StorageReportEnumState::Queued)),
         )
-        .set(report_jobs::state.eq(StorageReportEnumState::Paused.sql()))
+        .set(report_jobs::state.eq(StorageReportEnumState::Paused))
         .execute(connection)?;
         Ok(u64::try_from(count)?)
     }
@@ -579,8 +572,8 @@ impl StorageReportTransaction {
         Ok(Some(Box::new(StorageReportJobSnapshot {
             record: Self::snapshot_record(&row)?,
             queue_ordinal: u32::try_from(row.queue_ordinal)?,
-            state: StorageReportEnumState::parse(&row.state)?,
-            freshness: StorageReportEnumFreshness::parse(&row.freshness)?,
+            state: row.state,
+            freshness: row.freshness,
             results: records,
         })))
     }
@@ -606,8 +599,8 @@ impl StorageReportTransaction {
                 game: row.game_id.parse()?,
                 revision: row.source_revision.parse()?,
                 queue_ordinal: u32::try_from(row.queue_ordinal)?,
-                state: StorageReportEnumState::parse(&row.state)?,
-                freshness: StorageReportEnumFreshness::parse(&row.freshness)?,
+                state: row.state,
+                freshness: row.freshness,
                 position_count: u32::try_from(row.position_count)?,
                 completed: Self::recorded(connection, job)?,
             });

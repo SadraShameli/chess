@@ -1341,3 +1341,51 @@ async fn confirmed_history_deletion_removes_only_the_selected_saved_runs()
     store.close().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn deleted_attempt_is_tombstoned_and_the_saved_run_still_loads_and_resaves()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let store = StorageDocumentStore::open(
+        directory.path().join("puzzles.sqlite3"),
+        CapacityBudget::discover()?,
+    )
+    .await?;
+    let repository = StoragePuzzleRepository::new(store.client());
+    let id = StoragePuzzleFixture::id(1)?;
+    let mut owner = StoragePuzzleFixture::owner_with_id(id)?;
+    let request = StoragePuzzleFixture::request(
+        &mut owner,
+        ClockInstant::from_nanos(0),
+        PuzzlePersistenceStorageRevision::INITIAL,
+        0,
+    )?;
+    let receipt = repository.begin_save(request)?.wait().await?;
+    let attempt = PuzzleAttemptId::new(NonZeroU64::MIN);
+    let session = PuzzleSession::new(
+        id,
+        attempt,
+        StoragePuzzleFixture::definition()?,
+        PuzzleSessionConfig::defaults(PuzzleEnumCountdownMode::Session),
+    );
+    let mut history = PuzzleHistory::new(vec![PuzzleHistoryEntry::new(
+        id,
+        session.attempt().clone(),
+        Duration::ZERO,
+    )])?;
+    let deletion = history.delete(
+        PuzzleHistoryEnumScope::Attempt {
+            session: id,
+            attempt,
+        },
+        PuzzleHistoryEnumConfirmation::Confirmed,
+        None,
+    )?;
+    assert_eq!(deletion.summary().finalized(), 0);
+    assert_eq!(repository.delete_history(deletion).await?, 1);
+    let loaded = repository.load(id).await?.ok_or("missing run")?;
+    assert_eq!(loaded.deleted_attempts(), &[attempt]);
+    assert_eq!(loaded.storage_revision(), receipt.storage_revision());
+    store.close().await?;
+    Ok(())
+}

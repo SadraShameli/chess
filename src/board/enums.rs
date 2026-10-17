@@ -1,10 +1,27 @@
 use serde::{Deserialize, Serialize};
 use shakmaty::{CastlingMode, Color, Role};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 #[serde(rename_all = "snake_case")]
 pub enum BoardEnumVariant {
+    #[strum(serialize = "standard")]
     Standard,
+    #[strum(serialize = "chess960")]
     Chess960,
 }
 

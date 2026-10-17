@@ -29,7 +29,6 @@ bevy_egui = { version = "=0.43.1", default-features = false, features = ["render
 boolmesh = { version = "=0.2.1", default-features = false, optional = true }
 csv-core = "=0.1.13"
 diesel = { version = "=2.3.14", default-features = false, features = ["sqlite", "returning_clauses_for_sqlite_3_35", "32-column-tables", "with-deprecated"] }
-diesel-derive-enum = { version = "=2.1.0", features = ["sqlite"] }
 diesel_migrations = { version = "=2.3.2", features = ["sqlite"] }
 directories = "=6.0.0"
 earcutr = { version = "=0.5.0", optional = true }

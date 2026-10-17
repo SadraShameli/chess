@@ -179,10 +179,26 @@ impl Display for GameRevision {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 #[serde(rename_all = "snake_case")]
 pub enum GameEnumMode {
+    #[strum(serialize = "human_versus_engine")]
     HumanVersusEngine,
+    #[strum(serialize = "local_two_player")]
     LocalTwoPlayer,
 }
 

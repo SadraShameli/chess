@@ -1,5 +1,6 @@
 use diesel::prelude::*;
 
+use crate::storage::report_repository::{StorageReportEnumFreshness, StorageReportEnumState};
 use crate::storage::schema::{report_jobs, report_results};
 
 #[derive(Insertable)]
@@ -10,8 +11,8 @@ pub(super) struct StorageReportNewJob<'a> {
     pub(super) source_revision: &'a str,
     pub(super) line_digest: &'a [u8],
     pub(super) queue_ordinal: i32,
-    pub(super) state: &'a str,
-    pub(super) freshness: &'a str,
+    pub(super) state: StorageReportEnumState,
+    pub(super) freshness: StorageReportEnumFreshness,
     pub(super) position_count: i32,
     pub(super) configuration: &'a str,
     pub(super) source: &'a str,
@@ -33,8 +34,8 @@ pub(super) struct StorageReportJobRow {
     pub(super) source_revision: String,
     pub(super) line_digest: Vec<u8>,
     pub(super) queue_ordinal: i32,
-    pub(super) state: String,
-    pub(super) freshness: String,
+    pub(super) state: StorageReportEnumState,
+    pub(super) freshness: StorageReportEnumFreshness,
     pub(super) position_count: i32,
     pub(super) configuration: String,
     pub(super) source: String,

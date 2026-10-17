@@ -175,6 +175,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    puzzle_deleted_attempts (run_id, attempt_id) {
+        run_id -> Text,
+        attempt_id -> Text,
+    }
+}
+
+diesel::table! {
     puzzle_events (run_id, ordinal) {
         run_id -> Text,
         ordinal -> Integer,
@@ -224,6 +231,7 @@ diesel::joinable!(library_entry_tags -> library_tags (tag_id));
 diesel::joinable!(opening_occurrences -> opening_positions (position_id));
 diesel::joinable!(puzzle_attempts -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_checkpoints -> puzzle_runs (run_id));
+diesel::joinable!(puzzle_deleted_attempts -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_events -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_runs -> puzzle_collections (collection_id));
 diesel::joinable!(report_results -> report_jobs (job_id));
@@ -246,6 +254,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     puzzle_attempts,
     puzzle_checkpoints,
     puzzle_collections,
+    puzzle_deleted_attempts,
     puzzle_events,
     puzzle_runs,
     report_jobs,

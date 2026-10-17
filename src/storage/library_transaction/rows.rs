@@ -16,7 +16,7 @@ use crate::storage::library_inventory::{
     StorageLibraryInventoryCursor, StorageLibraryInventoryEntry, StorageLibraryInventoryPage,
 };
 use crate::storage::library_prepared::{
-    StorageLibraryEnumStartKind, StorageLibraryProjection, StorageLibraryProjectionOptions,
+    StorageLibraryProjection, StorageLibraryProjectionOptions,
 };
 use crate::storage::library_query::{
     StorageLibraryQuery, StorageLibraryQueryEntry, StorageLibraryQueryEntryOptions,
@@ -106,9 +106,9 @@ impl StorageLibraryTransactionRows {
             String,
             i32,
             Option<String>,
-            String,
+            StorageTrashEnumLocation,
             Option<i64>,
-            String,
+            StorageGameDocumentEnumContentKind,
             String,
             Option<i64>,
         );
@@ -146,7 +146,6 @@ impl StorageLibraryTransactionRows {
         if content != StorageLibraryError::content_revision(&document)? {
             return Err(StorageLibraryError::ProjectionStale);
         }
-        let location = StorageTrashEnumLocation::parse(&location)?;
         Self::validate_location(location, trashed)?;
         let modified = modified
             .map(GameLibraryOrganizationTimestamp::new)
@@ -164,7 +163,7 @@ impl StorageLibraryTransactionRows {
             ),
             location,
             modified,
-            kind: StorageLibraryProjection::parse_kind(&kind)?,
+            kind,
         }))
     }
     fn favorite(value: i64) -> Result<bool, StorageLibraryError> {
@@ -268,15 +267,11 @@ impl StorageLibraryTransactionRows {
             row.date_day.map(u8::try_from).transpose()?,
         )?;
         let projection = StorageLibraryProjection::new(StorageLibraryProjectionOptions {
-            kind: StorageLibraryProjection::parse_kind(&row.content_kind)?,
-            variant: StorageLibraryProjection::parse_variant(&row.rules_variant)?,
-            start: StorageLibraryEnumStartKind::parse(&row.start_kind)?,
-            mode: row
-                .mode
-                .as_deref()
-                .map(StorageLibraryProjection::parse_mode)
-                .transpose()?,
-            result: StorageLibraryProjection::parse_result(&row.result)?,
+            kind: row.content_kind,
+            variant: row.rules_variant,
+            start: row.start_kind,
+            mode: row.mode,
+            result: row.result.into(),
             white,
             black,
             date: Some(date),
@@ -295,7 +290,7 @@ impl StorageLibraryTransactionRows {
         }
         let favorite = Self::favorite(i64::from(row.favorite))?;
         let folder = row.folder_id.as_deref().map(str::parse).transpose()?;
-        let location = StorageTrashEnumLocation::parse(&row.location)?;
+        let location = row.location;
         Self::validate_location(location, row.trashed_ms)?;
         Ok(StorageLibraryQueryEntry::new(
             StorageLibraryQueryEntryOptions {
@@ -368,11 +363,9 @@ impl StorageLibraryTransactionRows {
             .inner_join(documents::table)
             .filter(library_entries::content_revision.eq(documents::revision))
             .filter(
-                library_entries::content_kind.eq(StorageLibraryProjection::kind_sql(
-                    StorageGameDocumentEnumContentKind::Played,
-                )),
+                library_entries::content_kind.eq(StorageGameDocumentEnumContentKind::Played),
             )
-            .filter(library_entries::location.eq(StorageTrashEnumLocation::Library.sql()))
+            .filter(library_entries::location.eq(StorageTrashEnumLocation::Library))
             .filter(library_entries::trashed_ms.is_null())
             .select((library_entries::game_id, library_entries::content_revision))
             .order(library_entries::game_id.asc())

@@ -17,7 +17,7 @@ use crate::storage::library_import::{
     StorageLibraryImportPageLimit, StorageLibraryImportSpace,
 };
 use crate::storage::library_prepared::{
-    StorageLibraryImportRecoveredProjection, StorageLibraryProjection,
+    StorageLibraryImportRecoveredProjection,
 };
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryTransaction;
@@ -101,7 +101,7 @@ impl StorageLibraryTransactionImport {
             .filter(library_entries::content_revision.eq(documents::revision))
             .filter(
                 library_entries::rules_variant
-                    .eq(StorageLibraryProjection::variant_sql(key.variant())),
+                    .eq(key.variant()),
             )
             .filter(library_entries::identity_initial_fen.eq(key.initial_fen()))
             .filter(library_entries::plies.eq(i32::try_from(key.mainline_uci().len())?))

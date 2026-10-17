@@ -122,7 +122,7 @@ impl StorageLibraryTransactionDestruction {
                         .filter(library_entries::game_id.eq(id.as_uuid().to_string())),
                 )
                 .set((
-                    library_entries::location.eq(StorageTrashEnumLocation::Trash.sql()),
+                    library_entries::location.eq(StorageTrashEnumLocation::Trash),
                     library_entries::trashed_ms.eq(Some(request.timestamp().value())),
                 ))
                 .execute(connection)?;
@@ -167,7 +167,7 @@ impl StorageLibraryTransactionDestruction {
                 .filter(library_entries::game_id.eq(target.id().as_uuid().to_string())),
         )
         .set((
-            library_entries::location.eq(StorageTrashEnumLocation::Library.sql()),
+            library_entries::location.eq(StorageTrashEnumLocation::Library),
             library_entries::trashed_ms.eq(None::<i64>),
         ))
         .execute(connection)?;
