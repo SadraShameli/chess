@@ -90,6 +90,7 @@ pub struct SceneRenderer {
     editor_context: Option<DesktopEditorCommandsContext>,
     pieces: HashMap<BoardSquare, SceneRendererPiece>,
     entity_squares: HashMap<Entity, BoardSquare>,
+    animated: Option<BoardSquare>,
 }
 
 impl SceneRenderer {
@@ -156,6 +157,7 @@ impl SceneRenderer {
             editor_context: None,
             pieces: HashMap::default(),
             entity_squares: HashMap::default(),
+            animated: None,
         };
         renderer.spawn_board(world)?;
         renderer.spawn_lights(world);
@@ -285,6 +287,59 @@ impl SceneRenderer {
         self.viewport = viewport;
         self.camera = camera;
         self.generation = generation;
+        Ok(true)
+    }
+
+    pub fn animate_piece(
+        &mut self,
+        world: &mut World,
+        origin: BoardSquare,
+        destination: BoardSquare,
+        progress: f32,
+    ) -> Result<bool, SceneRendererError> {
+        self.require_renderable()?;
+        let mut changed = false;
+        if self
+            .animated
+            .is_some_and(|animated| animated != destination)
+        {
+            changed = self.settle_piece(world)?;
+        }
+        let Some(root) = self.piece_root(destination) else {
+            return Ok(changed);
+        };
+        let translation = ScenePicking::square_center(origin).lerp(
+            ScenePicking::square_center(destination),
+            progress.clamp(0.0, 1.0),
+        );
+        let mut transform = world
+            .get_mut::<Transform>(root)
+            .ok_or(SceneRendererError::MissingEntity(root))?;
+        self.animated = Some(destination);
+        if transform.translation == translation {
+            return Ok(changed);
+        }
+        transform.translation = translation;
+        self.request_frame(world)?;
+        Ok(true)
+    }
+
+    pub fn settle_piece(&mut self, world: &mut World) -> Result<bool, SceneRendererError> {
+        let Some(square) = self.animated.take() else {
+            return Ok(false);
+        };
+        let Some(root) = self.piece_root(square) else {
+            return Ok(false);
+        };
+        let rest = ScenePicking::square_center(square);
+        let mut transform = world
+            .get_mut::<Transform>(root)
+            .ok_or(SceneRendererError::MissingEntity(root))?;
+        if transform.translation == rest {
+            return Ok(false);
+        }
+        transform.translation = rest;
+        self.request_frame(world)?;
         Ok(true)
     }
 

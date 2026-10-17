@@ -7,6 +7,8 @@ use crate::board::square::BoardSquare;
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::scene::camera::{SceneCamera, SceneCameraError};
+use crate::scene::renderer::{SceneRenderer, SceneRendererError};
+use bevy::prelude::World;
 
 #[derive(Debug, Error)]
 pub enum PresentationBoardAnimationError {
@@ -68,6 +70,25 @@ impl PresentationBoardAnimationFrame {
 
     pub const fn camera(self) -> Option<SceneCamera> {
         self.camera
+    }
+
+    pub fn apply_piece(
+        self,
+        renderer: &mut SceneRenderer,
+        world: &mut World,
+    ) -> Result<bool, SceneRendererError> {
+        match self.piece {
+            Some(piece) => {
+                renderer.animate_piece(world, piece.origin, piece.destination, piece.progress)
+            }
+            None => renderer.settle_piece(world),
+        }
+    }
+
+    pub fn display_camera(self, base: SceneCamera) -> SceneCamera {
+        self.camera
+            .unwrap_or(base)
+            .with_yaw_offset(self.flip_residual_degrees)
     }
 }
 

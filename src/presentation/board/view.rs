@@ -1,19 +1,28 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bevy_egui::egui::{self, Pos2, Rect, Sense, Ui};
 use thiserror::Error;
 
+use crate::board::enums::BoardEnumColor;
 use crate::board::square::BoardSquare;
+use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::dto::DesktopBoardSnapshot;
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::premove::GamePremoveIntent;
+use crate::presentation::board::animation::{
+    PresentationBoardAnimation, PresentationBoardAnimationError, PresentationBoardAnimationFrame,
+};
 use crate::presentation::board::enums::{
-    PresentationBoardEnumInputSource, PresentationBoardEnumPremoveSquare,
+    PresentationBoardEnumCameraAction, PresentationBoardEnumInputSource,
+    PresentationBoardEnumPremoveSquare,
 };
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::{
     PresentationBoardSemanticGrid, PresentationBoardSemanticGridFeedback,
 };
+use crate::presentation::board::transition::PresentationBoardTransition;
+use crate::scene::camera::SceneCamera;
 use crate::scene::enums::SceneEnumLifecycle;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport, ScenePickingViewportError};
 use crate::scene::renderer::{SceneRendererError, SceneRendererGeneration};
@@ -24,6 +33,8 @@ pub enum PresentationBoardViewError {
     Viewport(#[from] ScenePickingViewportError),
     #[error(transparent)]
     Picking(#[from] SceneRendererError),
+    #[error(transparent)]
+    Animation(#[from] PresentationBoardAnimationError),
 }
 
 pub trait PresentationBoardPickingProvider {
@@ -105,9 +116,14 @@ pub struct PresentationBoardViewFrame {
     viewport: ScenePickingViewport,
     actions: Vec<PresentationBoardAction>,
     has_semantic_grid: bool,
+    animation: Option<PresentationBoardAnimationFrame>,
 }
 
 impl PresentationBoardViewFrame {
+    pub const fn animation(&self) -> Option<PresentationBoardAnimationFrame> {
+        self.animation
+    }
+
     pub const fn viewport(&self) -> ScenePickingViewport {
         self.viewport
     }
@@ -135,6 +151,8 @@ pub struct PresentationBoardView {
     action_frame: Option<u64>,
     keyboard_frame: Option<u64>,
     retained: HashMap<PresentationBoardViewInputKey, PresentationBoardAction>,
+    animation: Option<PresentationBoardAnimation>,
+    observed: Option<DesktopBoardSnapshot>,
 }
 
 impl Default for PresentationBoardView {
@@ -154,7 +172,93 @@ impl PresentationBoardView {
             action_frame: None,
             keyboard_frame: None,
             retained: HashMap::new(),
+            animation: None,
+            observed: None,
         }
+    }
+
+    pub fn with_animation(clock: Arc<dyn ClockTimeProvider>, reduced_motion: bool) -> Self {
+        Self {
+            animation: Some(PresentationBoardAnimation::new(clock, reduced_motion)),
+            ..Self::new()
+        }
+    }
+
+    pub fn set_reduced_motion(&mut self, reduced_motion: bool) {
+        if let Some(animation) = &mut self.animation {
+            animation.set_reduced_motion(reduced_motion);
+        }
+    }
+
+    pub fn camera_action(
+        &mut self,
+        camera: SceneCamera,
+        action: PresentationBoardEnumCameraAction,
+    ) -> Result<SceneCamera, PresentationBoardViewError> {
+        Ok(match action {
+            PresentationBoardEnumCameraAction::RotateLeft => camera.rotate_left(),
+            PresentationBoardEnumCameraAction::RotateRight => camera.rotate_right(),
+            PresentationBoardEnumCameraAction::TiltUp => camera.tilt_up(),
+            PresentationBoardEnumCameraAction::TiltDown => camera.tilt_down(),
+            PresentationBoardEnumCameraAction::ZoomIn => camera.zoom_in(),
+            PresentationBoardEnumCameraAction::ZoomOut => camera.zoom_out(),
+            PresentationBoardEnumCameraAction::Reset => match &mut self.animation {
+                Some(animation) => animation.start_camera_reset(camera)?.0,
+                None => camera.reset(),
+            },
+            PresentationBoardEnumCameraAction::Flip => self.auto_flip(camera)?,
+        })
+    }
+
+    pub fn auto_flip(
+        &mut self,
+        camera: SceneCamera,
+    ) -> Result<SceneCamera, PresentationBoardViewError> {
+        if let Some(animation) = &mut self.animation {
+            animation.start_flip()?;
+        }
+        Ok(camera.with_orientation(match camera.orientation() {
+            BoardEnumColor::White => BoardEnumColor::Black,
+            BoardEnumColor::Black => BoardEnumColor::White,
+        }))
+    }
+
+    pub fn set_panel_visible(&mut self, visible: bool) -> Result<(), PresentationBoardViewError> {
+        if let Some(animation) = &mut self.animation {
+            animation.set_panel_visible(visible)?;
+        }
+        Ok(())
+    }
+
+    pub fn panel_progress(&mut self) -> Result<f32, PresentationBoardViewError> {
+        Ok(match &mut self.animation {
+            Some(animation) => animation.frame()?.panel_progress(),
+            None => 1.0,
+        })
+    }
+
+    fn advance_animation(
+        &mut self,
+        ui: &Ui,
+        snapshot: &DesktopBoardSnapshot,
+    ) -> Result<Option<PresentationBoardAnimationFrame>, PresentationBoardViewError> {
+        let Some(animation) = &mut self.animation else {
+            return Ok(None);
+        };
+        if let Some(previous) = &self.observed
+            && previous.fen() != snapshot.fen()
+        {
+            match PresentationBoardTransition::piece_move(previous, snapshot) {
+                Some((origin, destination)) => {
+                    animation.start_piece_move(origin, destination)?;
+                }
+                None => animation.cancel_obsolete_move(),
+            }
+        }
+        self.observed = Some(snapshot.clone());
+        let frame = animation.frame()?;
+        animation.request_repaint(ui.ctx());
+        Ok(Some(frame))
     }
 
     pub const fn selected(&self) -> Option<BoardSquare> {
@@ -249,6 +353,7 @@ impl PresentationBoardView {
             viewport,
             actions: Vec::new(),
             has_semantic_grid: false,
+            animation: self.advance_animation(ui, input.snapshot)?,
         };
         let Some(scene) = input.scene else {
             self.discard_gesture_input(ui);

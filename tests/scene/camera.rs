@@ -172,3 +172,15 @@ fn fit_distance_grows_with_zoom_and_projection_matches_the_viewport() -> Result<
     assert!((center - Vec2::new(500.0, 250.0)).length() < 1e-2);
     Ok(())
 }
+
+#[test]
+fn yaw_offset_wraps_without_touching_tilt_zoom_or_orientation() {
+    let camera = SceneCamera::initial(BoardEnumColor::Black).rotate_right();
+    let offset = camera.with_yaw_offset(-180.0);
+    assert_eq!(offset.yaw_degrees(), 195.0);
+    assert_eq!(offset.tilt_degrees(), camera.tilt_degrees());
+    assert_eq!(offset.zoom(), camera.zoom());
+    assert_eq!(offset.orientation(), BoardEnumColor::Black);
+    assert_eq!(camera.with_yaw_offset(f32::NAN), camera);
+    assert_eq!(camera.with_yaw_offset(0.0), camera);
+}

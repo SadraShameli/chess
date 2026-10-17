@@ -3,16 +3,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::time::Duration;
 
-use bevy_egui::egui::{Context, RawInput, ViewportId};
+use bevy_egui::egui::{Context, Pos2, RawInput, Rect, ViewportId};
 
-use chess::board::enums::BoardEnumColor;
+use chess::board::enums::{BoardEnumColor, BoardEnumVariant};
+use chess::board::position::BoardPosition;
 use chess::board::square::BoardSquare;
 use chess::clock::duration::{ClockDurationError, ClockInstant};
 use chess::clock::time_provider::ClockTimeProvider;
+use chess::desktop::dto::DesktopBoardSnapshot;
 use chess::desktop::preferences::{DesktopPreferences, DesktopPreferencesEnumMotion};
 use chess::presentation::board::animation::{
     PresentationBoardAnimation, PresentationBoardAnimationEnumOutcome,
 };
+use chess::presentation::board::enums::PresentationBoardEnumCameraAction;
+use chess::presentation::board::transition::PresentationBoardTransition;
+use chess::presentation::board::view::{PresentationBoardView, PresentationBoardViewInput};
 use chess::scene::camera::SceneCamera;
 
 type PresentationBoardAnimationResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -313,4 +318,193 @@ fn reduced_motion_preference_is_typed_defaults_off_and_is_listed_for_settings() 
     assert!(!preferences.set_motion(DesktopPreferencesEnumMotion::Reduced));
     assert!(preferences.motion().is_reduced());
     assert_eq!(preferences.motion().label(), "Reduced motion");
+}
+
+fn snapshot_after(
+    fen: &str,
+    uci: &str,
+) -> PresentationBoardAnimationResult<(DesktopBoardSnapshot, DesktopBoardSnapshot)> {
+    let before = BoardPosition::from_fen(fen, BoardEnumVariant::Standard)?;
+    let movement = before.parse_uci(uci)?;
+    let after = before.play(movement)?;
+    Ok((
+        DesktopBoardSnapshot::from_position(&before),
+        DesktopBoardSnapshot::from_position(&after),
+    ))
+}
+
+#[test]
+fn transitions_identify_the_visible_mover_for_quiet_capture_castling_and_promotion()
+-> PresentationBoardAnimationResult {
+    let standard = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    for (fen, uci, origin, destination) in [
+        (standard, "e2e4", "e2", "e4"),
+        ("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", "e4", "d5"),
+        ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1g1", "e1", "g1"),
+        ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1c1", "e1", "c1"),
+        ("7k/P7/8/8/8/8/8/4K3 w - - 0 1", "a7a8n", "a7", "a8"),
+    ] {
+        let (before, after) = snapshot_after(fen, uci)?;
+        assert_eq!(
+            PresentationBoardTransition::piece_move(&before, &after),
+            Some((
+                PresentationBoardAnimationFixture::square(origin)?,
+                PresentationBoardAnimationFixture::square(destination)?
+            )),
+            "{uci}"
+        );
+        assert_eq!(
+            PresentationBoardTransition::piece_move(&before, &before),
+            None
+        );
+    }
+    Ok(())
+}
+
+struct PresentationBoardAnimationHarness {
+    context: Context,
+    view: PresentationBoardView,
+}
+
+impl PresentationBoardAnimationHarness {
+    fn new(clock: Arc<PresentationBoardAnimationClock>, reduced_motion: bool) -> Self {
+        Self {
+            context: Context::default(),
+            view: PresentationBoardView::with_animation(clock, reduced_motion),
+        }
+    }
+
+    fn frame(
+        &mut self,
+        snapshot: &DesktopBoardSnapshot,
+    ) -> PresentationBoardAnimationResult<(
+        Option<chess::presentation::board::animation::PresentationBoardAnimationFrame>,
+        Duration,
+    )> {
+        let rect = Rect::from_min_size(Pos2::ZERO, bevy_egui::egui::vec2(400.0, 400.0));
+        let mut picker = |_point: Pos2| Ok(None);
+        let view = &mut self.view;
+        let mut failure = None;
+        let mut animation = None;
+        let mut output = self.context.run_ui(RawInput::default(), |ui| {
+            match view.show_at(
+                ui,
+                rect,
+                PresentationBoardViewInput::new(snapshot, None, &mut picker),
+            ) {
+                Ok(frame) => animation = frame.animation(),
+                Err(error) => failure = Some(error),
+            }
+        });
+        output.textures_delta.clear();
+        if let Some(error) = failure {
+            return Err(error.into());
+        }
+        let delay = output
+            .viewport_output
+            .get(&ViewportId::ROOT)
+            .ok_or("missing root viewport")?
+            .repaint_delay;
+        Ok((animation, delay))
+    }
+}
+
+#[test]
+fn view_starts_a_piece_animation_when_the_displayed_position_changes()
+-> PresentationBoardAnimationResult {
+    let clock = Arc::new(PresentationBoardAnimationClock::default());
+    clock.advance_millis(1_000);
+    let mut harness = PresentationBoardAnimationHarness::new(clock.clone(), false);
+    let (before, after) = snapshot_after(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "e2e4",
+    )?;
+    for _ in 0..WARMUP_PASSES {
+        harness.frame(&before)?;
+    }
+    let (idle, idle_delay) = harness.frame(&before)?;
+    assert!(idle.ok_or("missing frame")?.piece().is_none());
+    assert_eq!(idle_delay, Duration::MAX);
+    let (started, delay) = harness.frame(&after)?;
+    let piece = started
+        .ok_or("missing frame")?
+        .piece()
+        .ok_or("missing piece")?;
+    assert_eq!(
+        (piece.origin(), piece.destination()),
+        (
+            PresentationBoardAnimationFixture::square("e2")?,
+            PresentationBoardAnimationFixture::square("e4")?
+        )
+    );
+    assert!(delay <= PresentationBoardAnimation::REPAINT_INTERVAL.as_duration());
+    clock.advance_millis(180);
+    let (finished, _) = harness.frame(&after)?;
+    let piece = finished
+        .ok_or("missing frame")?
+        .piece()
+        .ok_or("missing piece")?;
+    assert!(near(piece.progress(), 1.0));
+    let (settled, settled_delay) = harness.frame(&after)?;
+    assert!(settled.ok_or("missing frame")?.piece().is_none());
+    assert_eq!(settled_delay, Duration::MAX);
+    Ok(())
+}
+
+#[test]
+fn reduced_motion_view_never_animates_a_changed_position() -> PresentationBoardAnimationResult {
+    let clock = Arc::new(PresentationBoardAnimationClock::default());
+    let mut harness = PresentationBoardAnimationHarness::new(clock, true);
+    let (before, after) = snapshot_after(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "e2e4",
+    )?;
+    harness.frame(&before)?;
+    let (changed, _) = harness.frame(&after)?;
+    assert!(changed.ok_or("missing frame")?.piece().is_none());
+    Ok(())
+}
+
+#[test]
+fn camera_actions_start_flip_and_reset_motion_while_keeping_offsets_apart_from_orientation()
+-> PresentationBoardAnimationResult {
+    let clock = Arc::new(PresentationBoardAnimationClock::default());
+    clock.advance_millis(1_000);
+    let mut harness = PresentationBoardAnimationHarness::new(clock.clone(), false);
+    let snapshot = DesktopBoardSnapshot::from_position(&BoardPosition::standard());
+    let moved =
+        PresentationBoardAnimationFixture::moved_camera().with_orientation(BoardEnumColor::White);
+    let flipped = harness
+        .view
+        .camera_action(moved, PresentationBoardEnumCameraAction::Flip)?;
+    assert_eq!(flipped.orientation(), BoardEnumColor::Black);
+    assert_eq!(flipped.pose(), moved.pose());
+    let (frame, _) = harness.frame(&snapshot)?;
+    let frame = frame.ok_or("missing frame")?;
+    assert!(near(frame.flip_residual_degrees().abs(), 180.0));
+    let shown = frame.display_camera(flipped);
+    assert_eq!(shown.orientation(), BoardEnumColor::Black);
+    assert_eq!(shown.tilt_degrees(), flipped.tilt_degrees());
+    assert_eq!(shown.zoom(), flipped.zoom());
+    clock.advance_millis(180);
+    harness.frame(&snapshot)?;
+    let (done, _) = harness.frame(&snapshot)?;
+    assert!(near(
+        done.ok_or("missing frame")?.flip_residual_degrees(),
+        0.0
+    ));
+    let reset = harness
+        .view
+        .camera_action(moved, PresentationBoardEnumCameraAction::Reset)?;
+    assert_eq!(reset, moved.reset());
+    let (frame, _) = harness.frame(&snapshot)?;
+    let shown = frame.ok_or("missing frame")?.display_camera(reset);
+    assert!(near(shown.yaw_degrees(), moved.yaw_degrees()));
+    assert_eq!(shown.orientation(), reset.orientation());
+    let panel = harness.view.panel_progress()?;
+    assert!(near(panel, 1.0));
+    harness.view.set_panel_visible(false)?;
+    clock.advance_millis(160);
+    assert!(near(harness.view.panel_progress()?, 0.0));
+    Ok(())
 }

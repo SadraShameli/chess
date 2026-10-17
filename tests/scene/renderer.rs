@@ -169,6 +169,22 @@ impl SceneRendererFixture {
         Ok(())
     }
 
+    fn translation(&self, entity: Entity) -> Result<Vec3, Box<dyn std::error::Error>> {
+        Ok(self
+            .world
+            .get::<Transform>(entity)
+            .ok_or("missing transform")?
+            .translation)
+    }
+
+    fn camera_active(&self, renderer: &SceneRenderer) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(self
+            .world
+            .get::<Camera>(renderer.camera_entity())
+            .ok_or("missing camera")?
+            .is_active)
+    }
+
     fn scene_entity_count(&mut self) -> usize {
         self.world
             .query_filtered::<Entity, With<Transform>>()
@@ -460,5 +476,37 @@ fn cached_scene_uses_nearest_mesh_hit_instead_of_the_square_beneath_an_occluding
             .pick(logical, renderer.generation().next()?, &mut ray_cast)
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn animated_piece_offset_interpolates_from_origin_and_settles_exactly_on_its_square()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut fixture = SceneRendererFixture::new()?;
+    let mut renderer = fixture.spawn()?;
+    renderer.apply_position(&mut fixture.world, &BoardPosition::standard())?;
+    let origin = "e4".parse()?;
+    let destination = "e2".parse()?;
+    let root = renderer.piece_root(destination).ok_or("missing pawn")?;
+    assert!(!renderer.animate_piece(&mut fixture.world, origin, "e5".parse()?, 0.5)?);
+    renderer.finish_frame(&mut fixture.world)?;
+    let rest = ScenePicking::square_center(destination);
+    let start = ScenePicking::square_center(origin);
+    assert!(renderer.animate_piece(&mut fixture.world, origin, destination, 0.0)?);
+    assert_eq!(fixture.translation(root)?, start);
+    assert!(fixture.camera_active(&renderer)?);
+    renderer.finish_frame(&mut fixture.world)?;
+    assert!(renderer.animate_piece(&mut fixture.world, origin, destination, 0.5)?);
+    assert!((fixture.translation(root)? - start.lerp(rest, 0.5)).length() < f32::EPSILON * 8.0);
+    assert!(renderer.animate_piece(&mut fixture.world, origin, destination, 3.0)?);
+    assert_eq!(fixture.translation(root)?, rest);
+    renderer.finish_frame(&mut fixture.world)?;
+    assert!(!renderer.animate_piece(&mut fixture.world, origin, destination, 1.0)?);
+    assert!(!fixture.camera_active(&renderer)?);
+    assert!(renderer.animate_piece(&mut fixture.world, origin, destination, 0.25)?);
+    assert!(renderer.settle_piece(&mut fixture.world)?);
+    assert_eq!(fixture.translation(root)?, rest);
+    assert!(!renderer.settle_piece(&mut fixture.world)?);
+    renderer.despawn(&mut fixture.world)?;
     Ok(())
 }

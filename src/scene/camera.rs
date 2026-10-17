@@ -126,6 +126,14 @@ impl SceneCamera {
         }
     }
 
+    pub fn with_yaw_offset(self, degrees: f32) -> Self {
+        if degrees.is_finite() {
+            self.rotated(degrees)
+        } else {
+            self
+        }
+    }
+
     pub const fn reset(self) -> Self {
         Self::initial(self.orientation)
     }
