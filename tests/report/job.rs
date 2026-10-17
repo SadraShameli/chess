@@ -4,6 +4,9 @@ mod fixture;
 #[path = "analysis_update_review.rs"]
 mod analysis_update_review;
 
+#[path = "service.rs"]
+mod service;
+
 use chess::board::position::BoardPosition;
 use chess::game::enums::GameRevision;
 use chess::report::job::{ReportJobEnumFreshness, ReportJobEnumState, ReportJobError};

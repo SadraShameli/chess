@@ -168,6 +168,29 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    report_jobs (job_id) {
+        job_id -> Text,
+        game_id -> Text,
+        source_revision -> Text,
+        line_digest -> Binary,
+        queue_ordinal -> Integer,
+        state -> Text,
+        freshness -> Text,
+        position_count -> Integer,
+        configuration -> Text,
+        source -> Text,
+    }
+}
+
+diesel::table! {
+    report_results (job_id, position_index) {
+        job_id -> Text,
+        position_index -> Integer,
+        body -> Text,
+    }
+}
+
 diesel::joinable!(games -> documents (game_id));
 diesel::joinable!(library_entries -> documents (game_id));
 diesel::joinable!(library_entries -> library_folders (folder_id));
@@ -177,6 +200,7 @@ diesel::joinable!(puzzle_attempts -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_checkpoints -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_events -> puzzle_runs (run_id));
 diesel::joinable!(puzzle_runs -> puzzle_collections (collection_id));
+diesel::joinable!(report_results -> report_jobs (job_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     clock_snapshots,
@@ -195,4 +219,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     puzzle_collections,
     puzzle_events,
     puzzle_runs,
+    report_jobs,
+    report_results,
 );

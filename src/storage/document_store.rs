@@ -15,6 +15,10 @@ use uuid::Uuid;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
+use crate::storage::report_repository::{
+    StorageReportEnumRequest, StorageReportEnumResponse, StorageReportError,
+    StorageReportTransaction,
+};
 use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::rows::{StorageDocumentRowContent, StorageDocumentRowReceipt};
 use crate::storage::editor_repository::{
@@ -131,6 +135,11 @@ enum StorageDocumentEnumCommand {
         _memory_reservation: OwnedSemaphorePermit,
         _admission: OwnedSemaphorePermit,
         result: oneshot::Sender<Result<StorageLibraryEnumTransactionResponse, StorageLibraryError>>,
+    },
+    Report {
+        request: Box<StorageReportEnumRequest>,
+        _admission: OwnedSemaphorePermit,
+        result: oneshot::Sender<Result<StorageReportEnumResponse, StorageReportError>>,
     },
     PuzzleInventory {
         after: Option<PuzzleSessionId>,
@@ -370,6 +379,20 @@ impl StorageDocumentClient {
         Ok(StoragePuzzleWrite::new(receiver))
     }
 
+    pub(crate) async fn report(
+        &self,
+        request: StorageReportEnumRequest,
+    ) -> Result<StorageReportEnumResponse, StorageReportError> {
+        let admission = self.admit()?;
+        let (result, receiver) = oneshot::channel();
+        self.enqueue(StorageDocumentEnumCommand::Report {
+            request: Box::new(request),
+            _admission: admission,
+            result,
+        })?;
+        receiver.await?
+    }
+
     pub(crate) async fn read_puzzle(
         &self,
         id: PuzzleSessionId,
@@ -550,6 +573,20 @@ impl StorageDocumentActor {
                     }
                     if unresolved_import_limit {
                         return Err(StorageDocumentError::UnresolvedImportPageCeiling);
+                    }
+                }
+                StorageDocumentEnumCommand::Report {
+                    request,
+                    _admission,
+                    result,
+                } => {
+                    let outcome = StorageReportTransaction::execute(
+                        self.connection.diesel(),
+                        *request,
+                    );
+                    drop((_admission, lease));
+                    if let Err(abandoned_result) = result.send(outcome) {
+                        drop(abandoned_result);
                     }
                 }
                 StorageDocumentEnumCommand::PuzzleInventory {

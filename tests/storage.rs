@@ -46,3 +46,6 @@ mod storage_library_metadata;
 mod storage_library_record;
 #[path = "storage/puzzle_repository.rs"]
 mod storage_puzzle_repository;
+
+#[path = "storage/report_repository.rs"]
+mod storage_report_repository;
