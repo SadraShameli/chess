@@ -236,3 +236,81 @@ impl<
         Ok(())
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesktopUpdateOperation {
+    Snapshot,
+    Check,
+    RequestDownload,
+    Approve,
+    Cancel,
+    EnterCredential {
+        credential: crate::update::credentials::UpdateCredential,
+        persist: bool,
+    },
+    Install,
+}
+
+#[derive(Debug, Clone)]
+pub struct DesktopUpdateSnapshot {
+    state: UpdateState,
+    credential: UpdateCredentialEnumStatus,
+    disabled: Option<String>,
+    message: Option<String>,
+}
+
+impl DesktopUpdateSnapshot {
+    pub fn new(
+        state: UpdateState,
+        credential: UpdateCredentialEnumStatus,
+        message: Option<String>,
+    ) -> Self {
+        Self {
+            state,
+            credential,
+            disabled: None,
+            message,
+        }
+    }
+
+    pub fn disabled(reason: String) -> Self {
+        Self {
+            state: UpdateState::default(),
+            credential: UpdateCredentialEnumStatus::Missing,
+            disabled: Some(reason),
+            message: None,
+        }
+    }
+
+    pub const fn state(&self) -> &UpdateState {
+        &self.state
+    }
+
+    pub const fn credential(&self) -> UpdateCredentialEnumStatus {
+        self.credential
+    }
+
+    pub fn disabled_reason(&self) -> Option<&str> {
+        self.disabled.as_deref()
+    }
+
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+}
+
+pub trait DesktopUpdateProvider: Send + Sync {
+    fn execute(&self, operation: DesktopUpdateOperation) -> DesktopUpdateSnapshot;
+}
+
+impl<
+    H: UpdateHttp + Clone,
+    V: UpdateSignatureVerifier,
+    S: UpdateCredentialStore,
+    N: UpdateNetworkCostProvider,
+> DesktopUpdateCommands<H, V, S, N>
+{
+    pub fn snapshot(&self, message: Option<String>) -> DesktopUpdateSnapshot {
+        DesktopUpdateSnapshot::new(self.state.clone(), self.credentials.status(), message)
+    }
+}

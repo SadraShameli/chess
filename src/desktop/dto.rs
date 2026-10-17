@@ -223,6 +223,7 @@ pub enum DesktopEnumValue {
     Game(Box<crate::desktop::game_snapshot::DesktopGameSnapshot>),
     Backup(Box<crate::desktop::backup_bridge::DesktopBackupBridgeEnumResult>),
     Bootstrap(DesktopBootstrapSnapshot),
+    Update(Box<crate::desktop::update_commands::DesktopUpdateSnapshot>),
     FileSelect(Option<DesktopFileHandleId>),
     StreamSubscribe {
         subscription_id: DesktopRequestId,

@@ -151,6 +151,14 @@ impl DesktopProfileInstallationIntent {
         Ok(())
     }
 
+    pub fn clear(lease: &DesktopProfileLease) -> Result<(), DesktopProfileInstallationError> {
+        DesktopProfileControlRecord::remove(
+            lease,
+            DesktopProfileControlRecordEnumKind::Installation,
+        )?;
+        Ok(())
+    }
+
     pub fn spec(&self) -> DesktopProfileInstallationSpec {
         DesktopProfileInstallationSpec {
             owner_generation: self.owner_generation,

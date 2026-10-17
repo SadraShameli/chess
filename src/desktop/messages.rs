@@ -59,6 +59,7 @@ pub enum DesktopEnumCommand {
         operation: DesktopPuzzleServiceEnumOperation,
     },
     Bootstrap,
+    Update(crate::desktop::update_commands::DesktopUpdateOperation),
     FileSelect {
         owner: DesktopMessagesEntityId,
         purpose: DesktopFileEnumPurpose,
@@ -90,6 +91,7 @@ impl DesktopEnumCommand {
             | Self::Editor { .. }
             | Self::Engine(_)
             | Self::Bootstrap
+            | Self::Update(_)
             | Self::FileSelect { .. }
             | Self::StreamSubscribe
             | Self::StreamAcknowledge { .. }
@@ -171,6 +173,7 @@ impl DesktopEnumCommand {
             | Self::Backup(_)
             | Self::Editor { .. }
             | Self::Bootstrap
+            | Self::Update(_)
             | Self::FileSelect { .. }
             | Self::StreamSubscribe
             | Self::StreamAcknowledge { .. }
@@ -208,6 +211,7 @@ impl DesktopEnumCommand {
             Self::FileSelect { owner, .. } => Some(*owner),
             Self::Bootstrap
             | Self::Backup(_)
+            | Self::Update(_)
             | Self::StreamSubscribe
             | Self::StreamAcknowledge { .. }
             | Self::StreamResync { .. }

@@ -48,10 +48,13 @@ impl DesktopPreferencesLoad {
 type DesktopPreferencesStoreOutcome =
     Option<Result<DesktopPreferencesRevision, DesktopPreferencesStoreError>>;
 
+pub type DesktopPreferencesObserver = Arc<dyn Fn(DesktopPreferences) + Send + Sync>;
+
 pub struct DesktopPreferencesStore {
     repository: Arc<StoragePreferencesRepository>,
     runtime: tokio::runtime::Handle,
     outcome: Arc<Mutex<DesktopPreferencesStoreOutcome>>,
+    observer: Arc<Mutex<Option<DesktopPreferencesObserver>>>,
 }
 
 impl DesktopPreferencesStore {
@@ -60,7 +63,12 @@ impl DesktopPreferencesStore {
             repository: Arc::new(repository),
             runtime,
             outcome: Arc::new(Mutex::new(None)),
+            observer: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn set_observer(&self, observer: DesktopPreferencesObserver) {
+        *self.observer.lock().unwrap_or_else(PoisonError::into_inner) = Some(observer);
     }
 
     pub async fn load(&self) -> DesktopPreferencesLoad {
@@ -96,8 +104,18 @@ impl DesktopPreferencesStore {
     pub fn save(&self, expected: DesktopPreferencesRevision, preferences: DesktopPreferences) {
         let repository = Arc::clone(&self.repository);
         let outcome = Arc::clone(&self.outcome);
+        let observer = Arc::clone(&self.observer);
         self.runtime.spawn(async move {
             let result = Self::persist(&repository, expected, preferences).await;
+            if result.is_ok() {
+                let held = observer
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone();
+                if let Some(observer) = held {
+                    observer(preferences);
+                }
+            }
             *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(result);
         });
     }

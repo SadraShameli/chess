@@ -1,5 +1,7 @@
 pub mod linux;
 pub mod macos;
+pub mod service;
+pub mod space;
 pub mod windows;
 
 use std::path::{Path, PathBuf};

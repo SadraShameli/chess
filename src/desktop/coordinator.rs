@@ -269,6 +269,7 @@ where
     latest_games: Vec<DesktopGameSnapshot>,
     pending_games: Vec<DesktopCoordinatorPending<DesktopGameSnapshot>>,
     engine: Option<Arc<dyn DesktopEngineBridgeProvider>>,
+    updates: Option<Arc<dyn crate::desktop::update_commands::DesktopUpdateProvider>>,
     pending_engine: Vec<DesktopCoordinatorPending<DesktopEngineBridgeEnumResult>>,
     backup: Option<Arc<dyn DesktopBackupBridgeProvider>>,
     pending_backup: Vec<DesktopCoordinatorPending<DesktopBackupBridgeEnumResult>>,
@@ -329,6 +330,7 @@ where
             latest_games: Vec::new(),
             pending_games: Vec::new(),
             engine: None,
+            updates: None,
             pending_engine: Vec::new(),
             backup: None,
             pending_backup: Vec::new(),
@@ -354,6 +356,14 @@ where
         self.latest_games = receiver.borrow().clone();
         self.game_snapshots = Some(receiver);
         self.games = Some(games);
+        self
+    }
+
+    pub fn with_updates(
+        mut self,
+        updates: Arc<dyn crate::desktop::update_commands::DesktopUpdateProvider>,
+    ) -> Self {
+        self.updates = Some(updates);
         self
     }
 
@@ -586,6 +596,24 @@ where
                 self.complete(&work, DesktopEnumValue::Bootstrap(self.snapshot.clone()))
                     .await?;
             }
+            DesktopEnumCommand::Update(operation) => match self.updates.clone() {
+                Some(updates) => {
+                    let snapshot = updates.execute(operation);
+                    self.complete(&work, DesktopEnumValue::Update(Box::new(snapshot)))
+                        .await?;
+                }
+                None => {
+                    self.fail(
+                        &work,
+                        DesktopFailure::new(
+                            DesktopEnumFailureCode::ResourceRefusal,
+                            "The update service is unavailable".to_owned(),
+                            true,
+                        ),
+                    )
+                    .await?;
+                }
+            },
             DesktopEnumCommand::FileSelect { owner, purpose } => {
                 if work.request().command().expected_revision() != Some(DesktopRevision::ZERO) {
                     self.fail(

@@ -131,6 +131,31 @@ impl DesktopProfileControlRecord {
         Ok(Some((path, bytes)))
     }
 
+    pub(super) fn remove(
+        lease: &DesktopProfileLease,
+        kind: DesktopProfileControlRecordEnumKind,
+    ) -> Result<(), DesktopProfileError> {
+        let path = kind.path(lease.identity().data_directory());
+        lease.verify_identity()?;
+        let security = lease.security();
+        let control = security.open_data_directory(lease.identity().control_directory())?;
+        security.validate_control_directory(&control, lease.identity().control_directory())?;
+        match security.open_existing_control_file(&control, &path) {
+            Ok(file) => {
+                security.validate_control_file(&file, &path)?;
+                drop(file);
+            }
+            Err(DesktopProfileError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        }
+        std::fs::remove_file(&path).map_err(|error| DesktopProfileError::io(&path, error))?;
+        lease.verify_identity()
+    }
+
     pub(super) fn replace<T: Serialize>(
         lease: &DesktopProfileLease,
         kind: DesktopProfileControlRecordEnumKind,

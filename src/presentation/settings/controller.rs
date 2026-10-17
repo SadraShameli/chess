@@ -10,6 +10,7 @@ use crate::desktop::preferences_reset::{
     DesktopPreferencesEnumResetScope, DesktopPreferencesResetPreview,
 };
 use crate::desktop::preferences_store::{DesktopPreferencesLoad, DesktopPreferencesStore};
+use crate::desktop::update_commands::{DesktopUpdateOperation, DesktopUpdateSnapshot};
 use crate::presentation::action::shortcuts::PresentationShortcutEnumPlatform;
 use crate::presentation::settings::shortcuts::PresentationSettingsShortcuts;
 
@@ -47,6 +48,13 @@ pub struct PresentationSettingsController {
     notice: Option<String>,
     exchange: String,
     shortcut_edits: [PresentationSettingsShortcutEdit; 4],
+    update: Option<DesktopUpdateSnapshot>,
+    update_intent: Option<DesktopUpdateOperation>,
+    update_credential: String,
+    update_persist: bool,
+    update_install_prompt: bool,
+    update_install_confirmed: bool,
+    update_frames: u32,
 }
 
 impl PresentationSettingsController {
@@ -65,6 +73,13 @@ impl PresentationSettingsController {
             prompt: PresentationSettingsEnumPrompt::None,
             exchange: String::new(),
             shortcut_edits: Default::default(),
+            update: None,
+            update_intent: None,
+            update_credential: String::new(),
+            update_persist: true,
+            update_install_prompt: false,
+            update_install_confirmed: false,
+            update_frames: 0,
         }
     }
 
@@ -101,6 +116,62 @@ impl PresentationSettingsController {
         action: DesktopPreferencesEnumShortcutAction,
     ) -> &mut PresentationSettingsShortcutEdit {
         &mut self.shortcut_edits[action.slot()]
+    }
+
+    pub fn accept_update(&mut self, snapshot: DesktopUpdateSnapshot) {
+        self.update = Some(snapshot);
+    }
+
+    pub const fn update(&self) -> Option<&DesktopUpdateSnapshot> {
+        self.update.as_ref()
+    }
+
+    pub fn request_update(&mut self, operation: DesktopUpdateOperation) {
+        self.update_intent = Some(operation);
+    }
+
+    pub fn take_update_intent(&mut self) -> Option<DesktopUpdateOperation> {
+        self.update_intent.take()
+    }
+
+    pub fn update_poll_due(&mut self) -> bool {
+        self.update_frames = self.update_frames.wrapping_add(1);
+        (self.update.is_none() && self.update_intent.is_none())
+            || self.update_frames.is_multiple_of(30)
+    }
+
+    pub const fn update_credential_mut(&mut self) -> &mut String {
+        &mut self.update_credential
+    }
+
+    pub const fn update_persist_mut(&mut self) -> &mut bool {
+        &mut self.update_persist
+    }
+
+    pub const fn update_install_prompt(&self) -> bool {
+        self.update_install_prompt
+    }
+
+    pub fn set_update_install_prompt(&mut self, open: bool) {
+        self.update_install_prompt = open;
+        self.update_install_confirmed = false;
+    }
+
+    pub const fn update_install_confirmed_mut(&mut self) -> &mut bool {
+        &mut self.update_install_confirmed
+    }
+
+    pub fn submit_update_credential(&mut self, persist: bool) {
+        let text = std::mem::take(&mut self.update_credential);
+        match crate::update::credentials::UpdateCredential::new(text) {
+            Ok(credential) => {
+                self.update_intent = Some(DesktopUpdateOperation::EnterCredential {
+                    credential,
+                    persist,
+                });
+            }
+            Err(error) => self.notice = Some(error.to_string()),
+        }
     }
 
     pub fn engine_note(&self) -> Option<&'static str> {

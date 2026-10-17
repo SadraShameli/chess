@@ -11,6 +11,9 @@ use crate::desktop::profile::installation::{
 use crate::desktop::profile::owner_record::{
     DesktopProfileOwnerRecord, DesktopProfileOwnerRecordError,
 };
+use crate::update::recovery::{
+    UpdateRecovery, UpdateRecoveryEnumDecision, UpdateRecoveryIntent, UpdateRecoveryObservation,
+};
 use crate::desktop::profile::{
     DesktopProfileAdmission, DesktopProfileEnumAdmission, DesktopProfileError, DesktopProfileId,
     DesktopProfileIdentity, DesktopProfileLease, DesktopProfileLockProvider,
@@ -113,6 +116,11 @@ impl<L: DesktopProfileLockProvider> DesktopNativeStartup<L> {
                         ))
                     }
                     DesktopProfileInstallationEnumStartup::Blocked(intent) => {
+                        if Self::clearable(&intent) {
+                            return Ok(DesktopNativeStartupEnumAdmission::Owned(
+                                DesktopNativeStartupOwner { lease, binding },
+                            ));
+                        }
                         drop(lease);
                         Ok(DesktopNativeStartupEnumAdmission::InstallationBlocked(
                             DesktopNativeStartupInstallationBlocked { binding, intent },
@@ -122,6 +130,28 @@ impl<L: DesktopProfileLockProvider> DesktopNativeStartup<L> {
             }
             DesktopProfileEnumAdmission::Busy => self.inspect_existing_owner(data_directory),
         }
+    }
+
+    pub fn clearable(intent: &DesktopProfileInstallationIntent) -> bool {
+        let Ok(installed_version) = semver::Version::parse(env!("CARGO_PKG_VERSION")) else {
+            return false;
+        };
+        let observation = UpdateRecoveryObservation {
+            installed_version,
+            helper_quiescent: !Self::helper_running(),
+            migration_valid: Some(true),
+        };
+        UpdateRecovery::decide(Some(&UpdateRecoveryIntent::from(intent)), &observation)
+            == UpdateRecoveryEnumDecision::ClearSuccess
+    }
+
+    fn helper_running() -> bool {
+        let mut system = sysinfo::System::new();
+        system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        system
+            .processes()
+            .values()
+            .any(|process| process.name().to_string_lossy().contains("chess-update-helper"))
     }
 
     pub fn inspect_existing_owner(

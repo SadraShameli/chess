@@ -202,6 +202,8 @@ pub enum DesktopNativeBootstrapError {
     #[error(transparent)]
     Profile(#[from] DesktopProfileError),
     #[error(transparent)]
+    Installation(#[from] crate::desktop::profile::installation::DesktopProfileInstallationError),
+    #[error(transparent)]
     OwnerRecord(#[from] DesktopProfileOwnerRecordError),
     #[error(transparent)]
     Capacity(#[from] CapacityBudgetError),
@@ -780,6 +782,16 @@ impl DesktopNativeBootstrapSupervisor {
         ));
         backup.start_scheduler();
         self.lifecycle.services.lock().await.backup = Some(Arc::clone(&backup));
+        if let Some(intent) =
+            crate::desktop::profile::installation::DesktopProfileInstallationIntent::read_current(
+                &self.lease,
+            )?
+            && DesktopNativeStartup::<DesktopProfileOsLock>::clearable(&intent)
+        {
+            crate::desktop::profile::installation::DesktopProfileInstallationIntent::clear(
+                &self.lease,
+            )?;
+        }
         let (mut engine_snapshot, package) = Self::engine(
             resources.engine().to_path_buf(),
             &executor,
@@ -826,6 +838,18 @@ impl DesktopNativeBootstrapSupervisor {
                 memory,
             },
         )?);
+        {
+            let live_resources = Arc::clone(&engine_resources);
+            preferences_store.set_observer(Arc::new(move |preferences| {
+                if let Err(error) = live_resources.apply_overrides(EngineConfigurationOverrides {
+                    threads: preferences.engine_threads(),
+                    hash_mib: preferences.engine_hash_mib(),
+                    move_overhead_ms: preferences.engine_move_overhead_ms(),
+                }) {
+                    eprintln!("Saved engine settings could not be applied live: {error}");
+                }
+            }));
+        }
         let random = executor
             .submit(|_cancellation| StdRng::try_from_rng(&mut SysRng))?
             .join()
@@ -989,6 +1013,23 @@ impl DesktopNativeBootstrapSupervisor {
         if let Some(engine_port) = &engine_port {
             coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
         }
+        let updates = match semver::Version::parse(env!("CARGO_PKG_VERSION")) {
+            Ok(installed) => crate::desktop::native::update::service::DesktopNativeUpdateService::start(
+                crate::desktop::native::update::service::DesktopNativeUpdateServiceOptions {
+                    cache_directory: self
+                        .lease
+                        .identity()
+                        .data_directory()
+                        .join("update-cache"),
+                    installed,
+                    runtime: tokio::runtime::Handle::current(),
+                },
+            ),
+            Err(error) => crate::desktop::native::update::service::DesktopNativeUpdateService::disabled(
+                &error.to_string(),
+            ),
+        };
+        coordinator = coordinator.with_updates(Arc::new(updates));
         let mut phase = CapacityPhase::new(self.budget.clone())?;
         let generation = phase.request_preparation()?;
         let capacity = Arc::new(Mutex::new(phase));

@@ -304,6 +304,7 @@ pub struct PresentationApp {
     theme_initialized: bool,
     settings: PresentationSettingsController,
     audio_observer: PresentationAudioObserver,
+    update_pending: Vec<DesktopApplicationReceipt>,
     settings_open: bool,
     backup: backup::PresentationAppBackup,
     settings_toggle_frame: Option<u64>,
@@ -367,6 +368,7 @@ impl PresentationApp {
             theme_initialized: false,
             settings,
             audio_observer: PresentationAudioObserver::default(),
+            update_pending: Vec::new(),
             settings_open: false,
             backup: backup::PresentationAppBackup::new(),
             settings_toggle_frame: None,
@@ -875,6 +877,44 @@ impl PresentationApp {
         self.settings.effective()
     }
 
+    fn submit_update<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) {
+        const MAX_PENDING: usize = 8;
+        if self.update_pending.len() >= MAX_PENDING {
+            return;
+        }
+        let Some(operation) = self.settings.take_update_intent() else {
+            return;
+        };
+        let submitted = port
+            .request(DesktopCommand::new(
+                DesktopEnumCommand::Update(operation),
+                None,
+            ))
+            .and_then(|request| port.try_submit(&request));
+        match submitted {
+            Ok(receipt) => self.update_pending.push(receipt),
+            Err(error) => self.failure = Some(error.to_string()),
+        }
+    }
+
+    fn poll_updates(&mut self) {
+        let mut completed = Vec::new();
+        self.update_pending.retain(|receipt| {
+            if let Some(response) = receipt.response() {
+                completed.push(response.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for response in completed {
+            self.accept_response(response);
+        }
+    }
+
     pub fn audio_events(&mut self) -> Vec<PresentationAudioEvent> {
         self.audio_observer
             .observe(self.games.iter().map(|game| &game.snapshot))
@@ -1015,6 +1055,7 @@ impl PresentationApp {
     }
 
     pub fn poll(&mut self) {
+        self.poll_updates();
         for pending in &self.pending {
             match pending.receipt.pending_notice() {
                 Ok(Some(notice)) => self.failure = Some(notice.message().to_owned()),
@@ -1128,6 +1169,7 @@ impl PresentationApp {
                 | DesktopEnumCommand::Editor { .. }
                 | DesktopEnumCommand::Puzzle { .. }
                 | DesktopEnumCommand::Bootstrap
+                | DesktopEnumCommand::Update(_)
                 | DesktopEnumCommand::FileSelect { .. }
                 | DesktopEnumCommand::StreamSubscribe
                 | DesktopEnumCommand::StreamAcknowledge { .. }
@@ -1203,6 +1245,7 @@ impl PresentationApp {
                 self.accept_game_snapshot(*snapshot);
             }
             DesktopEnumValue::Bootstrap(snapshot) => self.accept_snapshot(snapshot),
+            DesktopEnumValue::Update(snapshot) => self.settings.accept_update(*snapshot),
             DesktopEnumValue::StreamSubscribe {
                 subscription_id,
                 sequence,
@@ -1803,6 +1846,7 @@ impl PresentationApp {
             .show(ui, |ui| {
                 if self.settings_open {
                     self.show_settings(ui, port);
+                    self.submit_update(port);
                     return;
                 }
                 if self.workspace == PresentationAppEnumWorkspace::Editor {

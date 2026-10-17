@@ -106,3 +106,5 @@ mod desktop_preferences;
 mod desktop_release_workflow;
 #[path = "desktop/security_boundaries.rs"]
 mod desktop_security_boundaries;
+#[path = "desktop/engine_overrides.rs"]
+mod desktop_engine_overrides;

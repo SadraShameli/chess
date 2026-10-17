@@ -9,6 +9,12 @@ use crate::desktop::preferences_reset::DesktopPreferencesEnumResetScope;
 use crate::presentation::action::shortcuts::{
     PresentationShortcutEnumPlatform, PresentationShortcuts,
 };
+use crate::desktop::update_commands::DesktopUpdateOperation;
+use crate::presentation::settings::update::{
+    PresentationSettingsUpdate, PresentationSettingsUpdateEnumAction,
+};
+use crate::presentation::settings::update_install::PresentationSettingsUpdateInstall;
+use crate::update::state::UpdateEnumPhase;
 use crate::presentation::settings::controller::{
     PresentationSettingsController, PresentationSettingsEnumPrompt, PresentationSettingsOutcome,
 };
@@ -37,6 +43,8 @@ impl PresentationSettingsView {
             let step = Self::section(ui, controller, section);
             outcome.appearance_changed |= step.appearance_changed;
         }
+        ui.separator();
+        Self::updates(ui, controller);
         ui.separator();
         Self::exchange(ui, controller);
         ui.separator();
@@ -215,6 +223,78 @@ impl PresentationSettingsView {
                 ui.label("Engine default");
             }
         });
+    }
+
+    fn updates(ui: &mut Ui, controller: &mut PresentationSettingsController) {
+        ui.heading("Updates");
+        if controller.update_poll_due() {
+            controller.request_update(DesktopUpdateOperation::Snapshot);
+        }
+        let Some(snapshot) = controller.update().cloned() else {
+            ui.label("Update status is loading.");
+            return;
+        };
+        if let Some(reason) = snapshot.disabled_reason() {
+            ui.label(format!("Updates are unavailable: {reason}. Offline chess is unaffected."));
+            return;
+        }
+        if let Some(message) = snapshot.message() {
+            ui.label(message.to_owned());
+        }
+        let chosen =
+            PresentationSettingsUpdate::show(ui, snapshot.state(), snapshot.credential());
+        match chosen {
+            Some(PresentationSettingsUpdateEnumAction::Check) => {
+                controller.request_update(DesktopUpdateOperation::Check);
+            }
+            Some(PresentationSettingsUpdateEnumAction::Approve) => {
+                controller.request_update(DesktopUpdateOperation::Approve);
+            }
+            Some(PresentationSettingsUpdateEnumAction::Cancel) => {
+                controller.request_update(DesktopUpdateOperation::Cancel);
+            }
+            Some(PresentationSettingsUpdateEnumAction::Download) => {
+                controller.request_update(DesktopUpdateOperation::RequestDownload);
+            }
+            Some(PresentationSettingsUpdateEnumAction::Retry) => {
+                controller.request_update(if snapshot.state().release().is_some() {
+                    DesktopUpdateOperation::RequestDownload
+                } else {
+                    DesktopUpdateOperation::Check
+                });
+            }
+            Some(PresentationSettingsUpdateEnumAction::Install) => {
+                controller.set_update_install_prompt(true);
+            }
+            Some(
+                PresentationSettingsUpdateEnumAction::EnterCredential
+                | PresentationSettingsUpdateEnumAction::UseSessionCredential,
+            )
+            | None => {}
+        }
+        if matches!(
+            snapshot.state().phase(),
+            UpdateEnumPhase::CredentialsMissing | UpdateEnumPhase::CredentialsRejected
+        ) {
+            ui.add(egui::TextEdit::singleline(controller.update_credential_mut()).password(true));
+            ui.checkbox(controller.update_persist_mut(), "Keep in secure storage");
+            if ui.button("Save credential").clicked() {
+                let persist = *controller.update_persist_mut();
+                controller.submit_update_credential(persist);
+            }
+            if chosen == Some(PresentationSettingsUpdateEnumAction::UseSessionCredential) {
+                controller.submit_update_credential(false);
+            }
+        }
+        if controller.update_install_prompt() {
+            let mut confirmed = *controller.update_install_confirmed_mut();
+            let install = PresentationSettingsUpdateInstall::show_confirmation(ui, &mut confirmed);
+            *controller.update_install_confirmed_mut() = confirmed;
+            if install {
+                controller.request_update(DesktopUpdateOperation::Install);
+                controller.set_update_install_prompt(false);
+            }
+        }
     }
 
     fn exchange(ui: &mut Ui, controller: &mut PresentationSettingsController) {
