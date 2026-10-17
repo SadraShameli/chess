@@ -857,14 +857,7 @@ pub struct StorageLibraryQueryPage {
     entries: Vec<StorageLibraryQueryEntry>,
     next: Option<StorageLibraryQueryCursor>,
     catalog: StorageLibraryCatalogRevision,
-    unindexed_documents: u64,
     _memory: StorageLibraryMemory,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StorageLibraryEnumIndexCoverage {
-    EveryDocumentIndexed,
-    UnindexedDocuments(u64),
 }
 
 impl StorageLibraryQueryPage {
@@ -872,14 +865,12 @@ impl StorageLibraryQueryPage {
         entries: Vec<StorageLibraryQueryEntry>,
         next: Option<StorageLibraryQueryCursor>,
         catalog: StorageLibraryCatalogRevision,
-        unindexed_documents: u64,
         memory: StorageLibraryMemory,
     ) -> Self {
         Self {
             entries,
             next,
             catalog,
-            unindexed_documents,
             _memory: memory,
         }
     }
@@ -891,15 +882,5 @@ impl StorageLibraryQueryPage {
     }
     pub const fn catalog_revision(&self) -> StorageLibraryCatalogRevision {
         self.catalog
-    }
-    pub const fn unindexed_document_count(&self) -> u64 {
-        self.unindexed_documents
-    }
-    pub const fn index_coverage(&self) -> StorageLibraryEnumIndexCoverage {
-        if self.unindexed_documents == 0 {
-            StorageLibraryEnumIndexCoverage::EveryDocumentIndexed
-        } else {
-            StorageLibraryEnumIndexCoverage::UnindexedDocuments(self.unindexed_documents)
-        }
     }
 }

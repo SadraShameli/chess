@@ -26,7 +26,7 @@ use crate::desktop::native::game_runtime::{
 };
 use crate::desktop::native::library_startup::{
     DesktopNativeLibraryStartup, DesktopNativeLibraryStartupEnumIssueCause,
-    DesktopNativeLibraryStartupEnumReadiness, DesktopNativeLibraryStartupError,
+    DesktopNativeLibraryStartupEnumReadiness,
 };
 use crate::game::adjudication::GameAdjudicationMateProofProvider;
 use crate::game::engine_provider::GameEngineProvider;
@@ -75,8 +75,6 @@ pub enum DesktopNativeGameServiceError {
     Identity(#[from] GameIdentityError),
     #[error(transparent)]
     Library(#[from] StorageLibraryError),
-    #[error(transparent)]
-    LibraryStartup(#[from] DesktopNativeLibraryStartupError),
 }
 
 impl DesktopNativeGameServiceError {
@@ -181,19 +179,13 @@ where
     P: GameAdjudicationMateProofProvider + Send + Sync + RefUnwindSafe + 'static,
     R: Rng + Send + UnwindSafe + 'static,
 {
-    const LIBRARY_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
-
     pub fn new(options: DesktopNativeGameServiceOptions<F, C, P, R>) -> Self {
         let storage = DesktopNativeGameServiceStorage {
             client: options.storage.clone(),
             executor: Arc::clone(&options.executor),
         };
         let (registry, registry_port) = DesktopGameRegistry::new(options);
-        let library = DesktopNativeLibraryStartup::new(
-            storage.client.clone(),
-            Arc::clone(&storage.executor),
-            Instant::now() + Self::LIBRARY_STARTUP_TIMEOUT,
-        );
+        let library = DesktopNativeLibraryStartup::new();
         let library_readiness = library.subscribe();
         Self {
             startup: Some(registry),
@@ -251,7 +243,6 @@ where
         library: &mut DesktopNativeLibraryStartup,
         after: &mut Option<GameId>,
     ) -> Result<(), DesktopNativeGameServiceError> {
-        library.run().await?;
         let repository = StorageLibraryRepository::new(storage.client.clone(), &storage.executor);
         let inventory = StorageLibraryInventoryRepository::new(storage.client);
         loop {
@@ -260,7 +251,6 @@ where
                 StorageLibraryInventoryCursor::after,
             );
             let page = inventory.page(cursor).await?;
-            library.observe_recovery_catalog(page.catalog_revision())?;
             for document in page.entries() {
                 let loaded = repository.load(document.id()).await;
                 match loaded {
@@ -274,7 +264,7 @@ where
                             DesktopNativeLibraryStartupEnumIssueCause::Changed(Some(
                                 restored.content_revision(),
                             )),
-                        )?;
+                        );
                     }
                     Ok(Some(restored)) => {
                         let storage_revision = restored.content_revision();
@@ -299,7 +289,7 @@ where
                                     document.id().as_uuid(),
                                     document.content_revision(),
                                     DesktopNativeLibraryStartupEnumIssueCause::ContentKind,
-                                )?;
+                                );
                             }
                         }
                     }
@@ -308,20 +298,19 @@ where
                             document.id().as_uuid(),
                             document.content_revision(),
                             DesktopNativeLibraryStartupEnumIssueCause::Missing,
-                        )?;
+                        );
                     }
                     Err(error) => {
                         library.record_recovery_issue(
                             document.id().as_uuid(),
                             document.content_revision(),
                             DesktopNativeLibraryStartupEnumIssueCause::Storage(Arc::new(error)),
-                        )?;
+                        );
                     }
                 }
                 *after = Some(document.id());
             }
             if page.entries().is_empty() {
-                library.observe_revocation(library.deadline()).await?;
                 return Ok(());
             }
         }
@@ -383,10 +372,6 @@ where
             && self.worker.is_none()
             && self.worker_failure.is_none()
             && self
-                .library
-                .as_ref()
-                .is_none_or(|library| !library.has_pending())
-            && self
                 .port
                 .as_ref()
                 .is_none_or(DesktopNativeGameRuntimePort::is_shutdown_complete)
@@ -414,11 +399,6 @@ where
             if registry.is_shutdown_complete() {
                 self.startup = None;
             }
-        }
-        if let Some(library) = &mut self.library
-            && let Err(error) = library.drain_retained(deadline).await
-        {
-            DesktopNativeGameServiceError::record(&mut failure, error.into());
         }
         if self
             .worker

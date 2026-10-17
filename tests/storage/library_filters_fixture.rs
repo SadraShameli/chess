@@ -36,9 +36,7 @@ use chess::storage::game_document::StorageGameDocument;
 use chess::storage::library_prepared::StorageLibraryEnumContentChange;
 use chess::storage::library_query::{StorageLibraryQuery, StorageLibraryQueryOptions};
 use chess::storage::library_repository::{
-    StorageLibraryAdoptionCursor, StorageLibraryContentReceipt, StorageLibraryEnumAdoptionOutcome,
-    StorageLibraryEnumAdoptionPreparation, StorageLibraryEnumMutationReceipt,
-    StorageLibraryRepository,
+    StorageLibraryContentReceipt, StorageLibraryEnumMutationReceipt, StorageLibraryRepository,
 };
 
 pub(super) type StorageLibraryFiltersTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -238,58 +236,6 @@ impl StorageLibraryFiltersFixture {
             )?),
         )
         .await
-    }
-
-    pub(super) async fn adopt(
-        &self,
-        id: GameId,
-        body: String,
-    ) -> StorageLibraryFiltersTestResult<GameStorageRevision> {
-        let client = self.store.client();
-        client.save(id.as_uuid(), 0, body.clone()).await?;
-        let before = client
-            .read(id.as_uuid())
-            .await?
-            .ok_or("missing adoption source")?;
-        let revision = GameStorageRevision::new(before.revision());
-        assert_eq!(before.body(), body);
-        drop(before);
-        let repository = self.repository();
-        let mut cursor = StorageLibraryAdoptionCursor::start();
-        let candidate = loop {
-            let page = repository.adoption_page(cursor).await?;
-            if let Some(candidate) = page
-                .candidates()
-                .iter()
-                .find(|entry| entry.id() == id.as_uuid())
-            {
-                break *candidate;
-            }
-            cursor = page.next_cursor().ok_or("missing adoption candidate")?;
-        };
-        assert_eq!(candidate.content_revision(), revision);
-        let StorageLibraryEnumAdoptionPreparation::Prepared(prepared) =
-            repository.prepare_adoption(candidate).await?
-        else {
-            return Err("adoption did not prepare the real game envelope".into());
-        };
-        let mut pending = repository.begin_adopt(prepared)?;
-        assert!(matches!(
-            pending.wait().await?,
-            StorageLibraryEnumMutationReceipt::Adopted(
-                StorageLibraryEnumAdoptionOutcome::Inserted(_)
-            )
-        ));
-        let after = client
-            .read(id.as_uuid())
-            .await?
-            .ok_or("missing adopted document")?;
-        assert_eq!(after.body(), body);
-        assert_eq!(after.revision(), revision.value());
-        let recovered = repository.load(id).await?.ok_or("missing adopted record")?;
-        assert_eq!(recovered.modified(), None);
-        assert_eq!(recovered.content_revision(), revision);
-        Ok(revision)
     }
 
     pub(super) async fn expect_ids(

@@ -32,14 +32,12 @@ impl StorageLibraryTransactionImport {
     pub(super) fn snapshot(
         connection: &mut SqliteConnection,
         destination: StorageImportSessionDestination,
-        certified: bool,
     ) -> Result<StorageImportSessionSnapshot, StorageLibraryError> {
         Self::destination(connection, destination)?;
         Ok(StorageImportSessionSnapshot::new(
             StorageImportSessionCatalogStamp::new(
                 StorageLibraryTransaction::diesel_catalog(connection)?.value(),
             ),
-            certified,
             destination,
         ))
     }
@@ -64,13 +62,9 @@ impl StorageLibraryTransactionImport {
     fn validate(
         connection: &mut SqliteConnection,
         snapshot: StorageImportSessionSnapshot,
-        certified: bool,
         cancellation: &StorageImportSessionCancellation,
     ) -> Result<(), StorageLibraryError> {
         cancellation.check()?;
-        if !certified || !snapshot.is_adoption_complete() {
-            return Err(StorageLibraryError::AdoptionRequired);
-        }
         if StorageLibraryTransaction::diesel_catalog(connection)?.value()
             != snapshot.catalog_stamp().value()
         {
@@ -83,12 +77,8 @@ impl StorageLibraryTransactionImport {
     pub(super) fn candidates(
         connection: &mut SqliteConnection,
         request: &StorageLibraryImportCandidateRequest,
-        certified: bool,
         memory: &Arc<Semaphore>,
     ) -> Result<StorageImportSessionCandidatePage, StorageLibraryError> {
-        if !certified {
-            return Err(StorageLibraryError::AdoptionRequired);
-        }
         let query = request.query();
         if StorageLibraryTransaction::diesel_catalog(connection)?.value()
             != query.catalog_stamp().value()
@@ -195,28 +185,25 @@ impl StorageLibraryTransactionImport {
         connection: &mut SqliteConnection,
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
-        certified: bool,
         cancellation: &StorageImportSessionCancellation,
     ) -> Result<u64, StorageLibraryError> {
         cancellation.check()?;
-        Self::validate(connection, snapshot, certified, cancellation)?;
+        Self::validate(connection, snapshot, cancellation)?;
         Ok(StorageLibraryImportSpace::plan(connection, footprint, cancellation)?.bytes())
     }
 
     pub(super) fn commit(
         connection: &mut SqliteConnection,
         request: &mut StorageLibraryImportCommitRequest,
-        certified: bool,
         origin: uuid::Uuid,
         scope: &mut Option<StorageLibraryImportPageLimit>,
     ) -> Result<StorageImportSessionCommitReceipt, StorageLibraryError> {
         request.cancellation.check()?;
         let snapshot = StorageImportSessionSnapshot::new(
             request.prepared.catalog_stamp(),
-            true,
             request.prepared.destination(),
         );
-        Self::validate(connection, snapshot, certified, &request.cancellation)?;
+        Self::validate(connection, snapshot, &request.cancellation)?;
         request.prepared.recheck_space()?;
         let footprint = request.prepared.footprint();
         let space = StorageLibraryImportSpace::plan(connection, footprint, &request.cancellation)?;

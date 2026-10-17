@@ -3,9 +3,6 @@ mod import;
 pub use crate::storage::library_prepared::import::StorageLibraryImportPreparedProjection;
 pub(crate) use crate::storage::library_prepared::import::StorageLibraryImportRecoveredProjection;
 
-use serde::de::IgnoredAny;
-use serde::{Deserialize, Deserializer};
-use serde_json::value::RawValue;
 use tokio::sync::OwnedSemaphorePermit;
 
 use crate::board::enums::{BoardEnumColor, BoardEnumVariant};
@@ -454,70 +451,6 @@ impl StorageLibraryPreparedWrite {
     }
 }
 
-pub struct StorageLibraryPreparedAdoption {
-    id: GameId,
-    observed: GameStorageRevision,
-    projection: Box<StorageLibraryProjection>,
-    identity: StorageLibraryPreparedIdentity,
-    memory: StorageLibraryPreparedMemory,
-}
-
-impl StorageLibraryPreparedAdoption {
-    pub(crate) fn validate_memory_owner(
-        &self,
-        client: &StorageDocumentClient,
-    ) -> Result<(), StorageLibraryError> {
-        self.memory.validate_owner(client)
-    }
-
-    pub(crate) fn from_encoded(
-        id: GameId,
-        observed: GameStorageRevision,
-        body: &str,
-        memory: StorageLibraryPreparedMemory,
-        cancellation: &CapacityExecutorCancellation,
-    ) -> Result<Self, StorageLibraryError> {
-        memory.check_body(body.len())?;
-        let record = StorageGameDocument::recover_record_cancellable(body, cancellation)?;
-        if record.id() != id {
-            return Err(StorageLibraryError::Identity);
-        }
-        let prepared = Self {
-            id,
-            observed,
-            projection: Box::new(StorageLibraryProjection::from_record(
-                &record,
-                cancellation,
-            )?),
-            identity: StorageLibraryPreparedIdentity::new(&record, body, cancellation)?,
-            memory,
-        };
-        prepared.memory.check_bytes(
-            prepared.transport_bytes()
-                + std::mem::size_of::<StorageLibraryEnumTransactionRequest>(),
-        )?;
-        StorageLibraryError::check_cancellation(cancellation)?;
-        Ok(prepared)
-    }
-    pub(crate) const fn id(&self) -> GameId {
-        self.id
-    }
-    pub(crate) const fn observed(&self) -> GameStorageRevision {
-        self.observed
-    }
-    pub(crate) fn projection(&self) -> &StorageLibraryProjection {
-        &self.projection
-    }
-    pub(crate) fn identity(&self) -> &StorageLibraryPreparedIdentity {
-        &self.identity
-    }
-    pub(crate) fn transport_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self.projection.transport_bytes()
-            + self.identity.transport_bytes()
-    }
-}
-
 pub(crate) struct StorageLibraryPreparedIdentity {
     initial_fen: String,
     mainline: String,
@@ -557,53 +490,5 @@ impl StorageLibraryPreparedIdentity {
     }
     fn transport_bytes(&self) -> usize {
         self.initial_fen.capacity() + self.mainline.capacity()
-    }
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct StorageLibraryEnvelopeProbe<'a> {
-    schema_version: StorageLibraryEnvelopePresence,
-    game: StorageLibraryEnvelopePresence,
-    #[serde(borrow)]
-    kind: Option<&'a RawValue>,
-}
-
-#[derive(Default)]
-struct StorageLibraryEnvelopePresence(bool);
-
-impl<'de> Deserialize<'de> for StorageLibraryEnvelopePresence {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        IgnoredAny::deserialize(deserializer)?;
-        Ok(Self(true))
-    }
-}
-
-impl StorageLibraryEnvelopeProbe<'_> {
-    pub(crate) fn recognizes(body: &str) -> Result<bool, StorageLibraryError> {
-        let probe: StorageLibraryEnvelopeProbe<'_> = serde_json::from_str(body)?;
-        let declared = probe
-            .kind
-            .and_then(|kind| {
-                serde_json::from_str::<StorageGameDocumentEnumContentKind>(kind.get()).ok()
-            })
-            .is_some();
-        Ok((probe.schema_version.0 && probe.game.0) || declared)
-    }
-}
-
-pub(crate) struct StorageLibraryAdoptionPreparation;
-
-impl StorageLibraryAdoptionPreparation {
-    pub(crate) fn recognizes(body: &str, associated: bool) -> Result<bool, StorageLibraryError> {
-        if associated {
-            return Ok(true);
-        }
-        let first = body.trim_start().as_bytes().first().copied();
-        if first != Some(b'{') {
-            serde_json::from_str::<IgnoredAny>(body)?;
-            return Ok(false);
-        }
-        StorageLibraryEnvelopeProbe::recognizes(body)
     }
 }

@@ -224,12 +224,6 @@ impl PresentationLibraryPanel {
             }
             return;
         };
-        if page.unindexed_document_count() != 0 {
-            ui.label(format!(
-                "{} saved documents are not indexed. This page does not cover those documents.",
-                page.unindexed_document_count()
-            ));
-        }
         if page.entries().is_empty() {
             ui.label("No games match these filters");
         }

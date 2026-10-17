@@ -143,7 +143,6 @@ impl StorageImportSessionFilesystemProvider for StorageImportSessionTestFilesyst
 struct StorageImportSessionTestRepository {
     executor: Mutex<Arc<CapacityExecutor>>,
     stamp: AtomicU64,
-    complete: AtomicBool,
     commits: AtomicUsize,
     bodies: Vec<StorageImportSessionCandidateBody>,
     pause: AtomicBool,
@@ -159,7 +158,6 @@ impl StorageImportSessionTestRepository {
         Self {
             executor: Mutex::new(executor),
             stamp: AtomicU64::new(1),
-            complete: AtomicBool::new(true),
             commits: AtomicUsize::new(0),
             bodies: Vec::new(),
             pause: AtomicBool::new(false),
@@ -182,7 +180,6 @@ impl StorageImportSessionRepository for StorageImportSessionTestRepository {
             }
             Ok(StorageImportSessionSnapshot::new(
                 StorageImportSessionCatalogStamp::new(self.stamp.load(Ordering::SeqCst)),
-                self.complete.load(Ordering::SeqCst),
                 StorageImportSessionDestination::unfiled(),
             ))
         })
@@ -613,17 +610,6 @@ async fn a_new_catalog_insert_refuses_the_old_confirmation()
     fixture.repository.stamp.fetch_add(1, Ordering::SeqCst);
     assert!(session.commit(confirmation).await.is_err());
     assert_eq!(fixture.repository.commits.load(Ordering::SeqCst), 0);
-    session.cancel_retained().await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn incomplete_catalog_adoption_refuses_preparation() -> Result<(), Box<dyn std::error::Error>>
-{
-    let fixture = StorageImportSessionTestFixture::new()?;
-    fixture.repository.complete.store(false, Ordering::SeqCst);
-    let mut session = fixture.session("1. e4 *").await?;
-    assert!(session.prepare().await.is_err());
     session.cancel_retained().await?;
     Ok(())
 }

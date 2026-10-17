@@ -270,9 +270,6 @@ impl<
         }
         let snapshot = self.read(self.resources.repository.snapshot()).await?;
         self.cancellation.check()?;
-        if !snapshot.is_adoption_complete() {
-            return Err(StorageImportSessionError::IncompleteAdoption);
-        }
         let repository = Arc::clone(&self.resources.repository);
         let ids = Arc::clone(&self.resources.identities);
         let records = self

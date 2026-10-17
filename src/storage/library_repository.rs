@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
-use uuid::Uuid;
 
 use crate::capacity::executor::{
     CapacityExecutor, CapacityExecutorCancellation, CapacityExecutorError,
@@ -20,8 +19,7 @@ use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::{StorageDocumentClient, StorageDocumentError};
 use crate::storage::game_document::{StorageGameDocument, StorageGameDocumentError};
 use crate::storage::library_prepared::{
-    StorageLibraryAdoptionPreparation, StorageLibraryEnumContentChange,
-    StorageLibraryPreparedAdoption, StorageLibraryPreparedMemory, StorageLibraryPreparedWrite,
+    StorageLibraryEnumContentChange, StorageLibraryPreparedMemory, StorageLibraryPreparedWrite,
     StorageLibraryPreparedWriteOptions,
 };
 use crate::storage::library_query::{StorageLibraryQuery, StorageLibraryQueryPage};
@@ -157,8 +155,6 @@ pub enum StorageLibraryError {
     ContentKind,
     #[error("A new game requires a supplied content-change timestamp")]
     NewContentTimestamp,
-    #[error("The document requires adoption before it can be overwritten")]
-    AdoptionRequired,
     #[error("The projection does not match the current document revision")]
     ProjectionStale,
     #[error("The approved destructive plan is stale")]
@@ -391,7 +387,6 @@ pub enum StorageLibraryEnumMutationReceipt {
     Organized(GameLibraryOrganizationReceipt),
     DestructionApplied(StorageTrashReceipt),
     Restored(StorageTrashReceipt),
-    Adopted(StorageLibraryEnumAdoptionOutcome),
 }
 
 enum StorageLibraryEnumMutationKind {
@@ -399,7 +394,6 @@ enum StorageLibraryEnumMutationKind {
     Organize,
     Destruction,
     Restore,
-    Adopt,
 }
 
 pub struct StorageLibraryMutation {
@@ -424,9 +418,6 @@ impl StorageLibraryMutation {
             ) | (
                 StorageLibraryEnumMutationKind::Restore,
                 StorageLibraryEnumTransactionResponse::Restored(_)
-            ) | (
-                StorageLibraryEnumMutationKind::Adopt,
-                StorageLibraryEnumTransactionResponse::Adopted(_)
             )
         ) {
             return Err(StorageLibraryError::Protocol);
@@ -448,15 +439,11 @@ impl StorageLibraryMutation {
             StorageLibraryEnumTransactionResponse::Restored(receipt) => {
                 Ok(StorageLibraryEnumMutationReceipt::Restored(receipt))
             }
-            StorageLibraryEnumTransactionResponse::Adopted(outcome) => {
-                Ok(StorageLibraryEnumMutationReceipt::Adopted(outcome))
-            }
             StorageLibraryEnumTransactionResponse::Metadata(_)
             | StorageLibraryEnumTransactionResponse::Loaded(_)
             | StorageLibraryEnumTransactionResponse::Page(_)
             | StorageLibraryEnumTransactionResponse::DestructionPreview(_)
-            | StorageLibraryEnumTransactionResponse::AdoptionPage(_)
-            | StorageLibraryEnumTransactionResponse::AdoptionCertification(_)
+            | StorageLibraryEnumTransactionResponse::PlayedInventory(_)
             | StorageLibraryEnumTransactionResponse::ImportSnapshot(_)
             | StorageLibraryEnumTransactionResponse::ImportCandidates(_)
             | StorageLibraryEnumTransactionResponse::ImportCandidate(_)
@@ -468,144 +455,6 @@ impl StorageLibraryMutation {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct StorageLibraryAdoptionCursor {
-    after: Option<Uuid>,
-}
-
-impl StorageLibraryAdoptionCursor {
-    pub const fn start() -> Self {
-        Self { after: None }
-    }
-    pub const fn after(id: Uuid) -> Self {
-        Self { after: Some(id) }
-    }
-    pub(crate) const fn boundary(self) -> Option<Uuid> {
-        self.after
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct StorageLibraryAdoptionCandidate {
-    id: Uuid,
-    revision: GameStorageRevision,
-    associated: bool,
-}
-
-impl StorageLibraryAdoptionCandidate {
-    pub(crate) const fn new(id: Uuid, revision: GameStorageRevision, associated: bool) -> Self {
-        Self {
-            id,
-            revision,
-            associated,
-        }
-    }
-    pub const fn id(self) -> Uuid {
-        self.id
-    }
-    pub const fn content_revision(self) -> GameStorageRevision {
-        self.revision
-    }
-}
-
-pub struct StorageLibraryAdoptionPage {
-    candidates: Vec<StorageLibraryAdoptionCandidate>,
-    next: Option<StorageLibraryAdoptionCursor>,
-    catalog: StorageLibraryCatalogRevision,
-    _memory: StorageLibraryMemory,
-}
-
-impl StorageLibraryAdoptionPage {
-    pub(crate) fn new(
-        candidates: Vec<StorageLibraryAdoptionCandidate>,
-        next: Option<StorageLibraryAdoptionCursor>,
-        catalog: StorageLibraryCatalogRevision,
-        memory: StorageLibraryMemory,
-    ) -> Self {
-        Self {
-            candidates,
-            next,
-            catalog,
-            _memory: memory,
-        }
-    }
-    pub fn candidates(&self) -> &[StorageLibraryAdoptionCandidate] {
-        &self.candidates
-    }
-    pub const fn next_cursor(&self) -> Option<StorageLibraryAdoptionCursor> {
-        self.next
-    }
-    pub const fn catalog_revision(&self) -> StorageLibraryCatalogRevision {
-        self.catalog
-    }
-}
-
-#[derive(Debug)]
-pub enum StorageLibraryEnumAdoptionOutcome {
-    Inserted(StorageLibraryCatalogRevision),
-    AlreadyCurrent,
-    Changed(Option<GameStorageRevision>),
-}
-
-pub enum StorageLibraryEnumAdoptionPreparation {
-    Prepared(StorageLibraryPreparedAdoption),
-    Unrelated,
-    Changed(Option<GameStorageRevision>),
-    Issue(StorageLibraryAdoptionIssue),
-}
-
-#[derive(Debug)]
-pub struct StorageLibraryAdoptionIssue {
-    id: Uuid,
-    revision: GameStorageRevision,
-    source: Box<StorageLibraryError>,
-}
-
-impl StorageLibraryAdoptionIssue {
-    pub const fn id(&self) -> Uuid {
-        self.id
-    }
-    pub const fn content_revision(&self) -> GameStorageRevision {
-        self.revision
-    }
-    pub fn source_error(&self) -> &StorageLibraryError {
-        &self.source
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct StorageLibraryAdoptionCertification {
-    catalog: StorageLibraryCatalogRevision,
-    certified: bool,
-}
-
-impl StorageLibraryAdoptionCertification {
-    pub(crate) const fn new(catalog: StorageLibraryCatalogRevision, certified: bool) -> Self {
-        Self { catalog, certified }
-    }
-    pub(crate) const fn is_certified(self) -> bool {
-        self.certified
-    }
-    pub(crate) const fn catalog(self) -> StorageLibraryCatalogRevision {
-        self.catalog
-    }
-}
-
-pub(crate) struct StorageLibraryAdoptionCertificationPending(StorageLibraryPending);
-
-impl StorageLibraryAdoptionCertificationPending {
-    pub(crate) async fn wait(
-        &mut self,
-    ) -> Result<StorageLibraryAdoptionCertification, StorageLibraryError> {
-        let StorageLibraryEnumTransactionResponse::AdoptionCertification(certification) =
-            self.0.wait().await?
-        else {
-            return Err(StorageLibraryError::Protocol);
-        };
-        Ok(certification)
-    }
-}
-
 pub struct StorageLibraryRepository<'a> {
     client: StorageDocumentClient,
     executor: &'a CapacityExecutor,
@@ -614,25 +463,6 @@ pub struct StorageLibraryRepository<'a> {
 impl<'a> StorageLibraryRepository<'a> {
     pub const fn new(client: StorageDocumentClient, executor: &'a CapacityExecutor) -> Self {
         Self { client, executor }
-    }
-    pub(crate) fn begin_certify_adoption(
-        &self,
-        expected: StorageLibraryCatalogRevision,
-    ) -> Result<StorageLibraryAdoptionCertificationPending, StorageLibraryError> {
-        Ok(StorageLibraryAdoptionCertificationPending(
-            self.client
-                .begin_library(StorageLibraryEnumTransactionRequest::CertifyAdoption(
-                    expected,
-                ))?,
-        ))
-    }
-    pub(crate) fn begin_revoke_adoption(
-        &self,
-    ) -> Result<StorageLibraryAdoptionCertificationPending, StorageLibraryError> {
-        Ok(StorageLibraryAdoptionCertificationPending(
-            self.client
-                .begin_library(StorageLibraryEnumTransactionRequest::RevokeAdoption)?,
-        ))
     }
     pub async fn load(
         &self,
@@ -781,80 +611,5 @@ impl<'a> StorageLibraryRepository<'a> {
             pending: self.client.begin_library(request)?,
             kind,
         })
-    }
-    pub async fn adoption_page(
-        &self,
-        cursor: StorageLibraryAdoptionCursor,
-    ) -> Result<StorageLibraryAdoptionPage, StorageLibraryError> {
-        let response = self
-            .client
-            .begin_library(StorageLibraryEnumTransactionRequest::AdoptionPage(cursor))?
-            .wait()
-            .await?;
-        let StorageLibraryEnumTransactionResponse::AdoptionPage(page) = response else {
-            return Err(StorageLibraryError::Protocol);
-        };
-        Ok(page)
-    }
-    pub async fn prepare_adoption(
-        &self,
-        candidate: StorageLibraryAdoptionCandidate,
-    ) -> Result<StorageLibraryEnumAdoptionPreparation, StorageLibraryError> {
-        let Some(document) = self.client.read(candidate.id).await? else {
-            return Ok(StorageLibraryEnumAdoptionPreparation::Changed(None));
-        };
-        let observed = GameStorageRevision::new(document.revision());
-        if observed != candidate.revision {
-            return Ok(StorageLibraryEnumAdoptionPreparation::Changed(Some(
-                observed,
-            )));
-        }
-        let memory = self.prepared_memory(document.body().len())?;
-        self.executor
-            .submit_waiting(move |cancellation| {
-                StorageLibraryError::check_cancellation(cancellation)?;
-                let preparation = (|| {
-                    if !StorageLibraryAdoptionPreparation::recognizes(
-                        document.body(),
-                        candidate.associated,
-                    )? {
-                        return Ok(None);
-                    }
-                    StorageLibraryPreparedAdoption::from_encoded(
-                        candidate.id.to_string().parse()?,
-                        observed,
-                        document.body(),
-                        memory,
-                        cancellation,
-                    )
-                    .map(Some)
-                })();
-                Ok(match preparation {
-                    Ok(None) => StorageLibraryEnumAdoptionPreparation::Unrelated,
-                    Ok(Some(prepared)) => StorageLibraryEnumAdoptionPreparation::Prepared(prepared),
-                    Err(StorageLibraryError::Cancelled) => {
-                        return Err(StorageLibraryError::Cancelled);
-                    }
-                    Err(source) => {
-                        StorageLibraryEnumAdoptionPreparation::Issue(StorageLibraryAdoptionIssue {
-                            id: candidate.id,
-                            revision: observed,
-                            source: Box::new(source),
-                        })
-                    }
-                })
-            })
-            .await?
-            .join()
-            .await?
-    }
-    pub fn begin_adopt(
-        &self,
-        prepared: StorageLibraryPreparedAdoption,
-    ) -> Result<StorageLibraryMutation, StorageLibraryError> {
-        self.begin_mutation(
-            StorageLibraryEnumTransactionRequest::Adopt(prepared),
-            StorageLibraryEnumMutationKind::Adopt,
-        )
     }
 }

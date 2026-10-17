@@ -75,8 +75,6 @@ pub enum StorageImportSessionRepositoryError {
     StaleDestination,
     #[error("The duplicate candidate changed after it was listed")]
     StaleCandidate,
-    #[error("Library adoption is not certified")]
-    IncompleteAdoption,
     #[error("The import game identifier is already in use")]
     ExistingGame,
     #[error("The repository returned an invalid or unbounded response")]
@@ -125,8 +123,6 @@ pub enum StorageImportSessionError {
     Pending,
     #[error("This import operation is unavailable in the current state")]
     State,
-    #[error("Library adoption must finish before importing")]
-    IncompleteAdoption,
     #[error("The import has no selected valid games")]
     EmptySelection,
     #[error("A duplicate requires an explicit Keep Copy choice")]
@@ -271,27 +267,18 @@ impl StorageImportSessionDestination {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageImportSessionSnapshot {
     stamp: StorageImportSessionCatalogStamp,
-    is_adoption_complete: bool,
     destination: StorageImportSessionDestination,
 }
 
 impl StorageImportSessionSnapshot {
     pub const fn new(
         stamp: StorageImportSessionCatalogStamp,
-        is_adoption_complete: bool,
         destination: StorageImportSessionDestination,
     ) -> Self {
-        Self {
-            stamp,
-            is_adoption_complete,
-            destination,
-        }
+        Self { stamp, destination }
     }
     pub const fn catalog_stamp(self) -> StorageImportSessionCatalogStamp {
         self.stamp
-    }
-    pub const fn is_adoption_complete(self) -> bool {
-        self.is_adoption_complete
     }
     pub const fn destination(self) -> StorageImportSessionDestination {
         self.destination

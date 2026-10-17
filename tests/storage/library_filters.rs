@@ -30,7 +30,7 @@ async fn heterogeneous_keysets_match_fixed_groups_in_every_sort_direction()
 -> StorageLibraryFiltersTestResult {
     let fixture = StorageLibraryFiltersFixture::new().await?;
     let counts = [13_usize, 123, 31, 29, 47, 17];
-    let modified = [Some(0), Some(200), Some(900), Some(100), None, Some(300)];
+    let modified = [0, 200, 900, 100, 1_000, 300];
     let dates = [
         Some(GameMetadataDate::new(Some(2023), Some(12), Some(31))?),
         Some(GameMetadataDate::new(Some(2024), Some(2), Some(29))?),
@@ -67,11 +67,7 @@ async fn heterogeneous_keysets_match_fixed_groups_in_every_sort_direction()
                     ..StorageLibraryFiltersNotation::default()
                 },
             )?;
-            if let Some(timestamp) = modified[group] {
-                fixture.insert(id, body, timestamp).await?;
-            } else {
-                fixture.adopt(id, body).await?;
-            }
+            fixture.insert(id, body, modified[group]).await?;
             groups[group].push(id);
         }
     }
@@ -83,7 +79,7 @@ async fn heterogeneous_keysets_match_fixed_groups_in_every_sort_direction()
     for (sort, order) in [
         (
             StorageLibraryEnumSort::UpdatedDescending,
-            [2, 5, 1, 3, 0, 4],
+            [4, 2, 5, 1, 3, 0],
         ),
         (StorageLibraryEnumSort::UpdatedAscending, [0, 3, 1, 5, 2, 4]),
         (StorageLibraryEnumSort::DateDescending, [2, 1, 0, 3, 5, 4]),
@@ -109,7 +105,6 @@ async fn heterogeneous_keysets_match_fixed_groups_in_every_sort_direction()
                 None => query.clone(),
             };
             let page = fixture.repository().query(request).await?;
-            assert_eq!(page.unindexed_document_count(), 0);
             if let Some(catalog) = catalog {
                 assert_eq!(page.catalog_revision(), catalog);
             } else {
@@ -122,7 +117,7 @@ async fn heterogeneous_keysets_match_fixed_groups_in_every_sort_direction()
                     entry
                         .modified()
                         .map(GameLibraryOrganizationTimestamp::value),
-                    modified[group]
+                    Some(modified[group])
                 );
                 assert_eq!(entry.date(), dates[group]);
                 assert_eq!(entry.plies(), u32::try_from(plies[group])?);
@@ -981,46 +976,5 @@ async fn content_and_organization_mutations_refuse_existing_catalog_cursors()
         Some(3_000)
     );
     drop(fresh);
-    fixture.close().await
-}
-
-#[tokio::test]
-async fn adopted_unknown_timestamp_survives_checkpoint_without_rewriting_on_adoption()
--> StorageLibraryFiltersTestResult {
-    let fixture = StorageLibraryFiltersFixture::new().await?;
-    let id = StorageLibraryFiltersFixture::id(1)?;
-    let body = StorageLibraryFiltersFixture::parsed_body(
-        id,
-        "[White \"Legacy player\"]\n[Date \"2024.??.29\"]\n\n1. e4 e5 *",
-    )?;
-    let observed = fixture.adopt(id, body.clone()).await?;
-    let receipt = fixture
-        .write(
-            id,
-            observed,
-            body,
-            StorageLibraryEnumContentChange::Checkpoint,
-        )
-        .await?;
-    let loaded = fixture
-        .repository()
-        .load(id)
-        .await?
-        .ok_or("missing adopted checkpoint")?;
-    assert_eq!(loaded.modified(), None);
-    assert_eq!(loaded.content_revision(), receipt.content_revision());
-    assert!(loaded.content_revision().value() > observed.value());
-    assert_eq!(
-        loaded
-            .record()
-            .metadata()
-            .known()
-            .white
-            .as_ref()
-            .map(|text| text.as_str()),
-        Some("Legacy player")
-    );
-    assert_eq!(loaded.record().identity_line_len()?, 2);
-    drop(loaded);
     fixture.close().await
 }

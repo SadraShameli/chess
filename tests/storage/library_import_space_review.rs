@@ -19,9 +19,7 @@ use crate::storage::library_import::tests::{
     StorageLibraryImportTestIds, StorageLibraryImportTestRepository,
     StorageLibraryImportTestResult,
 };
-use crate::storage::library_repository::{
-    StorageLibraryAdoptionCursor, StorageLibraryEnumAdoptionPreparation, StorageLibraryRepository,
-};
+use crate::storage::library_repository::StorageLibraryRepository;
 
 struct StorageLibraryImportSpaceReviewFilesystem {
     actual: Arc<StorageLibraryImportTestFilesystem>,
@@ -170,7 +168,6 @@ impl StorageLibraryImportSpaceReview {
 
     async fn new() -> StorageLibraryImportTestResult<Self> {
         let fixture = StorageLibraryImportTestFixture::new().await?;
-        fixture.certify().await?;
         fixture.sql("PRAGMA wal_autocheckpoint = 0; CREATE TEMP TABLE import_space_review_checks(value INTEGER NOT NULL CHECK(value = 1))").await?;
         let (mut session, _) = Self::session(&fixture, Self::RETAINED_PGN).await?;
         session.prepare().await?;
@@ -276,40 +273,8 @@ impl StorageLibraryImportSpaceReview {
             .save(Self::BALLAST_ID, 0, body)
             .await?;
         let saved = self.fixture.repository().snapshot().await?;
-        assert!(!saved.is_adoption_complete());
         assert_eq!(saved.catalog_stamp().value(), catalog.value() + 1);
-        let library =
-            StorageLibraryRepository::new(self.fixture.store.client(), &self.fixture.executor);
-        let page = library
-            .adoption_page(StorageLibraryAdoptionCursor::start())
-            .await?;
-        assert_eq!(page.candidates().len(), 2);
-        assert!(page.next_cursor().is_none());
-        assert!(
-            page.candidates()
-                .iter()
-                .any(|candidate| candidate.id() == self.retained.as_uuid())
-        );
-        let candidate = page
-            .candidates()
-            .iter()
-            .find(|candidate| candidate.id() == Self::BALLAST_ID)
-            .copied()
-            .ok_or("missing unrelated ballast adoption candidate")?;
-        assert!(matches!(
-            library.prepare_adoption(candidate).await?,
-            StorageLibraryEnumAdoptionPreparation::Unrelated
-        ));
-        assert!(
-            library
-                .begin_certify_adoption(page.catalog_revision())?
-                .wait()
-                .await?
-                .is_certified()
-        );
-        let refreshed = self.fixture.repository().snapshot().await?;
-        assert!(refreshed.is_adoption_complete());
-        assert_eq!(refreshed.catalog_stamp(), saved.catalog_stamp());
+        let refreshed = saved;
         self.fixture.sql("INSERT INTO import_space_review_checks SELECT (SELECT count(*) FROM library_entries) = 1 AND (SELECT count(*) FROM documents) = 2").await?;
         let checkpointed = self.checkpoint().await?;
         assert!(checkpointed.main > before.main);
@@ -513,7 +478,6 @@ async fn retained_wal_file_high_water_does_not_hide_checkpoint_backlog()
 async fn scoped_page_ceiling_restores_after_observed_sql_rollback() -> StorageLibraryImportTestResult
 {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     fixture.capture_page_limit().await?;
     fixture.require_scoped_page_limit().await?;
     fixture.sql("CREATE TEMP TRIGGER import_scope_abort BEFORE UPDATE ON library_state BEGIN SELECT RAISE(ABORT, 'scope rollback observed'); END").await?;
@@ -541,7 +505,6 @@ async fn scoped_page_ceiling_restores_after_observed_sql_rollback() -> StorageLi
 async fn a_stricter_existing_page_ceiling_is_preserved_after_sqlite_full()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     fixture.sql("PRAGMA max_page_count = 1").await?;
     fixture.capture_page_limit().await?;
     let mut session = fixture.session(&format!("1. e4 {{ {} }} *", "λ".repeat(100_000)))?;
@@ -799,7 +762,6 @@ async fn a_small_import_into_a_checkpointed_populated_library_has_a_bounded_allo
 async fn cancelled_imports_with_real_wal_spills_fit_the_confirmed_allowance()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     fixture.capture_page_limit().await?;
     fixture.sql("PRAGMA cache_size = 4; PRAGMA cache_spill = ON; PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE)").await?;
     let before = fixture.space_files().await?;

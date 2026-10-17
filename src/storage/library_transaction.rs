@@ -28,18 +28,16 @@ use crate::storage::library_import::{
     StorageLibraryImportCandidateRequest, StorageLibraryImportCommitRequest,
     StorageLibraryImportPageLimit,
 };
-use crate::storage::library_inventory::StorageLibraryInventoryCursor;
+use crate::storage::library_inventory::{
+    StorageLibraryInventoryCursor, StorageLibraryInventoryPage,
+};
 use crate::storage::library_metadata::{
     StorageLibraryMetadataEnumRequest, StorageLibraryMetadataEnumResponse,
 };
-use crate::storage::library_prepared::{
-    StorageLibraryPreparedAdoption, StorageLibraryPreparedWrite,
-};
+use crate::storage::library_prepared::StorageLibraryPreparedWrite;
 use crate::storage::library_query::{StorageLibraryQuery, StorageLibraryQueryPage};
-use crate::storage::library_repository::StorageLibraryAdoptionCertification;
 use crate::storage::library_repository::{
-    StorageLibraryAdoptionCursor, StorageLibraryAdoptionPage, StorageLibraryCatalogRevision,
-    StorageLibraryContentReceipt, StorageLibraryEnumAdoptionOutcome, StorageLibraryError,
+    StorageLibraryCatalogRevision, StorageLibraryContentReceipt, StorageLibraryError,
     StorageLibraryStoredRecord,
 };
 use crate::storage::library_transaction::content::StorageLibraryTransactionContent;
@@ -56,8 +54,6 @@ use crate::storage::trash::{
 
 pub(crate) enum StorageLibraryEnumTransactionRequest {
     Metadata(StorageLibraryMetadataEnumRequest),
-    CertifyAdoption(StorageLibraryCatalogRevision),
-    RevokeAdoption,
     ImportSnapshot(StorageImportSessionDestination),
     ImportCandidates(StorageLibraryImportCandidateRequest),
     ImportCandidate(StorageImportSessionCandidate),
@@ -76,9 +72,7 @@ pub(crate) enum StorageLibraryEnumTransactionRequest {
     PreviewDestruction(StorageTrashPreviewRequest),
     ApplyDestruction(StorageTrashConfirmedRequest),
     Restore(StorageTrashRestoreRequest),
-    AdoptionPage(StorageLibraryAdoptionCursor),
     PlayedInventory(StorageLibraryInventoryCursor),
-    Adopt(StorageLibraryPreparedAdoption),
 }
 
 impl StorageLibraryEnumTransactionRequest {
@@ -92,10 +86,7 @@ impl StorageLibraryEnumTransactionRequest {
             Self::ImportCandidates(request) => request.validate_owner(client),
             Self::CommitImport(request) => request.validate_owner(client),
             Self::Save(prepared) => prepared.validate_memory_owner(client),
-            Self::Adopt(prepared) => prepared.validate_memory_owner(client),
             Self::Metadata(_)
-            | Self::CertifyAdoption(_)
-            | Self::RevokeAdoption
             | Self::ImportSnapshot(_)
             | Self::ImportCandidate(_)
             | Self::ImportEstimate { .. }
@@ -105,7 +96,6 @@ impl StorageLibraryEnumTransactionRequest {
             | Self::PreviewDestruction(_)
             | Self::ApplyDestruction(_)
             | Self::Restore(_)
-            | Self::AdoptionPage(_)
             | Self::PlayedInventory(_) => Ok(()),
         }
     }
@@ -115,10 +105,8 @@ impl StorageLibraryEnumTransactionRequest {
             #[cfg(test)]
             Self::ImportTestSql(sql) => sql.capacity(),
             Self::CommitImport(request) => return request.admission_bytes(),
-            Self::ImportCandidates(_) | Self::Save(_) | Self::Adopt(_) => return Ok(0),
+            Self::ImportCandidates(_) | Self::Save(_) => return Ok(0),
             Self::Metadata(_)
-            | Self::CertifyAdoption(_)
-            | Self::RevokeAdoption
             | Self::ImportSnapshot(_)
             | Self::ImportCandidate(_)
             | Self::ImportEstimate { .. }
@@ -126,7 +114,6 @@ impl StorageLibraryEnumTransactionRequest {
             | Self::PreviewDestruction(_)
             | Self::ApplyDestruction(_)
             | Self::Restore(_)
-            | Self::AdoptionPage(_)
             | Self::PlayedInventory(_) => 0,
             Self::Query(query) => query.transport_bytes()?,
             Self::Organize(request) => request.transport_bytes(),
@@ -137,7 +124,6 @@ impl StorageLibraryEnumTransactionRequest {
 
 pub(crate) enum StorageLibraryEnumTransactionResponse {
     Metadata(StorageLibraryMetadataEnumResponse),
-    AdoptionCertification(StorageLibraryAdoptionCertification),
     ImportSnapshot(StorageImportSessionSnapshot),
     ImportCandidates(StorageImportSessionCandidatePage),
     ImportCandidate(StorageImportSessionCandidateBody),
@@ -152,8 +138,7 @@ pub(crate) enum StorageLibraryEnumTransactionResponse {
     DestructionPreview(StorageTrashPlan),
     DestructionApplied(StorageTrashReceipt),
     Restored(StorageTrashReceipt),
-    AdoptionPage(StorageLibraryAdoptionPage),
-    Adopted(StorageLibraryEnumAdoptionOutcome),
+    PlayedInventory(StorageLibraryInventoryPage),
 }
 
 pub(crate) struct StorageLibraryTransaction;
@@ -163,7 +148,6 @@ impl StorageLibraryTransaction {
         connection: &mut SqliteConnection,
         mut request: StorageLibraryEnumTransactionRequest,
         memory: &Arc<Semaphore>,
-        certified: &mut bool,
         origin: uuid::Uuid,
     ) -> Result<StorageLibraryEnumTransactionResponse, StorageLibraryError> {
         #[cfg(test)]
@@ -183,7 +167,6 @@ impl StorageLibraryTransaction {
                 | StorageLibraryEnumTransactionRequest::Organize(_)
                 | StorageLibraryEnumTransactionRequest::ApplyDestruction(_)
                 | StorageLibraryEnumTransactionRequest::Restore(_)
-                | StorageLibraryEnumTransactionRequest::Adopt(_)
         );
         let mut import_scope = None;
         let mut run = |transaction: &mut SqliteConnection| -> Result<
@@ -196,29 +179,9 @@ impl StorageLibraryTransaction {
                         StorageLibraryTransactionMetadata::execute(transaction, request, memory)?,
                     )
                 }
-                StorageLibraryEnumTransactionRequest::CertifyAdoption(expected) => {
-                    StorageLibraryEnumTransactionResponse::AdoptionCertification(
-                        StorageLibraryAdoptionCertification::new(
-                            Self::diesel_catalog(transaction)?,
-                            Self::diesel_catalog(transaction)? == *expected,
-                        ),
-                    )
-                }
-                StorageLibraryEnumTransactionRequest::RevokeAdoption => {
-                    StorageLibraryEnumTransactionResponse::AdoptionCertification(
-                        StorageLibraryAdoptionCertification::new(
-                            Self::diesel_catalog(transaction)?,
-                            false,
-                        ),
-                    )
-                }
                 StorageLibraryEnumTransactionRequest::ImportSnapshot(destination) => {
                     StorageLibraryEnumTransactionResponse::ImportSnapshot(
-                        StorageLibraryTransactionImport::snapshot(
-                            transaction,
-                            *destination,
-                            *certified,
-                        )?,
+                        StorageLibraryTransactionImport::snapshot(transaction, *destination)?,
                     )
                 }
                 StorageLibraryEnumTransactionRequest::ImportCandidates(request) => {
@@ -226,7 +189,6 @@ impl StorageLibraryTransaction {
                         StorageLibraryTransactionImport::candidates(
                             transaction,
                             request,
-                            *certified,
                             memory,
                         )?,
                     )
@@ -249,7 +211,6 @@ impl StorageLibraryTransaction {
                         transaction,
                         *snapshot,
                         *footprint,
-                        *certified,
                         cancellation,
                     )?,
                 ),
@@ -258,7 +219,6 @@ impl StorageLibraryTransaction {
                         StorageLibraryTransactionImport::commit(
                             transaction,
                             request,
-                            *certified,
                             origin,
                             &mut import_scope,
                         )?,
@@ -302,22 +262,8 @@ impl StorageLibraryTransaction {
                         StorageLibraryTransactionDestruction::restore(transaction, request)?,
                     )
                 }
-                StorageLibraryEnumTransactionRequest::AdoptionPage(cursor) => {
-                    StorageLibraryEnumTransactionResponse::AdoptionPage(
-                        StorageLibraryTransactionRows::adoption_page(
-                            transaction,
-                            *cursor,
-                            memory,
-                        )?,
-                    )
-                }
-                StorageLibraryEnumTransactionRequest::Adopt(prepared) => {
-                    StorageLibraryEnumTransactionResponse::Adopted(
-                        StorageLibraryTransactionContent::adopt(transaction, prepared)?,
-                    )
-                }
                 StorageLibraryEnumTransactionRequest::PlayedInventory(cursor) => {
-                    StorageLibraryEnumTransactionResponse::AdoptionPage(
+                    StorageLibraryEnumTransactionResponse::PlayedInventory(
                         StorageLibraryTransactionRows::played_inventory(
                             transaction,
                             *cursor,
@@ -356,18 +302,6 @@ impl StorageLibraryTransaction {
             (Err(error), None) => Err(error),
         };
         let response = StorageLibraryImportPageLimit::finish(connection, import_scope, result)?;
-        match (&request, &response) {
-            (
-                StorageLibraryEnumTransactionRequest::CertifyAdoption(_),
-                StorageLibraryEnumTransactionResponse::AdoptionCertification(result),
-            ) => {
-                if result.is_certified() {
-                    *certified = true;
-                }
-            }
-            (StorageLibraryEnumTransactionRequest::RevokeAdoption, _) => *certified = false,
-            _ => {}
-        }
         drop(request);
         Ok(response)
     }

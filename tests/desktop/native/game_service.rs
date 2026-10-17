@@ -329,7 +329,7 @@ impl DesktopNativeGameServiceFixture {
             DesktopNativeGameServiceFixtureEnumDocument::Unrelated => {
                 assert!(matches!(
                     readiness,
-                    DesktopNativeLibraryStartupEnumReadiness::Ready(_)
+                    DesktopNativeLibraryStartupEnumReadiness::Ready
                 ));
             }
             DesktopNativeGameServiceFixtureEnumDocument::CorruptPlayed

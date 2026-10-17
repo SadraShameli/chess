@@ -17,7 +17,6 @@ use chess::storage::library_prepared::{
 };
 use chess::storage::library_query::StorageLibraryQuery;
 use chess::storage::library_repository::{
-    StorageLibraryAdoptionCursor, StorageLibraryEnumAdoptionPreparation,
     StorageLibraryEnumMutationReceipt, StorageLibraryError, StorageLibraryRepository,
 };
 
@@ -87,10 +86,6 @@ impl StorageLibraryActorFixture {
 
     fn body_with_notes(notes: String) -> StorageLibraryActorTestResult<String> {
         Self::body_with_fields("Elodie", notes)
-    }
-
-    fn body_with_player(player: &str) -> StorageLibraryActorTestResult<String> {
-        Self::body_with_fields(player, String::new())
     }
 
     fn body_with_fields(player: &str, notes: String) -> StorageLibraryActorTestResult<String> {
@@ -166,62 +161,6 @@ async fn retained_prepared_writes_cannot_escape_the_shared_memory_budget()
     assert!(
         saturated,
         "retained prepared writes exceeded the shared byte budget"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn retained_prepared_adoptions_cannot_escape_the_shared_memory_budget()
--> StorageLibraryActorTestResult {
-    let fixture = StorageLibraryActorFixture::new().await?;
-    let body = StorageLibraryActorFixture::body_with_player(&"x".repeat(1_000_000))?;
-    let id = StorageLibraryActorFixture::id()?;
-    fixture
-        .store
-        .client()
-        .save(id.as_uuid(), 0, body.clone())
-        .await?;
-    let repository = fixture.repository();
-    let page = repository
-        .adoption_page(StorageLibraryAdoptionCursor::start())
-        .await?;
-    let candidate = *page
-        .candidates()
-        .iter()
-        .find(|entry| entry.id() == id.as_uuid())
-        .ok_or("missing adoption candidate")?;
-    drop(page);
-    let attempts = StorageDocumentStore::MEMORY_BUDGET / body.len() + 1;
-    let mut retained = Vec::new();
-    let mut saturated = false;
-    let mut failure = None;
-    for _ in 0..attempts {
-        match repository.prepare_adoption(candidate).await {
-            Ok(StorageLibraryEnumAdoptionPreparation::Prepared(prepared)) => {
-                retained.push(prepared)
-            }
-            Ok(_) => {
-                failure = Some(StorageLibraryError::Protocol);
-                break;
-            }
-            Err(StorageLibraryError::Store(StorageDocumentError::Saturated)) => {
-                saturated = true;
-                break;
-            }
-            Err(error) => {
-                failure = Some(error);
-                break;
-            }
-        }
-    }
-    drop(retained);
-    fixture.close().await?;
-    if let Some(error) = failure {
-        return Err(error.into());
-    }
-    assert!(
-        saturated,
-        "retained prepared adoptions exceeded the shared byte budget"
     );
     Ok(())
 }

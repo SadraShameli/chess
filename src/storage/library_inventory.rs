@@ -2,7 +2,7 @@ use crate::game::enums::GameId;
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::library_repository::{
-    StorageLibraryAdoptionPage, StorageLibraryCatalogRevision, StorageLibraryError,
+    StorageLibraryCatalogRevision, StorageLibraryError, StorageLibraryMemory,
 };
 use crate::storage::library_transaction::{
     StorageLibraryEnumTransactionRequest, StorageLibraryEnumTransactionResponse,
@@ -34,6 +34,10 @@ pub struct StorageLibraryInventoryEntry {
 }
 
 impl StorageLibraryInventoryEntry {
+    pub(crate) const fn new(id: GameId, revision: GameStorageRevision) -> Self {
+        Self { id, revision }
+    }
+
     pub const fn id(self) -> GameId {
         self.id
     }
@@ -46,32 +50,25 @@ impl StorageLibraryInventoryEntry {
 pub struct StorageLibraryInventoryPage {
     entries: Vec<StorageLibraryInventoryEntry>,
     next: Option<StorageLibraryInventoryCursor>,
-    transport: StorageLibraryAdoptionPage,
+    catalog: StorageLibraryCatalogRevision,
+    _memory: StorageLibraryMemory,
 }
 
 impl StorageLibraryInventoryPage {
     pub const PAGE_SIZE: usize = crate::storage::library_query::StorageLibraryQuery::PAGE_SIZE;
 
-    fn from_transport(transport: StorageLibraryAdoptionPage) -> Result<Self, StorageLibraryError> {
-        let mut entries = Vec::with_capacity(transport.candidates().len());
-        for candidate in transport.candidates() {
-            entries.push(StorageLibraryInventoryEntry {
-                id: candidate.id().to_string().parse()?,
-                revision: candidate.content_revision(),
-            });
-        }
-        let next = if transport.next_cursor().is_some() {
-            entries
-                .last()
-                .map(|entry| StorageLibraryInventoryCursor::after(entry.id()))
-        } else {
-            None
-        };
-        Ok(Self {
+    pub(crate) fn new(
+        entries: Vec<StorageLibraryInventoryEntry>,
+        next: Option<StorageLibraryInventoryCursor>,
+        catalog: StorageLibraryCatalogRevision,
+        memory: StorageLibraryMemory,
+    ) -> Self {
+        Self {
             entries,
             next,
-            transport,
-        })
+            catalog,
+            _memory: memory,
+        }
     }
 
     pub fn entries(&self) -> &[StorageLibraryInventoryEntry] {
@@ -83,7 +80,7 @@ impl StorageLibraryInventoryPage {
     }
 
     pub const fn catalog_revision(&self) -> StorageLibraryCatalogRevision {
-        self.transport.catalog_revision()
+        self.catalog
     }
 }
 
@@ -107,9 +104,9 @@ impl StorageLibraryInventoryRepository {
             ))?
             .wait()
             .await?;
-        let StorageLibraryEnumTransactionResponse::AdoptionPage(page) = response else {
+        let StorageLibraryEnumTransactionResponse::PlayedInventory(page) = response else {
             return Err(StorageLibraryError::Protocol);
         };
-        StorageLibraryInventoryPage::from_transport(page)
+        Ok(page)
     }
 }

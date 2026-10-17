@@ -334,22 +334,6 @@ impl StorageLibraryImportTestFixture {
             Arc::clone(&self.wall),
         )
     }
-    async fn certify(&self) -> StorageLibraryImportTestResult {
-        let library = StorageLibraryRepository::new(self.store.client(), &self.executor);
-        let page = library
-            .adoption_page(
-                crate::storage::library_repository::StorageLibraryAdoptionCursor::start(),
-            )
-            .await?;
-        assert!(
-            library
-                .begin_certify_adoption(page.catalog_revision())?
-                .wait()
-                .await?
-                .is_certified()
-        );
-        Ok(())
-    }
     fn session(
         &self,
         pgn: &str,
@@ -380,28 +364,9 @@ impl StorageLibraryImportTestFixture {
 }
 
 #[tokio::test]
-async fn import_requires_actor_certification_even_with_an_empty_index()
--> StorageLibraryImportTestResult {
-    let fixture = StorageLibraryImportTestFixture::new().await?;
-    assert!(
-        !fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    let mut session = fixture.session("1. e4 *")?;
-    assert!(session.prepare().await.is_err());
-    session.cancel_retained().await?;
-    drop(session);
-    fixture.close().await
-}
-
-#[tokio::test]
 async fn atomic_import_inserts_notation_records_and_bumps_catalog_once()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let before = fixture.repository().snapshot().await?;
     let mut session =
         fixture.session("[White \"Zoë\"]\n\n1. e4 {αβ} *\n\n[White \"İpek\"]\n\n1. d4 *")?;
@@ -416,7 +381,6 @@ async fn atomic_import_inserts_notation_records_and_bumps_catalog_once()
     );
     assert_eq!(fixture.wall.reads.load(Ordering::SeqCst), 1);
     let after = fixture.repository().snapshot().await?;
-    assert!(after.is_adoption_complete());
     assert_eq!(
         after.catalog_stamp().value(),
         before.catalog_stamp().value() + 1
@@ -436,74 +400,9 @@ async fn atomic_import_inserts_notation_records_and_bumps_catalog_once()
 }
 
 #[tokio::test]
-async fn generic_write_revokes_coverage_but_failed_write_preserves_it()
--> StorageLibraryImportTestResult {
-    let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
-    let client = fixture.store.client();
-    let id = uuid::Uuid::from_u128(9000);
-    assert!(client.save(id, 1, "{}".into()).await.is_err());
-    assert!(
-        fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    client.save(id, 0, "{}".into()).await?;
-    assert!(
-        !fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    fixture.certify().await?;
-    assert!(
-        fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    fixture.close().await
-}
-
-#[tokio::test]
-async fn raced_certification_refuses_the_old_observed_catalog() -> StorageLibraryImportTestResult {
-    let fixture = StorageLibraryImportTestFixture::new().await?;
-    let library = StorageLibraryRepository::new(fixture.store.client(), &fixture.executor);
-    let observed = library
-        .adoption_page(crate::storage::library_repository::StorageLibraryAdoptionCursor::start())
-        .await?
-        .catalog_revision();
-    fixture
-        .store
-        .client()
-        .save(uuid::Uuid::from_u128(9001), 0, "{}".into())
-        .await?;
-    assert!(
-        !library
-            .begin_certify_adoption(observed)?
-            .wait()
-            .await?
-            .is_certified()
-    );
-    assert!(
-        !fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    fixture.close().await
-}
-
-#[tokio::test]
 async fn catalog_race_refuses_an_approved_import_without_any_insert()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let page = session
@@ -534,7 +433,6 @@ async fn catalog_race_refuses_an_approved_import_without_any_insert()
 #[tokio::test]
 async fn late_truncation_rolls_back_earlier_frames() -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let page = session
@@ -572,7 +470,6 @@ async fn late_truncation_rolls_back_earlier_frames() -> StorageLibraryImportTest
 #[tokio::test]
 async fn trailing_eof_bytes_roll_back_the_complete_stream() -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let confirmation = session.freeze().await?;
@@ -659,7 +556,6 @@ impl StorageLibraryImportTestFixture {
 #[tokio::test]
 async fn final_catalog_failure_rolls_back_every_insert() -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -689,7 +585,6 @@ async fn final_catalog_failure_rolls_back_every_insert() -> StorageLibraryImport
 #[tokio::test]
 async fn real_sqlite_full_rolls_back_streamed_inserts() -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session(&format!(
         "1. e4 {{ {} }} *\n\n1. d4 {{ {} }} *",
         "α".repeat(100_000),
@@ -715,7 +610,6 @@ async fn real_sqlite_full_rolls_back_streamed_inserts() -> StorageLibraryImportT
 #[tokio::test]
 async fn in_transaction_space_recheck_refuses_after_admission() -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -737,7 +631,6 @@ async fn in_transaction_space_recheck_refuses_after_admission() -> StorageLibrar
 async fn puzzle_growth_without_catalog_change_invalidates_the_space_allowance()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -763,7 +656,6 @@ async fn puzzle_growth_without_catalog_change_invalidates_the_space_allowance()
 async fn late_existing_identifier_preserves_its_body_and_rolls_back_earlier_frames()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -795,7 +687,6 @@ async fn late_existing_identifier_preserves_its_body_and_rolls_back_earlier_fram
 async fn last_insert_unique_failure_rolls_back_the_complete_batch() -> StorageLibraryImportTestResult
 {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -827,7 +718,6 @@ async fn last_insert_unique_failure_rolls_back_the_complete_batch() -> StorageLi
 async fn cancelled_late_read_observes_actor_rollback_and_releases_batch_budget()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     fixture.capture_page_limit().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
@@ -871,7 +761,6 @@ async fn cancelled_late_read_observes_actor_rollback_and_releases_batch_budget()
 async fn cancellation_after_commit_retains_the_real_receipt_and_does_not_resubmit()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -926,18 +815,6 @@ async fn prepared_projection_from_another_actor_is_refused_atomically()
         fixture.budget.clone(),
     )
     .await?;
-    fixture.certify().await?;
-    let foreign_library = StorageLibraryRepository::new(foreign.client(), &fixture.executor);
-    let observed = foreign_library
-        .adoption_page(crate::storage::library_repository::StorageLibraryAdoptionCursor::start())
-        .await?;
-    assert!(
-        foreign_library
-            .begin_certify_adoption(observed.catalog_revision())?
-            .wait()
-            .await?
-            .is_certified()
-    );
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
     let ids = fixture.ids(&mut session).await?;
@@ -972,7 +849,6 @@ async fn prepared_projection_from_another_actor_is_refused_atomically()
 async fn candidate_clones_keep_the_producer_budget_until_the_final_clone_drops()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let ids = fixture.committed("1. e4 {retained annotations} *").await?;
     let candidate = StorageImportSessionCandidate::new(ids[0], 1);
     let body = fixture.repository().read_candidate(candidate).await?;
@@ -1001,7 +877,6 @@ async fn candidate_clones_keep_the_producer_budget_until_the_final_clone_drops()
 async fn candidate_read_returns_typed_stale_and_projection_freshness_failures()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let ids = fixture.committed("1. e4 *").await?;
     assert!(matches!(
         fixture
@@ -1030,7 +905,6 @@ async fn candidate_read_returns_typed_stale_and_projection_freshness_failures()
 async fn keyset_bucket_is_bounded_and_keeps_trash_duplicates_without_changing_bodies()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let pgn = (0..102)
         .map(|index| format!("[White \"Player{index}\"]\n\n1. e4 {{original {index}}} *\n\n"))
         .collect::<String>();
@@ -1082,7 +956,6 @@ async fn keyset_bucket_is_bounded_and_keeps_trash_duplicates_without_changing_bo
 async fn typed_checkpoint_retains_coverage_and_invalidates_an_old_preview()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let ids = fixture.committed("1. e4 *").await?;
     let library = StorageLibraryRepository::new(fixture.store.client(), &fixture.executor);
     let original = fixture
@@ -1106,7 +979,6 @@ async fn typed_checkpoint_retains_coverage_and_invalidates_an_old_preview()
         .await?;
     library.begin_save(prepared)?.wait().await?;
     let after = fixture.repository().snapshot().await?;
-    assert!(after.is_adoption_complete());
     assert_eq!(
         after.catalog_stamp().value(),
         before.catalog_stamp().value() + 1
@@ -1136,7 +1008,6 @@ async fn folder_destination_is_exact_and_new_records_have_default_organization()
         .ok_or("shared test port")?
         .actual
         .destination = destination;
-    fixture.certify().await?;
     let ids = fixture.committed("1. e4 *\n\n1. d4 *").await?;
     let library = StorageLibraryRepository::new(fixture.store.client(), &fixture.executor);
     for id in ids {
@@ -1201,7 +1072,6 @@ async fn folder_rename_reparent_and_delete_refuse_frozen_imports() -> StorageLib
             .ok_or("shared test port")?
             .actual
             .destination = StorageImportSessionDestination::folder(folder, 7)?;
-        fixture.certify().await?;
         let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
         session.prepare().await?;
         let ids = fixture.ids(&mut session).await?;
@@ -1231,7 +1101,6 @@ async fn corrupt_body_projection_and_aggregate_hash_roll_back_earlier_frames()
         StorageLibraryImportTestEnumCorruption::AggregateOrdinal,
     ] {
         let fixture = StorageLibraryImportTestFixture::new().await?;
-        fixture.certify().await?;
         let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
         session.prepare().await?;
         let ids = fixture.ids(&mut session).await?;
@@ -1309,7 +1178,6 @@ async fn corrupt_body_projection_and_aggregate_hash_roll_back_earlier_frames()
 async fn importing_a_kept_copy_preserves_existing_library_and_trash_annotations()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let pgn = "[White \"Alice\"]\n[Black \"Bob\"]\n[Date \"2026.10.17\"]\n\n1. e4 {original annotation} e5 *";
     let original_ids = fixture
         .committed(&format!(
@@ -1377,34 +1245,9 @@ async fn importing_a_kept_copy_preserves_existing_library_and_trash_annotations(
 }
 
 #[tokio::test]
-async fn reopening_the_database_resets_certification_with_existing_projections()
--> StorageLibraryImportTestResult {
-    let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
-    fixture.committed("1. e4 *").await?;
-    let path = fixture.directory.path().join("import.sqlite");
-    fixture.store.close().await?;
-    let reopened = StorageDocumentStore::open(path, fixture.budget.clone()).await?;
-    let repository = StorageLibraryImportRepository::new(
-        reopened.client(),
-        StorageImportSessionDestination::unfiled(),
-        Arc::clone(&fixture.wall),
-    );
-    assert!(!repository.snapshot().await?.is_adoption_complete());
-    reopened.close().await?;
-    drop(fixture.port);
-    Arc::try_unwrap(fixture.executor)
-        .map_err(|_retained_executor| "retained reopen executor")?
-        .shutdown()
-        .await?;
-    Ok(())
-}
-
-#[tokio::test]
 async fn populated_indexes_unicode_and_wal_spill_growth_fit_the_confirmed_bound()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     let populated = (0..150)
         .map(|index| format!("[White \"Seed{index}\"]\n[Black \"Référence\"]\n\n1. d4 *\n\n"))
         .collect::<String>();
@@ -1456,97 +1299,9 @@ async fn populated_indexes_unicode_and_wal_spill_growth_fit_the_confirmed_bound(
 }
 
 #[tokio::test]
-async fn certification_race_reconciles_before_native_ready() -> StorageLibraryImportTestResult {
-    use crate::desktop::native::library_startup::{
-        DesktopNativeLibraryStartup, DesktopNativeLibraryStartupEnumReadiness,
-    };
-
-    let fixture = StorageLibraryImportTestFixture::new().await?;
-    let mut owner = DesktopNativeLibraryStartup::new(
-        fixture.store.client(),
-        Arc::clone(&fixture.executor),
-        tokio::time::Instant::now() + std::time::Duration::from_secs(60),
-    );
-    assert!(owner.advance().await?);
-    fixture
-        .store
-        .client()
-        .save(uuid::Uuid::from_u128(91_000), 0, "{}".to_owned())
-        .await?;
-    assert!(owner.advance().await?);
-    assert_eq!(owner.progress().sweep(), 2);
-    assert!(matches!(
-        owner.readiness(),
-        DesktopNativeLibraryStartupEnumReadiness::Adopting(_)
-    ));
-    assert!(
-        !fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    owner.run().await?;
-    assert!(
-        matches!(owner.readiness(), DesktopNativeLibraryStartupEnumReadiness::Ready(catalog) if catalog.value() == fixture.repository().snapshot().await?.catalog_stamp().value())
-    );
-    assert!(
-        fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    drop(owner);
-    fixture.close().await
-}
-
-#[tokio::test]
-async fn observed_recovery_finding_revokes_previously_certified_actor_coverage()
--> StorageLibraryImportTestResult {
-    use crate::desktop::native::library_startup::{
-        DesktopNativeLibraryStartup, DesktopNativeLibraryStartupEnumIssueCause,
-    };
-
-    let fixture = StorageLibraryImportTestFixture::new().await?;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
-    let mut owner = DesktopNativeLibraryStartup::new(
-        fixture.store.client(),
-        Arc::clone(&fixture.executor),
-        deadline,
-    );
-    owner.run().await?;
-    assert!(
-        fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    owner.record_recovery_issue(
-        uuid::Uuid::from_u128(91_001),
-        crate::game::storage_repository::GameStorageRevision::new(1),
-        DesktopNativeLibraryStartupEnumIssueCause::Missing,
-    )?;
-    assert!(owner.has_pending());
-    owner.drain_retained(deadline).await?;
-    assert!(!owner.has_pending());
-    assert!(
-        !fixture
-            .repository()
-            .snapshot()
-            .await?
-            .is_adoption_complete()
-    );
-    drop(owner);
-    fixture.close().await
-}
-
-#[tokio::test]
 async fn temporary_entry_fault_rolls_back_prior_rows_and_the_current_document()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     fixture.capture_page_limit().await?;
     let mut session = fixture.session("1. e4 *\n\n1. d4 *")?;
     session.prepare().await?;
@@ -1586,7 +1341,6 @@ async fn temporary_entry_fault_rolls_back_prior_rows_and_the_current_document()
 async fn a_cancelled_estimate_retains_actor_usability_and_the_prior_page_limit()
 -> StorageLibraryImportTestResult {
     let fixture = StorageLibraryImportTestFixture::new().await?;
-    fixture.certify().await?;
     fixture.capture_page_limit().await?;
     let repository = fixture.repository();
     let snapshot = repository.snapshot().await?;

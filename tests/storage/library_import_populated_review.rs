@@ -16,9 +16,7 @@ use crate::storage::library_import::tests::space_review::{
     StorageLibraryImportSpaceReview, StorageLibraryImportSpaceReviewFiles,
     StorageLibraryImportSpaceReviewFilesystem, StorageLibraryImportSpaceReviewSession,
 };
-use crate::storage::library_repository::{
-    StorageLibraryAdoptionCursor, StorageLibraryEnumAdoptionPreparation, StorageLibraryRepository,
-};
+use crate::storage::library_repository::StorageLibraryRepository;
 use crate::storage::trash::StorageTrashEnumLocation;
 
 #[derive(Clone, Copy)]
@@ -372,7 +370,6 @@ impl StorageLibraryImportPopulatedReview {
 
     async fn add_checkpointed_ballast(&mut self) -> StorageLibraryImportTestResult {
         let snapshot = self.review.fixture.repository().snapshot().await?;
-        assert!(snapshot.is_adoption_complete());
         self.review
             .fixture
             .store
@@ -380,7 +377,6 @@ impl StorageLibraryImportPopulatedReview {
             .save(Self::BALLAST_ID, 0, Self::BALLAST_BODY.to_owned())
             .await?;
         let revoked = self.review.fixture.repository().snapshot().await?;
-        assert!(!revoked.is_adoption_complete());
         assert_eq!(
             revoked.catalog_stamp().value(),
             snapshot
@@ -390,34 +386,6 @@ impl StorageLibraryImportPopulatedReview {
                 .ok_or("populated catalog overflow")?
         );
         assert_eq!(revoked.destination(), snapshot.destination());
-        let library = StorageLibraryRepository::new(
-            self.review.fixture.store.client(),
-            &self.review.fixture.executor,
-        );
-        let page = library
-            .adoption_page(StorageLibraryAdoptionCursor::start())
-            .await?;
-        let candidate = page
-            .candidates()
-            .iter()
-            .find(|candidate| candidate.id() == Self::BALLAST_ID)
-            .copied()
-            .ok_or("missing populated ballast candidate")?;
-        assert!(matches!(
-            library.prepare_adoption(candidate).await?,
-            StorageLibraryEnumAdoptionPreparation::Unrelated
-        ));
-        assert!(
-            library
-                .begin_certify_adoption(page.catalog_revision())?
-                .wait()
-                .await?
-                .is_certified()
-        );
-        let certified = self.review.fixture.repository().snapshot().await?;
-        assert!(certified.is_adoption_complete());
-        assert_eq!(certified.catalog_stamp(), revoked.catalog_stamp());
-        assert_eq!(certified.destination(), snapshot.destination());
         self.has_ballast = true;
         self.assert_counts(u64::try_from(self.existing.len())?)
             .await?;

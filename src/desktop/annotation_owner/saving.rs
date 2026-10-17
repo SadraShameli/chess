@@ -179,8 +179,7 @@ impl DesktopAnnotationOwner {
                     Ok(
                         StorageLibraryEnumMutationReceipt::Organized(_)
                         | StorageLibraryEnumMutationReceipt::DestructionApplied(_)
-                        | StorageLibraryEnumMutationReceipt::Restored(_)
-                        | StorageLibraryEnumMutationReceipt::Adopted(_),
+                        | StorageLibraryEnumMutationReceipt::Restored(_),
                     ) => Err(self.unresolved_save(DesktopAnnotationOwnerError::Protocol)),
                     Err(
                         error @ (StorageLibraryError::Protocol

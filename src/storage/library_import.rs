@@ -63,9 +63,6 @@ impl<W: GameStorageWallTimeProvider + ?Sized + 'static> StorageLibraryImportRepo
         if matches!(&error, StorageLibraryError::ImportCandidate) {
             return StorageImportSessionRepositoryError::StaleCandidate;
         }
-        if matches!(&error, StorageLibraryError::AdoptionRequired) {
-            return StorageImportSessionRepositoryError::IncompleteAdoption;
-        }
         StorageImportSessionRepositoryError::Effect(Box::new(error))
     }
 

@@ -107,7 +107,6 @@ impl StorageLibraryTransactionFixture {
             self.connection.diesel(),
             request,
             &self.memory,
-            &mut false,
             uuid::Uuid::nil(),
         )
     }
@@ -819,101 +818,6 @@ async fn stale_destruction_is_rejected_and_permanent_delete_cascades_only_after_
 }
 
 #[tokio::test]
-async fn adoption_is_bounded_idempotent_and_preserves_bodies_revisions_and_unknown_time()
--> StorageLibraryTransactionTestResult {
-    use crate::storage::library_prepared::StorageLibraryPreparedAdoption;
-    use crate::storage::library_repository::{
-        StorageLibraryAdoptionCursor, StorageLibraryEnumAdoptionOutcome,
-    };
-    let mut fixture = StorageLibraryTransactionFixture::new()?;
-    let id = StorageLibraryTransactionFixture::id(1)?;
-    let body = StorageLibraryTransactionFixture::body(id, None)?;
-    fixture.legacy.execute(
-        "INSERT INTO documents(id, revision, body) VALUES (?1, '7', ?2)",
-        params![id.as_uuid().to_string(), body],
-    )?;
-    let response = fixture.execute(StorageLibraryEnumTransactionRequest::AdoptionPage(
-        StorageLibraryAdoptionCursor::start(),
-    ))?;
-    let StorageLibraryEnumTransactionResponse::AdoptionPage(page) = response else {
-        return Err("expected adoption page".into());
-    };
-    assert_eq!(page.candidates().len(), 1);
-    assert_eq!(page.candidates()[0].content_revision().value(), 7);
-    assert!(page.next_cursor().is_none());
-    for attempt in 0..2 {
-        let body = body.clone();
-        let memory = fixture.prepared_memory(body.len())?;
-        let prepared = fixture
-            .executor
-            .submit_waiting(move |cancellation| {
-                StorageLibraryPreparedAdoption::from_encoded(
-                    id,
-                    GameStorageRevision::new(7),
-                    &body,
-                    memory,
-                    cancellation,
-                )
-            })
-            .await?
-            .join()
-            .await??;
-        let response = fixture.execute(StorageLibraryEnumTransactionRequest::Adopt(prepared))?;
-        let StorageLibraryEnumTransactionResponse::Adopted(outcome) = response else {
-            return Err("expected adoption outcome".into());
-        };
-        if attempt == 0 {
-            assert!(matches!(
-                outcome,
-                StorageLibraryEnumAdoptionOutcome::Inserted(_)
-            ));
-        } else {
-            assert!(matches!(
-                outcome,
-                StorageLibraryEnumAdoptionOutcome::AlreadyCurrent
-            ));
-        }
-    }
-    let stored: (String, String) =
-        fixture
-            .legacy
-            .query_row("SELECT body, revision FROM documents", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?;
-    assert_eq!(stored, (body.clone(), "7".to_owned()));
-    let page = fixture.query(StorageLibraryQuery::default()).await?;
-    assert_eq!(page.entries()[0].modified(), None);
-    assert_eq!(
-        page.entries()[0].organization().revision(),
-        GameLibraryOrganizationRevision::ZERO
-    );
-    let memory = fixture.prepared_memory(body.len())?;
-    let prepared = fixture
-        .executor
-        .submit_waiting(move |cancellation| {
-            StorageLibraryPreparedAdoption::from_encoded(
-                id,
-                GameStorageRevision::new(7),
-                &body,
-                memory,
-                cancellation,
-            )
-        })
-        .await?
-        .join()
-        .await??;
-    fixture
-        .legacy
-        .execute("UPDATE documents SET revision = '8'", [])?;
-    assert!(
-        matches!(fixture.execute(StorageLibraryEnumTransactionRequest::Adopt(prepared))?,
-        StorageLibraryEnumTransactionResponse::Adopted(StorageLibraryEnumAdoptionOutcome::Changed(Some(revision))) if revision.value() == 8)
-    );
-    fixture.executor.shutdown().await?;
-    Ok(())
-}
-
-#[tokio::test]
 async fn catalog_exhaustion_rolls_back_the_document_and_projection_together()
 -> StorageLibraryTransactionTestResult {
     let mut fixture = StorageLibraryTransactionFixture::new()?;
@@ -992,33 +896,6 @@ async fn pending_wait_cancellation_retains_the_receiver_until_outcome_observatio
     Ok(())
 }
 
-#[test]
-fn envelope_probe_does_not_hide_recognized_corruption_or_future_versions()
--> StorageLibraryTransactionTestResult {
-    use crate::storage::library_prepared::StorageLibraryAdoptionPreparation;
-    for body in [
-        r#"{"schema_version":999,"game":null}"#,
-        r#"{"schema_version":null,"game":{}}"#,
-        r#"{"kind":"played"}"#,
-        r#"{"kind":"notation","game":{}}"#,
-    ] {
-        assert!(StorageLibraryAdoptionPreparation::recognizes(body, false)?);
-        assert!(StorageGameDocument::recover_record(body).is_err());
-    }
-    assert!(!StorageLibraryAdoptionPreparation::recognizes(
-        r#"{"settings":true}"#,
-        false
-    )?);
-    assert!(!StorageLibraryAdoptionPreparation::recognizes(
-        "[1,2,3]", false
-    )?);
-    assert!(StorageLibraryAdoptionPreparation::recognizes(
-        r#"{"settings":true}"#,
-        true
-    )?);
-    Ok(())
-}
-
 #[tokio::test]
 async fn output_memory_is_retained_by_pages_and_saturation_is_explicit()
 -> StorageLibraryTransactionTestResult {
@@ -1043,7 +920,6 @@ async fn output_memory_is_retained_by_pages_and_saturation_is_explicit()
             fixture.connection.diesel(),
             StorageLibraryEnumTransactionRequest::Load(id),
             &small,
-            &mut false,
             uuid::Uuid::nil(),
         ),
         Err(StorageLibraryError::Store(
@@ -1077,33 +953,6 @@ fn diesel_catalog_bump_is_monotonic_inside_an_immediate_transaction()
         legacy.parse::<crate::storage::library_repository::StorageLibraryCatalogRevision>()?,
         bumped
     );
-    Ok(())
-}
-
-#[test]
-fn baseline_schema_adopts_generic_document_identity_revision_and_body()
--> StorageLibraryTransactionTestResult {
-    let mut fixture = StorageLibraryTransactionFixture::new()?;
-    let id = uuid::Uuid::nil().to_string();
-    let body = r#"{"setting":"kept"}"#;
-    fixture.legacy.execute(
-        "INSERT INTO documents(id, revision, body) VALUES (?1, ?2, ?3)",
-        params![id, u64::MAX.to_string(), body],
-    )?;
-    let stored: (String, String, String) =
-        fixture
-            .legacy
-            .query_row("SELECT id, revision, body FROM documents", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?;
-    assert_eq!(stored, (id, u64::MAX.to_string(), body.to_owned()));
-    let response = fixture.execute(StorageLibraryEnumTransactionRequest::AdoptionPage(
-        crate::storage::library_repository::StorageLibraryAdoptionCursor::start(),
-    ))?;
-    let StorageLibraryEnumTransactionResponse::AdoptionPage(page) = response else {
-        return Err("expected adoption inventory".into());
-    };
-    assert_eq!(page.candidates()[0].id(), uuid::Uuid::nil());
     Ok(())
 }
 
@@ -1460,33 +1309,11 @@ async fn prepared_reservations_transfer_through_dispatch_and_release_after_obser
 #[tokio::test]
 async fn dropping_unqueued_prepared_owners_and_cancelled_preparation_releases_reservations()
 -> StorageLibraryTransactionTestResult {
-    use crate::storage::library_prepared::StorageLibraryPreparedAdoption;
     use std::future::{Future, poll_fn};
     use std::task::Poll;
     let fixture = StorageLibraryTransactionFixture::new()?;
     let id = StorageLibraryTransactionFixture::id(1)?;
     let before = fixture.memory.available_permits();
-    let body = StorageLibraryTransactionFixture::body(id, None)?;
-    let memory = fixture.prepared_memory(body.len())?;
-    let prepared = fixture
-        .executor
-        .submit_waiting(move |cancellation| {
-            StorageLibraryPreparedAdoption::from_encoded(
-                id,
-                GameStorageRevision::new(1),
-                &body,
-                memory,
-                cancellation,
-            )
-        })
-        .await?
-        .join()
-        .await??;
-    assert!(fixture.memory.available_permits() < before);
-    let request = StorageLibraryEnumTransactionRequest::Adopt(prepared);
-    assert_eq!(request.unreserved_admission_bytes()?, 0);
-    drop(request);
-    assert_eq!(fixture.memory.available_permits(), before);
     let body = StorageLibraryTransactionFixture::body(id, None)?;
     let memory = fixture.prepared_memory(body.capacity())?;
     let budget = CapacityBudget::new(NonZeroUsize::MIN)?;
@@ -1704,7 +1531,6 @@ impl StorageLibraryTransactionForeignBudgetFixture {
 struct StorageLibraryTransactionForeignBudgetSnapshot {
     catalog: crate::storage::library_repository::StorageLibraryCatalogRevision,
     indexed_games: usize,
-    unindexed_documents: u64,
     document: Option<(GameStorageRevision, crate::package::digest::PackageDigest)>,
 }
 
@@ -1721,7 +1547,6 @@ impl StorageLibraryTransactionForeignBudgetSnapshot {
         let page = repository.query(StorageLibraryQuery::default()).await?;
         let catalog = page.catalog_revision();
         let indexed_games = page.entries().len();
-        let unindexed_documents = page.unindexed_document_count();
         drop(page);
         let stored = client.read(id.as_uuid()).await?;
         let document = stored.as_ref().map(|stored| {
@@ -1734,7 +1559,6 @@ impl StorageLibraryTransactionForeignBudgetSnapshot {
         Ok(Self {
             catalog,
             indexed_games,
-            unindexed_documents,
             document,
         })
     }
@@ -1816,85 +1640,6 @@ async fn foreign_prepared_write_is_refused_without_mutating_an_exhausted_destina
     assert!(
         attempt.refused && before == after,
         "foreign prepared write bypassed destination admission: refused={}, completion={:?}, before={before:?}, after={after:?}",
-        attempt.refused,
-        attempt.completion
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn foreign_prepared_adoption_is_refused_without_mutating_an_exhausted_destination()
--> StorageLibraryTransactionTestResult {
-    use crate::storage::library_repository::{
-        StorageLibraryAdoptionCursor, StorageLibraryEnumAdoptionPreparation,
-        StorageLibraryRepository,
-    };
-    let fixture =
-        StorageLibraryTransactionForeignBudgetFixture::new(CapacityBudget::discover()?).await?;
-    let outcome = async {
-        let id = StorageLibraryTransactionFixture::id(1)?;
-        let body = StorageLibraryTransactionFixture::body(id, None)?;
-        fixture
-            .store_a
-            .client()
-            .save(
-                id.as_uuid(),
-                GameStorageRevision::INITIAL.value(),
-                body.clone(),
-            )
-            .await?;
-        fixture
-            .store_b
-            .client()
-            .save(id.as_uuid(), GameStorageRevision::INITIAL.value(), body)
-            .await?;
-        let repository_a =
-            StorageLibraryRepository::new(fixture.store_a.client(), &fixture.executor);
-        let repository_b =
-            StorageLibraryRepository::new(fixture.store_b.client(), &fixture.executor);
-        let page = repository_a
-            .adoption_page(StorageLibraryAdoptionCursor::start())
-            .await?;
-        let candidate = *page
-            .candidates()
-            .iter()
-            .find(|candidate| candidate.id() == id.as_uuid())
-            .ok_or("missing source adoption candidate")?;
-        drop(page);
-        let preparation = repository_a.prepare_adoption(candidate).await?;
-        let StorageLibraryEnumAdoptionPreparation::Prepared(prepared) = preparation else {
-            return Err("expected a source prepared adoption".into());
-        };
-        let before = StorageLibraryTransactionForeignBudgetSnapshot::read(
-            fixture.store_b.client(),
-            &fixture.executor,
-            id,
-        )
-        .await?;
-        let pressure = fixture
-            .store_b
-            .client()
-            .reserve_library_memory(StorageDocumentStore::MEMORY_BUDGET)?;
-        let attempt = StorageLibraryTransactionForeignBudgetAttempt::observe(
-            repository_b.begin_adopt(prepared),
-        )
-        .await;
-        drop(pressure);
-        let after = StorageLibraryTransactionForeignBudgetSnapshot::read(
-            fixture.store_b.client(),
-            &fixture.executor,
-            id,
-        )
-        .await?;
-        Ok::<_, Box<dyn std::error::Error>>((attempt, before, after))
-    }
-    .await;
-    let closed = fixture.close().await;
-    let (attempt, before, after) = outcome?;
-    closed?;
-    assert!(
-        attempt.refused && before == after,
-        "foreign prepared adoption bypassed destination admission: refused={}, completion={:?}, before={before:?}, after={after:?}",
         attempt.refused,
         attempt.completion
     );

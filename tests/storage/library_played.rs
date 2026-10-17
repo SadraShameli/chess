@@ -37,7 +37,6 @@ use crate::notation::pgn_import::NotationPgnImport;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::game_document::{
     StorageGameDocument, StorageGameDocumentEnumContentKind, StorageGameDocumentError,
-    StorageGameDocumentRepository,
 };
 use crate::storage::library_played::StorageLibraryPlayedRepository;
 use crate::storage::library_prepared::{
@@ -45,7 +44,6 @@ use crate::storage::library_prepared::{
 };
 use crate::storage::library_query::StorageLibraryQuery;
 use crate::storage::library_repository::{
-    StorageLibraryAdoptionCursor, StorageLibraryEnumAdoptionPreparation,
     StorageLibraryEnumMutationReceipt, StorageLibraryError, StorageLibraryRepository,
 };
 
@@ -1048,51 +1046,5 @@ async fn played_load_refuses_clockless_notation_and_leaves_it_unchanged()
     assert_eq!(stored.body(), body);
     assert_eq!(stored.revision(), 1);
     drop(stored);
-    fixture.close().await
-}
-
-#[tokio::test]
-async fn legacy_save_remains_unindexed_and_adopted_unknown_time_survives_checkpoint()
--> StorageLibraryPlayedTestResult {
-    let fixture = StorageLibraryPlayedFixture::new().await?;
-    let session = StorageLibraryPlayedFixture::session()?;
-    let request = GameStorageSaveRequest::capture(
-        &session,
-        StorageLibraryPlayedFixture::now(),
-        GameStorageRevision::INITIAL,
-    )?;
-    let legacy = StorageGameDocumentRepository::new(fixture.store.client(), &fixture.executor);
-    let receipt = legacy.save(request).await?;
-    assert_eq!(fixture.counts().await?, (1, 0));
-    let library = fixture.library();
-    let page = library
-        .adoption_page(StorageLibraryAdoptionCursor::start())
-        .await?;
-    let candidate = *page
-        .candidates()
-        .iter()
-        .find(|candidate| candidate.id() == session.id().as_uuid())
-        .ok_or("missing played adoption candidate")?;
-    drop(page);
-    let prepared = library.prepare_adoption(candidate).await?;
-    let StorageLibraryEnumAdoptionPreparation::Prepared(prepared) = prepared else {
-        return Err("legacy played adoption was not prepared".into());
-    };
-    library.begin_adopt(prepared)?.wait().await?;
-    fixture
-        .assert_saved(&session, receipt.storage_revision(), None)
-        .await?;
-    let saved = fixture
-        .repository()
-        .save(GameStorageSaveRequest::capture(
-            &session,
-            StorageLibraryPlayedFixture::now(),
-            receipt.storage_revision(),
-        )?)
-        .await?;
-    assert_eq!(saved.storage_revision(), GameStorageRevision::new(2));
-    fixture
-        .assert_saved(&session, saved.storage_revision(), None)
-        .await?;
     fixture.close().await
 }

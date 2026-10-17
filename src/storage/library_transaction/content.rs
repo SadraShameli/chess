@@ -4,13 +4,11 @@ use diesel::upsert::excluded;
 
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::library_prepared::{
-    StorageLibraryEnumContentChange, StorageLibraryPreparedAdoption,
-    StorageLibraryPreparedIdentity, StorageLibraryPreparedWrite, StorageLibraryProjection,
+    StorageLibraryEnumContentChange, StorageLibraryPreparedIdentity, StorageLibraryPreparedWrite,
+    StorageLibraryProjection,
 };
 use crate::storage::library_query::StorageLibraryMillis;
-use crate::storage::library_repository::{
-    StorageLibraryContentReceipt, StorageLibraryEnumAdoptionOutcome, StorageLibraryError,
-};
+use crate::storage::library_repository::{StorageLibraryContentReceipt, StorageLibraryError};
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::rows::StorageLibraryTransactionRows;
 use crate::storage::schema::{documents, library_entries};
@@ -40,8 +38,6 @@ impl StorageLibraryTransactionContent {
             if existing.kind() != prepared.projection().kind() {
                 return Err(StorageLibraryError::ContentKind);
             }
-        } else if actual.is_some() {
-            return Err(StorageLibraryError::AdoptionRequired);
         }
         let modified = match (prepared.change(), indexed.as_ref()) {
             (StorageLibraryEnumContentChange::Changed(timestamp), Some(existing)) => Some(
@@ -123,38 +119,6 @@ impl StorageLibraryTransactionContent {
                 folder: insert.folder,
             },
         )
-    }
-    pub(super) fn adopt(
-        connection: &mut SqliteConnection,
-        prepared: &StorageLibraryPreparedAdoption,
-    ) -> Result<StorageLibraryEnumAdoptionOutcome, StorageLibraryError> {
-        let current = StorageLibraryTransactionRows::document_revision(connection, prepared.id())?;
-        if current != Some(prepared.observed()) {
-            return Ok(StorageLibraryEnumAdoptionOutcome::Changed(current));
-        }
-        if let Some(existing) = StorageLibraryTransactionRows::state(connection, prepared.id())? {
-            if existing.content() == prepared.observed() {
-                if existing.kind() != prepared.projection().kind() {
-                    return Err(StorageLibraryError::ContentKind);
-                }
-                return Ok(StorageLibraryEnumAdoptionOutcome::AlreadyCurrent);
-            }
-            return Err(StorageLibraryError::ProjectionStale);
-        }
-        Self::project(
-            connection,
-            StorageLibraryTransactionContentProjection {
-                id: prepared.id(),
-                revision: prepared.observed(),
-                projection: prepared.projection(),
-                identity: prepared.identity(),
-                modified: None,
-                folder: None,
-            },
-        )?;
-        Ok(StorageLibraryEnumAdoptionOutcome::Inserted(
-            StorageLibraryTransaction::diesel_bump_catalog(connection)?,
-        ))
     }
     fn project(
         connection: &mut SqliteConnection,

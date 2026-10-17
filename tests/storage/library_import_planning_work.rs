@@ -310,7 +310,6 @@ impl StorageLibraryImportPlanningWorkFixture {
                     diesel.diesel(),
                     StorageLibraryEnumTransactionRequest::Save(prepared),
                     &memory,
-                    &mut false,
                     uuid::Uuid::nil(),
                 )?,
                 StorageLibraryEnumTransactionResponse::Saved(_)

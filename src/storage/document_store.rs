@@ -472,7 +472,6 @@ struct StorageDocumentActor {
     memory: Arc<Semaphore>,
     budget: CapacityBudget,
     runtime: tokio::runtime::Handle,
-    library_certified: bool,
     library_preparation_origin: Uuid,
 }
 
@@ -490,7 +489,6 @@ impl StorageDocumentActor {
             memory,
             budget,
             runtime,
-            library_certified: false,
             library_preparation_origin: Uuid::new_v4(),
         })
     }
@@ -533,7 +531,6 @@ impl StorageDocumentActor {
                         self.connection.diesel(),
                         *request,
                         &self.memory,
-                        &mut self.library_certified,
                         self.library_preparation_origin,
                     );
                     let unresolved = !matches!(
@@ -683,7 +680,6 @@ impl StorageDocumentActor {
                     .map_err(|error| StorageDocumentError::Library(Box::new(error)))?;
                 Ok(revision)
             })?;
-        self.library_certified = false;
         Ok(StorageDocumentReceipt { id, revision })
     }
 

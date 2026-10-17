@@ -23,12 +23,11 @@ use crate::storage::library_query::{
     StorageLibraryQueryEntryOptions, StorageLibraryQueryPage, StorageLibraryQueryRow,
 };
 use crate::storage::library_repository::{
-    StorageLibraryAdoptionCandidate, StorageLibraryAdoptionCursor, StorageLibraryAdoptionPage,
     StorageLibraryError, StorageLibraryMemory, StorageLibraryStoredRecord,
     StorageLibraryStoredRecordOptions,
 };
 use crate::storage::library_transaction::StorageLibraryTransaction;
-use crate::storage::schema::{documents, games, library_entries, library_entry_tags};
+use crate::storage::schema::{documents, library_entries, library_entry_tags};
 use crate::storage::trash::StorageTrashEnumLocation;
 
 pub(super) struct StorageLibraryTransactionEntryState {
@@ -347,91 +346,23 @@ impl StorageLibraryTransactionRows {
             } else {
                 None
             };
-            let unindexed: i64 = documents::table
-                .left_join(library_entries::table)
-                .filter(
-                    library_entries::game_id
-                        .is_null()
-                        .or(library_entries::content_revision
-                            .nullable()
-                            .ne(documents::revision.nullable())),
-                )
-                .count()
-                .get_result(connection)?;
             Ok(StorageLibraryQueryPage::new(
                 entries,
                 next,
                 catalog,
-                u64::try_from(unindexed)?,
                 reservation,
             ))
         })
     }
-    pub(super) fn adoption_page(
-        connection: &mut SqliteConnection,
-        cursor: StorageLibraryAdoptionCursor,
-        memory: &Arc<Semaphore>,
-    ) -> Result<StorageLibraryAdoptionPage, StorageLibraryError> {
-        let reservation = StorageLibraryMemory::new(
-            memory,
-            StorageLibraryQuery::PAGE_SIZE * std::mem::size_of::<StorageLibraryAdoptionCandidate>(),
-        )?;
-        let mut query = documents::table
-            .left_join(games::table)
-            .left_join(library_entries::table)
-            .select((
-                documents::id,
-                documents::revision,
-                games::game_id
-                    .nullable()
-                    .is_not_null()
-                    .or(library_entries::game_id.nullable().is_not_null()),
-            ))
-            .order(documents::id.asc())
-            .limit(i64::try_from(StorageLibraryQuery::PAGE_SIZE + 1)?)
-            .into_boxed();
-        if let Some(boundary) = cursor.boundary() {
-            query = query.filter(documents::id.gt(boundary.to_string()));
-        }
-        let rows: Vec<(String, String, bool)> = query.load(connection)?;
-        let mut candidates = Vec::with_capacity(StorageLibraryQuery::PAGE_SIZE);
-        let mut has_more = false;
-        for (id, revision, indexed) in rows {
-            if candidates.len() == StorageLibraryQuery::PAGE_SIZE {
-                has_more = true;
-                break;
-            }
-            candidates.push(StorageLibraryAdoptionCandidate::new(
-                id.parse()?,
-                StorageLibraryError::content_revision(&revision)?,
-                indexed,
-            ));
-        }
-        let next = if has_more {
-            candidates
-                .last()
-                .map(|candidate| StorageLibraryAdoptionCursor::after(candidate.id()))
-        } else {
-            None
-        };
-        Ok(StorageLibraryAdoptionPage::new(
-            candidates,
-            next,
-            StorageLibraryTransaction::diesel_catalog(connection)?,
-            reservation,
-        ))
-    }
-
     pub(super) fn played_inventory(
         connection: &mut SqliteConnection,
         cursor: StorageLibraryInventoryCursor,
         memory: &Arc<Semaphore>,
-    ) -> Result<StorageLibraryAdoptionPage, StorageLibraryError> {
+    ) -> Result<StorageLibraryInventoryPage, StorageLibraryError> {
         let reservation = StorageLibraryMemory::new(
             memory,
             StorageLibraryInventoryPage::PAGE_SIZE
-                * (std::mem::size_of::<StorageLibraryAdoptionCandidate>()
-                    + std::mem::size_of::<StorageLibraryInventoryEntry>()),
+                * std::mem::size_of::<StorageLibraryInventoryEntry>(),
         )?;
         let mut query = library_entries::table
             .inner_join(documents::table)
@@ -451,28 +382,27 @@ impl StorageLibraryTransactionRows {
             query = query.filter(library_entries::game_id.gt(boundary.as_uuid().to_string()));
         }
         let rows: Vec<(String, String)> = query.load(connection)?;
-        let mut candidates = Vec::with_capacity(StorageLibraryInventoryPage::PAGE_SIZE);
+        let mut entries = Vec::with_capacity(StorageLibraryInventoryPage::PAGE_SIZE);
         let mut has_more = false;
         for (id, revision) in rows {
-            if candidates.len() == StorageLibraryInventoryPage::PAGE_SIZE {
+            if entries.len() == StorageLibraryInventoryPage::PAGE_SIZE {
                 has_more = true;
                 break;
             }
-            candidates.push(StorageLibraryAdoptionCandidate::new(
+            entries.push(StorageLibraryInventoryEntry::new(
                 id.parse()?,
                 StorageLibraryError::content_revision(&revision)?,
-                true,
             ));
         }
         let next = if has_more {
-            candidates
+            entries
                 .last()
-                .map(|candidate| StorageLibraryAdoptionCursor::after(candidate.id()))
+                .map(|entry| StorageLibraryInventoryCursor::after(entry.id()))
         } else {
             None
         };
-        Ok(StorageLibraryAdoptionPage::new(
-            candidates,
+        Ok(StorageLibraryInventoryPage::new(
+            entries,
             next,
             StorageLibraryTransaction::diesel_catalog(connection)?,
             reservation,
