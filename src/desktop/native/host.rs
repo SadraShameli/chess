@@ -56,8 +56,18 @@ use crate::capacity::budget::CapacityBudget;
 use crate::capacity::phase::{
     CapacityPhase, CapacityPhaseEnumState, CapacityPhaseError, CapacityPhaseGeneration,
 };
-use crate::clock::duration::ClockInstant;
+use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProviderMonotonic;
+use crate::desktop::layout::{
+    DesktopLayout, DesktopLayoutDisplay, DesktopLayoutError,
+};
+use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
+use crate::desktop::renderer_commands::{
+    DesktopRendererCommands, DesktopRendererCommandsEnumCause, DesktopRendererCommandsEnumState,
+    DesktopRendererCommandsError,
+};
+use crate::presentation::board::recovery::PresentationBoardRecoveryEnumIntent;
+use crate::scene::quality::{SceneQuality, SceneQualityEnumSample, SceneQualityError};
 use crate::desktop::application::{DesktopApplicationError, DesktopApplicationPort};
 use crate::desktop::dto::DesktopBoardSnapshot;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult};
@@ -123,6 +133,8 @@ pub struct DesktopNativeHostServices {
     pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub clock: Arc<ClockTimeProviderMonotonic>,
+    pub layout: DesktopLayout,
+    pub layout_store: Option<Arc<DesktopNativeLayoutStore>>,
     pub wake: Arc<DesktopNativeEventLoopWake>,
     pub resources: DesktopNativeResources,
     pub capacity: Arc<Mutex<CapacityPhase>>,
@@ -201,6 +213,14 @@ pub enum DesktopNativeHostError {
     #[error(transparent)]
     Scene(#[from] SceneRendererError),
     #[error(transparent)]
+    Clock(#[from] ClockDurationError),
+    #[error(transparent)]
+    Quality(#[from] SceneQualityError),
+    #[error(transparent)]
+    Renderer(#[from] DesktopRendererCommandsError),
+    #[error(transparent)]
+    Layout(#[from] DesktopLayoutError),
+    #[error(transparent)]
     Camera(#[from] SceneCameraError),
     #[error(transparent)]
     Viewport(#[from] ScenePickingViewportError),
@@ -244,10 +264,40 @@ struct DesktopNativeHostState {
     pending_view: Option<ScenePickingViewport>,
     pending_camera: Option<SceneCamera>,
     animation: Option<PresentationBoardAnimationFrame>,
+    adaptive: DesktopNativeHostAdaptive,
     dialog_ready: bool,
     dialog_admission_closed: bool,
     exit_authorized: bool,
     readiness: Option<DesktopNativeHostReadiness>,
+}
+
+struct DesktopNativeHostAdaptive {
+    quality: SceneQuality,
+    renderer: DesktopRendererCommands,
+    layout: DesktopLayout,
+    layout_saved: DesktopLayout,
+    layout_seen: DesktopLayout,
+    layout_changed_at: Option<ClockInstant>,
+    monitor_fitted: bool,
+    retry_requested: bool,
+}
+
+impl DesktopNativeHostAdaptive {
+    const LAYOUT_SAVE_DELAY: ClockDuration = ClockDuration::from_nanos(500_000_000);
+    const LAYOUT_POLL: Duration = Duration::from_millis(250);
+
+    fn new(layout: DesktopLayout) -> Self {
+        Self {
+            quality: SceneQuality::default(),
+            renderer: DesktopRendererCommands::new(),
+            layout,
+            layout_saved: layout,
+            layout_seen: layout,
+            layout_changed_at: None,
+            monitor_fitted: false,
+            retry_requested: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -551,6 +601,14 @@ impl DesktopNativeHost {
                 DesktopNativeHostError::ResourcePath(services.resources.root().to_path_buf())
             })?
             .to_owned();
+        let (layout_width, layout_height) = services.layout.window_size();
+        let window_size = bevy::math::Vec2::new(layout_width, layout_height).as_uvec2();
+        let window_position = if services.layout.is_window_positioned() {
+            let (layout_x, layout_y) = services.layout.window_position();
+            bevy::window::WindowPosition::At(bevy::math::Vec2::new(layout_x, layout_y).as_ivec2())
+        } else {
+            bevy::window::WindowPosition::Automatic
+        };
         let mut app = App::new();
         app.add_plugins(
             DefaultPlugins
@@ -563,7 +621,8 @@ impl DesktopNativeHost {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: Self::TITLE.to_owned(),
-                        resolution: (u32::from(Self::WIDTH), u32::from(Self::HEIGHT)).into(),
+                        resolution: (window_size.x, window_size.y).into(),
+                        position: window_position,
                         resize_constraints: WindowResizeConstraints {
                             min_width: f32::from(Self::WIDTH),
                             min_height: f32::from(Self::HEIGHT),
@@ -607,6 +666,12 @@ impl DesktopNativeHost {
             .resource::<AssetServer>()
             .load(DesktopNativeResources::PIECES_ASSET);
         let mut presentation = PresentationApp::new(services.clock.clone());
+        presentation.set_layout(services.layout);
+        let initial_camera = services
+            .layout
+            .camera(BoardEnumColor::White)
+            .unwrap_or_else(|_error| SceneCamera::initial(BoardEnumColor::White));
+        let adaptive = DesktopNativeHostAdaptive::new(services.layout);
         if let Some(connection) = services.engine_panels.take() {
             presentation.mount_engine(connection);
         }
@@ -625,7 +690,7 @@ impl DesktopNativeHost {
             puzzle_window: None,
             asset,
             asset_reload: None,
-            camera: SceneCamera::initial(BoardEnumColor::White),
+            camera: initial_camera,
             rendered_board: None,
             generation,
             ready: false,
@@ -643,6 +708,7 @@ impl DesktopNativeHost {
             pending_view: None,
             pending_camera: None,
             animation: None,
+            adaptive,
             dialog_ready: false,
             dialog_admission_closed: false,
             exit_authorized: false,
@@ -965,6 +1031,14 @@ impl DesktopNativeHost {
                 return Err(DesktopNativeHostError::Pipeline(Arc::clone(error)));
             }
         }
+        Self::observe_renderer(state)?;
+        if std::mem::take(&mut state.adaptive.retry_requested) && state.failure.is_some() {
+            state.recovery = None;
+            state.readiness = None;
+            state.replacement = None;
+            state.expected_device = None;
+            Self::begin_interruption(world, state)?;
+        }
         if state.failure.is_some() && state.recovery.is_none() && state.readiness.is_none() {
             Self::begin_interruption(world, state)?;
         }
@@ -988,6 +1062,144 @@ impl DesktopNativeHost {
             let outcome = Self::update_scene(world, state, &mut renderer);
             world.insert_resource(renderer);
             outcome?;
+        }
+        Ok(())
+    }
+
+    fn renderer_cause(error: &DesktopNativeHostError) -> DesktopRendererCommandsEnumCause {
+        match error {
+            DesktopNativeHostError::Assets(_) | DesktopNativeHostError::AssetRetryIdentity => {
+                DesktopRendererCommandsEnumCause::Asset
+            }
+            DesktopNativeHostError::Device(_) => DesktopRendererCommandsEnumCause::ContextLoss,
+            DesktopNativeHostError::Pipeline(_) => DesktopRendererCommandsEnumCause::Shader,
+            _ => DesktopRendererCommandsEnumCause::Initialization,
+        }
+    }
+
+    fn observe_renderer(state: &mut DesktopNativeHostState) -> Result<(), DesktopNativeHostError> {
+        let now = state.services.port.now()?;
+        let commands = &mut state.adaptive.renderer;
+        if let Some(error) = &state.failure
+            && commands.is_board_available()
+        {
+            commands.interrupt(Self::renderer_cause(error));
+        }
+        if state.readiness.is_some()
+            && matches!(
+                commands.state(),
+                DesktopRendererCommandsEnumState::Interrupted(_)
+                    | DesktopRendererCommandsEnumState::Unrecoverable(_)
+            )
+        {
+            commands.retry(now)?;
+        }
+        if state.failure.is_none()
+            && state.ready
+            && matches!(
+                commands.state(),
+                DesktopRendererCommandsEnumState::Retrying { .. }
+            )
+        {
+            commands.recovered(now)?;
+        }
+        commands.observe(now);
+        state.presentation.set_renderer_commands(*commands);
+        Ok(())
+    }
+
+    fn adapt_quality(
+        world: &mut World,
+        state: &mut DesktopNativeHostState,
+        renderer: &mut SceneRenderer,
+        rendering: bool,
+    ) -> Result<(), DesktopNativeHostError> {
+        let now = state.services.port.now()?;
+        let delta = world
+            .get_resource::<bevy::prelude::Time>()
+            .map(|time| time.delta());
+        let sample = match delta {
+            Some(delta) if rendering => SceneQualityEnumSample::Active(ClockDuration::from_nanos(
+                u64::try_from(delta.as_nanos()).unwrap_or(u64::MAX),
+            )),
+            Some(_) | None => SceneQualityEnumSample::Idle,
+        };
+        state.adaptive.quality.record(now, sample)?;
+        let profile = state.adaptive.quality.profile();
+        renderer.apply_quality(world, profile)?;
+        state.presentation.set_render_scale(profile.render_scale());
+        Ok(())
+    }
+
+    fn observe_layout(
+        state: &mut DesktopNativeHostState,
+        context: &egui::Context,
+    ) -> Result<(), DesktopNativeHostError> {
+        if state.presentation.take_layout_reset() {
+            state.adaptive.layout.reset();
+            state.camera = SceneCamera::initial(state.camera.orientation());
+            state.presentation.set_layout(state.adaptive.layout);
+        }
+        let now = state.services.port.now()?;
+        let (outer, inner, monitor) = context.input(|input| {
+            let viewport = input.viewport();
+            (viewport.outer_rect, viewport.inner_rect, viewport.monitor_size)
+        });
+        if let (Some(outer), Some(inner)) = (outer, inner) {
+            state.adaptive.layout.set_window(
+                outer.min.x,
+                outer.min.y,
+                inner.width(),
+                inner.height(),
+            )?;
+        }
+        if !state.adaptive.monitor_fitted
+            && let Some(monitor) = monitor
+        {
+            state.adaptive.monitor_fitted = true;
+            match state.adaptive.layout.fit_to_display(DesktopLayoutDisplay {
+                x: 0.0,
+                y: 0.0,
+                width: monitor.x,
+                height: monitor.y,
+            }) {
+                Ok(()) => {}
+                Err(error @ DesktopLayoutError::DisplayTooSmall { .. }) => {
+                    state.presentation.report_notice(error.to_string());
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let remembered = *state.presentation.layout();
+        let layout = &mut state.adaptive.layout;
+        layout.remember_camera(state.camera);
+        layout.set_panel_width(remembered.panel_width());
+        layout.set_tab(remembered.tab());
+        layout.set_navigation_collapsed(remembered.navigation_collapsed());
+        let adaptive = &mut state.adaptive;
+        if adaptive.layout != adaptive.layout_seen {
+            adaptive.layout_seen = adaptive.layout;
+            adaptive.layout_changed_at = Some(now);
+        }
+        if adaptive.layout != adaptive.layout_saved
+            && let Some(changed) = adaptive.layout_changed_at
+        {
+            if now.elapsed_since(changed)?.as_nanos()
+                >= DesktopNativeHostAdaptive::LAYOUT_SAVE_DELAY.as_nanos()
+            {
+                adaptive.layout_saved = adaptive.layout;
+                if let Some(store) = &state.services.layout_store {
+                    let store = Arc::clone(store);
+                    let layout = adaptive.layout;
+                    state.services.runtime.spawn(async move {
+                        if let Err(error) = store.save(&layout).await {
+                            eprintln!("Native layout could not be saved: {error}");
+                        }
+                    });
+                }
+            } else {
+                context.request_repaint_after(DesktopNativeHostAdaptive::LAYOUT_POLL);
+            }
         }
         Ok(())
     }
@@ -1357,6 +1569,10 @@ impl DesktopNativeHost {
         state: &mut DesktopNativeHostState,
         renderer: &mut SceneRenderer,
     ) -> Result<(), DesktopNativeHostError> {
+        let rendering = state.ready
+            && world
+                .get::<bevy::prelude::Camera>(renderer.camera_entity())
+                .is_some_and(|camera| camera.is_active);
         if state.ready {
             renderer.finish_frame(world)?;
         }
@@ -1372,6 +1588,7 @@ impl DesktopNativeHost {
                 animation.apply_piece(renderer, world)?;
             }
             renderer.animate_view(world, Self::display_camera(state))?;
+            Self::adapt_quality(world, state, renderer, rendering)?;
             return Ok(());
         }
         let camera_changed = state.pending_camera.is_some();
@@ -1522,6 +1739,17 @@ impl DesktopNativeHost {
             state.pending_view = Some(viewport);
         }
         state.animation = frame.animation();
+        match frame.recovery_intent() {
+            Some(PresentationBoardRecoveryEnumIntent::Retry) => {
+                state.adaptive.retry_requested = true;
+                context.request_repaint();
+            }
+            Some(PresentationBoardRecoveryEnumIntent::ResumeGames) => {
+                state.adaptive.renderer.resume_games()?;
+            }
+            None => {}
+        }
+        Self::observe_layout(state, context)?;
         if let Some(action) = frame.camera_action() {
             if state.ready {
                 state.camera = state

@@ -656,3 +656,48 @@ fn camera_actions_queued_before_graphics_are_ready_apply_in_order_once_drained()
     assert_eq!(app.presentation.drain_camera_actions(drained)?, drained);
     Ok(())
 }
+
+#[test]
+fn every_modal_in_the_presentation_layer_is_a_labelled_focus_trapping_dialog() {
+    fn sources(directory: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                found.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/presentation"),
+        &mut files,
+    );
+    let mut audited = 0;
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        if !text.contains("Modal::new(") {
+            continue;
+        }
+        audited += 1;
+        assert!(
+            text.contains("Role::Dialog") || text.contains("PresentationAnalysisEditorModal"),
+            "{} opens a modal without exposing a dialog role",
+            file.display()
+        );
+        assert!(
+            text.contains("set_modal")
+                || text.contains("PresentationAnalysisEditorModal")
+                || text.contains("is_above_modal_layer"),
+            "{} opens a modal without containing focus",
+            file.display()
+        );
+    }
+    assert!(audited >= 7, "expected every modal source to be audited");
+}

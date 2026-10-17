@@ -113,7 +113,10 @@ use crate::presentation::app::editor::{
 };
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
+use crate::desktop::layout::DesktopLayout;
+use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
 use crate::storage::editor_repository::StorageEditorRepository;
+use crate::storage::preferences_repository::StoragePreferencesRepository;
 use crate::storage::puzzle_repository::StoragePuzzleRepository;
 
 struct DesktopNativeBootstrapEditorDraftIds;
@@ -777,6 +780,7 @@ impl DesktopNativeBootstrapSupervisor {
             .as_ref()
             .ok_or(DesktopNativeBootstrapError::HostServices)?
             .client();
+        let layout_client = storage_client.clone();
         let puzzles = DesktopNativePuzzleService::new(DesktopNativePuzzleServiceOptions {
             repository: StoragePuzzleRepository::new(storage_client.clone()),
             executor: Arc::clone(&executor),
@@ -923,7 +927,16 @@ impl DesktopNativeBootstrapSupervisor {
             return Err(DesktopNativeBootstrapError::HostServices);
         }
         let (events, receiver) = DesktopNativeHost::event_channel();
+        let layout_store = Arc::new(DesktopNativeLayoutStore::new(
+            StoragePreferencesRepository::new(layout_client),
+        ));
+        let layout = layout_store.load().await.unwrap_or_else(|error| {
+            eprintln!("Saved window layout could not be loaded; using defaults: {error}");
+            DesktopLayout::default()
+        });
         let host = DesktopNativeHostServices {
+            layout,
+            layout_store: Some(layout_store),
             clock: Arc::clone(&clock),
             engine_panels,
             library_workspace: Some(library_workspace),

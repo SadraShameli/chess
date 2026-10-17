@@ -54,7 +54,12 @@ use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::markings::{PresentationBoardMark, PresentationBoardMarkRequest};
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+use crate::presentation::board::recovery::{
+    PresentationBoardRecovery, PresentationBoardRecoveryEnumIntent,
+};
 use crate::presentation::board::toolbar::PresentationBoardToolbar;
+use crate::desktop::layout::DesktopLayout;
+use crate::desktop::renderer_commands::DesktopRendererCommands;
 use crate::presentation::board::view::{
     PresentationBoardAction, PresentationBoardPickingProvider, PresentationBoardView,
     PresentationBoardViewError, PresentationBoardViewFrame, PresentationBoardViewInput,
@@ -226,9 +231,14 @@ pub struct PresentationAppFrame {
     board_actions: Vec<PresentationBoardAction>,
     camera_action: Option<PresentationBoardEnumCameraAction>,
     animation: Option<PresentationBoardAnimationFrame>,
+    recovery_intent: Option<PresentationBoardRecoveryEnumIntent>,
 }
 
 impl PresentationAppFrame {
+    pub const fn recovery_intent(&self) -> Option<PresentationBoardRecoveryEnumIntent> {
+        self.recovery_intent
+    }
+
     pub const fn animation(&self) -> Option<PresentationBoardAnimationFrame> {
         self.animation
     }
@@ -286,6 +296,11 @@ pub struct PresentationApp {
     markings_identity: Option<(PresentationAppEnumWorkspace, Option<GameId>, Option<GameId>)>,
     inspector_open: bool,
     inspector_toggle_frame: Option<u64>,
+    layout: DesktopLayout,
+    layout_reset_requested: bool,
+    renderer_commands: DesktopRendererCommands,
+    recovery_intent: Option<PresentationBoardRecoveryEnumIntent>,
+    render_scale: f32,
     camera_queue: Vec<PresentationBoardEnumCameraAction>,
     navigation_frame: Option<u64>,
 }
@@ -338,6 +353,11 @@ impl PresentationApp {
             markings_identity: None,
             inspector_open: true,
             inspector_toggle_frame: None,
+            layout: DesktopLayout::default(),
+            layout_reset_requested: false,
+            renderer_commands: DesktopRendererCommands::new(),
+            recovery_intent: None,
+            render_scale: 1.0,
             camera_queue: Vec::new(),
             navigation_frame: None,
         }
@@ -1315,6 +1335,10 @@ impl PresentationApp {
     fn show_settings(&mut self, ui: &mut Ui) {
         ui.heading("Settings");
         ui.label("Appearance applies immediately for this session. Saving preferences across launches is not available yet.");
+        if ui.button("Reset Layout").clicked() {
+            self.layout.reset();
+            self.layout_reset_requested = true;
+        }
         for &section in DesktopPreferences::sections() {
             ui.separator();
             ui.heading(section.label());
@@ -1670,7 +1694,7 @@ impl PresentationApp {
         self.board.request_repaint(ui.ctx());
         if inspector_progress > 0.0 {
             egui::Panel::right("chess.inspector")
-            .exact_size(PresentationThemeTokens::PANEL_WIDTH * inspector_progress)
+            .exact_size(self.layout.panel_width() * inspector_progress)
             .show(ui, |ui| {
                 if self.settings_open {
                     self.show_settings(ui);
@@ -1841,6 +1865,11 @@ impl PresentationApp {
         let mut editor_viewport = None;
         let board_frame = egui::CentralPanel::default()
             .show(ui, |ui| {
+                if let Some(intent) =
+                    PresentationBoardRecovery::show(ui, &self.renderer_commands)
+                {
+                    self.recovery_intent = Some(intent);
+                }
                 if let Some(action) =
                     PresentationBoardToolbar::show(ui, scene.is_some(), self.board.markings_mut())
                 {
@@ -1891,6 +1920,7 @@ impl PresentationApp {
                             ui,
                             PresentationBoardViewInput::new(snapshot, scene, picker)
                                 .with_pending_move(pending_move)
+                                .with_render_scale(self.render_scale)
                                 .with_marks_enabled(
                                     !self.quit_confirmation
                                         && !promotion_owns_input
@@ -2126,6 +2156,7 @@ impl PresentationApp {
             board_actions: board_frame.map_or_else(Vec::new, |frame| frame.actions().to_vec()),
             camera_action,
             animation,
+            recovery_intent: self.recovery_intent.take(),
         })
     }
 
@@ -2191,6 +2222,36 @@ impl PresentationApp {
             )
         });
         self.board.markings_mut().set_external(external);
+    }
+
+    pub const fn layout(&self) -> &DesktopLayout {
+        &self.layout
+    }
+
+    pub fn layout_mut(&mut self) -> &mut DesktopLayout {
+        &mut self.layout
+    }
+
+    pub fn set_layout(&mut self, layout: DesktopLayout) {
+        self.layout = layout;
+    }
+
+    pub fn take_layout_reset(&mut self) -> bool {
+        std::mem::take(&mut self.layout_reset_requested)
+    }
+
+    pub fn set_renderer_commands(&mut self, commands: DesktopRendererCommands) {
+        self.renderer_commands = commands;
+    }
+
+    pub fn set_render_scale(&mut self, render_scale: f32) {
+        if render_scale.is_finite() {
+            self.render_scale = render_scale.clamp(0.75, 1.0);
+        }
+    }
+
+    pub fn report_notice(&mut self, message: String) {
+        self.failure = Some(message);
     }
 
     fn toggle_frame_is_new(&mut self, frame: u64) -> bool {

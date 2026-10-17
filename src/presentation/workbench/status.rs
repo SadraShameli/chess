@@ -40,11 +40,13 @@ impl PresentationWorkbenchStatusEnumState {
     }
 
     pub fn show(&self, ui: &mut Ui) -> egui::Response {
-        let response = ui.label(self.announcement());
+        let response = ui.label(self.text());
         let live = self.live();
+        let prefix = self.prefix();
         ui.ctx().accesskit_node_builder(response.id, |node| {
             node.set_role(egui::accesskit::Role::Status);
             node.set_live(live);
+            node.set_description(prefix);
         });
         response
     }

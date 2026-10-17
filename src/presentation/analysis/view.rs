@@ -14,6 +14,7 @@ use crate::presentation::analysis::controller::{
 };
 use crate::presentation::analysis::line::PresentationAnalysisLineScore;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::workbench::status::PresentationWorkbenchStatusEnumState;
 
 #[derive(Debug, Error)]
 pub enum PresentationAnalysisViewError {
@@ -219,16 +220,34 @@ impl PresentationAnalysisView {
                     ));
                 }
                 EngineSearchSessionEnumCompletion::Failed(error) => {
-                    ui.label(label);
+                    PresentationWorkbenchStatusEnumState::Error(label.to_owned()).show(ui);
                     ui.colored_label(ui.visuals().error_fg_color, error.to_string());
                 }
                 EngineSearchSessionEnumCompletion::Stopped
                 | EngineSearchSessionEnumCompletion::Cancelled => {
-                    ui.label(label);
+                    PresentationWorkbenchStatusEnumState::Empty(label.to_owned()).show(ui);
                 }
             }
         } else {
-            ui.label(label);
+            let status = match controller.state() {
+                PresentationAnalysisControllerEnumState::Starting
+                | PresentationAnalysisControllerEnumState::Searching
+                | PresentationAnalysisControllerEnumState::Stopping => {
+                    PresentationWorkbenchStatusEnumState::Loading(label.to_owned())
+                }
+                PresentationAnalysisControllerEnumState::Completed => {
+                    PresentationWorkbenchStatusEnumState::Result(label.to_owned())
+                }
+                PresentationAnalysisControllerEnumState::Failed => {
+                    PresentationWorkbenchStatusEnumState::Error(label.to_owned())
+                }
+                PresentationAnalysisControllerEnumState::Idle
+                | PresentationAnalysisControllerEnumState::Stopped
+                | PresentationAnalysisControllerEnumState::Cancelled => {
+                    PresentationWorkbenchStatusEnumState::Empty(label.to_owned())
+                }
+            };
+            status.show(ui);
         }
         if let Some(failure) = controller.failure() {
             ui.colored_label(ui.visuals().error_fg_color, failure.message());

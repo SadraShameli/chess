@@ -50,6 +50,8 @@ pub struct DesktopLayout {
     window_y: f32,
     window_width: f32,
     window_height: f32,
+    #[serde(default)]
+    window_positioned: bool,
     navigation_collapsed: bool,
     panel_width: f32,
     tab: DesktopLayoutEnumTab,
@@ -66,6 +68,7 @@ impl Default for DesktopLayout {
             window_y: 0.0,
             window_width: Self::DEFAULT_WIDTH,
             window_height: Self::DEFAULT_HEIGHT,
+            window_positioned: false,
             navigation_collapsed: false,
             panel_width: Self::DEFAULT_PANEL_WIDTH,
             tab: DesktopLayoutEnumTab::default(),
@@ -97,6 +100,10 @@ impl DesktopLayout {
         (self.window_x, self.window_y)
     }
 
+    pub const fn is_window_positioned(&self) -> bool {
+        self.window_positioned
+    }
+
     pub fn set_window(
         &mut self,
         x: f32,
@@ -109,6 +116,7 @@ impl DesktopLayout {
         }
         self.window_x = x;
         self.window_y = y;
+        self.window_positioned = true;
         self.window_width = width.max(Self::MIN_WIDTH);
         self.window_height = height.max(Self::MIN_HEIGHT);
         Ok(())

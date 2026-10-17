@@ -232,3 +232,20 @@ fn only_click_and_focus_requests_are_accepted_from_assistive_technology() {
 fn accesskit_node() -> bevy_egui::egui::accesskit::NodeId {
     bevy_egui::egui::Id::new("chess.test.node").accesskit_id()
 }
+
+#[test]
+fn the_layout_merges_into_existing_preferences_without_dropping_sibling_keys()
+-> PresentationBoardLayoutResult {
+    use chess::desktop::native::layout_store::DesktopNativeLayoutStore;
+    let mut layout = DesktopLayout::default();
+    layout.set_tab(DesktopLayoutEnumTab::Report);
+    let fresh = DesktopNativeLayoutStore::merge(None, &layout)?;
+    assert_eq!(DesktopNativeLayoutStore::extract(&fresh)?, Some(layout));
+    let merged = DesktopNativeLayoutStore::merge(Some(r#"{"theme":"dark"}"#), &layout)?;
+    assert!(merged.contains("\"theme\":\"dark\""));
+    assert_eq!(DesktopNativeLayoutStore::extract(&merged)?, Some(layout));
+    assert_eq!(DesktopNativeLayoutStore::extract(r#"{"theme":"dark"}"#)?, None);
+    assert!(DesktopNativeLayoutStore::merge(Some("[]"), &layout).is_err());
+    assert!(DesktopNativeLayoutStore::extract("not json").is_err());
+    Ok(())
+}

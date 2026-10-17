@@ -1,5 +1,6 @@
 use bevy_egui::egui::{self, Ui};
 
+use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
 use crate::puzzle::history::PuzzleHistoryEnumScope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,7 @@ impl PresentationPuzzleHistory {
         let mut cancel = false;
         let modal =
             egui::Modal::new(egui::Id::new("puzzle.history.deletion")).show(ui.ctx(), |ui| {
+                PresentationAnalysisEditorModal::label(ui, "Delete puzzle history");
                 ui.heading("Delete puzzle history?");
                 ui.label(Self::warning(scope));
                 ui.label("A run in progress cannot be deleted.");
