@@ -133,3 +133,21 @@ fn custom_start_and_local_opponents_retain_their_authoritative_domain_values()
     );
     Ok(())
 }
+
+#[test]
+fn preset_labels_are_unchanged_and_the_iterator_matches_the_registry()
+-> Result<(), Box<dyn std::error::Error>> {
+    use strum::IntoEnumIterator;
+    let labels = [
+        "Untimed", "1+0", "2+1", "3+0", "3+2", "5+0", "5+3", "10+0", "10+5", "15+10", "30+0",
+    ];
+    assert_eq!(
+        GameConfigurationEnumPreset::iter().collect::<Vec<_>>(),
+        GameConfigurationEnumPreset::ALL
+    );
+    for (preset, label) in GameConfigurationEnumPreset::ALL.into_iter().zip(labels) {
+        assert_eq!(preset.label(), label);
+        assert_eq!(label.parse::<GameConfigurationEnumPreset>()?, preset);
+    }
+    Ok(())
+}

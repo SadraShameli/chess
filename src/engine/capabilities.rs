@@ -55,13 +55,12 @@ impl EngineCapabilities {
             .strip_prefix("option name ")
             .and_then(|option| option.split_once(" type "))
             .ok_or(EngineCapabilitiesError::OptionMismatch)?;
-        let option = EngineEnumOption::ALL
-            .into_iter()
-            .find(|option| option.name() == name)
-            .ok_or_else(|| EngineCapabilitiesError::UnknownOption {
+        let option = name.parse::<EngineEnumOption>().map_err(|_unknown| {
+            EngineCapabilitiesError::UnknownOption {
                 name: name.to_owned(),
                 descriptor: descriptor.to_owned(),
-            })?;
+            }
+        })?;
         let descriptor = option
             .parse_descriptor(descriptor)
             .ok_or(EngineCapabilitiesError::OptionMismatch)?;

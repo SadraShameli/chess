@@ -9,18 +9,39 @@ use crate::game::engine_provider::GameEngineSearchConfig;
 use crate::game::enums::{GameEnumMode, GameEnumSeat};
 use crate::game::session::{GameSeats, GameSessionError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum GameConfigurationEnumPreset {
+    #[strum(serialize = "Untimed")]
     Untimed,
+    #[strum(serialize = "1+0")]
     OnePlusZero,
+    #[strum(serialize = "2+1")]
     TwoPlusOne,
+    #[strum(serialize = "3+0")]
     ThreePlusZero,
+    #[strum(serialize = "3+2")]
     ThreePlusTwo,
+    #[strum(serialize = "5+0")]
     FivePlusZero,
+    #[strum(serialize = "5+3")]
     FivePlusThree,
+    #[strum(serialize = "10+0")]
     TenPlusZero,
+    #[strum(serialize = "10+5")]
     TenPlusFive,
+    #[strum(serialize = "15+10")]
     FifteenPlusTen,
+    #[strum(serialize = "30+0")]
     ThirtyPlusZero,
 }
 
@@ -39,20 +60,8 @@ impl GameConfigurationEnumPreset {
         Self::ThirtyPlusZero,
     ];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Untimed => "Untimed",
-            Self::OnePlusZero => "1+0",
-            Self::TwoPlusOne => "2+1",
-            Self::ThreePlusZero => "3+0",
-            Self::ThreePlusTwo => "3+2",
-            Self::FivePlusZero => "5+0",
-            Self::FivePlusThree => "5+3",
-            Self::TenPlusZero => "10+0",
-            Self::TenPlusFive => "10+5",
-            Self::FifteenPlusTen => "15+10",
-            Self::ThirtyPlusZero => "30+0",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub fn time_control(self) -> Result<ClockTimeControl, ClockTimeControlError> {

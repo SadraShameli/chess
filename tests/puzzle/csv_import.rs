@@ -1040,3 +1040,27 @@ async fn capacity_phase_revocation_during_csv_scan_is_typed_and_terminal()
     assert_eq!(budget.available(), budget.workers());
     Ok(())
 }
+
+#[test]
+fn csv_header_names_map_to_fields_with_unchanged_spellings() -> Result<(), Box<dyn std::error::Error>> {
+    use chess::puzzle::csv_import::PuzzleCsvImportEnumField;
+    let expected = [
+        ("PuzzleId", PuzzleCsvImportEnumField::PuzzleId),
+        ("FEN", PuzzleCsvImportEnumField::Fen),
+        ("Moves", PuzzleCsvImportEnumField::Moves),
+        ("Rating", PuzzleCsvImportEnumField::Rating),
+        ("RatingDeviation", PuzzleCsvImportEnumField::RatingDeviation),
+        ("Popularity", PuzzleCsvImportEnumField::Popularity),
+        ("NbPlays", PuzzleCsvImportEnumField::NbPlays),
+        ("Themes", PuzzleCsvImportEnumField::Themes),
+        ("GameUrl", PuzzleCsvImportEnumField::GameUrl),
+        ("OpeningTags", PuzzleCsvImportEnumField::OpeningTags),
+        ("DailyDate", PuzzleCsvImportEnumField::DailyDate),
+    ];
+    for (name, field) in expected {
+        assert_eq!(name.parse::<PuzzleCsvImportEnumField>()?, field);
+    }
+    assert!("fen".parse::<PuzzleCsvImportEnumField>().is_err());
+    assert!("Unknown".parse::<PuzzleCsvImportEnumField>().is_err());
+    Ok(())
+}

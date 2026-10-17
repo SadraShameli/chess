@@ -1,12 +1,32 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum EngineEnumOption {
+    #[strum(serialize = "Hash")]
     Hash,
+    #[strum(serialize = "Threads")]
     Threads,
+    #[strum(serialize = "MoveOverhead")]
     MoveOverhead,
+    #[strum(serialize = "Minimal")]
     Minimal,
+    #[strum(serialize = "Clear Hash")]
     ClearHash,
+    #[strum(serialize = "UCI_Chess960")]
     Chess960,
+    #[strum(serialize = "MultiPV")]
     MultiPv,
+    #[strum(serialize = "SyzygyPath")]
     SyzygyPath,
 }
 
@@ -24,17 +44,8 @@ impl EngineEnumOption {
         Self::SyzygyPath,
     ];
 
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Hash => "Hash",
-            Self::Threads => "Threads",
-            Self::MoveOverhead => "MoveOverhead",
-            Self::Minimal => "Minimal",
-            Self::ClearHash => "Clear Hash",
-            Self::Chess960 => "UCI_Chess960",
-            Self::MultiPv => "MultiPV",
-            Self::SyzygyPath => "SyzygyPath",
-        }
+    pub fn name(self) -> &'static str {
+        self.into()
     }
 
     pub const fn typed_descriptor(self) -> EngineOptionEnumDescriptor {

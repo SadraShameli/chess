@@ -48,66 +48,63 @@ pub enum NotationPgnExportError {
     UnsupportedTagValue { name: String },
 }
 
+#[derive(strum::AsRefStr)]
 enum NotationPgnExportEnumTag {
+    #[strum(serialize = "Event")]
     Event,
+    #[strum(serialize = "Site")]
     Site,
+    #[strum(serialize = "Date")]
     Date,
+    #[strum(serialize = "Round")]
     Round,
+    #[strum(serialize = "White")]
     White,
+    #[strum(serialize = "Black")]
     Black,
+    #[strum(serialize = "Result")]
     Result,
+    #[strum(serialize = "WhiteElo")]
     WhiteElo,
+    #[strum(serialize = "BlackElo")]
     BlackElo,
+    #[strum(serialize = "Opening")]
     Opening,
+    #[strum(serialize = "Variation")]
     Variation,
+    #[strum(serialize = "ECO")]
     Eco,
+    #[strum(serialize = "Annotator")]
     Annotator,
+    #[strum(serialize = "TimeControl")]
     TimeControl,
+    #[strum(serialize = "Variant")]
     Variant,
+    #[strum(serialize = "SetUp")]
     SetUp,
+    #[strum(serialize = "FEN")]
     Fen,
 }
 
 impl NotationPgnExportEnumTag {
-    const fn name(&self) -> &'static str {
-        match self {
-            Self::Event => "Event",
-            Self::Site => "Site",
-            Self::Date => "Date",
-            Self::Round => "Round",
-            Self::White => "White",
-            Self::Black => "Black",
-            Self::Result => "Result",
-            Self::WhiteElo => "WhiteElo",
-            Self::BlackElo => "BlackElo",
-            Self::Opening => "Opening",
-            Self::Variation => "Variation",
-            Self::Eco => "ECO",
-            Self::Annotator => "Annotator",
-            Self::TimeControl => "TimeControl",
-            Self::Variant => "Variant",
-            Self::SetUp => "SetUp",
-            Self::Fen => "FEN",
-        }
+    fn name(&self) -> &str {
+        self.as_ref()
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::IntoStaticStr, strum::EnumIter)]
 enum NotationPgnExportEnumDirective {
+    #[strum(serialize = "[%csl")]
     Circle,
+    #[strum(serialize = "[%cal")]
     Arrow,
+    #[strum(serialize = "[%clk")]
     Clock,
 }
 
 impl NotationPgnExportEnumDirective {
-    const ALL: [Self; 3] = [Self::Circle, Self::Arrow, Self::Clock];
-
-    const fn opening(self) -> &'static str {
-        match self {
-            Self::Circle => "[%csl",
-            Self::Arrow => "[%cal",
-            Self::Clock => "[%clk",
-        }
+    fn opening(self) -> &'static str {
+        self.into()
     }
 
     fn occurs_in(self, notes: &str) -> bool {
@@ -592,8 +589,7 @@ impl<'a> NotationPgnExport<'a> {
     ) -> Result<bool, NotationPgnExportError> {
         let annotations = node.annotations();
         let notes = annotations.notes();
-        if NotationPgnExportEnumDirective::ALL
-            .iter()
+        if <NotationPgnExportEnumDirective as strum::IntoEnumIterator>::iter()
             .any(|directive| directive.occurs_in(notes))
         {
             return Err(NotationPgnExportError::UnsupportedComment {

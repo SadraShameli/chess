@@ -17,40 +17,34 @@ use crate::puzzle::metadata::{
 use crate::puzzle::selection::PuzzleSelectionDataset;
 use crate::puzzle::tree::PuzzleDefinitionTreeError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
 pub enum PuzzleCsvImportEnumField {
+    #[strum(serialize = "PuzzleId")]
     PuzzleId,
+    #[strum(serialize = "FEN")]
     Fen,
+    #[strum(serialize = "Moves")]
     Moves,
+    #[strum(serialize = "Rating")]
     Rating,
+    #[strum(serialize = "RatingDeviation")]
     RatingDeviation,
+    #[strum(serialize = "Popularity")]
     Popularity,
+    #[strum(serialize = "NbPlays")]
     NbPlays,
+    #[strum(serialize = "Themes")]
     Themes,
+    #[strum(serialize = "GameUrl")]
     GameUrl,
+    #[strum(serialize = "OpeningTags")]
     OpeningTags,
+    #[strum(serialize = "DailyDate")]
     DailyDate,
 }
 
 impl PuzzleCsvImportEnumField {
     const REQUIRED: [Self; 3] = [Self::PuzzleId, Self::Fen, Self::Moves];
-
-    fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "PuzzleId" => Some(Self::PuzzleId),
-            "FEN" => Some(Self::Fen),
-            "Moves" => Some(Self::Moves),
-            "Rating" => Some(Self::Rating),
-            "RatingDeviation" => Some(Self::RatingDeviation),
-            "Popularity" => Some(Self::Popularity),
-            "NbPlays" => Some(Self::NbPlays),
-            "Themes" => Some(Self::Themes),
-            "GameUrl" => Some(Self::GameUrl),
-            "OpeningTags" => Some(Self::OpeningTags),
-            "DailyDate" => Some(Self::DailyDate),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,7 +646,7 @@ impl<R: BufRead> PuzzleCsvImport<R> {
         let headers: Vec<_> = names
             .into_iter()
             .map(|name| PuzzleCsvImportHeader {
-                field: PuzzleCsvImportEnumField::from_name(&name),
+                field: name.parse().ok(),
                 name,
             })
             .collect();

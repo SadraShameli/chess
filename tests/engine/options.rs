@@ -1008,3 +1008,28 @@ fn search_scores_and_raw_evaluation_are_distinct_white_perspective_results()
     assert!(EngineAnalysis::parse("-50", &black_to_move).is_err());
     Ok(())
 }
+
+#[test]
+fn engine_option_spellings_are_unchanged_and_the_iterator_drives_the_registry()
+-> Result<(), Box<dyn std::error::Error>> {
+    use chess::engine::enums::EngineEnumOption;
+    use strum::IntoEnumIterator;
+    let expected = [
+        (EngineEnumOption::Hash, "Hash"),
+        (EngineEnumOption::Threads, "Threads"),
+        (EngineEnumOption::MoveOverhead, "MoveOverhead"),
+        (EngineEnumOption::Minimal, "Minimal"),
+        (EngineEnumOption::ClearHash, "Clear Hash"),
+        (EngineEnumOption::Chess960, "UCI_Chess960"),
+        (EngineEnumOption::MultiPv, "MultiPV"),
+        (EngineEnumOption::SyzygyPath, "SyzygyPath"),
+    ];
+    assert_eq!(EngineEnumOption::iter().collect::<Vec<_>>(), EngineEnumOption::ALL);
+    for (option, spelling) in expected {
+        assert_eq!(option.name(), spelling);
+        assert_eq!(option.to_string(), spelling);
+        assert_eq!(spelling.parse::<EngineEnumOption>()?, option);
+    }
+    assert!("hash".parse::<EngineEnumOption>().is_err());
+    Ok(())
+}

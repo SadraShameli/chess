@@ -2,55 +2,79 @@ use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum EnginePackagePlatformEnumFeature {
+    #[strum(serialize = "SSE2")]
     Sse2,
+    #[strum(serialize = "AVX2")]
     Avx2,
+    #[strum(serialize = "BMI1")]
     Bmi1,
+    #[strum(serialize = "BMI2")]
     Bmi2,
+    #[strum(serialize = "FMA")]
     Fma,
+    #[strum(serialize = "LZCNT")]
     Lzcnt,
+    #[strum(serialize = "MOVBE")]
     Movbe,
+    #[strum(serialize = "AVX-512F")]
     Avx512f,
+    #[strum(serialize = "AVX-512BW")]
     Avx512bw,
+    #[strum(serialize = "AVX-512CD")]
     Avx512cd,
+    #[strum(serialize = "AVX-512DQ")]
     Avx512dq,
+    #[strum(serialize = "AVX-512VL")]
     Avx512vl,
+    #[strum(serialize = "NEON")]
     Neon,
 }
 
 impl EnginePackagePlatformEnumFeature {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Sse2 => "SSE2",
-            Self::Avx2 => "AVX2",
-            Self::Bmi1 => "BMI1",
-            Self::Bmi2 => "BMI2",
-            Self::Fma => "FMA",
-            Self::Lzcnt => "LZCNT",
-            Self::Movbe => "MOVBE",
-            Self::Avx512f => "AVX-512F",
-            Self::Avx512bw => "AVX-512BW",
-            Self::Avx512cd => "AVX-512CD",
-            Self::Avx512dq => "AVX-512DQ",
-            Self::Avx512vl => "AVX-512VL",
-            Self::Neon => "NEON",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum EnginePackagePlatformEnumOsState {
+    #[strum(serialize = "operating-system AVX register state")]
     YmmEnabled,
+    #[strum(serialize = "operating-system AVX-512 register state")]
     ZmmEnabled,
 }
 
 impl EnginePackagePlatformEnumOsState {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::YmmEnabled => "operating-system AVX register state",
-            Self::ZmmEnabled => "operating-system AVX-512 register state",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

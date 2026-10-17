@@ -179,3 +179,22 @@ fn receipts_for_another_game_or_a_future_revision_are_rejected() -> DesktopRecov
     ));
     Ok(())
 }
+
+#[test]
+fn save_barrier_labels_are_unchanged_and_enumerated() -> DesktopRecoveryResult {
+    use strum::IntoEnumIterator;
+    let expected = [
+        (GameSaveCoordinatorEnumBarrier::CloseGame, "close this game"),
+        (GameSaveCoordinatorEnumBarrier::QuitApplication, "quit the application"),
+        (GameSaveCoordinatorEnumBarrier::MoveToTrash, "move this game to Trash"),
+    ];
+    assert_eq!(
+        GameSaveCoordinatorEnumBarrier::iter().collect::<Vec<_>>(),
+        expected.map(|(barrier, _label)| barrier)
+    );
+    for (barrier, label) in expected {
+        assert_eq!(barrier.label(), label);
+        assert_eq!(label.parse::<GameSaveCoordinatorEnumBarrier>()?, barrier);
+    }
+    Ok(())
+}

@@ -3,20 +3,29 @@ use thiserror::Error;
 use crate::game::enums::{GameId, GameRevision};
 use crate::game::save::{GameSaveEnumAcknowledgment, GameSaveEnumStatus};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum GameSaveCoordinatorEnumBarrier {
+    #[strum(serialize = "close this game")]
     CloseGame,
+    #[strum(serialize = "quit the application")]
     QuitApplication,
+    #[strum(serialize = "move this game to Trash")]
     MoveToTrash,
 }
 
 impl GameSaveCoordinatorEnumBarrier {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::CloseGame => "close this game",
-            Self::QuitApplication => "quit the application",
-            Self::MoveToTrash => "move this game to Trash",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 }
 

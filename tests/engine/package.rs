@@ -385,3 +385,36 @@ fn glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason() ->
     );
     Ok(())
 }
+
+#[test]
+fn profile_and_target_spellings_are_unchanged_and_the_iterator_matches_the_registry()
+-> EnginePackageResult {
+    use strum::IntoEnumIterator;
+    assert_eq!(
+        EnginePackageEnumProfile::iter().collect::<Vec<_>>(),
+        EnginePackageEnumProfile::ALL
+    );
+    let labels = [
+        (EnginePackageEnumProfile::Portable, "Portable baseline"),
+        (EnginePackageEnumProfile::X8664V3, "x86-64-v3"),
+        (EnginePackageEnumProfile::X8664V4, "x86-64-v4"),
+        (EnginePackageEnumProfile::Numa, "Linux NUMA"),
+        (EnginePackageEnumProfile::AppleNeon, "Apple ARM64 NEON"),
+    ];
+    for (profile, label) in labels {
+        assert_eq!(profile.label(), label);
+        assert_eq!(label.parse::<EnginePackageEnumProfile>()?, profile);
+    }
+    for target in EnginePackageEnumTarget::iter() {
+        assert_eq!(target.triple().parse::<EnginePackageEnumTarget>()?, target);
+        assert_eq!(serde_json::to_string(&target)?, format!("\"{}\"", target.triple()));
+    }
+    for feature in EnginePackagePlatformEnumFeature::iter() {
+        assert_eq!(feature.label().parse::<EnginePackagePlatformEnumFeature>()?, feature);
+    }
+    for state in EnginePackagePlatformEnumOsState::iter() {
+        assert_eq!(state.label().parse::<EnginePackagePlatformEnumOsState>()?, state);
+    }
+    assert_eq!(EnginePackagePlatformEnumFeature::Avx512bw.label(), "AVX-512BW");
+    Ok(())
+}

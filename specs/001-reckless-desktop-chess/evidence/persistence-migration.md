@@ -195,3 +195,48 @@ reports malformed framing, so a validation-only phase machine remains for
 size grew (+303/-137). Merged by owner decision. New behavior: rows above 4096
 fields are rejected as `RowTooLarge`. Focused check: `cargo test --test domain
 csv_import` 22 passed.
+
+## T311 strum, domain modules (lane-c), written without a build
+
+Scope: `src/board`, `src/game`, `src/clock`, `src/engine` (not `configuration.rs`),
+`src/notation`, `src/puzzle`, `src/opening`, `src/report`. `src/desktop`,
+`src/storage`, `src/presentation` and `src/update` are other lanes. Already on
+strum before this pass: `BoardEnumVariant` and `GameEnumMode`. Spellings are kept
+identical through explicit `#[strum(serialize = ...)]`. Nothing here has been
+compiled or run yet.
+
+Converted tables:
+
+| Enum | Table replaced | Derives added |
+| --- | --- | --- |
+| `EngineEnumOption` (`src/engine/enums.rs`) | `name()` match; the `ALL` plus `find` option lookup in `EngineCapabilities::discover` | `EnumString`, `IntoStaticStr`, `Display`, `EnumIter` |
+| `GameConfigurationEnumPreset` (`src/game/configuration.rs`) | `label()` match | same |
+| `GameSaveCoordinatorEnumBarrier` (`src/game/save_coordinator.rs`) | `label()` match | same |
+| `EnginePackageEnumTarget` (`src/engine/package/manifest.rs`) | `triple()` match | same |
+| `EnginePackageEnumProfile` (`src/engine/package/manifest.rs`) | `label()` match | same |
+| `EnginePackagePlatformEnumFeature` (`src/engine/package/platform.rs`) | `label()` match | same |
+| `EnginePackagePlatformEnumOsState` (`src/engine/package/platform.rs`) | `label()` match | same |
+| `PuzzleCsvImportEnumField` (`src/puzzle/csv_import.rs`) | `from_name()` match; unknown headers stay `None` through `parse().ok()` | `EnumString` |
+| `NotationPgnExportEnumTag` (`src/notation/pgn_export.rs`) | `name()` match | `AsRefStr` |
+| `NotationPgnExportEnumDirective` (`src/notation/pgn_export.rs`) | `opening()` match and the hand-kept `ALL` | `IntoStaticStr`, `EnumIter` |
+
+Left as they are, with the reason:
+
+- `ALL` constants on `EngineEnumOption`, `GameConfigurationEnumPreset` and
+  `EnginePackageEnumProfile` stay because `src/presentation`, `src/desktop`,
+  `tools/` and tests index them (`ALL.map`, array equality, `.len()`). Each now
+  has an `EnumIter` order test against `ALL`; remove `ALL` once the
+  presentation and desktop lanes move to `iter()`.
+- `NotationGameIdentityEnumResult::pgn_token` and
+  `EngineDiagnosticEnumCommand::command` match on enums with data or format
+  arguments, which strum cannot derive.
+- `GameSession`, `PuzzleDefinition*`, `Opening*` `as_str`/`name`/`code` are
+  string newtypes, not enum tables.
+- UCI info keyword and PGN tag parsing in `src/engine/analysis.rs` and
+  `src/notation/pgn_import.rs` assign into structures, so they are parsers, not
+  enum tables.
+
+Contract coverage added: `tests/engine/options.rs`, `tests/game/configuration.rs`,
+`tests/engine/package.rs`, `tests/desktop/game_recovery_policy.rs` and
+`tests/puzzle/csv_import.rs` check each spelling, its round trip and the
+`EnumIter` order.

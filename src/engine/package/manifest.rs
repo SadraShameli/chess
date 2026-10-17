@@ -22,13 +22,28 @@ pub enum EnginePackageManifestError {
     Digest(#[from] PackageDigestError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 pub enum EnginePackageEnumTarget {
     #[serde(rename = "aarch64-apple-darwin")]
+    #[strum(serialize = "aarch64-apple-darwin")]
     MacosArm,
     #[serde(rename = "x86_64-pc-windows-msvc")]
+    #[strum(serialize = "x86_64-pc-windows-msvc")]
     WindowsX64,
     #[serde(rename = "x86_64-unknown-linux-gnu")]
+    #[strum(serialize = "x86_64-unknown-linux-gnu")]
     LinuxX64,
 }
 
@@ -42,12 +57,8 @@ impl EnginePackageEnumTarget {
         }
     }
 
-    pub const fn triple(self) -> &'static str {
-        match self {
-            Self::MacosArm => "aarch64-apple-darwin",
-            Self::WindowsX64 => "x86_64-pc-windows-msvc",
-            Self::LinuxX64 => "x86_64-unknown-linux-gnu",
-        }
+    pub fn triple(self) -> &'static str {
+        self.into()
     }
 
     pub fn filename(self) -> String {
@@ -99,16 +110,33 @@ impl EnginePackageEnumTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EnginePackageEnumProfile {
+    #[strum(serialize = "Portable baseline")]
     Portable,
     #[serde(rename = "x86_64_v3")]
+    #[strum(serialize = "x86-64-v3")]
     X8664V3,
     #[serde(rename = "x86_64_v4")]
+    #[strum(serialize = "x86-64-v4")]
     X8664V4,
+    #[strum(serialize = "Linux NUMA")]
     Numa,
     #[serde(rename = "apple_arm64_neon")]
+    #[strum(serialize = "Apple ARM64 NEON")]
     AppleNeon,
 }
 
@@ -150,14 +178,8 @@ impl EnginePackageEnumProfile {
         Self::AppleNeon,
     ];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Portable => "Portable baseline",
-            Self::X8664V3 => "x86-64-v3",
-            Self::X8664V4 => "x86-64-v4",
-            Self::Numa => "Linux NUMA",
-            Self::AppleNeon => "Apple ARM64 NEON",
-        }
+    pub fn label(self) -> &'static str {
+        self.into()
     }
 
     pub const fn file_suffix(self) -> Option<&'static str> {
