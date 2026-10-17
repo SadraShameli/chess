@@ -18,6 +18,7 @@ fn input(intents: Vec<PresentationReportIntent>) -> DesktopNativeStudyInput {
         report_intents: intents,
         current_report: None,
         position: BoardPosition::standard(),
+        sample_offset: 0,
         starters: Vec::new(),
         integrity: StorageDatasetIntegrityReport::default(),
     }

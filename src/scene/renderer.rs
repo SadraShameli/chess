@@ -26,6 +26,7 @@ use crate::scene::assets::{SceneAssets, SceneAssetsNode};
 use crate::scene::camera::{SceneCamera, SceneCameraError, SceneCameraFrame};
 use crate::scene::editor::SceneEditorBinding;
 use crate::scene::enums::SceneEnumLifecycle;
+use crate::scene::materials::SceneMaterials;
 use crate::scene::picking::{ScenePicking, ScenePickingViewport};
 use crate::scene::quality::SceneQualityProfile;
 
@@ -101,9 +102,6 @@ pub struct SceneRenderer {
 impl SceneRenderer {
     pub const RENDER_LAYER: usize = 1;
     const SQUARE_THICKNESS: f32 = 0.05;
-    const KEY_ILLUMINANCE: f32 = 10_000.0;
-    const LIGHT_SQUARE: Color = Color::srgb_u8(238, 229, 207);
-    const DARK_SQUARE: Color = Color::srgb_u8(75, 112, 87);
     const BACKGROUND: Color = Color::srgb_u8(17, 21, 26);
 
     pub fn spawn(
@@ -314,7 +312,8 @@ impl SceneRenderer {
         }
         let mut lights = world.query::<(&mut DirectionalLight, &ChildOf)>();
         for (mut light, parent) in lights.iter_mut(world) {
-            if parent.parent() == self.root && light.illuminance >= Self::KEY_ILLUMINANCE {
+            if parent.parent() == self.root && light.illuminance >= SceneMaterials::KEY_ILLUMINANCE
+            {
                 light.shadow_maps_enabled = size.is_some();
             }
         }
@@ -616,13 +615,7 @@ impl SceneRenderer {
             let mut materials = world
                 .get_resource_mut::<Assets<StandardMaterial>>()
                 .ok_or(SceneRendererError::MissingResource("material"))?;
-            [Self::DARK_SQUARE, Self::LIGHT_SQUARE].map(|color| {
-                materials.add(StandardMaterial {
-                    base_color: color,
-                    perceptual_roughness: 0.72,
-                    ..StandardMaterial::default()
-                })
-            })
+            [false, true].map(|light| materials.add(SceneMaterials::square(light)))
         };
         for index in 0..ScenePicking::SQUARES {
             let square = BoardSquare::try_from(index)?;
@@ -644,17 +637,14 @@ impl SceneRenderer {
     }
 
     fn spawn_lights(&self, world: &mut World) {
-        for (illuminance, shadow_maps_enabled, position) in [
-            (10_000.0, true, Vec3::new(-3.0, 8.0, 4.0)),
-            (2_500.0, false, Vec3::new(4.0, 5.0, -3.0)),
-        ] {
+        for light in SceneMaterials::LIGHTS {
             world.spawn((
                 DirectionalLight {
-                    illuminance,
-                    shadow_maps_enabled,
+                    illuminance: light.illuminance,
+                    shadow_maps_enabled: light.shadows,
                     ..DirectionalLight::default()
                 },
-                Transform::from_translation(position).looking_at(Vec3::ZERO, Vec3::Y),
+                Transform::from_translation(light.position).looking_at(Vec3::ZERO, Vec3::Y),
                 ChildOf(self.root),
                 RenderLayers::layer(Self::RENDER_LAYER),
             ));

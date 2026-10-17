@@ -40,7 +40,7 @@ impl StorageMigrationRunner {
                 .migrations()
                 .map_err(StorageDocumentError::Migration)?;
             if !Self::has_migration_table(transaction)? && Self::has_user_tables(transaction)? {
-                return Err(StorageDocumentError::UnsupportedLegacyDatabase);
+                return Err(StorageDocumentError::UnmanagedDatabase);
             }
             let applied = transaction
                 .applied_migrations()

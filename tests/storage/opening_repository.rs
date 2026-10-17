@@ -355,3 +355,50 @@ fn records_reject_invalid_shapes() -> StorageOpeningTestResult {
     ));
     Ok(())
 }
+
+#[tokio::test]
+async fn explorer_samples_page_by_offset_and_report_the_next_offset() -> StorageOpeningTestResult {
+    use chess::board::position::BoardPosition;
+    use chess::desktop::opening_commands::DesktopOpeningCommands;
+    use chess::opening::index::OpeningIndexKey;
+
+    let fixture = StorageOpeningFixture::new().await?;
+    let standard = BoardPosition::standard();
+    let root = OpeningIndexKey::of(&standard)?;
+    let total = DesktopOpeningCommands::SAMPLE_PAGE + 5;
+    let mut games = Vec::new();
+    for game in 1..=u64::try_from(total)? {
+        games.push(StorageOpeningGameIndex::new(
+            StorageOpeningFixture::source("corpus")?,
+            game,
+            40,
+            vec![StorageOpeningOccurrence::new(
+                root.clone(),
+                0,
+                Some("e2e4".to_owned()),
+            )?],
+        )?);
+    }
+    fixture.repository.index(games).await?;
+    let first = DesktopOpeningCommands::explore_indexed(&fixture.repository, &standard, 0).await?;
+    assert_eq!(first.samples.len(), DesktopOpeningCommands::SAMPLE_PAGE);
+    assert_eq!(first.samples.first().map(|sample| sample.game), Some(1));
+    assert_eq!(
+        first.next_sample_offset,
+        Some(DesktopOpeningCommands::SAMPLE_PAGE)
+    );
+    let second = DesktopOpeningCommands::explore_indexed(
+        &fixture.repository,
+        &standard,
+        DesktopOpeningCommands::SAMPLE_PAGE,
+    )
+    .await?;
+    assert_eq!(second.samples.len(), 5);
+    assert_eq!(
+        second.samples.first().map(|sample| sample.game),
+        Some(u64::try_from(DesktopOpeningCommands::SAMPLE_PAGE)? + 1)
+    );
+    assert_eq!(second.next_sample_offset, None);
+    fixture.store.close().await?;
+    Ok(())
+}

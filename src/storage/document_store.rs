@@ -80,8 +80,10 @@ pub enum StorageDocumentError {
     IndexedLibraryRecord { id: Uuid },
     #[error("Library catalog operation failed: {0}")]
     Library(#[source] Box<StorageLibraryError>),
-    #[error("The database predates Diesel migrations and is unsupported; delete it to start fresh")]
-    UnsupportedLegacyDatabase,
+    #[error(
+        "The database has tables not created by this application's migrations; delete it to start fresh"
+    )]
+    UnmanagedDatabase,
     #[error("Applied migration {version} is not part of this build")]
     FutureMigration { version: String },
     #[error("The database queue or document memory budget is full")]

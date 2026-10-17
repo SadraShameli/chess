@@ -244,9 +244,9 @@ impl DesktopGameSnapshot {
         self.notice
     }
 
-    pub(crate) fn refresh_save_status(&mut self, status: GameSaveEnumStatus) {
+    pub fn observe_save(&mut self, status: GameSaveEnumStatus, saved_revision: GameRevision) {
         self.save_required = status == GameSaveEnumStatus::Required;
-        self.unsaved = self.save_required;
+        self.unsaved = self.save_required || self.revision() > saved_revision;
     }
     pub fn capture(
         session: &GameSession,

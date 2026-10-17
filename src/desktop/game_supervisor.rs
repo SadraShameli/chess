@@ -1281,7 +1281,12 @@ where
                 result = Self::factory_ready(&mut self.factory, factory_context), if factory_context.is_some() && self.preparation.is_none() && self.computing.is_none() => {
                     let response = self.factory_request.take().ok_or(DesktopGameSupervisorError::StateUnavailable)?;
                     match result {
-                        Ok(engine) => { self.engine = Some(engine); self.handle(response).await?; }
+                        Ok(engine) => {
+                            self.engine = Some(engine);
+                            let mut response = response;
+                            response.request.received_at = self.clock.now()?;
+                            self.handle(response).await?;
+                        }
                         Err(source) => {
                             let operation = DesktopGameSupervisorError::Factory { source: Box::new(source) };
                             let cleanup = Self::shutdown_factory(
@@ -1723,7 +1728,7 @@ where
                 }
                 let mut event = self.events.borrow().clone();
                 event.storage_revision = self.storage_revision;
-                event.snapshot.refresh_save_status(status);
+                event.snapshot.observe_save(status, receipt.game_revision());
                 let owner = self.session.take()?;
                 self.content_failure = owner.failure();
                 self.session.replace(owner)?;
@@ -1733,7 +1738,7 @@ where
                 self.events.send_replace(event);
                 if let Some((mut snapshot, response)) = context.response {
                     if receipt.game_revision() == snapshot.revision() {
-                        snapshot.refresh_save_status(GameSaveEnumStatus::Current);
+                        snapshot.observe_save(GameSaveEnumStatus::Current, receipt.game_revision());
                     }
                     match response {
                         DesktopGameSupervisorEnumReply::Game(response) => {

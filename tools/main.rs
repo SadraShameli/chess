@@ -22,7 +22,7 @@ mod release_check;
 #[derive(Debug, Error)]
 enum ToolsCommandError {
     #[error(
-        "Usage: chess-tools benchmark-evaluate <measurements.json> | data-verify <sources.json> <cache-directory> | data-select-games <pgn> <output-directory> | data-select-puzzles <csv> <output-directory> <source> <version> | data-build <selection-directory> <output-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa|apple-neon] | engine-check | release-check <tag> | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
+        "Usage: chess-tools benchmark-evaluate <measurements.json> | data-verify <sources.json> <cache-directory> | data-select-games <pgn> <output-directory> | data-select-puzzles <csv> <output-directory> <source> <version> | data-book <master-pgn> <selection-directory> | data-build <selection-directory> <output-directory> | engine-build [--profile portable|x86-64-v3|x86-64-v4|numa|apple-neon] | engine-check | release-check <tag> | package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check | engine-pgo <source> <model> <output> <llvm-profdata> [--counts-only] | engine-spsa-check <source> <model> <output> | engine-queued-check <output> | engine-coverage <package-directory> <new-output-report> [evidence-report...] | assets-generate <directory> [--check] | sounds-generate <directory> [--check] (requires asset-tools)"
     )]
     Usage,
     #[error(transparent)]
@@ -171,6 +171,10 @@ enum ToolsEnumCommand {
         input: PathBuf,
         output: PathBuf,
     },
+    BuildBook {
+        pgn: PathBuf,
+        selection: PathBuf,
+    },
     EvaluateBenchmark {
         measurements: PathBuf,
     },
@@ -207,6 +211,12 @@ impl ToolsEnumCommand {
                     output: output.into(),
                     source: source.to_string_lossy().into_owned(),
                     version: version.to_string_lossy().into_owned(),
+                });
+            }
+            [command, pgn, selection] if command == "data-book" => {
+                return Ok(Self::BuildBook {
+                    pgn: pgn.into(),
+                    selection: selection.into(),
                 });
             }
             [command, input, output] if command == "data-build" => {
@@ -386,6 +396,13 @@ impl ToolsEnumCommand {
                     summary.prefixes.puzzles(),
                     summary.total_bytes,
                     summary.reductions.len()
+                );
+            }
+            Self::BuildBook { pgn, selection } => {
+                let summary = data::ToolsDataBook::run(&pgn, &selection)?;
+                println!(
+                    "Book from {} selected master games ({} standard starts): {} moves, {} bytes",
+                    summary.selected, summary.standard, summary.moves, summary.bytes
                 );
             }
             Self::EvaluateBenchmark { measurements } => {

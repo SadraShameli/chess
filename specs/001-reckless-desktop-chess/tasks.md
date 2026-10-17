@@ -915,3 +915,15 @@ publication or external contact occurs as part of generating this list.
 **Pending parallel tasks**: 33 across disjoint contract-test files; 13 additional
 `[P]` markers belong to completed rows, including three historical rows. No native task is accepted
 merely by this generation.
+
+## Phase 18: Convergence
+
+- [X] T317 [US9] Implement separate paused-admission waits and running-turn capacity waits so no clock is charged before the first Start/Resume admission, in `src/desktop/native/game_resources.rs` (or a new `src/game/admission.rs` owner) with red-first cases in `tests/capacity/concurrent_games.rs`, per T202/FR-021 (missing)
+- [ ] T318 [US7] Implement explorer sample-game paging and opening a sample game from the explorer in `src/desktop/native/study_driver.rs` and `src/presentation/opening/`, removing the two "not available yet" notices, per US7 acceptance scenarios and T174 (partial)
+- [X] T319 [US13] Implement the generated master-only Standard-position Polyglot book builder in `tools/data/book.rs` and have `tools/data/build.rs` consume it instead of copying a fixed `book.bin`, per T271 (missing)
+- [ ] T320 [US13] Produce `resources/datasets/manifest.json` from `tools/data/build.rs` with source hashes, counts and licenses for the starter databases, per T272/FR-026 (missing)
+- [X] T321 [US4] Move the ivory/ebony satin piece materials and scene lighting into a scene-owned `src/scene/materials.rs` used by the renderer, per T117 (partial)
+- [X] T322 Make native shutdown fail loud when the report worker task panics: map the `JoinError` from awaiting it in `src/desktop/native/bootstrap.rs` cleanup to a typed `DesktopNativeBootstrapError` retained as terminal instead of discarding it, per Constitution (fail loud) (contradicts)
+- [X] T323 [US10] Surface rejected engine-option patches in `src/presentation/settings/view.rs` `engine_row` as a visible validation notice instead of silently ignoring the `Err`, per FR-018/US10 (partial)
+- [X] T324 Update the supervisor save acknowledgment so a save of an older revision does not clear the snapshot's unsaved-changes flag in `src/desktop/game_supervisor.rs` (`refresh_save_status`), with a red-first case in `tests/desktop/game_supervisor.rs`, per US9 tab/overview unsaved feedback (partial)
+- [X] T325 Review whether `StorageDocumentError::UnsupportedLegacyDatabase` detection in `src/storage/migration.rs` should stay (refuse and recreate) or be removed under the no-legacy decision, and record the decision in `specs/001-reckless-desktop-chess/decisions.md`, per T316 (unrequested)

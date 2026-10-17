@@ -34,6 +34,7 @@ struct DesktopNativeStudyDriverState {
     last_run: Option<Instant>,
     last_board: Option<String>,
     explorer_position: Option<BoardPosition>,
+    sample_offset: usize,
     opening_queue: Vec<PresentationOpeningIntent>,
     dataset_queue: Vec<PresentationSettingsDatasetsIntent>,
     notices: Vec<String>,
@@ -77,6 +78,7 @@ impl DesktopNativeStudyDriver {
                 last_run: None,
                 last_board: None,
                 explorer_position: None,
+                sample_offset: 0,
                 opening_queue: Vec::new(),
                 dataset_queue: Vec::new(),
                 notices: Vec::new(),
@@ -125,6 +127,7 @@ impl DesktopNativeStudyDriver {
         if state.last_board != fen {
             state.last_board = fen;
             state.explorer_position = None;
+            state.sample_offset = 0;
             moved = true;
         }
         for intent in std::mem::take(&mut state.opening_queue) {
@@ -137,6 +140,7 @@ impl DesktopNativeStudyDriver {
                     match base.play(movement) {
                         Ok(next) => {
                             state.explorer_position = Some(next);
+                            state.sample_offset = 0;
                             moved = true;
                         }
                         Err(error) => state
@@ -144,12 +148,13 @@ impl DesktopNativeStudyDriver {
                             .push(format!("The continuation could not be followed: {error}")),
                     }
                 }
-                PresentationOpeningIntent::SamplePage(_) => state
-                    .notices
-                    .push("Paging through sample games is not available yet".to_owned()),
-                PresentationOpeningIntent::OpenSample(_) => state.notices.push(
-                    "Opening a sample game from the explorer is not available yet".to_owned(),
-                ),
+                PresentationOpeningIntent::SamplePage(offset) => {
+                    state.sample_offset = offset;
+                    moved = true;
+                }
+                PresentationOpeningIntent::OpenSample(game) => state.notices.push(format!(
+                    "Sample game {game} cannot be opened: the explorer index records positions, not the game's moves"
+                )),
             }
         }
         let now = Instant::now();
@@ -164,6 +169,7 @@ impl DesktopNativeStudyDriver {
             report_intents,
             current_report: study.report_mut().view().map(|view| view.id),
             position,
+            sample_offset: state.sample_offset,
             starters: self.starters.clone(),
             integrity: StorageDatasetIntegrityReport::default(),
         };

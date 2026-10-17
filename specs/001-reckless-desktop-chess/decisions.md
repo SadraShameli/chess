@@ -565,6 +565,13 @@ ack deadline before closing with resync required. File/job progress is coalesced
 to 5 Hz. Workbench deadline defaults to 60 seconds, configurable to 10 minutes;
 noninterruptible engine jobs cancel by child termination/reaping.
 
+- **Unmanaged databases (2026-10-17, T325)**: opening a database that has user
+  tables but no Diesel migration table fails with `UnmanagedDatabase` and
+  asks the owner to delete it. This is a refusal guard, not legacy support:
+  no pre-Diesel schema is read, adopted or migrated, and nothing is deleted
+  automatically. It stays so foreign or corrupted files are never migrated
+  in place.
+
 ## Presentation, assets, and input
 
 Use original parametric sculpted meshes authored for this project, checked into

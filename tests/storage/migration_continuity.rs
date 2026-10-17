@@ -137,7 +137,7 @@ async fn a_reopened_database_keeps_its_rows() -> StorageMigrationContinuityResul
 #[tokio::test]
 async fn a_pre_diesel_database_is_refused_unchanged() -> StorageMigrationContinuityResult {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("legacy.sqlite3");
+    let path = directory.path().join("unmanaged.sqlite3");
     let mut connection = StorageSqliteInspector::open(&path)?;
     connection.batch(
         "CREATE TABLE documents (id TEXT PRIMARY KEY, revision TEXT, body TEXT); INSERT INTO documents VALUES ('a', '1', '{}'); PRAGMA user_version = 4;",
@@ -150,7 +150,7 @@ async fn a_pre_diesel_database_is_refused_unchanged() -> StorageMigrationContinu
     let refused = StorageDocumentStore::open(path.clone(), CapacityBudget::discover()?).await;
     assert!(matches!(
         refused,
-        Err(StorageDocumentError::UnsupportedLegacyDatabase)
+        Err(StorageDocumentError::UnmanagedDatabase)
     ));
     let mut after = StorageMigrationContinuityFixture::open(&path)?;
     assert!(!StorageMigrationContinuityFixture::has_migration_table(

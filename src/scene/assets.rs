@@ -1,12 +1,12 @@
 use bevy::asset::{AssetId, Assets, Handle};
 use bevy::gltf::{GltfMaterial, GltfMesh, GltfNode};
-use bevy::pbr::gltf::standard_material_from_gltf_material;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::{Mesh, StandardMaterial, Transform};
 use thiserror::Error;
 
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind};
 use crate::board::piece::BoardPiece;
+use crate::scene::materials::SceneMaterials;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SceneAssetsPieceKey {
@@ -193,9 +193,7 @@ impl SceneAssetsResolver<'_> {
                         .gltf_materials
                         .get(material)
                         .ok_or(SceneAssetsError::MissingDependency)?;
-                    let mapped = self
-                        .materials
-                        .add(standard_material_from_gltf_material(source));
+                    let mapped = self.materials.add(SceneMaterials::piece(source));
                     self.mapped_materials.insert(material.id(), mapped.clone());
                     mapped
                 };

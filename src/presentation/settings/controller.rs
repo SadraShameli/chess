@@ -99,6 +99,10 @@ impl PresentationSettingsController {
         &self.prompt
     }
 
+    pub fn reject(&mut self, error: &crate::desktop::preferences::DesktopPreferencesError) {
+        self.notice = Some(format!("The value was refused: {error}"));
+    }
+
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
     }

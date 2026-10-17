@@ -248,8 +248,11 @@ impl PresentationSettingsView {
                     .changed();
             if toggled || edited {
                 let requested = custom.then_some(value);
-                if let Ok(change) = patch(requested) {
-                    controller.edit(change);
+                match patch(requested) {
+                    Ok(change) => {
+                        controller.edit(change);
+                    }
+                    Err(error) => controller.reject(&error),
                 }
             }
             if !custom {

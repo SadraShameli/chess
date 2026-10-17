@@ -81,13 +81,32 @@ pub struct DesktopOpeningExplorerView {
 pub struct DesktopOpeningCommands;
 
 impl DesktopOpeningCommands {
+    pub const SAMPLE_PAGE: usize = 20;
+
     pub async fn explore_indexed(
         repository: &StorageOpeningRepository,
         position: &BoardPosition,
+        sample_offset: usize,
     ) -> Result<DesktopOpeningExplorerView, DesktopOpeningCommandsError> {
         let key = OpeningIndexKey::of(position)?;
         let stored = repository.continuations(key.clone()).await?;
-        let hits = repository.hits(key, None).await?;
+        let wanted = sample_offset.saturating_add(Self::SAMPLE_PAGE + 1);
+        let mut hits = Vec::new();
+        let mut cursor = None;
+        while hits.len() < wanted {
+            let page = repository.hits(key.clone(), cursor).await?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            cursor = Some(last.cursor());
+            hits.extend(page);
+        }
+        let more = hits.len() > sample_offset.saturating_add(Self::SAMPLE_PAGE);
+        let hits: Vec<_> = hits
+            .into_iter()
+            .skip(sample_offset)
+            .take(Self::SAMPLE_PAGE)
+            .collect();
         let mut continuations = Vec::new();
         let mut moving: u64 = 0;
         let mut ending: u64 = 0;
@@ -149,7 +168,7 @@ impl DesktopOpeningCommands {
             black_rating: None,
             continuations,
             samples,
-            next_sample_offset: None,
+            next_sample_offset: more.then_some(sample_offset.saturating_add(Self::SAMPLE_PAGE)),
         })
     }
 

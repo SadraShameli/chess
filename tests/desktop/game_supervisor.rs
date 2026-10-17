@@ -928,3 +928,80 @@ async fn successful_retry_save_clears_the_authoritative_and_response_snapshot_ga
     drop((supervisor, port, events));
     fixture.close().await
 }
+
+struct DesktopGameSupervisorFixtureGatedFactory {
+    released: Arc<tokio::sync::Notify>,
+}
+
+impl DesktopGameSupervisorEngineFactory for DesktopGameSupervisorFixtureGatedFactory {
+    type Engine = DesktopGameSupervisorFixtureEngine;
+    type Error = std::io::Error;
+
+    async fn create(&mut self, _context: GameEngineContext) -> Result<Self::Engine, Self::Error> {
+        self.released.notified().await;
+        Ok(DesktopGameSupervisorFixtureEngine)
+    }
+
+    async fn shutdown_retained(&mut self, _deadline: Instant) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn engine_game_start_charges_no_clock_time_while_waiting_for_engine_admission()
+-> DesktopGameSupervisorTestResult {
+    let fixture = DesktopGameSupervisorFixtureStorage::new(2).await?;
+    let clock = Arc::new(DesktopGameSupervisorFixtureClock::default());
+    let released = Arc::new(tokio::sync::Notify::new());
+    let session = DesktopGameSupervisorFixture::session_with_seats(GameSeats::new(
+        GameEnumMode::HumanVersusEngine,
+        GameEnumSeat::Human,
+        GameEnumSeat::Reckless,
+    )?)?;
+    let initial = session
+        .clock()
+        .view(ClockInstant::from_nanos(0))?
+        .side(BoardEnumColor::White)
+        .remaining();
+    let (mut supervisor, port) = DesktopGameSupervisor::new(DesktopGameSupervisorOptions {
+        session,
+        storage_revision: GameStorageRevision::INITIAL,
+        storage: fixture.store.client(),
+        executor: Arc::clone(&fixture.executor),
+        clock: Arc::clone(&clock),
+        wall_time: crate::game_storage_wall_time_fixture::GameStorageWallTimeFixture::shared(),
+        proof: Arc::new(DesktopGameSupervisorFixtureProof),
+        factory: DesktopGameSupervisorFixtureGatedFactory {
+            released: Arc::clone(&released),
+        },
+        search_config: GameEngineSearchConfig::initial_default(),
+    })
+    .await?;
+    let worker = tokio::spawn(async move {
+        let result = supervisor.run().await;
+        (supervisor, result)
+    });
+    let pending = port.try_submit(DesktopGameSupervisorFixture::request(
+        GameRevision::ZERO,
+        0,
+        DesktopGameCommandsEnumAction::Start,
+    ))?;
+    tokio::task::yield_now().await;
+    let waited = Duration::from_secs(5);
+    clock
+        .0
+        .store(u64::try_from(waited.as_nanos())?, Ordering::SeqCst);
+    released.notify_one();
+    let started = tokio::time::timeout(Duration::from_secs(3), pending.wait()).await??;
+    assert_eq!(started.phase(), GameEnumPhase::Active);
+    let remaining = started
+        .clock()
+        .view(ClockInstant::from_nanos(u64::try_from(waited.as_nanos())?))?
+        .side(BoardEnumColor::White)
+        .remaining();
+    assert_eq!(remaining, initial);
+    worker.abort();
+    assert!(worker.await.is_err_and(|error| error.is_cancelled()));
+    drop(port);
+    fixture.close().await
+}

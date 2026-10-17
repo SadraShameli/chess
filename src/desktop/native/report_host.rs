@@ -157,6 +157,7 @@ impl DesktopNativeReportHost {
     pub async fn explore(
         &self,
         position: &BoardPosition,
+        sample_offset: usize,
     ) -> Result<DesktopOpeningExplorerView, DesktopNativeReportHostError> {
         let leases = self
             .datasets
@@ -166,7 +167,8 @@ impl DesktopNativeReportHost {
                 "explorer".to_owned(),
             )
             .await?;
-        let outcome = DesktopOpeningCommands::explore_indexed(&self.openings, position).await;
+        let outcome =
+            DesktopOpeningCommands::explore_indexed(&self.openings, position, sample_offset).await;
         self.datasets.release(leases).await?;
         Ok(outcome?)
     }
@@ -341,7 +343,7 @@ impl DesktopNativeReportHost {
                     .push(format!("The reports could not be listed: {error}")),
             }
         }
-        match self.explore(&input.position).await {
+        match self.explore(&input.position, input.sample_offset).await {
             Ok(view) => output.explorer = Some(view),
             Err(error) => output
                 .failures
@@ -403,6 +405,7 @@ impl DesktopNativeReportHost {
             report_intents: study.take_report_intents(),
             current_report: study.report_mut().view().map(|view| view.id),
             position: position.clone(),
+            sample_offset: 0,
             starters: starters.to_vec(),
             integrity: integrity.clone(),
         };
@@ -470,6 +473,7 @@ pub struct DesktopNativeStudyInput {
     pub report_intents: Vec<PresentationReportIntent>,
     pub current_report: Option<ReportJobId>,
     pub position: BoardPosition,
+    pub sample_offset: usize,
     pub starters: Vec<DesktopDatasetStarter>,
     pub integrity: StorageDatasetIntegrityReport,
 }

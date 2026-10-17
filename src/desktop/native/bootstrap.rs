@@ -171,6 +171,8 @@ use crate::desktop::native::activation::windows::{
 
 #[derive(Debug, Error)]
 pub enum DesktopNativeBootstrapError {
+    #[error("The report worker stopped abnormally: {0}")]
+    ReportWorker(tokio::task::JoinError),
     #[error("Unknown application argument: {0:?}. Use --help for supported arguments")]
     Argument(OsString),
     #[error("The --profile-directory argument requires exactly one nonempty path")]
@@ -463,10 +465,13 @@ impl DesktopNativeBootstrapLifecycle {
             backup.shutdown().await;
         }
         if let Some(worker) = services.report_worker.as_mut() {
-            if timeout_at(deadline, worker).await.is_err() {
-                return Err(DesktopNativeBootstrapError::CleanupDeadline);
-            }
+            let joined = timeout_at(deadline, worker)
+                .await
+                .map_err(|_elapsed| DesktopNativeBootstrapError::CleanupDeadline)?;
             services.report_worker = None;
+            if let Err(error) = joined {
+                services.retain_terminal(DesktopNativeBootstrapError::ReportWorker(error));
+            }
         }
         let DesktopNativeBootstrapServices {
             engine,

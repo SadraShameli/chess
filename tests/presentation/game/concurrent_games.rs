@@ -171,3 +171,21 @@ fn closing_the_application_with_open_games_needs_an_explicit_confirmation()
     assert!(!app.take_confirmed_quit_request());
     Ok(())
 }
+
+#[test]
+fn acknowledging_an_older_save_keeps_newer_moves_marked_unsaved()
+-> PresentationConcurrentGamesResult {
+    let mut session = GameTransitionFixture::session(ClockTimeControl::initial_default(), None)?;
+    let saved = session.revision();
+    GameTransitionFixture::play(&mut session, 2, "e2e4", 1_000)?;
+    let now = ClockInstant::from_millis(2_000)?;
+    let mut snapshot = DesktopGameSnapshot::capture(&session, now)?;
+    snapshot.observe_save(chess::game::save::GameSaveEnumStatus::Current, saved);
+    assert!(snapshot.has_unsaved_changes());
+    snapshot.observe_save(
+        chess::game::save::GameSaveEnumStatus::Current,
+        snapshot.revision(),
+    );
+    assert!(!snapshot.has_unsaved_changes());
+    Ok(())
+}
