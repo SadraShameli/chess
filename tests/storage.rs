@@ -34,6 +34,8 @@ mod storage_dataset_selection;
 mod storage_dataset_sources;
 #[path = "storage/datasets.rs"]
 mod storage_datasets;
+#[path = "storage/backup.rs"]
+mod storage_backup;
 #[path = "storage/editor_repository.rs"]
 mod storage_editor_repository;
 #[path = "storage/game_document.rs"]
@@ -57,6 +59,10 @@ mod storage_opening_repository;
 #[path = "storage/puzzle_repository.rs"]
 mod storage_puzzle_repository;
 
+#[path = "storage/restore.rs"]
+mod storage_restore;
+#[path = "storage/restore_ownership.rs"]
+mod storage_restore_ownership;
 #[path = "storage/report_repository.rs"]
 mod storage_report_repository;
 

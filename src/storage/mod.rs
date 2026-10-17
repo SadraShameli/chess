@@ -1,4 +1,5 @@
 pub mod atomic_file;
+pub mod backup;
 pub mod connection;
 pub mod dataset_import;
 pub mod dataset_integrity;

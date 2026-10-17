@@ -28,10 +28,14 @@ mod presentation_app_editor;
 mod presentation_engine_panels;
 #[path = "presentation/game/controller.rs"]
 mod presentation_game_controller;
+#[path = "presentation/game/concurrent_games.rs"]
+mod presentation_game_concurrent_games;
 #[path = "presentation/game/new_game.rs"]
 mod presentation_game_new_game;
 #[path = "presentation/game/play.rs"]
 mod presentation_game_play;
+#[path = "presentation/backup.rs"]
+mod presentation_backup;
 #[path = "presentation/workbench.rs"]
 mod presentation_workbench;
 

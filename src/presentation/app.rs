@@ -71,6 +71,8 @@ use crate::presentation::game::controller::{
     PresentationGameController, PresentationGameControllerError, PresentationGameControllerIntent,
 };
 use crate::presentation::game::new_game::PresentationGameNewGame;
+use crate::presentation::game::overview::PresentationGameOverview;
+use crate::presentation::game::tabs::PresentationGameTabs;
 use crate::presentation::game::play::{
     PresentationGamePlay, PresentationGamePlayClock, PresentationGamePlayEnumOperation,
     PresentationGamePlayError, PresentationGamePlayIntent,
@@ -705,7 +707,9 @@ impl PresentationApp {
                 || (snapshot.revision() == game.snapshot.revision()
                     && (snapshot.captured_at() < game.snapshot.captured_at()
                         || snapshot.captured_at() == game.snapshot.captured_at()
-                            && !has_new_notice))
+                            && !has_new_notice
+                            && snapshot.admission() == game.snapshot.admission()
+                            && snapshot.allocation() == game.snapshot.allocation()))
             {
                 return false;
             }
@@ -1454,6 +1458,7 @@ impl PresentationApp {
         let mut inspector_toggle = false;
         let mut workspace = None;
         let mut navigation = None;
+        let mut overview_rows = Vec::new();
         egui::Panel::top("chess.header").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(
@@ -1554,23 +1559,22 @@ impl PresentationApp {
                 {
                     workspace = Some(PresentationAppEnumWorkspace::Editor);
                 }
-                let mut selected = self.selected_game;
-                for (index, game) in self.games.iter().enumerate() {
-                    let label = format!("Game {}", index.saturating_add(1));
-                    if ui
-                        .selectable_label(selected == Some(game.snapshot.id()), label)
-                        .clicked()
-                    {
-                        selected = Some(game.snapshot.id());
-                        navigation = Some(PresentationAppLibraryEnumNavigation::Game(
-                            game.snapshot.id(),
-                        ));
+                match PresentationGameOverview::rows(
+                    self.games.iter().map(|game| &game.snapshot),
+                    now,
+                ) {
+                    Ok(rows) => {
+                        if let Some(chosen) =
+                            PresentationGameTabs::show(ui, &rows, self.selected_game)
+                        {
+                            navigation = Some(PresentationAppLibraryEnumNavigation::Game(chosen));
+                        }
+                        overview_rows = rows;
                     }
-                }
-                if selected != self.selected_game {
-                    navigation = selected.map(PresentationAppLibraryEnumNavigation::Game);
+                    Err(error) => self.failure = Some(error.to_string()),
                 }
             });
+            PresentationGameTabs::show_overview(ui, &overview_rows);
         });
         if !ui.is_sizing_pass() && self.navigation_frame != Some(frame) {
             if let Some(target) = navigation {

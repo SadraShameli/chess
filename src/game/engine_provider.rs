@@ -284,10 +284,34 @@ pub enum GameEngineEnumEvent {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameEngineAllocationView {
+    workers: u32,
+    hash_mib: u32,
+}
+
+impl GameEngineAllocationView {
+    pub const fn new(workers: u32, hash_mib: u32) -> Self {
+        Self { workers, hash_mib }
+    }
+
+    pub const fn workers(self) -> u32 {
+        self.workers
+    }
+
+    pub const fn hash_mib(self) -> u32 {
+        self.hash_mib
+    }
+}
+
 pub trait GameEngineProvider: Send {
     type Error: std::error::Error + Send + Sync;
 
     fn is_idle(&self) -> bool;
+
+    fn allocation_view(&self) -> Option<GameEngineAllocationView> {
+        None
+    }
     fn start(
         &mut self,
         request: GameEngineRequest,

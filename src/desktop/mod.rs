@@ -1,6 +1,7 @@
 pub mod annotation_commands;
 pub mod annotation_owner;
 pub mod application;
+pub mod backup_commands;
 pub mod coordinator;
 pub mod dataset_commands;
 pub mod dto;

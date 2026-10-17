@@ -35,7 +35,8 @@ use crate::desktop::game_editor::{
     DesktopGameEditorContext, DesktopGameEditorError, DesktopGameEditorPublicationError,
 };
 use crate::desktop::game_snapshot::{
-    DesktopGameSnapshot, DesktopGameSnapshotEnumNotice, DesktopGameSnapshotError,
+    DesktopGameSnapshot, DesktopGameSnapshotAllocation, DesktopGameSnapshotEnumAdmission,
+    DesktopGameSnapshotEnumNotice, DesktopGameSnapshotError,
 };
 use crate::desktop::game_supervisor::content::DesktopGameSupervisorContent;
 pub use crate::desktop::game_supervisor::editor::DesktopGameSupervisorEditorReceipt;
@@ -1256,6 +1257,10 @@ where
             self.begin_save(false);
             let engine_operation = self.engine_operation();
             let has_engine_operation = engine_operation.is_some();
+            self.refresh_resources_view(matches!(
+                &engine_operation,
+                Some(DesktopGameSupervisorEnumEngineOperation::Start(_))
+            ));
             let context = self.context();
             let factory_context = self.factory_request.as_ref().map(|_| context);
             let deadline = self.deadline()?;
@@ -1827,6 +1832,28 @@ where
             ))),
             None => Some(DesktopGameSupervisorEnumEngineOperation::Resources),
         }
+    }
+
+    fn refresh_resources_view(&self, start_pending: bool) {
+        let admission = if start_pending {
+            DesktopGameSnapshotEnumAdmission::WaitingForCapacity
+        } else {
+            DesktopGameSnapshotEnumAdmission::Admitted
+        };
+        let allocation = self
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.allocation_view())
+            .map(|view| DesktopGameSnapshotAllocation::new(view.workers(), view.hash_mib()));
+        self.events.send_if_modified(|event| {
+            if event.snapshot.admission() == admission
+                && event.snapshot.allocation() == allocation
+            {
+                return false;
+            }
+            event.snapshot.set_resources(admission, allocation);
+            true
+        });
     }
 
     fn publish_notice(&self, failure: Arc<DesktopGameSupervisorError>) {

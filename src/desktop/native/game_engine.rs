@@ -19,7 +19,7 @@ use crate::engine::process_provider::{EngineProcess, EngineProcessProvider};
 use crate::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
 use crate::engine::session::{EngineSession, EngineSessionError, EngineSessionStartup};
 use crate::game::engine_provider::{
-    GameEngineContext, GameEngineEnumEvent, GameEngineProvider, GameEngineQuiescenceReceipt,
+    GameEngineAllocationView, GameEngineContext, GameEngineEnumEvent, GameEngineProvider, GameEngineQuiescenceReceipt,
     GameEngineRequest, GameEngineSearchIdentity, GameEngineStopReceipt,
 };
 use crate::game::enums::GameId;
@@ -666,6 +666,18 @@ impl<
 > GameEngineProvider for DesktopNativeGameEngine<P, C, R>
 {
     type Error = DesktopNativeGameEngineError<R::Error>;
+
+    fn allocation_view(&self) -> Option<GameEngineAllocationView> {
+        self.allocation
+            .as_ref()
+            .or(self.state.allocation.as_ref())
+            .and_then(|allocation| {
+                Some(GameEngineAllocationView::new(
+                    u32::try_from(allocation.workers()).ok()?,
+                    allocation.config().hash_mib(),
+                ))
+            })
+    }
 
     fn is_idle(&self) -> bool {
         self.registration.is_some()

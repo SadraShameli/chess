@@ -10,7 +10,8 @@ use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
 use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::configuration::GameConfiguration;
-use crate::game::enums::{GameId, GameRevision};
+use crate::game::enums::{GameEnumPhase, GameId, GameRevision};
+use crate::game::pause::GamePauseEnumCause;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DesktopGameBridgeEnumOperation {
@@ -26,6 +27,22 @@ pub enum DesktopGameBridgeEnumOperation {
 }
 
 impl DesktopGameBridgeEnumOperation {
+    pub fn pause_all<'a>(
+        snapshots: impl IntoIterator<Item = &'a DesktopGameSnapshot>,
+    ) -> Vec<Self> {
+        snapshots
+            .into_iter()
+            .filter(|snapshot| snapshot.phase() == GameEnumPhase::Active)
+            .map(|snapshot| Self::Session {
+                game: snapshot.id(),
+                revision: snapshot.revision(),
+                action: DesktopGameCommandsEnumAction::Pause {
+                    cause: GamePauseEnumCause::Manual,
+                },
+            })
+            .collect()
+    }
+
     pub fn owner(&self) -> DesktopMessagesEntityId {
         match self {
             Self::Create { owner, .. } => *owner,

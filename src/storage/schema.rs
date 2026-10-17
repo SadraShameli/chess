@@ -1,6 +1,15 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    backup_state (singleton) {
+        singleton -> Nullable<Integer>,
+        first_user_data_ms -> Nullable<Text>,
+        last_automatic_ms -> Nullable<Text>,
+        automatic_warning -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
     clock_snapshots (game_id, node_id) {
         game_id -> Text,
         node_id -> Text,
@@ -264,6 +273,7 @@ diesel::joinable!(puzzle_runs -> puzzle_collections (collection_id));
 diesel::joinable!(report_results -> report_jobs (job_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    backup_state,
     clock_snapshots,
     dataset_leases,
     datasets,

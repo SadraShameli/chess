@@ -148,6 +148,33 @@ impl DesktopGameSnapshotMove {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DesktopGameSnapshotEnumAdmission {
+    #[default]
+    Admitted,
+    WaitingForCapacity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DesktopGameSnapshotAllocation {
+    workers: u32,
+    hash_mib: u32,
+}
+
+impl DesktopGameSnapshotAllocation {
+    pub const fn new(workers: u32, hash_mib: u32) -> Self {
+        Self { workers, hash_mib }
+    }
+
+    pub const fn workers(self) -> u32 {
+        self.workers
+    }
+
+    pub const fn hash_mib(self) -> u32 {
+        self.hash_mib
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DesktopGameSnapshot {
     id: GameId,
@@ -174,9 +201,28 @@ pub struct DesktopGameSnapshot {
     save_required: bool,
     notice: Option<DesktopGameSnapshotEnumNotice>,
     analysis: DesktopGameSnapshotEnumAnalysis,
+    admission: DesktopGameSnapshotEnumAdmission,
+    allocation: Option<DesktopGameSnapshotAllocation>,
 }
 
 impl DesktopGameSnapshot {
+    pub const fn admission(&self) -> DesktopGameSnapshotEnumAdmission {
+        self.admission
+    }
+
+    pub const fn allocation(&self) -> Option<DesktopGameSnapshotAllocation> {
+        self.allocation
+    }
+
+    pub(crate) fn set_resources(
+        &mut self,
+        admission: DesktopGameSnapshotEnumAdmission,
+        allocation: Option<DesktopGameSnapshotAllocation>,
+    ) {
+        self.admission = admission;
+        self.allocation = allocation;
+    }
+
     pub(crate) fn retain_notice(&mut self, notice: Option<DesktopGameSnapshotEnumNotice>) {
         self.notice = self.notice.or(notice);
     }
@@ -248,6 +294,8 @@ impl DesktopGameSnapshot {
             save_required: session.save_status() == GameSaveEnumStatus::Required,
             notice: None,
             analysis: DesktopGameSnapshotEnumAnalysis::capture(session)?,
+            admission: DesktopGameSnapshotEnumAdmission::Admitted,
+            allocation: None,
         })
     }
 
