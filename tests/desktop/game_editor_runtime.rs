@@ -372,7 +372,9 @@ impl DesktopGameEditorRuntimeFixture {
         let path = self.directory.path().join("editor.sqlite");
         Ok(self
             .executor
-            .submit_waiting(move |_cancellation| operation(&mut StorageSqliteInspector::open(path)?))
+            .submit_waiting(move |_cancellation| {
+                operation(&mut StorageSqliteInspector::open(path)?)
+            })
             .await?
             .join()
             .await??)
