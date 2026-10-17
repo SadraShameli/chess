@@ -26,6 +26,7 @@ pub mod puzzle_service;
 pub mod puzzle_window;
 pub mod recovery;
 pub mod report_host;
+pub mod report_worker;
 pub mod resources;
 pub mod startup;
 pub mod task_pools;

@@ -75,12 +75,14 @@ pub struct DesktopNativeStudyPending {
     pub opening: Vec<PresentationOpeningIntent>,
     pub datasets: Vec<PresentationSettingsDatasetsIntent>,
     pub reanalysis: Vec<ReportJobId>,
+    pub failures: Vec<String>,
 }
 
 pub struct DesktopNativeReportHost {
     reports: Mutex<DesktopReportCommands>,
     openings: StorageOpeningRepository,
     datasets: StorageDatasetRepository,
+    failures: std::sync::Mutex<Vec<String>>,
 }
 
 impl DesktopNativeReportHost {
@@ -100,6 +102,7 @@ impl DesktopNativeReportHost {
             reports: Mutex::new(DesktopReportCommands::new(ReportService::new(scheduler))),
             openings: StorageOpeningRepository::new(client.clone()),
             datasets: StorageDatasetRepository::new(client),
+            failures: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -215,6 +218,19 @@ impl DesktopNativeReportHost {
         Ok(true)
     }
 
+    pub fn record_failure(&self, message: String) {
+        if let Ok(mut failures) = self.failures.lock() {
+            failures.push(message);
+        }
+    }
+
+    pub fn take_failures(&self) -> Vec<String> {
+        self.failures
+            .lock()
+            .map(|mut failures| std::mem::take(&mut *failures))
+            .unwrap_or_default()
+    }
+
     pub async fn drain<P: EngineProcess>(
         &self,
         session: &mut EngineSearchSession<P>,
@@ -272,6 +288,7 @@ impl DesktopNativeReportHost {
             opening: study.take_opening_intents(),
             datasets: study.take_dataset_intents(),
             reanalysis,
+            failures: self.take_failures(),
         })
     }
 }

@@ -24,7 +24,7 @@ use crate::capacity::phase::{
     CapacityPhase, CapacityPhaseEnumInterruption, CapacityPhaseEnumState, CapacityPhaseError,
     CapacityPhaseGeneration,
 };
-use crate::clock::duration::ClockDurationError;
+use crate::clock::duration::{ClockDuration, ClockDurationError};
 use crate::clock::time_provider::{ClockTimeProvider, ClockTimeProviderMonotonic};
 use crate::desktop::application::{
     DesktopApplication, DesktopApplicationError, DesktopApplicationPort,
@@ -74,6 +74,9 @@ use crate::desktop::native::library_service::{
 };
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
 use crate::desktop::native::report_host::DesktopNativeReportHost;
+use crate::desktop::native::report_worker::DesktopNativeReportWorker;
+use crate::engine::resource_config::EngineResourceConfig;
+use crate::engine::search::session::EngineSearchSession;
 use crate::desktop::native::puzzle_service::{
     DesktopNativePuzzleService, DesktopNativePuzzleServiceOptions,
 };
@@ -324,6 +327,7 @@ struct DesktopNativeBootstrapServices {
     puzzles: Option<DesktopNativeBootstrapPuzzleService>,
     puzzle_cleanup: Option<DesktopNativeBootstrapCleanup<DesktopNativeBootstrapPuzzleService>>,
     reports: Option<Arc<DesktopNativeReportHost>>,
+    report_worker: Option<JoinHandle<()>>,
     library: Option<DesktopNativeLibraryService>,
     library_cleanup: Option<DesktopNativeBootstrapCleanup<DesktopNativeLibraryService>>,
     analysis: Option<
@@ -340,6 +344,7 @@ impl DesktopNativeBootstrapServices {
                 .as_ref()
                 .is_none_or(|backup| backup.is_scheduler_stopped())
             && self.reports.as_ref().is_none_or(|host| Arc::strong_count(host) == 1)
+            && self.report_worker.as_ref().is_none_or(JoinHandle::is_finished)
             && self.library_cleanup.is_none()
             && self
                 .library
@@ -951,6 +956,7 @@ impl DesktopNativeBootstrapSupervisor {
         };
         let mut engine_port = None;
         let mut engine_panels = None;
+        let report_package = package.clone();
         if let Some(package) = package {
             let analysis = DesktopNativeEngineRuntime::new(DesktopNativeEngineRuntimeOptions {
                 provider: EngineNativeProcessProvider,
@@ -1037,6 +1043,8 @@ impl DesktopNativeBootstrapSupervisor {
         if !Self::prepare(&capacity, generation).await? {
             return Err(DesktopNativeBootstrapError::HostServices);
         }
+        let report_worker = self.start_report_worker(report_package, &game_port, &capacity).await;
+        self.lifecycle.services.lock().await.report_worker = report_worker;
         let (events, receiver) = DesktopNativeHost::event_channel();
         let layout_store = Arc::new(DesktopNativeLayoutStore::new(
             StoragePreferencesRepository::new(layout_client),
@@ -1092,6 +1100,50 @@ impl DesktopNativeBootstrapSupervisor {
             coordinator.map_err(DesktopNativeBootstrapError::Coordinator),
             observations,
         )
+    }
+
+    async fn start_report_worker(
+        &self,
+        package: Option<EnginePackageSelected>,
+        games: &DesktopNativeGameRuntimePort,
+        capacity: &Arc<Mutex<CapacityPhase>>,
+    ) -> Option<JoinHandle<()>> {
+        let host = self.lifecycle.services.lock().await.reports.clone()?;
+        let package = package?;
+        match Self::report_session(&self.budget, package).await {
+            Ok(session) => Some(tokio::spawn(DesktopNativeReportWorker::run(
+                host,
+                session,
+                games.snapshots(),
+                Arc::clone(capacity),
+                self.host_done.clone(),
+            ))),
+            Err(message) => {
+                host.record_failure(message);
+                None
+            }
+        }
+    }
+
+    async fn report_session(
+        budget: &CapacityBudget,
+        package: EnginePackageSelected,
+    ) -> Result<EngineSearchSession<EngineNativeProcess>, String> {
+        let initialization = budget
+            .lease(1)
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut engine = EngineSession::start(&EngineNativeProcessProvider, package)
+            .await
+            .map_err(|error| error.to_string())?;
+        drop(initialization);
+        let resources = EngineResourceConfig::new(1, 64, ClockDuration::ZERO)
+            .map_err(|error| error.to_string())?;
+        engine
+            .configure_resources(resources)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(EngineSearchSession::new(engine))
     }
 
     async fn engine(

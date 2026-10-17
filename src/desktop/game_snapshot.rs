@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use thiserror::Error;
 
 use crate::board::enums::BoardEnumColor;
@@ -15,7 +17,7 @@ use crate::game::session::{
     GameMetadata, GameSeats, GameSession, GameSessionEnumInterruption, GameSessionError,
 };
 use crate::game::takeback::{GameTakebackEnumConsent, GameTakebackError, GameTakebackPending};
-use crate::game::tree::GameTreeError;
+use crate::game::tree::{GameTree, GameTreeError};
 
 #[derive(Debug, Error)]
 pub enum DesktopGameSnapshotError {
@@ -203,6 +205,7 @@ pub struct DesktopGameSnapshot {
     analysis: DesktopGameSnapshotEnumAnalysis,
     admission: DesktopGameSnapshotEnumAdmission,
     allocation: Option<DesktopGameSnapshotAllocation>,
+    completed_tree: Option<Arc<GameTree>>,
 }
 
 impl DesktopGameSnapshot {
@@ -305,7 +308,13 @@ impl DesktopGameSnapshot {
             analysis: DesktopGameSnapshotEnumAnalysis::capture(session)?,
             admission: DesktopGameSnapshotEnumAdmission::Admitted,
             allocation: None,
+            completed_tree: (session.phase() == GameEnumPhase::Completed)
+                .then(|| Arc::new(tree.clone())),
         })
+    }
+
+    pub fn completed_tree(&self) -> Option<&Arc<GameTree>> {
+        self.completed_tree.as_ref()
     }
 
     pub const fn id(&self) -> GameId {

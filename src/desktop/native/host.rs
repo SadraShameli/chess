@@ -59,6 +59,7 @@ use crate::capacity::phase::{
 };
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProviderMonotonic;
+use crate::presentation::timing::{PresentationTimingError, PresentationTimingSampler};
 use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryPort};
 use crate::desktop::layout::{DesktopLayout, DesktopLayoutDisplay, DesktopLayoutError};
 use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
@@ -219,6 +220,8 @@ pub enum DesktopNativeHostError {
     #[error(transparent)]
     Clock(#[from] ClockDurationError),
     #[error(transparent)]
+    Timing(#[from] PresentationTimingError),
+    #[error(transparent)]
     Quality(#[from] SceneQualityError),
     #[error(transparent)]
     Renderer(#[from] DesktopRendererCommandsError),
@@ -294,6 +297,8 @@ struct DesktopNativeHostState {
     dialog_admission_closed: bool,
     exit_authorized: bool,
     readiness: Option<DesktopNativeHostReadiness>,
+    timing: PresentationTimingSampler,
+    timing_exported: bool,
 }
 
 struct DesktopNativeHostAdaptive {
@@ -745,6 +750,8 @@ impl DesktopNativeHost {
             dialog_admission_closed: false,
             exit_authorized: false,
             readiness: Some(readiness),
+            timing: PresentationTimingSampler::new(),
+            timing_exported: false,
         });
         let render_app = app
             .get_sub_app_mut(RenderApp)
@@ -1538,6 +1545,8 @@ impl DesktopNativeHost {
         Ok(())
     }
 
+    const TIMING_EXPORT_VARIABLE: &'static str = "CHESS_TIMING_EXPORT";
+
     fn guard_exit(world: &mut World) {
         let Some(mut state) = world.remove_resource::<DesktopNativeHostState>() else {
             return;
@@ -1548,6 +1557,15 @@ impl DesktopNativeHost {
         {
             messages.clear();
             state.presentation.request_quit();
+        }
+        if state.exit_authorized
+            && !state.timing_exported
+            && let Some(path) = std::env::var_os(Self::TIMING_EXPORT_VARIABLE)
+        {
+            state.timing_exported = true;
+            if let Err(error) = std::fs::write(&path, state.timing.to_json()) {
+                eprintln!("Presentation timing could not be exported: {error}");
+            }
         }
         world.insert_resource(state);
     }
@@ -1767,12 +1785,21 @@ impl DesktopNativeHost {
         if state.ready && state.presentation.has_queued_camera_actions() {
             state.camera = state.presentation.drain_camera_actions(state.camera)?;
         }
+        let frame_started = state.services.port.now()?;
+        let has_input = context.input(|input| !input.events.is_empty());
+        if has_input {
+            state.timing.record_input(frame_started);
+        }
         let renderer = world.remove_resource::<SceneRenderer>();
         let outcome = Self::show_presentation(world, state, &context, renderer.as_ref());
         if let Some(renderer) = renderer {
             world.insert_resource(renderer);
         }
         outcome?;
+        let presented = state.services.port.now()?;
+        state
+            .timing
+            .record_presented(presented, has_input || state.animation.is_some())?;
         if let Some(window) = &mut state.puzzle_window {
             window.report_readiness(
                 DesktopNativePuzzleWindowFrame {
