@@ -34,6 +34,8 @@ pub enum DesktopUpdateError {
     RetryAfter(u64),
     #[error("No newer release has been found")]
     NoRelease,
+    #[error("Installation cannot continue: {0}")]
+    Install(String),
 }
 
 pub struct DesktopUpdateOptions<H: UpdateHttp + Clone, V: UpdateSignatureVerifier, S: UpdateCredentialStore, N: UpdateNetworkCostProvider> {
@@ -248,7 +250,17 @@ pub enum DesktopUpdateOperation {
         credential: crate::update::credentials::UpdateCredential,
         persist: bool,
     },
-    Install,
+    Install {
+        prerequisites: crate::desktop::backup_commands::DesktopBackupCommandsPrerequisites,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct DesktopUpdateInstallInputs {
+    pub asset: crate::update::manifest::UpdateManifestAsset,
+    pub package: std::path::PathBuf,
+    pub version: Version,
+    pub target: UpdateTarget,
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +322,44 @@ impl<
     N: UpdateNetworkCostProvider,
 > DesktopUpdateCommands<H, V, S, N>
 {
+    pub fn begin_install(&mut self) -> Result<DesktopUpdateInstallInputs, DesktopUpdateError> {
+        self.state.begin_install_prerequisites()?;
+        let cached = match self.cache.completed() {
+            Ok(Some(cached)) => cached,
+            Ok(None) => {
+                self.state.abort_install()?;
+                return Err(DesktopUpdateError::NoRelease);
+            }
+            Err(error) => {
+                self.state.abort_install()?;
+                return Err(error.into());
+            }
+        };
+        let (receipt, package) = cached;
+        Ok(DesktopUpdateInstallInputs {
+            asset: crate::update::manifest::UpdateManifestAsset::new(
+                receipt.release.asset_id,
+                receipt.release.asset_name.clone(),
+                receipt.release.target,
+                receipt.length,
+                receipt.package_sha256,
+            ),
+            package,
+            version: receipt.release.version,
+            target: receipt.release.target,
+        })
+    }
+
+    pub fn abort_install(&mut self) -> Result<(), DesktopUpdateError> {
+        self.state.abort_install()?;
+        Ok(())
+    }
+
+    pub fn begin_handoff(&mut self) -> Result<(), DesktopUpdateError> {
+        self.state.begin_handoff()?;
+        Ok(())
+    }
+
     pub fn snapshot(&self, message: Option<String>) -> DesktopUpdateSnapshot {
         DesktopUpdateSnapshot::new(self.state.clone(), self.credentials.status(), message)
     }

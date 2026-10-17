@@ -12,7 +12,9 @@ use chess::desktop::native::startup::{
 use chess::desktop::profile::activation::{
     DesktopProfileActivationBinding, DesktopProfileActivationExchange,
 };
-use chess::desktop::profile::installation::DesktopProfileInstallationEnumState;
+use chess::desktop::profile::installation::{
+    DesktopProfileInstallationEnumState, DesktopProfileInstallationIntent,
+};
 use chess::desktop::profile::owner_record::{
     DesktopProfileEnumPhase, DesktopProfileOwnerRecordBoundEndpoint,
     DesktopProfileOwnerRecordEndpoint, DesktopProfileOwnerRecordError,
@@ -639,5 +641,63 @@ fn identity_inspection_refuses_symlinks_and_hardlinks_without_repairing_them()
         DesktopProfileIdentity::read_existing(&fixture.data(), &fixture.security)?,
         Some(owner.binding().profile())
     );
+    Ok(())
+}
+
+fn current_version_bytes(owner: &DesktopNativeStartupOwner, state: &str) -> Vec<u8> {
+    String::from_utf8_lossy(&DesktopNativeStartupFixture::installation_bytes(owner, state))
+        .replace(
+            "\"package_version\":\"1.2.3\"",
+            &format!("\"package_version\":\"{}\"", env!("CARGO_PKG_VERSION")),
+        )
+        .into_bytes()
+}
+
+#[test]
+fn a_matching_installed_version_with_a_successful_intent_admits_and_clears()
+-> Result<(), Box<dyn std::error::Error>> {
+    for state in [
+        r#"{"phase":"committed"}"#,
+        r#"{"phase":"outcome","result":"succeeded"}"#,
+    ] {
+        let fixture = DesktopNativeStartupFixture::new()?;
+        let owner = fixture.owned()?;
+        let bytes = current_version_bytes(&owner, state);
+        let path = fixture.write_installation(&owner, &bytes)?;
+        drop(owner);
+        let DesktopNativeStartupEnumAdmission::Owned(owner) = fixture.admit()? else {
+            return Err(std::io::Error::other("A completed update stayed blocked").into());
+        };
+        assert!(path.exists());
+        DesktopProfileInstallationIntent::clear(owner.lease())?;
+        assert!(!path.exists());
+        drop(owner);
+        assert!(matches!(
+            fixture.admit()?,
+            DesktopNativeStartupEnumAdmission::Owned(_)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn prepared_failed_and_unknown_intents_stay_blocked_even_at_the_installed_version()
+-> Result<(), Box<dyn std::error::Error>> {
+    for state in [
+        r#"{"phase":"prepared"}"#,
+        r#"{"phase":"outcome","result":"failed"}"#,
+        r#"{"phase":"outcome","result":"unknown"}"#,
+    ] {
+        let fixture = DesktopNativeStartupFixture::new()?;
+        let owner = fixture.owned()?;
+        let bytes = current_version_bytes(&owner, state);
+        let path = fixture.write_installation(&owner, &bytes)?;
+        drop(owner);
+        assert!(matches!(
+            fixture.admit()?,
+            DesktopNativeStartupEnumAdmission::InstallationBlocked(_)
+        ));
+        assert_eq!(fs::read(path)?, bytes);
+    }
     Ok(())
 }

@@ -22,7 +22,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 enum UpdateHelperError {
-    #[error("Usage: chess-update-helper --data-dir <path> --package <path> --target <target> --version <version> --destination <path> --parent-pid <pid> --relaunch <path>")]
+    #[error("Usage: chess-update-helper --data-dir <path> --package <path> --target <target> --version <version> --destination <path> --parent-pid <pid> --relaunch <path> --generation <id>")]
     Usage,
     #[error("The helper argument {0} is invalid")]
     Argument(&'static str),
@@ -42,6 +42,7 @@ struct UpdateHelperArguments {
     destination: PathBuf,
     parent_pid: u32,
     relaunch: PathBuf,
+    generation: String,
 }
 
 impl UpdateHelperArguments {
@@ -71,6 +72,7 @@ impl UpdateHelperArguments {
                 .parse()
                 .map_err(|_error| UpdateHelperError::Argument("--parent-pid"))?,
             relaunch: PathBuf::from(take("--relaunch")?),
+            generation: take("--generation")?,
         };
         if !values.is_empty() {
             return Err(UpdateHelperError::Usage);
@@ -92,6 +94,13 @@ fn wait_for_parent_exit(pid: u32) {
 }
 
 fn run(arguments: UpdateHelperArguments) -> Result<(), UpdateHelperError> {
+    {
+        use std::io::Write;
+        let mut output = std::io::stdout().lock();
+        writeln!(output, "ready {}", arguments.generation)
+            .and_then(|()| output.flush())
+            .map_err(|error| UpdateHelperError::Other(error.to_string()))?;
+    }
     wait_for_parent_exit(arguments.parent_pid);
     let security = DesktopProfileSecurity::current()
         .map_err(|error| UpdateHelperError::Other(error.to_string()))?;

@@ -1,14 +1,30 @@
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader};
+use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
+use std::time::Duration;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use semver::Version;
 use tokio::sync::{mpsc, watch};
 
+use uuid::Uuid;
+
+use crate::desktop::backup_bridge::DesktopBackupService;
+use crate::desktop::backup_commands::DesktopBackupCommandsPrerequisites;
+use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::native::credentials::DesktopNativeCredentials;
+use crate::desktop::profile::DesktopProfileLease;
+use crate::desktop::profile::installation::DesktopProfileInstallationSpec;
+use crate::update::install::{
+    UpdateHelperEnumReadiness, UpdateInstall, UpdateInstallConfirmation, UpdateInstallEnvironment,
+    UpdateInstallRequest, UpdateIntentLeaseWriter,
+};
 use crate::desktop::native::update::space::DesktopNativeUpdateSpace;
 use crate::desktop::update_commands::{
-    DesktopUpdateCommands, DesktopUpdateOperation, DesktopUpdateOptions, DesktopUpdateProvider,
+    DesktopUpdateCommands, DesktopUpdateError, DesktopUpdateInstallInputs, DesktopUpdateOperation, DesktopUpdateOptions, DesktopUpdateProvider,
     DesktopUpdateSnapshot,
 };
 use crate::update::cache::UpdateCache;
@@ -27,10 +43,90 @@ type DesktopNativeUpdateCommands = DesktopUpdateCommands<
     UpdateNetworkCostUnsupported,
 >;
 
+pub struct DesktopNativeUpdateInstallContext {
+    pub backup: Arc<DesktopBackupService>,
+    pub lease: Arc<DesktopProfileLease>,
+    pub quit: Arc<dyn Fn() + Send + Sync>,
+    pub data_schema: NonZeroU32,
+}
+
 pub struct DesktopNativeUpdateServiceOptions {
     pub cache_directory: PathBuf,
     pub installed: Version,
     pub runtime: tokio::runtime::Handle,
+    pub install: Option<DesktopNativeUpdateInstallContext>,
+}
+
+struct DesktopNativeUpdateEnvironment {
+    prerequisites: DesktopBackupCommandsPrerequisites,
+    backup: Uuid,
+    command: Command,
+    child: Option<Child>,
+}
+
+impl DesktopNativeUpdateEnvironment {
+    const READY_TIMEOUT: Duration = Duration::from_secs(10);
+}
+
+impl UpdateInstallEnvironment for DesktopNativeUpdateEnvironment {
+    fn resolve_unsaved_edits(&mut self) -> Result<(), String> {
+        if self.prerequisites.editors_have_no_unsaved_edits {
+            Ok(())
+        } else {
+            Err("Unsaved editor changes must be saved or discarded first".to_owned())
+        }
+    }
+
+    fn pause_and_save_games(&mut self) -> Result<(), String> {
+        if self.prerequisites.games_paused_and_saved {
+            Ok(())
+        } else {
+            Err("Every game must be paused and saved first".to_owned())
+        }
+    }
+
+    fn safety_backup(&mut self) -> Result<DesktopRequestId, String> {
+        DesktopRequestId::from_str(&self.backup.to_string()).map_err(|error| error.to_string())
+    }
+
+    fn start_helper(&mut self, spec: &DesktopProfileInstallationSpec) -> UpdateHelperEnumReadiness {
+        let generation = String::from(spec.helper_generation);
+        let spawned = self
+            .command
+            .arg("--generation")
+            .arg(&generation)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(mut child) = spawned else {
+            return UpdateHelperEnumReadiness::Lost;
+        };
+        let Some(stdout) = child.stdout.take() else {
+            self.child = Some(child);
+            return UpdateHelperEnumReadiness::Lost;
+        };
+        self.child = Some(child);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            let _read = BufReader::new(stdout).read_line(&mut line);
+            let _sent = sender.send(line);
+        });
+        match receiver.recv_timeout(Self::READY_TIMEOUT) {
+            Ok(line) if line.trim() == format!("ready {generation}") => {
+                UpdateHelperEnumReadiness::Ready(spec.helper_generation)
+            }
+            Ok(_) | Err(_) => UpdateHelperEnumReadiness::Lost,
+        }
+    }
+
+    fn confirm_helper_stopped(&mut self, _spec: &DesktopProfileInstallationSpec) -> bool {
+        match &mut self.child {
+            Some(child) => child.try_wait().is_ok_and(|status| status.is_some()),
+            None => true,
+        }
+    }
 }
 
 pub struct DesktopNativeUpdateService {
@@ -74,11 +170,17 @@ impl DesktopNativeUpdateService {
         )));
         let (sender, receiver) = mpsc::unbounded_channel();
         let task_shared = Arc::clone(&shared);
-        let runtime = options.runtime.clone();
+        let DesktopNativeUpdateServiceOptions {
+            cache_directory,
+            installed,
+            runtime,
+            install,
+        } = options;
         runtime.spawn(Self::run(
-            Self::build(http, verifier, repository, target, options),
+            Self::build(http, verifier, repository, target, cache_directory, installed),
             task_shared,
             receiver,
+            install,
         ));
         if sender.send(DesktopUpdateOperation::Check).is_err() {
             return Self::disabled("The update service stopped immediately");
@@ -94,7 +196,8 @@ impl DesktopNativeUpdateService {
         verifier: UpdateVerifier,
         repository: UpdateRepository,
         target: UpdateTarget,
-        options: DesktopNativeUpdateServiceOptions,
+        cache_directory: PathBuf,
+        installed: Version,
     ) -> Option<DesktopNativeUpdateCommands> {
         tokio::task::spawn_blocking(move || {
             DesktopUpdateCommands::new(DesktopUpdateOptions {
@@ -102,10 +205,10 @@ impl DesktopNativeUpdateService {
                 verifier,
                 repository,
                 origins: UpdateOrigins::github(),
-                cache: UpdateCache::new(options.cache_directory),
+                cache: UpdateCache::new(cache_directory),
                 credentials: UpdateCredentials::open(DesktopNativeCredentials::new()),
                 network: UpdateNetworkCostUnsupported,
-                installed: options.installed,
+                installed,
                 target,
             })
             .ok()
@@ -123,6 +226,7 @@ impl DesktopNativeUpdateService {
         build: impl std::future::Future<Output = Option<DesktopNativeUpdateCommands>>,
         shared: Arc<Mutex<DesktopUpdateSnapshot>>,
         mut receiver: mpsc::UnboundedReceiver<DesktopUpdateOperation>,
+        install: Option<DesktopNativeUpdateInstallContext>,
     ) {
         let Some(mut commands) = build.await else {
             Self::publish(
@@ -144,13 +248,16 @@ impl DesktopNativeUpdateService {
                 DesktopUpdateOperation::EnterCredential { credential, persist } => {
                     commands.enter_credential(credential, persist)
                 }
-                DesktopUpdateOperation::Install => {
+                DesktopUpdateOperation::Install { prerequisites } => {
+                    let outcome = match &install {
+                        Some(context) => Self::install(&mut commands, context, prerequisites).await,
+                        None => Err(DesktopUpdateError::Install(
+                            "Installing is not available in this session".to_owned(),
+                        )),
+                    };
                     Self::publish(
                         &shared,
-                        commands.snapshot(Some(
-                            "Installing needs a verified safety backup, which is not available yet"
-                                .to_owned(),
-                        )),
+                        commands.snapshot(outcome.err().map(|error| error.to_string())),
                     );
                     continue;
                 }
@@ -163,6 +270,122 @@ impl DesktopNativeUpdateService {
                 Self::publish(&shared, commands.snapshot(message));
             }
         }
+    }
+
+    fn destination(target: UpdateTarget, executable: &Path) -> Option<PathBuf> {
+        match target {
+            UpdateTarget::MacosArm64 => executable.ancestors().nth(3).map(Path::to_path_buf),
+            UpdateTarget::WindowsX86_64 => executable.parent().map(Path::to_path_buf),
+            UpdateTarget::LinuxAppImage => std::env::var_os("APPIMAGE").map(PathBuf::from),
+            UpdateTarget::LinuxDeb => Some(executable.to_path_buf()),
+        }
+    }
+
+    fn helper_command(
+        context: &DesktopNativeUpdateInstallContext,
+        inputs: &DesktopUpdateInstallInputs,
+    ) -> Result<Command, DesktopUpdateError> {
+        let failure = |what: &str| DesktopUpdateError::Install(what.to_owned());
+        let executable =
+            std::env::current_exe().map_err(|error| DesktopUpdateError::Install(error.to_string()))?;
+        let helper = executable
+            .parent()
+            .map(|directory| directory.join(if cfg!(windows) {
+                "chess-update-helper.exe"
+            } else {
+                "chess-update-helper"
+            }))
+            .filter(|path| path.is_file())
+            .ok_or_else(|| failure("The update helper is missing from this installation"))?;
+        let destination = Self::destination(inputs.target, &executable)
+            .ok_or_else(|| failure("The installation location cannot be determined"))?;
+        let relaunch = match inputs.target {
+            UpdateTarget::LinuxAppImage => destination.clone(),
+            UpdateTarget::MacosArm64
+            | UpdateTarget::WindowsX86_64
+            | UpdateTarget::LinuxDeb => executable,
+        };
+        let mut command = Command::new(helper);
+        command
+            .arg("--data-dir")
+            .arg(context.lease.identity().data_directory())
+            .arg("--package")
+            .arg(&inputs.package)
+            .arg("--target")
+            .arg(inputs.target.to_string())
+            .arg("--version")
+            .arg(inputs.version.to_string())
+            .arg("--destination")
+            .arg(destination)
+            .arg("--parent-pid")
+            .arg(std::process::id().to_string())
+            .arg("--relaunch")
+            .arg(relaunch);
+        Ok(command)
+    }
+
+    async fn install(
+        commands: &mut DesktopNativeUpdateCommands,
+        context: &DesktopNativeUpdateInstallContext,
+        prerequisites: DesktopBackupCommandsPrerequisites,
+    ) -> Result<(), DesktopUpdateError> {
+        let inputs = commands.begin_install()?;
+        let handoff = Self::handoff(context, &inputs, prerequisites).await;
+        match handoff {
+            Ok(()) => {
+                commands.begin_handoff()?;
+                (context.quit)();
+                Ok(())
+            }
+            Err(error) => {
+                commands.abort_install()?;
+                Err(error)
+            }
+        }
+    }
+
+    async fn handoff(
+        context: &DesktopNativeUpdateInstallContext,
+        inputs: &DesktopUpdateInstallInputs,
+        prerequisites: DesktopBackupCommandsPrerequisites,
+    ) -> Result<(), DesktopUpdateError> {
+        if let Some(unmet) = prerequisites.first_unmet() {
+            return Err(DesktopUpdateError::Install(format!(
+                "{unmet:?} must be satisfied first"
+            )));
+        }
+        let backup = context
+            .backup
+            .pre_update_backup(prerequisites)
+            .await
+            .map_err(|failure| DesktopUpdateError::Install(failure.to_string()))?;
+        let command = Self::helper_command(context, inputs)?;
+        let lease = Arc::clone(&context.lease);
+        let schema = context.data_schema;
+        let inputs = inputs.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut environment = DesktopNativeUpdateEnvironment {
+                prerequisites,
+                backup,
+                command,
+                child: None,
+            };
+            UpdateInstall::run(
+                UpdateInstallConfirmation::explicit(),
+                &UpdateInstallRequest {
+                    asset: &inputs.asset,
+                    package: &inputs.package,
+                    version: inputs.version.clone(),
+                    data_schema: schema,
+                },
+                &mut environment,
+                &UpdateIntentLeaseWriter(&lease),
+            )
+            .map(|_spec| ())
+            .map_err(|error| DesktopUpdateError::Install(error.to_string()))
+        })
+        .await
+        .map_err(|error| DesktopUpdateError::Install(error.to_string()))?
     }
 
     async fn download(

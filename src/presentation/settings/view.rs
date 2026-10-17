@@ -291,7 +291,7 @@ impl PresentationSettingsView {
             let install = PresentationSettingsUpdateInstall::show_confirmation(ui, &mut confirmed);
             *controller.update_install_confirmed_mut() = confirmed;
             if install {
-                controller.request_update(DesktopUpdateOperation::Install);
+                controller.request_install();
                 controller.set_update_install_prompt(false);
             }
         }

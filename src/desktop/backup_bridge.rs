@@ -152,6 +152,19 @@ impl DesktopBackupService {
         })
     }
 
+    pub async fn pre_update_backup(
+        &self,
+        prerequisites: DesktopBackupCommandsPrerequisites,
+    ) -> Result<Uuid, DesktopFailure> {
+        let commands = Arc::clone(&self.commands);
+        let now_ms = Self::now_ms();
+        Self::blocking(Arc::clone(&self.executor), move || {
+            let guard = commands.lock().map_err(|_poisoned| poisoned_error())?;
+            guard.pre_update_blocking(prerequisites, Uuid::new_v4(), now_ms)
+        })
+        .await
+    }
+
     pub fn start_scheduler(self: &Arc<Self>) {
         let service = Arc::clone(self);
         let handle = tokio::spawn(async move {

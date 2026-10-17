@@ -54,6 +54,7 @@ pub struct PresentationSettingsController {
     update_persist: bool,
     update_install_prompt: bool,
     update_install_confirmed: bool,
+    update_install_requested: bool,
     update_frames: u32,
 }
 
@@ -79,6 +80,7 @@ impl PresentationSettingsController {
             update_persist: true,
             update_install_prompt: false,
             update_install_confirmed: false,
+            update_install_requested: false,
             update_frames: 0,
         }
     }
@@ -128,6 +130,14 @@ impl PresentationSettingsController {
 
     pub fn request_update(&mut self, operation: DesktopUpdateOperation) {
         self.update_intent = Some(operation);
+    }
+
+    pub fn request_install(&mut self) {
+        self.update_install_requested = true;
+    }
+
+    pub fn take_install_request(&mut self) -> bool {
+        std::mem::take(&mut self.update_install_requested)
     }
 
     pub fn take_update_intent(&mut self) -> Option<DesktopUpdateOperation> {

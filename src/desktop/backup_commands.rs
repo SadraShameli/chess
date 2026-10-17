@@ -387,6 +387,23 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
         }
     }
 
+    pub fn pre_update_blocking(
+        &self,
+        prerequisites: DesktopBackupCommandsPrerequisites,
+        id: Uuid,
+        now_ms: u64,
+    ) -> Result<Uuid, DesktopBackupCommandsError> {
+        if let Some(unmet) = prerequisites.first_unmet() {
+            return Err(DesktopBackupCommandsError::Prerequisite(unmet));
+        }
+        let archive = self.create_blocking(BackupEnumCategory::PreUpdate, id, now_ms)?;
+        let found = self.find_blocking(archive.manifest().id())?;
+        if found.as_path() != archive.path() {
+            return Err(BackupError::PreviewMismatch.into());
+        }
+        Ok(archive.manifest().id())
+    }
+
     pub fn stage_restore_blocking(
         &mut self,
         lease: &DesktopProfileLease,

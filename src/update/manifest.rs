@@ -101,6 +101,22 @@ pub struct UpdateManifestAsset {
 }
 
 impl UpdateManifestAsset {
+    pub const fn new(
+        id: u64,
+        name: String,
+        target: UpdateTarget,
+        length: u64,
+        sha256: [u8; 32],
+    ) -> Self {
+        Self {
+            id,
+            name,
+            target,
+            length,
+            sha256,
+        }
+    }
+
     pub const fn id(&self) -> u64 {
         self.id
     }

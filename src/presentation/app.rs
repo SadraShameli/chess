@@ -1564,6 +1564,12 @@ impl PresentationApp {
             }),
             editors_have_no_unsaved_edits: !self.has_unsaved_editor_state(),
         };
+        if self.settings.take_install_request() {
+            self.settings
+                .request_update(crate::desktop::update_commands::DesktopUpdateOperation::Install {
+                    prerequisites,
+                });
+        }
         self.backup.show(ui, port, now_ms, prerequisites);
     }
 

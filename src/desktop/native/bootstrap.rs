@@ -1015,7 +1015,7 @@ impl DesktopNativeBootstrapSupervisor {
                 .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()))
                 .with_library(library_workspace, Arc::new(library_port))
                 .with_editor(editor_owner, editor_commands)
-                .with_backup(backup);
+                .with_backup(Arc::clone(&backup) as Arc<dyn crate::desktop::backup_bridge::DesktopBackupBridgeProvider>);
         if let Some(engine_port) = &engine_port {
             coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
         }
@@ -1029,6 +1029,29 @@ impl DesktopNativeBootstrapSupervisor {
                         .join("update-cache"),
                     installed,
                     runtime: tokio::runtime::Handle::current(),
+                    install: Some(
+                        crate::desktop::native::update::service::DesktopNativeUpdateInstallContext {
+                            backup: Arc::clone(&backup),
+                            lease: Arc::clone(&self.lease),
+                            quit: {
+                                let quit_port = port.clone();
+                                let quit_runtime = tokio::runtime::Handle::current();
+                                Arc::new(move || {
+                                    let port = quit_port.clone();
+                                    quit_runtime.spawn(async move {
+                                        let _requested =
+                                            DesktopNativeBootstrap::request_quit(&port).await;
+                                    });
+                                })
+                            },
+                            data_schema: crate::storage::migration::StorageMigrationRunner::embedded_versions()
+                                .ok()
+                                .and_then(|versions| versions.last().cloned())
+                                .and_then(|version| version.parse::<u32>().ok())
+                                .and_then(std::num::NonZeroU32::new)
+                                .unwrap_or(std::num::NonZeroU32::MIN),
+                        },
+                    ),
                 },
             ),
             Err(error) => crate::desktop::native::update::service::DesktopNativeUpdateService::disabled(
