@@ -14,11 +14,23 @@ pub enum PackageDigestError {
     Io(#[from] std::io::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct PackageDigest([u8; 32]);
 
 impl PackageDigest {
+    pub fn hash_slice(bytes: &[u8]) -> Self {
+        Self::from_bytes(Sha256::digest(bytes).into())
+    }
+
+    pub const fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    pub(crate) const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn read(mut reader: impl Read) -> Result<Self, PackageDigestError> {
         let mut digest = Sha256::new();
         let mut buffer = vec![0; 64 * 1024];
