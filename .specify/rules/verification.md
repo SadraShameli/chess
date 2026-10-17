@@ -24,8 +24,11 @@
   license and security implications, and maintain the lockfile. Add a library
   only for a concrete requirement. Python tooling, including `specify`, uses
   uv-managed Python, never Homebrew Python.
-- Release and profiling settings are defined in the manifest. Portable thin LTO
-  is the initial optimization baseline; benchmark further tuning according to
+- All build profiles are defined in the manifest. Release uses maximum portable
+  optimization: opt-level 3, fat LTO, one codegen unit, no overflow or debug
+  assertions, stripped symbols, and unwinding panics because the CPU executor
+  isolates worker panics. Dev and test compile dependencies at opt-level 3.
+  Benchmark further tuning, such as PGO, according to
   [performance](performance.md). Do not add machine-specific compiler flags.
 
 ## Required gates
@@ -33,7 +36,9 @@
 - `make verify` is the canonical final command. It runs formatters before
   checkers, then Clippy, tests, and an optimized build. Individual workflows are
   `make format`, `make lint`, `make tests`, `make build`, and `make profile-build`.
-  `make run` starts a debug development build; `ARGS` passes application arguments.
+  `make run` starts the optimized release build, `make debug` a debuggable
+  build, and `make run-debugging` an optimized build with full debug info;
+  `ARGS` passes application arguments.
   Read their actual command definitions in `Makefile`; do not duplicate them in
   documentation or hooks.
 - Complete related edits first, then run final gates sequentially once. Repeat

@@ -15,7 +15,8 @@ thresholds, and [verification workflows](.specify/rules/verification.md) are
 configured. Run `make verify` for the complete verification sequence or
 `make profile-build` for an optimized build with full debug information.
 
-Run an incremental debug build with `make run`. Use `make run ARGS="--help"`
+Run the optimized release build with `make run`, or a debuggable build with
+`make debug`. Use `make run ARGS="--help"`
 for supported arguments. For isolated development data, use
 `make run ARGS="--profile-directory /tmp/chess-development"`.
 

@@ -4,7 +4,7 @@
 ARGS ?=
 NATIVE_PROFILE ?= dev
 
-.PHONY: verify format lint schema-check tests build profile-build run native-test-build native-tests
+.PHONY: verify format lint schema-check tests build profile-build run debug run-debugging debug-build native-test-build native-tests
 
 verify: format lint schema-check tests build
 
@@ -38,8 +38,19 @@ profile-build:
 	cargo build --locked --profile profiling --all-targets --all-features
 	cargo build --locked --profile profiling --test native --all-features
 
+RUN_ARGS = $(if $(strip $(ARGS)), -- $(ARGS))
+
 run:
-	cargo run --locked$(if $(strip $(ARGS)), -- $(ARGS))
+	cargo run --locked --release$(RUN_ARGS)
+
+debug:
+	cargo run --locked --profile debugging$(RUN_ARGS)
+
+run-debugging:
+	cargo run --locked --profile release-debugging$(RUN_ARGS)
+
+debug-build:
+	cargo build --locked --profile debugging --all-targets --all-features
 
 native-test-build:
 	cargo test --locked --profile $(NATIVE_PROFILE) --test native --all-features --no-run

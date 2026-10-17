@@ -18,7 +18,8 @@ maps their native replacement owners. Existing
 prove native-egui operation or the full product.
 
 Read [the actual Makefile](../../Makefile) before using commands. At this point
-`make run` now launches the native Bevy/egui executable in debug mode. Its
+`make run` now launches the optimized native Bevy/egui release build; `make debug`
+launches a debuggable build. Its
 current shell is an integration milestone, not a complete playable product.
 `make run ARGS="--help"` lists supported arguments; use
 `make run ARGS="--profile-directory /tmp/chess-development"` for an isolated
@@ -52,7 +53,7 @@ make native-tests
 ```
 
 `make verify` owns the ordered final checks. Native commands use Cargo/Rust
-instead of frontend toolchains. `make run` launches a debug development build; no empty
+instead of frontend toolchains. `make run` launches the optimized release build; no empty
 argument separator is appended without ARGS. The actual app argument surface
 must be documented when implemented, including the above help smoke check.
 The native test command must start the production Bevy renderer on the OS main
