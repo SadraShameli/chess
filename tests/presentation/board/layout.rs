@@ -8,9 +8,8 @@ use chess::desktop::layout::{
 use chess::desktop::native::accessibility::{
     DesktopNativeAccessibility, DesktopNativeAccessibilityEnumAction,
 };
-use chess::presentation::board::figurines::{
-    PresentationBoardFigurines, PresentationBoardFigurinesEnumNotation,
-};
+use chess::desktop::preferences::DesktopPreferencesEnumNotation;
+use chess::presentation::board::figurines::PresentationBoardFigurines;
 use chess::presentation::theme::layout::PresentationThemeLayout;
 use chess::presentation::workbench::status::{
     PresentationWorkbenchStatusAnnouncer, PresentationWorkbenchStatusEnumState,
@@ -178,12 +177,12 @@ fn status_states_are_prefixed_with_text_and_error_announcements_bypass_throttlin
 fn letters_are_the_default_notation_and_figurines_replace_only_piece_letters()
 -> PresentationBoardLayoutResult {
     assert_eq!(
-        PresentationBoardFigurinesEnumNotation::default(),
-        PresentationBoardFigurinesEnumNotation::Letters
+        DesktopPreferencesEnumNotation::default(),
+        DesktopPreferencesEnumNotation::Letters
     );
     let white = BoardEnumColor::White;
-    let letters = PresentationBoardFigurinesEnumNotation::Letters;
-    let figurines = PresentationBoardFigurinesEnumNotation::Figurines;
+    let letters = DesktopPreferencesEnumNotation::Letters;
+    let figurines = DesktopPreferencesEnumNotation::Figurines;
     assert_eq!(
         PresentationBoardFigurines::display_san("Nf3", letters, white),
         "Nf3"
@@ -276,4 +275,24 @@ fn board_squares_accept_only_click_and_focus_action_requests() -> PresentationBo
         Err(PresentationAccessibilityError::UnsupportedSquareAction(Action::Increment))
     ));
     Ok(())
+}
+
+#[test]
+fn the_published_notation_preference_controls_displayed_san_and_move_lines() {
+    let context = bevy_egui::egui::Context::default();
+    assert_eq!(PresentationBoardFigurines::display(&context, "Nf3", None), "Nf3");
+    PresentationBoardFigurines::publish(&context, DesktopPreferencesEnumNotation::Figurines);
+    assert_eq!(
+        PresentationBoardFigurines::display(&context, "Nf3", Some(BoardEnumColor::Black)),
+        "\u{265e}f3"
+    );
+    assert_eq!(
+        PresentationBoardFigurines::display_line(&context, "1. e4 Nf6 2. Nc3 O-O"),
+        "1. e4 \u{2658}f6 2. \u{2658}c3 O-O"
+    );
+    PresentationBoardFigurines::publish(&context, DesktopPreferencesEnumNotation::Letters);
+    assert_eq!(
+        PresentationBoardFigurines::display_line(&context, "1. e4 Nf6"),
+        "1. e4 Nf6"
+    );
 }

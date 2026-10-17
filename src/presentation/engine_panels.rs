@@ -347,16 +347,30 @@ impl PresentationEnginePanels {
         )
     }
 
-    fn retry_engine_information(&mut self) -> Result<(), PresentationEnginePanelsError> {
-        if let Some(analysis) = &self.analysis {
-            let context = self.workbench_context(analysis.selection().context());
-            let position = analysis.selection().position().clone();
-            self.workbench = Some(PresentationWorkbenchController::new(
-                context,
-                Some(position),
-            ));
-            self.workbench_request = None;
-            self.capture_engine()?;
+    fn retry_engine_information<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationEnginePanelsError> {
+        let Some(analysis) = &self.analysis else {
+            return Ok(());
+        };
+        let selection = analysis.selection().context();
+        let position = analysis.selection().position().clone();
+        let context = self.workbench_context(selection);
+        self.workbench = Some(PresentationWorkbenchController::new(
+            context,
+            Some(position),
+        ));
+        self.workbench_request = None;
+        self.capture_engine()?;
+        if self.pending.is_none() {
+            self.pending = Some(Self::prepare(
+                port,
+                self.context(selection),
+                DesktopEngineCommandsEnumOperation::Retry,
+                PresentationEnginePanelsEnumPending::Retry,
+            )?);
+            Self::admit(&mut self.pending, port)?;
         }
         Ok(())
     }
@@ -1319,7 +1333,7 @@ impl PresentationEnginePanels {
                     }
                 }
                 if self.workbench_view.take_engine_retry() {
-                    self.retry_engine_information()?;
+                    self.retry_engine_information(port)?;
                 }
             }
         }

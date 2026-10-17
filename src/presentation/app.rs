@@ -58,6 +58,7 @@ use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::markings::{PresentationBoardMark, PresentationBoardMarkRequest};
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::board::recovery::{
     PresentationBoardRecovery, PresentationBoardRecoveryEnumIntent,
 };
@@ -1541,6 +1542,7 @@ impl PresentationApp {
             ui.ctx()
                 .request_discard("apply initial native theme before layout");
         }
+        PresentationBoardFigurines::publish(ui.ctx(), self.settings.effective().notation());
         let settings_outcome = self.settings.poll();
         self.apply_settings_outcome(&ui.ctx().clone(), settings_outcome);
         self.poll();

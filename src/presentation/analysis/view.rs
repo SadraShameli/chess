@@ -5,6 +5,7 @@ use crate::board::r#move::BoardMoveError;
 use crate::desktop::identity::DesktopRequestId;
 use crate::engine::analysis::{EngineAnalysisHashOccupancy, EngineAnalysisLine};
 use crate::engine::search::session::EngineSearchSessionEnumCompletion;
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::analysis::configuration::{
     PresentationAnalysisConfiguration, PresentationAnalysisConfigurationEnumMode,
 };
@@ -118,7 +119,10 @@ impl PresentationAnalysisView {
             } else {
                 ui.label("White score: unavailable");
             }
-            ui.label(candidate.variation_text());
+            ui.label(PresentationBoardFigurines::display_line(
+                ui.ctx(),
+                candidate.variation_text(),
+            ));
             egui::CollapsingHeader::new(format!("Candidate {} statistics", candidate.rank()))
                 .id_salt((
                     "analysis.candidate",
@@ -216,7 +220,11 @@ impl PresentationAnalysisView {
                     let position = terminal.snapshot().metadata().position().current();
                     ui.label(format!(
                         "Analysis complete: {}",
-                        position.san(&movement.uci(position.variant()))?
+                        PresentationBoardFigurines::display(
+                            ui.ctx(),
+                            &position.san(&movement.uci(position.variant()))?,
+                            Some(position.turn())
+                        )
                     ));
                 }
                 EngineSearchSessionEnumCompletion::Failed(error) => {

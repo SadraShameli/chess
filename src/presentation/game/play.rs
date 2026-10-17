@@ -16,6 +16,7 @@ use crate::game::enums::{
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::game::takeback::GameTakebackEnumResponse;
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 
 #[derive(Debug, Error)]
@@ -667,7 +668,15 @@ impl PresentationGamePlay {
                             BoardEnumColor::White => ".",
                             BoardEnumColor::Black => "...",
                         };
-                        let label = format!("{}{separator} {}", movement.number(), movement.san());
+                        let label = format!(
+                            "{}{separator} {}",
+                            movement.number(),
+                            PresentationBoardFigurines::display(
+                                ui.ctx(),
+                                movement.san(),
+                                Some(movement.mover())
+                            )
+                        );
                         if ui
                             .selectable_label(snapshot.view() == movement.id(), label)
                             .clicked()

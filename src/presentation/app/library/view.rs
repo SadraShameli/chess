@@ -3,6 +3,7 @@ use bevy_egui::egui::{self, Ui};
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::application::{DesktopApplicationPort, DesktopApplicationWakeProvider};
 use crate::desktop::identity::DesktopRequestId;
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::analysis::annotations::{
     PresentationAnalysisAnnotationsEnumDestination, PresentationAnalysisAnnotationsEnumGuardChoice,
 };
@@ -164,7 +165,11 @@ impl PresentationAppLibrary {
                                 && !self.source_changed,
                             egui::Button::selectable(
                                 selected,
-                                node.san().unwrap_or("Initial position"),
+                                PresentationBoardFigurines::display(
+                                    ui.ctx(),
+                                    node.san().unwrap_or("Initial position"),
+                                    None,
+                                ),
                             ),
                         )
                     })

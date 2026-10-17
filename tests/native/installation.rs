@@ -1,5 +1,13 @@
 use std::path::{Path, PathBuf};
 
+use chess::engine::package::host::EnginePackageHost;
+use chess::engine::package::manifest::EnginePackageEnumTarget;
+use chess::engine::package::selector::EnginePackageSelector;
+use chess::game::enums::{GameId, GameRevision};
+use chess::game::pause::GamePauseEnumCause;
+use chess::game::recovery::{GameRecovery, GameRecoveryEnumAction, GameRecoveryEnumTrigger};
+use chess::game::save::GameSaveEnumStatus;
+use chess::game::save_coordinator::{GameSaveCoordinator, GameSaveCoordinatorEnumBarrier};
 use chess::desktop::native::resources::{
     DesktopNativeResources, DesktopNativeResourcesEnumDependency, DesktopNativeResourcesEnumFailure,
     DesktopNativeResourcesError,
@@ -18,6 +26,9 @@ impl NativeInstallationHarness {
         Self::missing_engine_manifest_is_a_required_failure(resources)?;
         Self::corrupt_pieces_are_a_required_failure(resources)?;
         Self::empty_installation_is_a_required_failure()?;
+        Self::engine_failure_is_a_required_interruption(resources)?;
+        Self::save_failure_keeps_unsaved_state_and_blocks_every_barrier()?;
+        Self::sleep_pauses_games_without_an_automatic_resume()?;
         println!("installation scenarios passed on the main thread");
         Ok(())
     }
@@ -130,6 +141,72 @@ impl NativeInstallationHarness {
                 Err(format!("an empty directory must be a required failure: {other:?}").into())
             }
         }
+    }
+
+    fn engine_failure_is_a_required_interruption(
+        resources: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let target = EnginePackageEnumTarget::current()?;
+        let (version, distribution) = match target {
+            EnginePackageEnumTarget::MacosArm => ("14.0", ""),
+            EnginePackageEnumTarget::WindowsX64 => ("11", ""),
+            EnginePackageEnumTarget::LinuxX64 => ("22.04", "ubuntu"),
+        };
+        let host = EnginePackageHost::from_observation(target, version, distribution, true)?;
+        let staged = tempfile::tempdir()?;
+        std::fs::copy(
+            resources.join(DesktopNativeResources::ENGINE_MANIFEST),
+            staged.path().join("manifest.json"),
+        )?;
+        if EnginePackageSelector::load(staged.path(), host).is_ok() {
+            return Err("an engine package without its binary must not load".into());
+        }
+        if DesktopNativeResourcesEnumDependency::Engine.failure()
+            != DesktopNativeResourcesEnumFailure::Interruption
+        {
+            return Err("an engine failure must interrupt the application".into());
+        }
+        Ok(())
+    }
+
+    fn save_failure_keeps_unsaved_state_and_blocks_every_barrier(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let game: GameId = "00000000-0000-4000-8000-0000000000a1".parse()?;
+        let revision = GameRevision::ZERO.next()?.next()?;
+        let mut coordinator = GameSaveCoordinator::new(game, revision);
+        coordinator.record_failure("disk full".to_owned());
+        if coordinator.status() != GameSaveEnumStatus::Required
+            || coordinator.memory_revision() != revision
+        {
+            return Err("a failed save must retain the unsaved memory state".into());
+        }
+        for barrier in [
+            GameSaveCoordinatorEnumBarrier::CloseGame,
+            GameSaveCoordinatorEnumBarrier::QuitApplication,
+            GameSaveCoordinatorEnumBarrier::MoveToTrash,
+        ] {
+            if coordinator.require_saved(barrier).is_ok() {
+                return Err(format!("{barrier:?} must wait for the save").into());
+            }
+        }
+        coordinator.acknowledge(game, revision)?;
+        coordinator.require_saved(GameSaveCoordinatorEnumBarrier::QuitApplication)?;
+        Ok(())
+    }
+
+    fn sleep_pauses_games_without_an_automatic_resume() -> Result<(), Box<dyn std::error::Error>> {
+        if GameRecovery::decide(GameRecoveryEnumTrigger::ComputerSleep)
+            != GameRecoveryEnumAction::Pause(GamePauseEnumCause::ComputerSleep)
+        {
+            return Err("computer sleep must pause live games".into());
+        }
+        if GameRecovery::decide(GameRecoveryEnumTrigger::WakeFromSleep)
+            != GameRecoveryEnumAction::KeepRunning
+            || GameRecovery::resumes_automatically(GamePauseEnumCause::ComputerSleep)
+        {
+            return Err("waking must not resume a paused game".into());
+        }
+        Ok(())
     }
 
     fn stage(

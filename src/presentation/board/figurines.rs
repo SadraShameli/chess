@@ -1,26 +1,52 @@
+use bevy_egui::egui::{Context, Id};
+
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PresentationBoardFigurinesEnumNotation {
-    #[default]
-    Letters,
-    Figurines,
-}
-
-impl PresentationBoardFigurinesEnumNotation {
-    pub const ALL: [Self; 2] = [Self::Letters, Self::Figurines];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Letters => "Letters",
-            Self::Figurines => "Figurines",
-        }
-    }
-}
+use crate::desktop::preferences::DesktopPreferencesEnumNotation;
 
 pub struct PresentationBoardFigurines;
 
 impl PresentationBoardFigurines {
+    const PREFERENCE_KEY: &'static str = "chess.notation.preference";
+
+    pub fn publish(context: &Context, notation: DesktopPreferencesEnumNotation) {
+        context.data_mut(|data| data.insert_temp(Id::new(Self::PREFERENCE_KEY), notation));
+    }
+
+    pub fn notation(context: &Context) -> DesktopPreferencesEnumNotation {
+        context
+            .data(|data| data.get_temp(Id::new(Self::PREFERENCE_KEY)))
+            .unwrap_or_default()
+    }
+
+    pub fn display(context: &Context, san: &str, mover: Option<BoardEnumColor>) -> String {
+        Self::display_san(
+            san,
+            Self::notation(context),
+            mover.unwrap_or(BoardEnumColor::White),
+        )
+    }
+
+    pub fn display_line(context: &Context, line: &str) -> String {
+        match Self::notation(context) {
+            DesktopPreferencesEnumNotation::Letters => line.to_owned(),
+            DesktopPreferencesEnumNotation::Figurines => line
+                .split(' ')
+                .map(|token| {
+                    if token.ends_with('.') || token.starts_with(|first: char| first.is_ascii_digit()) {
+                        token.to_owned()
+                    } else {
+                        Self::display_san(
+                            token,
+                            DesktopPreferencesEnumNotation::Figurines,
+                            BoardEnumColor::White,
+                        )
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+        }
+    }
+
     pub const fn glyph(color: BoardEnumColor, kind: BoardEnumPieceKind) -> char {
         match (color, kind) {
             (BoardEnumColor::White, BoardEnumPieceKind::King) => '\u{2654}',
@@ -62,12 +88,12 @@ impl PresentationBoardFigurines {
 
     pub fn display_san(
         san: &str,
-        notation: PresentationBoardFigurinesEnumNotation,
+        notation: DesktopPreferencesEnumNotation,
         mover: BoardEnumColor,
     ) -> String {
         match notation {
-            PresentationBoardFigurinesEnumNotation::Letters => san.to_owned(),
-            PresentationBoardFigurinesEnumNotation::Figurines => {
+            DesktopPreferencesEnumNotation::Letters => san.to_owned(),
+            DesktopPreferencesEnumNotation::Figurines => {
                 let mut previous = None;
                 san.chars()
                     .enumerate()

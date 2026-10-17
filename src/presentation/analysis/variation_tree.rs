@@ -17,6 +17,7 @@ use crate::desktop::game_editor::{
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::annotations::GameAnnotationsEnumVariationRequest;
 use crate::game::enums::GameMoveId;
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::analysis::editor_intent::{
     PresentationAnalysisEditorError, PresentationAnalysisEditorHistory,
     PresentationAnalysisEditorIntent, PresentationAnalysisEditorModal,
@@ -727,7 +728,8 @@ impl PresentationAnalysisVariationTree {
     ) {
         ui.push_id(node.id(), |ui| {
             ui.horizontal_wrapped(|ui| {
-                let label = node.san().unwrap_or("Start");
+                let label =
+                    PresentationBoardFigurines::display(ui.ctx(), node.san().unwrap_or("Start"), None);
                 if ui
                     .add_enabled(
                         enabled,

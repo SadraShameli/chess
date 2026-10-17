@@ -599,6 +599,37 @@ async fn trash_preview_runs_in_its_own_lane_without_resync() -> DesktopLibrarySe
 }
 
 #[tokio::test]
+async fn trash_confirmation_is_refused_for_a_live_game_with_unsaved_moves()
+-> DesktopLibraryServiceTestResult {
+    let mut fixture = PresentationLibraryTestFixture::new().await?;
+    let observation: DesktopLibraryServiceTestResult<_> = async {
+        fixture.service.seed(711, true).await?;
+        let game = DesktopLibraryServiceFixture::id(711)?;
+        let mut controller = PresentationLibraryController::new(fixture.service.workspace);
+        let request = crate::storage::trash::StorageTrashPreviewRequest::MoveToTrash(game);
+        let intent = controller
+            .preview_trash(DesktopRequestId::new(), request)?
+            .ok_or("preview")?;
+        fixture.execute(&mut controller, &intent).await??;
+        let planned = controller.trash_plan().is_some();
+        controller.observe_unsaved_games(vec![game]);
+        let refused = matches!(
+            controller.confirm_game_trash(DesktopRequestId::new()),
+            Err(PresentationLibraryError::UnsavedGame(blocked)) if blocked == game
+        );
+        controller.observe_unsaved_games(Vec::new());
+        let allowed = controller
+            .confirm_game_trash(DesktopRequestId::new())?
+            .is_some();
+        Ok((planned, refused, allowed))
+    }
+    .await;
+    fixture.close().await?;
+    assert_eq!(observation?, (true, true, true));
+    Ok(())
+}
+
+#[tokio::test]
 async fn import_commit_needs_a_frozen_confirmation_and_import_steps_share_one_lane()
 -> DesktopLibraryServiceTestResult {
     let fixture = PresentationLibraryTestFixture::new().await?;
