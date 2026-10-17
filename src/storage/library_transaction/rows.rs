@@ -19,8 +19,8 @@ use crate::storage::library_prepared::{
     StorageLibraryEnumStartKind, StorageLibraryProjection, StorageLibraryProjectionOptions,
 };
 use crate::storage::library_query::{
-    StorageLibraryMillis, StorageLibraryQuery, StorageLibraryQueryEntry,
-    StorageLibraryQueryEntryOptions, StorageLibraryQueryPage, StorageLibraryQueryRow,
+    StorageLibraryQuery, StorageLibraryQueryEntry, StorageLibraryQueryEntryOptions,
+    StorageLibraryQueryPage, StorageLibraryQueryRow,
 };
 use crate::storage::library_repository::{
     StorageLibraryError, StorageLibraryMemory, StorageLibraryStoredRecord,
@@ -107,10 +107,10 @@ impl StorageLibraryTransactionRows {
             i32,
             Option<String>,
             String,
-            Option<StorageLibraryMillis>,
+            Option<i64>,
             String,
             String,
-            Option<StorageLibraryMillis>,
+            Option<i64>,
         );
         let row: Option<Row> = library_entries::table
             .inner_join(documents::table)
@@ -147,9 +147,9 @@ impl StorageLibraryTransactionRows {
             return Err(StorageLibraryError::ProjectionStale);
         }
         let location = StorageTrashEnumLocation::parse(&location)?;
-        Self::validate_location(location, trashed.map(StorageLibraryMillis::value))?;
+        Self::validate_location(location, trashed)?;
         let modified = modified
-            .map(|millis| GameLibraryOrganizationTimestamp::new(millis.value()))
+            .map(GameLibraryOrganizationTimestamp::new)
             .transpose()?;
         Ok(Some(StorageLibraryTransactionEntryState {
             content,
@@ -296,7 +296,7 @@ impl StorageLibraryTransactionRows {
         let favorite = Self::favorite(i64::from(row.favorite))?;
         let folder = row.folder_id.as_deref().map(str::parse).transpose()?;
         let location = StorageTrashEnumLocation::parse(&row.location)?;
-        Self::validate_location(location, row.trashed_ms.map(StorageLibraryMillis::value))?;
+        Self::validate_location(location, row.trashed_ms)?;
         Ok(StorageLibraryQueryEntry::new(
             StorageLibraryQueryEntryOptions {
                 id,
@@ -310,7 +310,7 @@ impl StorageLibraryTransactionRows {
                 ),
                 modified: row
                     .modified_ms
-                    .map(|millis| GameLibraryOrganizationTimestamp::new(millis.value()))
+                    .map(GameLibraryOrganizationTimestamp::new)
                     .transpose()?,
                 location,
                 date_filtered,

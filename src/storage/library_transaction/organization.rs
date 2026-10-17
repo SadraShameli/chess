@@ -10,9 +10,7 @@ use crate::game::library_organization::{
     GameLibraryOrganizationRevision, GameLibraryOrganizationTagId,
     GameLibraryOrganizationTagTarget, GameLibraryOrganizationTimestamp,
 };
-use crate::storage::library_query::{
-    StorageLibraryMillis, StorageLibraryQuery, library_coalesce_millis, library_max_millis,
-};
+use crate::storage::library_query::{StorageLibraryQuery, library_coalesce_timestamp, library_max};
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::rows::{
@@ -156,16 +154,13 @@ impl StorageLibraryTransactionOrganization {
                 let _validated_id: GameId = id.parse()?;
                 let revision: GameLibraryOrganizationRevision = revision.parse()?;
                 let next = revision.next()?;
-                let stamp = StorageLibraryMillis::new(timestamp.value());
+                let stamp = timestamp.value();
                 diesel::update(library_entries::table.filter(library_entries::game_id.eq(id)))
                     .set((
                         library_entries::organization_revision.eq(next.to_string()),
-                        library_entries::modified_ms.eq(library_max_millis(
-                            library_coalesce_millis(
-                                library_entries::modified_ms,
-                                stamp.expression(),
-                            ),
-                            stamp.expression(),
+                        library_entries::modified_ms.eq(library_max(
+                            library_coalesce_timestamp(library_entries::modified_ms, stamp),
+                            stamp,
                         )
                         .nullable()),
                     ))

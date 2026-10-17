@@ -150,10 +150,7 @@ async fn page_budget_refuses_excess_allocation_and_restores_the_ceiling_after_ro
                 StorageLibraryImportSpaceBudgetEnumPragma::Ceiling.read(fixture.diesel.diesel())?;
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
             let after = fixture.snapshot()?;
-            fixture
-                .connection
-                .close()
-                .map_err(|(_connection, error)| error)?;
+            drop(fixture.connection);
             let path = fixture.directory.path().to_owned();
             fixture.directory.close()?;
             assert!(!path.try_exists()?);
@@ -215,10 +212,7 @@ async fn journal_proof_requires_enabled_immediate_foreign_keys()
                         .map(drop))
                     },
                 )?;
-                fixture
-                    .connection
-                    .close()
-                    .map_err(|(_connection, error)| error)?;
+                drop(fixture.connection);
                 let path = fixture.directory.path().to_owned();
                 fixture.directory.close()?;
                 assert!(!path.try_exists()?);

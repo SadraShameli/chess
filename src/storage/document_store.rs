@@ -15,10 +15,6 @@ use uuid::Uuid;
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
 use crate::puzzle::session::PuzzleSessionId;
-use crate::storage::report_repository::{
-    StorageReportEnumRequest, StorageReportEnumResponse, StorageReportError,
-    StorageReportTransaction,
-};
 use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::rows::{StorageDocumentRowContent, StorageDocumentRowReceipt};
 use crate::storage::editor_repository::{
@@ -37,14 +33,16 @@ use crate::storage::puzzle_repository::{
     StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
     StoragePuzzleWrite,
 };
+use crate::storage::report_repository::{
+    StorageReportEnumRequest, StorageReportEnumResponse, StorageReportError,
+    StorageReportTransaction,
+};
 use crate::storage::schema::{documents, library_entries};
 
 #[derive(Debug, Error)]
 pub enum StorageDocumentError {
     #[error(transparent)]
     Capacity(#[from] CapacityBudgetError),
-    #[error("Local database operation failed: {0}")]
-    Sqlite(#[from] rusqlite::Error),
     #[error("Local database connection failed: {0}")]
     Connection(#[from] diesel::ConnectionError),
     #[error("Local database query failed: {0}")]
@@ -580,10 +578,8 @@ impl StorageDocumentActor {
                     _admission,
                     result,
                 } => {
-                    let outcome = StorageReportTransaction::execute(
-                        self.connection.diesel(),
-                        *request,
-                    );
+                    let outcome =
+                        StorageReportTransaction::execute(self.connection.diesel(), *request);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);

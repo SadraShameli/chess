@@ -5,7 +5,9 @@ use std::sync::Arc;
 use diesel::Connection as _;
 use diesel::SqliteConnection;
 use diesel::connection::InstrumentationEvent;
-use rusqlite::Connection;
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Text};
 use tokio::sync::Semaphore;
 
 use crate::board::start::BoardStart;
@@ -79,6 +81,44 @@ struct StorageLibraryImportPlanningWorkDocument {
     revision: u64,
     body_bytes: u64,
     body_digest: PackageDigest,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportPlanningWorkDocumentRow {
+    #[diesel(sql_type = Text)]
+    id: String,
+    #[diesel(sql_type = Text)]
+    revision: String,
+    #[diesel(sql_type = Text)]
+    body: String,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportPlanningWorkTextRow {
+    #[diesel(sql_type = Text)]
+    value: String,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportPlanningWorkCountRow {
+    #[diesel(sql_type = BigInt)]
+    value: i64,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportPlanningWorkTreeRow {
+    #[diesel(sql_type = Text)]
+    name: String,
+    #[diesel(sql_type = Text)]
+    page_type: String,
+    #[diesel(sql_type = BigInt)]
+    pages: i64,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportPlanningWorkPlanRow {
+    #[diesel(sql_type = Text)]
+    detail: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -176,7 +216,7 @@ impl StorageLibraryImportPlanningWorkRollback {
 
 pub(crate) struct StorageLibraryImportPlanningWorkFixture {
     pub(crate) diesel: StorageConnection,
-    pub(crate) connection: Connection,
+    pub(crate) connection: SqliteConnection,
     statements: Arc<std::sync::Mutex<Vec<String>>>,
     pub(crate) directory: tempfile::TempDir,
     expected_documents: Vec<StorageLibraryImportPlanningWorkDocument>,
@@ -260,12 +300,11 @@ impl StorageLibraryImportPlanningWorkFixture {
     ) -> StorageLibraryImportPlanningWorkResult<Self> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("planning.sqlite");
-        let connection = Connection::open(&path)?;
-        connection.pragma_update(None, "page_size", i64::try_from(Self::PAGE_BYTES)?)?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "synchronous", "FULL")?;
-        connection.pragma_update(None, "wal_autocheckpoint", 0)?;
+        let mut connection = SqliteConnection::establish(&path.to_string_lossy())?;
+        connection.batch_execute(&format!(
+            "PRAGMA page_size = {}; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL; PRAGMA wal_autocheckpoint = 0;",
+            Self::PAGE_BYTES
+        ))?;
         let mut diesel = StorageConnection::open(&path)?;
         StorageMigrationRunner::run_embedded(diesel.diesel())?;
         let statements = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -354,45 +393,58 @@ impl StorageLibraryImportPlanningWorkFixture {
     }
 
     fn snapshot(
-        &self,
+        &mut self,
     ) -> StorageLibraryImportPlanningWorkResult<StorageLibraryImportPlanningWorkSnapshot> {
         let mut documents = Vec::new();
-        let mut statement = self
-            .connection
-            .prepare("SELECT id, revision, body FROM documents ORDER BY id")?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let body: String = row.get(2)?;
+        let rows = diesel::sql_query("SELECT id, revision, body FROM documents ORDER BY id")
+            .load::<StorageLibraryImportPlanningWorkDocumentRow>(&mut self.connection)?;
+        for row in rows {
             documents.push(StorageLibraryImportPlanningWorkDocument {
-                id: row.get::<_, String>(0)?.parse()?,
-                revision: row.get::<_, String>(1)?.parse()?,
-                body_bytes: u64::try_from(body.len())?,
-                body_digest: PackageDigest::hash_slice(body.as_bytes()),
+                id: row.id.parse()?,
+                revision: row.revision.parse()?,
+                body_bytes: u64::try_from(row.body.len())?,
+                body_digest: PackageDigest::hash_slice(row.body.as_bytes()),
             });
         }
-        let metadata = self.connection.prepare(
-            "SELECT json_array(game_id, content_revision, organization_revision, content_kind, rules_variant, start_kind, mode, result, white_display, white_key, black_display, black_key, date_year, date_month, date_day, opening_display, opening_key, opening_code, plies, identity_initial_fen, identity_mainline_uci, modified_ms, favorite, folder_id, location, trashed_ms) FROM library_entries ORDER BY game_id",
-        )?
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
-        let schema = self
-            .connection
-            .prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name")?
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<String>>>()?;
-        let nonoverflow = self.connection.prepare(
-            "SELECT name, pagetype, count(*) FROM dbstat WHERE pagetype <> 'overflow' GROUP BY name, pagetype ORDER BY name, pagetype",
-        )?
-        .query_map([], |row| {
-            let pages: i64 = row.get(2)?;
-            Ok(StorageLibraryImportPlanningWorkTreeShape {
-                name: row.get(0)?,
-                page_type: row.get(1)?,
-                pages: u64::try_from(pages)
-                    .map_err(|_negative| rusqlite::Error::IntegralValueOutOfRange(2, pages))?,
+        let metadata = diesel::sql_query(
+            "SELECT json_array(game_id, content_revision, organization_revision, content_kind, rules_variant, start_kind, mode, result, white_display, white_key, black_display, black_key, date_year, date_month, date_day, opening_display, opening_key, opening_code, plies, identity_initial_fen, identity_mainline_uci, modified_ms, favorite, folder_id, location, trashed_ms) AS value FROM library_entries ORDER BY game_id",
+        )
+        .load::<StorageLibraryImportPlanningWorkTextRow>(&mut self.connection)?
+        .into_iter()
+        .map(|row| row.value)
+        .collect::<Vec<String>>();
+        let schema = diesel::sql_query(
+            "SELECT sql AS value FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type, name",
+        )
+        .load::<StorageLibraryImportPlanningWorkTextRow>(&mut self.connection)?
+        .into_iter()
+        .map(|row| row.value)
+        .collect::<Vec<String>>();
+        let nonoverflow = diesel::sql_query(
+            "SELECT name, pagetype AS page_type, count(*) AS pages FROM dbstat WHERE pagetype <> 'overflow' GROUP BY name, pagetype ORDER BY name, pagetype",
+        )
+        .load::<StorageLibraryImportPlanningWorkTreeRow>(&mut self.connection)?
+        .into_iter()
+        .map(|row| {
+            Ok::<_, std::num::TryFromIntError>(StorageLibraryImportPlanningWorkTreeShape {
+                name: row.name,
+                page_type: row.page_type,
+                pages: u64::try_from(row.pages)?,
             })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        let document_overflow_pages = diesel::sql_query(
+            "SELECT count(*) AS value FROM dbstat WHERE name = 'documents' AND pagetype = 'overflow'",
+        )
+        .get_result::<StorageLibraryImportPlanningWorkCountRow>(&mut self.connection)?
+        .value;
+        let catalog =
+            diesel::sql_query("SELECT revision AS value FROM library_state WHERE singleton = 1")
+                .get_result::<StorageLibraryImportPlanningWorkTextRow>(&mut self.connection)?
+                .value;
+        let total_changes = diesel::sql_query("SELECT total_changes() AS value")
+            .get_result::<StorageLibraryImportPlanningWorkCountRow>(&mut self.connection)?
+            .value;
         Ok(StorageLibraryImportPlanningWorkSnapshot {
             main: StorageLibraryImportPlanningWorkFile::read(
                 &self.directory.path().join("planning.sqlite"),
@@ -404,17 +456,9 @@ impl StorageLibraryImportPlanningWorkFixture {
             metadata,
             schema,
             nonoverflow,
-            document_overflow_pages: u64::try_from(self.connection.query_row(
-                "SELECT count(*) FROM dbstat WHERE name = 'documents' AND pagetype = 'overflow'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )?)?,
-            catalog: self.connection.query_row(
-                "SELECT revision FROM library_state WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )?,
-            total_changes: self.connection.total_changes(),
+            document_overflow_pages: u64::try_from(document_overflow_pages)?,
+            catalog,
+            total_changes: u64::try_from(total_changes)?,
         })
     }
 
@@ -458,9 +502,7 @@ impl StorageLibraryImportPlanningWorkFixture {
         let after_immediate = self.snapshot()?;
         let last_checkpoint = self.checkpoint()?;
         let after_checkpoint = self.snapshot()?;
-        self.connection
-            .close()
-            .map_err(|(_connection, error)| error)?;
+        drop(self.connection);
         let path = self.directory.path().to_owned();
         self.directory.close()?;
         Ok(StorageLibraryImportPlanningWorkObservation {
@@ -577,8 +619,7 @@ fn canonical_primary_key_probes_have_covering_query_plans() -> StorageLibraryImp
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("probes.sqlite");
     StorageMigrationRunner::run_embedded(StorageConnection::open(&path)?.diesel())?;
-    let connection = Connection::open(&path)?;
-    connection.pragma_update(None, "foreign_keys", "ON")?;
+    let mut connection = StorageConnection::open(&path)?;
     let limit = StorageLibraryImportSpaceTrees::probe_limit(1)?;
     assert_eq!(limit, 81);
     for (table, index) in [
@@ -591,10 +632,12 @@ fn canonical_primary_key_probes_have_covering_query_plans() -> StorageLibraryImp
             "sqlite_autoindex_library_entries_1",
         ),
     ] {
-        let plans = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {}", table.probe_sql()))?
-            .query_map([i64::try_from(limit)?], |row| row.get::<_, String>(3))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let plans = diesel::sql_query(format!("EXPLAIN QUERY PLAN {}", table.probe_sql()))
+            .bind::<BigInt, _>(i64::try_from(limit)?)
+            .load::<StorageLibraryImportPlanningWorkPlanRow>(connection.diesel())?
+            .into_iter()
+            .map(|row| row.detail)
+            .collect::<Vec<_>>();
         assert_eq!(plans.len(), 1, "{plans:?}");
         assert!(
             plans[0].contains(&format!("USING COVERING INDEX {index}")),
@@ -649,10 +692,7 @@ async fn bounded_probes_distinguish_exact_cardinality_from_a_lower_bound()
                 } else if records > limit {
                     assert_eq!(Some(steps), capped_steps);
                 }
-                fixture
-                    .connection
-                    .close()
-                    .map_err(|(_connection, error)| error)?;
+                drop(fixture.connection);
                 fixture.directory.close()?;
             }
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
@@ -772,10 +812,7 @@ async fn inventory_cancellation_is_observed_between_streamed_rows()
             assert!(StorageLibraryImportPageLimit::is_autocommit(
                 fixture.diesel.diesel()
             )?);
-            fixture
-                .connection
-                .close()
-                .map_err(|(_connection, error)| error)?;
+            drop(fixture.connection);
             fixture.directory.close()?;
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
         })
@@ -799,7 +836,7 @@ async fn partial_indexes_reuse_the_parent_probe_without_repeating_inventory()
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
             let footprint = StorageLibraryImportPlanningWorkFixture::footprint()?;
             let before = fixture.measure(false, footprint)?;
-            fixture.connection.execute_batch(
+            fixture.connection.batch_execute(
                 "CREATE INDEX import_empty_partial ON library_entries(game_id) WHERE favorite = 1",
             )?;
             assert_eq!(fixture.checkpoint()?, (0, 0, 0));
@@ -808,10 +845,7 @@ async fn partial_indexes_reuse_the_parent_probe_without_repeating_inventory()
             assert_eq!(after.inventory_vm_steps, before.inventory_vm_steps);
             assert!(after.new_page_budget >= before.new_page_budget);
             assert!(after.old_tree_pages >= before.old_tree_pages);
-            fixture
-                .connection
-                .close()
-                .map_err(|(_connection, error)| error)?;
+            drop(fixture.connection);
             fixture.directory.close()?;
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
         })
@@ -832,23 +866,23 @@ async fn tiny_import_bounds_are_stable_when_a_checkpointed_unrelated_document_gr
             token,
         )?;
         let unrelated = uuid::Uuid::from_u128(99_001).to_string();
-        fixture.connection.execute(
-            "INSERT INTO documents(id, revision, body) VALUES (?1, '1', '{}')",
-            [&unrelated],
-        )?;
+        diesel::sql_query("INSERT INTO documents(id, revision, body) VALUES (?, '1', '{}')")
+            .bind::<Text, _>(&unrelated)
+            .execute(&mut fixture.connection)?;
         assert_eq!(fixture.checkpoint()?, (0, 0, 0));
         let footprint = StorageLibraryImportPlanningWorkFixture::footprint()?;
         let before = fixture.measure(false, footprint)?;
-        fixture.connection.execute(
-            "UPDATE documents SET body = json_object('unrelated', hex(zeroblob(16384))) WHERE id = ?1",
-            [&unrelated],
-        )?;
+        diesel::sql_query(
+            "UPDATE documents SET body = json_object('unrelated', hex(zeroblob(16384))) WHERE id = ?",
+        )
+        .bind::<Text, _>(&unrelated)
+        .execute(&mut fixture.connection)?;
         assert_eq!(fixture.checkpoint()?, (0, 0, 0));
         let after = fixture.measure(false, footprint)?;
         assert_eq!(before.new_page_budget, after.new_page_budget);
         assert_eq!(before.old_tree_pages, after.old_tree_pages);
         assert_eq!(before.allocator_operations, after.allocator_operations);
-        fixture.connection.close().map_err(|(_connection, error)| error)?;
+        drop(fixture.connection);
         fixture.directory.close()?;
         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     }).await?;

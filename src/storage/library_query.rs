@@ -34,6 +34,16 @@ diesel::define_sql_function! {
     ) -> BigInt;
 }
 
+diesel::define_sql_function! {
+    #[sql_name = "coalesce"]
+    fn library_coalesce_timestamp(value: Nullable<BigInt>, fallback: BigInt) -> BigInt;
+}
+
+diesel::define_sql_function! {
+    #[sql_name = "max"]
+    fn library_max(left: BigInt, right: BigInt) -> BigInt;
+}
+
 type StorageLibraryQuerySource = InnerJoinQuerySource<library_entries::table, documents::table>;
 type StorageLibraryQueryBool =
     Box<dyn BoxableExpression<StorageLibraryQuerySource, Sqlite, SqlType = Bool>>;
@@ -41,72 +51,6 @@ type StorageLibraryQueryNullableBool =
     Box<dyn BoxableExpression<StorageLibraryQuerySource, Sqlite, SqlType = Nullable<Bool>>>;
 type StorageLibraryQueryInteger =
     Box<dyn BoxableExpression<StorageLibraryQuerySource, Sqlite, SqlType = BigInt>>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, diesel::deserialize::FromSqlRow)]
-#[diesel(sql_type = diesel::sql_types::Integer)]
-pub(crate) struct StorageLibraryMillis(i64);
-
-impl StorageLibraryMillis {
-    pub(crate) const fn new(value: i64) -> Self {
-        Self(value)
-    }
-
-    pub(crate) const fn value(self) -> i64 {
-        self.0
-    }
-
-    pub(crate) fn optional(
-        value: Option<i64>,
-    ) -> library_nullable_millis<
-        diesel::dsl::IntoSql<Option<i64>, Nullable<BigInt>>,
-        diesel::dsl::IntoSql<Option<i64>, Nullable<BigInt>>,
-    > {
-        library_nullable_millis(
-            value.into_sql::<Nullable<BigInt>>(),
-            None::<i64>.into_sql::<Nullable<BigInt>>(),
-        )
-    }
-
-    pub(crate) fn expression(
-        self,
-    ) -> diesel::dsl::Cast<diesel::dsl::IntoSql<i64, BigInt>, diesel::sql_types::Integer> {
-        self.0
-            .into_sql::<BigInt>()
-            .fallible_cast::<diesel::sql_types::Integer>()
-    }
-}
-
-impl diesel::deserialize::FromSql<diesel::sql_types::Integer, Sqlite> for StorageLibraryMillis {
-    fn from_sql(
-        mut value: diesel::sqlite::SqliteValue<'_, '_, '_>,
-    ) -> diesel::deserialize::Result<Self> {
-        Ok(Self(value.read_long()))
-    }
-}
-
-diesel::define_sql_function! {
-    #[sql_name = "ifnull"]
-    fn library_nullable_millis(
-        value: Nullable<BigInt>,
-        fallback: Nullable<BigInt>,
-    ) -> Nullable<diesel::sql_types::Integer>;
-}
-
-diesel::define_sql_function! {
-    #[sql_name = "coalesce"]
-    fn library_coalesce_millis(
-        value: Nullable<diesel::sql_types::Integer>,
-        fallback: diesel::sql_types::Integer,
-    ) -> diesel::sql_types::Integer;
-}
-
-diesel::define_sql_function! {
-    #[sql_name = "max"]
-    fn library_max_millis(
-        left: diesel::sql_types::Integer,
-        right: diesel::sql_types::Integer,
-    ) -> diesel::sql_types::Integer;
-}
 
 #[derive(Debug, Queryable, Selectable)]
 #[diesel(table_name = library_entries)]
@@ -130,11 +74,11 @@ pub(crate) struct StorageLibraryQueryRow {
     pub(crate) opening_key: Option<String>,
     pub(crate) opening_code: Option<String>,
     pub(crate) plies: i32,
-    pub(crate) modified_ms: Option<StorageLibraryMillis>,
+    pub(crate) modified_ms: Option<i64>,
     pub(crate) favorite: i32,
     pub(crate) folder_id: Option<String>,
     pub(crate) location: String,
-    pub(crate) trashed_ms: Option<StorageLibraryMillis>,
+    pub(crate) trashed_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -259,7 +203,7 @@ impl StorageLibraryEnumSort {
     fn value(self, index: usize) -> StorageLibraryQueryInteger {
         match (self, index) {
             (Self::UpdatedDescending | Self::UpdatedAscending, _) => {
-                Box::new(library_coalesce(library_entries::modified_ms, 0))
+                Box::new(library_coalesce_timestamp(library_entries::modified_ms, 0))
             }
             (Self::DateDescending | Self::DateAscending, 0) => {
                 Box::new(library_coalesce(library_entries::date_year, 0))

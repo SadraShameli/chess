@@ -4,7 +4,9 @@ use std::num::NonZeroUsize;
 use std::panic::UnwindSafe;
 use std::task::Poll;
 
-use rusqlite::{Connection, params};
+use diesel::SqliteConnection;
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
 
 use crate::board::enums::BoardEnumColor;
 use crate::board::position::BoardPosition;
@@ -34,6 +36,7 @@ use crate::game::storage_repository::{
     GameStorageSaveRequestError,
 };
 use crate::notation::pgn_import::NotationPgnImport;
+use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::game_document::{
     StorageGameDocument, StorageGameDocumentEnumContentKind, StorageGameDocumentError,
@@ -46,6 +49,7 @@ use crate::storage::library_query::StorageLibraryQuery;
 use crate::storage::library_repository::{
     StorageLibraryEnumMutationReceipt, StorageLibraryError, StorageLibraryRepository,
 };
+use crate::storage::schema::{documents, library_entries};
 
 type StorageLibraryPlayedTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -83,12 +87,17 @@ impl StorageLibraryPlayedFixture {
     async fn inspect<T, F>(&self, operation: F) -> StorageLibraryPlayedTestResult<T>
     where
         T: Send + 'static,
-        F: FnOnce(&Connection) -> Result<T, rusqlite::Error> + Send + UnwindSafe + 'static,
+        F: FnOnce(&mut SqliteConnection) -> Result<T, diesel::result::Error>
+            + Send
+            + UnwindSafe
+            + 'static,
     {
         let path = self.directory.path().join("library.sqlite");
         Ok(self
             .executor
-            .submit_waiting(move |_cancellation| operation(&Connection::open(path)?))
+            .submit_waiting(move |_cancellation| -> Result<T, StorageLibraryError> {
+                Ok(operation(StorageConnection::open(&path)?.diesel())?)
+            })
             .await?
             .join()
             .await??)
@@ -201,11 +210,10 @@ impl StorageLibraryPlayedFixture {
 
     async fn counts(&self) -> StorageLibraryPlayedTestResult<(i64, i64)> {
         self.inspect(|connection| {
-            connection.query_row(
-                "SELECT (SELECT COUNT(*) FROM documents), (SELECT COUNT(*) FROM library_entries)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            Ok((
+                documents::table.count().get_result(connection)?,
+                library_entries::table.count().get_result(connection)?,
+            ))
         })
         .await
     }
@@ -237,13 +245,20 @@ impl StorageLibraryPlayedFixture {
         assert_eq!(played.session().live(), session.live());
         assert!(!played.session().clock().is_running());
         let game = session.id();
-        let projected: (String, String, Option<i64>, String) = self.inspect(move |connection| {
-            connection.query_row(
-                "SELECT d.revision, e.content_revision, e.modified_ms, e.content_kind FROM documents d JOIN library_entries e ON e.game_id = d.id WHERE d.id = ?1",
-                params![game.as_uuid().to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-        }).await?;
+        let projected: (String, String, Option<i64>, String) = self
+            .inspect(move |connection| {
+                documents::table
+                    .inner_join(library_entries::table)
+                    .filter(documents::id.eq(game.as_uuid().to_string()))
+                    .select((
+                        documents::revision,
+                        library_entries::content_revision,
+                        library_entries::modified_ms,
+                        library_entries::content_kind,
+                    ))
+                    .first(connection)
+            })
+            .await?;
         assert_eq!(
             projected,
             (
@@ -468,7 +483,7 @@ async fn expected_revision_conflict_rolls_back_document_projection_and_catalog()
 async fn failed_projection_write_rolls_back_the_new_document_and_catalog()
 -> StorageLibraryPlayedTestResult {
     let fixture = StorageLibraryPlayedFixture::new().await?;
-    fixture.inspect(|connection| connection.execute_batch("CREATE TRIGGER reject_played_projection BEFORE INSERT ON library_entries BEGIN SELECT RAISE(ABORT, 'fixture projection refusal'); END;")).await?;
+    fixture.inspect(|connection| connection.batch_execute("CREATE TRIGGER reject_played_projection BEFORE INSERT ON library_entries BEGIN SELECT RAISE(ABORT, 'fixture projection refusal'); END;")).await?;
     let before = fixture
         .library()
         .query(StorageLibraryQuery::default())

@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use diesel::prelude::*;
+use diesel::sql_types::Text;
+
 use chess::board::enums::BoardEnumColor;
 use chess::board::start::BoardStart;
 use chess::capacity::budget::CapacityBudget;
@@ -14,6 +17,7 @@ use chess::game::storage_repository::GameStorageRevision;
 use chess::game::tree::GameTree;
 use chess::notation::game::{NotationGame, NotationGameParts};
 use chess::notation::game_identity::NotationGameIdentityEnumResult;
+use chess::storage::connection::StorageConnection;
 use chess::storage::document_store::StorageDocumentStore;
 use chess::storage::game_document::StorageGameDocument;
 use chess::storage::library_inventory::{
@@ -147,16 +151,16 @@ async fn played_inventory_pages_by_id_and_excludes_notation_trash_and_stale_proj
     let stale = fixture.played(108, 3_000_000).await?;
     fixture.store.close().await?;
     {
-        let connection =
-            rusqlite::Connection::open(fixture.directory.path().join("inventory.sqlite"))?;
-        connection.execute(
-            "UPDATE library_entries SET location = 'trash', trashed_ms = 1234 WHERE game_id = ?1",
-            [trash.as_uuid().to_string()],
-        )?;
-        connection.execute(
-            "UPDATE documents SET revision = '2' WHERE id = ?1",
-            [stale.as_uuid().to_string()],
-        )?;
+        let mut connection =
+            StorageConnection::open(&fixture.directory.path().join("inventory.sqlite"))?;
+        diesel::sql_query(
+            "UPDATE library_entries SET location = 'trash', trashed_ms = 1234 WHERE game_id = ?",
+        )
+        .bind::<Text, _>(trash.as_uuid().to_string())
+        .execute(connection.diesel())?;
+        diesel::sql_query("UPDATE documents SET revision = '2' WHERE id = ?")
+            .bind::<Text, _>(stale.as_uuid().to_string())
+            .execute(connection.diesel())?;
     }
     fixture.store = StorageDocumentStore::open(
         fixture.directory.path().join("inventory.sqlite"),

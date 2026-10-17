@@ -1,4 +1,7 @@
-use rusqlite::{Connection, TransactionBehavior};
+use diesel::SqliteConnection;
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Integer, Text};
 
 use crate::capacity::budget::CapacityBudget;
 use crate::capacity::executor::CapacityExecutor;
@@ -8,12 +11,30 @@ use crate::storage::migration::StorageMigrationRunner;
 
 type StorageLibraryImportJournalResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-#[derive(Debug)]
+#[derive(Debug, QueryableByName)]
 struct StorageLibraryImportJournalOpcode {
+    #[diesel(sql_type = Text, column_name = "opcode")]
     name: String,
+    #[diesel(sql_type = BigInt, column_name = "p1")]
     first: i64,
+    #[diesel(sql_type = BigInt, column_name = "p2")]
     second: i64,
+    #[diesel(sql_type = BigInt, column_name = "p3")]
     third: i64,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportJournalFlag {
+    #[diesel(sql_type = Integer)]
+    value: i32,
+}
+
+#[derive(QueryableByName)]
+struct StorageLibraryImportJournalVersion {
+    #[diesel(sql_type = Text)]
+    version: String,
+    #[diesel(sql_type = Text)]
+    source: String,
 }
 
 struct StorageLibraryImportJournalProgram(Vec<StorageLibraryImportJournalOpcode>);
@@ -21,18 +42,12 @@ struct StorageLibraryImportJournalProgram(Vec<StorageLibraryImportJournalOpcode>
 impl StorageLibraryImportJournalProgram {
     const ABORT_ACTION: i64 = 2;
 
-    fn compile(connection: &Connection, sql: &str) -> StorageLibraryImportJournalResult<Self> {
-        let mut statement = connection.prepare(&format!("EXPLAIN {sql}"))?;
-        let mut rows = statement.raw_query();
-        let mut opcodes = Vec::new();
-        while let Some(row) = rows.next()? {
-            opcodes.push(StorageLibraryImportJournalOpcode {
-                name: row.get(1)?,
-                first: row.get(2)?,
-                second: row.get(3)?,
-                third: row.get(4)?,
-            });
-        }
+    fn compile(
+        connection: &mut SqliteConnection,
+        sql: &str,
+    ) -> StorageLibraryImportJournalResult<Self> {
+        let opcodes = diesel::sql_query(format!("EXPLAIN {sql}"))
+            .load::<StorageLibraryImportJournalOpcode>(connection)?;
         assert!(!opcodes.is_empty());
         let program = Self(opcodes);
         eprintln!(
@@ -55,7 +70,7 @@ impl StorageLibraryImportJournalProgram {
             .iter()
             .filter(|opcode| {
                 opcode.name == "Halt"
-                    && opcode.first == i64::from(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY)
+                    && opcode.first == i64::from(libsqlite3_sys::SQLITE_CONSTRAINT_FOREIGNKEY)
                     && opcode.second == Self::ABORT_ACTION
                     && opcode.third == 0
             })
@@ -79,7 +94,7 @@ impl StorageLibraryImportJournalProgram {
 }
 
 struct StorageLibraryImportJournalFixture {
-    connection: Connection,
+    connection: StorageConnection,
     directory: tempfile::TempDir,
 }
 
@@ -87,32 +102,40 @@ impl StorageLibraryImportJournalFixture {
     fn new() -> StorageLibraryImportJournalResult<Self> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("journal-proof.sqlite");
-        let connection = Connection::open(&path)?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "defer_foreign_keys", "OFF")?;
-        connection.pragma_update(None, "synchronous", "FULL")?;
         StorageMigrationRunner::run_embedded(StorageConnection::open(&path)?.diesel())?;
-        assert!(connection.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))?);
-        assert!(
-            !connection
-                .pragma_query_value(None, "defer_foreign_keys", |row| row.get::<_, bool>(0))?
+        let mut connection = StorageConnection::open(&path)?;
+        let pragma = |connection: &mut SqliteConnection, sql: &str| {
+            diesel::sql_query(sql).get_result::<StorageLibraryImportJournalFlag>(connection)
+        };
+        assert_eq!(
+            pragma(
+                connection.diesel(),
+                "SELECT foreign_keys AS value FROM pragma_foreign_keys"
+            )?
+            .value,
+            1
         );
-        let triggers: i64 = connection.query_row(
-            "SELECT count(*) FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('documents', 'library_entries', 'library_state')",
-            [],
-            |row| row.get(0),
-        )?;
-        let temporary_triggers: i64 = connection.query_row(
-            "SELECT count(*) FROM temp.sqlite_schema WHERE type = 'trigger'",
-            [],
-            |row| row.get(0),
-        )?;
+        assert_eq!(
+            pragma(
+                connection.diesel(),
+                "SELECT defer_foreign_keys AS value FROM pragma_defer_foreign_keys"
+            )?
+            .value,
+            0
+        );
+        let triggers: i64 = diesel::select(diesel::dsl::sql::<BigInt>(
+            "(SELECT count(*) FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('documents', 'library_entries', 'library_state'))",
+        ))
+        .get_result(connection.diesel())?;
+        let temporary_triggers: i64 = diesel::select(diesel::dsl::sql::<BigInt>(
+            "(SELECT count(*) FROM temp.sqlite_schema WHERE type = 'trigger')",
+        ))
+        .get_result(connection.diesel())?;
         assert_eq!((triggers, temporary_triggers), (0, 0));
-        let source: (String, String) =
-            connection.query_row("SELECT sqlite_version(), sqlite_source_id()", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })?;
+        let source =
+            diesel::sql_query("SELECT sqlite_version() AS version, sqlite_source_id() AS source")
+                .get_result::<StorageLibraryImportJournalVersion>(connection.diesel())?;
+        let source = (source.version, source.source);
         eprintln!("canonical import SQLite compiler: {source:?}");
         Ok(Self {
             connection,
@@ -121,9 +144,7 @@ impl StorageLibraryImportJournalFixture {
     }
 
     fn close(self) -> StorageLibraryImportJournalResult {
-        self.connection
-            .close()
-            .map_err(|(_connection, error)| error)?;
+        drop(self.connection);
         let path = self.directory.path().to_owned();
         self.directory.close()?;
         assert!(!path.try_exists()?);
@@ -173,15 +194,19 @@ async fn canonical_document_insert_and_entry_upsert_compile_as_single_row_writes
 -> StorageLibraryImportJournalResult {
     let statements = StorageLibraryImportJournalStatements::capture().await?;
     let mut fixture = StorageLibraryImportJournalFixture::new()?;
-    let transaction = fixture
+    fixture
         .connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let document = StorageLibraryImportJournalProgram::compile(&transaction, &statements.document)?;
-    document.assert_single_row_shape();
-    let entry = StorageLibraryImportJournalProgram::compile(&transaction, &statements.entry)?;
-    entry.assert_single_row_shape();
-    assert!(entry.direct_foreign_key_halts() >= 2, "{:?}", entry.0);
-    transaction.rollback()?;
+        .diesel()
+        .immediate_transaction(|transaction| {
+            let document =
+                StorageLibraryImportJournalProgram::compile(transaction, &statements.document)?;
+            document.assert_single_row_shape();
+            let entry =
+                StorageLibraryImportJournalProgram::compile(transaction, &statements.entry)?;
+            entry.assert_single_row_shape();
+            assert!(entry.direct_foreign_key_halts() >= 2, "{:?}", entry.0);
+            StorageLibraryImportJournalResult::Ok(())
+        })?;
     fixture.close()
 }
 
@@ -190,14 +215,17 @@ async fn canonical_catalog_update_compiles_as_a_rowid_one_pass_write()
 -> StorageLibraryImportJournalResult {
     let statements = StorageLibraryImportJournalStatements::capture().await?;
     let mut fixture = StorageLibraryImportJournalFixture::new()?;
-    let transaction = fixture
+    fixture
         .connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let catalog = StorageLibraryImportJournalProgram::compile(&transaction, &statements.catalog)?;
-    catalog.assert_single_row_shape();
-    assert!(catalog.has("SeekRowid"), "{:?}", catalog.0);
-    assert!(!catalog.has("OpenEphemeral"), "{:?}", catalog.0);
-    transaction.rollback()?;
+        .diesel()
+        .immediate_transaction(|transaction| {
+            let catalog =
+                StorageLibraryImportJournalProgram::compile(transaction, &statements.catalog)?;
+            catalog.assert_single_row_shape();
+            assert!(catalog.has("SeekRowid"), "{:?}", catalog.0);
+            assert!(!catalog.has("OpenEphemeral"), "{:?}", catalog.0);
+            StorageLibraryImportJournalResult::Ok(())
+        })?;
     fixture.close()
 }
 
@@ -206,19 +234,24 @@ async fn a_real_temporary_entry_fault_trigger_changes_the_canonical_upsert_progr
 -> StorageLibraryImportJournalResult {
     let statements = StorageLibraryImportJournalStatements::capture().await?;
     let mut fixture = StorageLibraryImportJournalFixture::new()?;
-    let before =
-        StorageLibraryImportJournalProgram::compile(&fixture.connection, &statements.entry)?;
+    let before = StorageLibraryImportJournalProgram::compile(
+        fixture.connection.diesel(),
+        &statements.entry,
+    )?;
     before.assert_single_row_shape();
-    fixture.connection.execute_batch(
+    fixture.connection.diesel().batch_execute(
         "CREATE TEMP TRIGGER import_entry_fault BEFORE INSERT ON library_entries BEGIN SELECT RAISE(ABORT, 'entry statement fault'); END",
     )?;
-    let transaction = fixture
+    fixture
         .connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let fault = StorageLibraryImportJournalProgram::compile(&transaction, &statements.entry)?;
-    assert!(fault.has("Program"), "{:?}", fault.0);
-    assert!(fault.has("FkCounter"), "{:?}", fault.0);
-    assert_eq!(fault.direct_foreign_key_halts(), 0, "{:?}", fault.0);
-    transaction.rollback()?;
+        .diesel()
+        .immediate_transaction(|transaction| {
+            let fault =
+                StorageLibraryImportJournalProgram::compile(transaction, &statements.entry)?;
+            assert!(fault.has("Program"), "{:?}", fault.0);
+            assert!(fault.has("FkCounter"), "{:?}", fault.0);
+            assert_eq!(fault.direct_foreign_key_halts(), 0, "{:?}", fault.0);
+            StorageLibraryImportJournalResult::Ok(())
+        })?;
     fixture.close()
 }

@@ -2,7 +2,7 @@ use diesel::SqliteConnection;
 use diesel::prelude::*;
 
 use crate::game::library_organization::GameLibraryOrganizationFolderId;
-use crate::storage::library_query::{StorageLibraryMillis, StorageLibraryQuery};
+use crate::storage::library_query::StorageLibraryQuery;
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::organization::{
@@ -123,9 +123,7 @@ impl StorageLibraryTransactionDestruction {
                 )
                 .set((
                     library_entries::location.eq(StorageTrashEnumLocation::Trash.sql()),
-                    library_entries::trashed_ms.eq(StorageLibraryMillis::optional(Some(
-                        request.timestamp().value(),
-                    ))),
+                    library_entries::trashed_ms.eq(Some(request.timestamp().value())),
                 ))
                 .execute(connection)?;
                 StorageTrashEnumAppliedAction::Trashed(id)
@@ -170,7 +168,7 @@ impl StorageLibraryTransactionDestruction {
         )
         .set((
             library_entries::location.eq(StorageTrashEnumLocation::Library.sql()),
-            library_entries::trashed_ms.eq(StorageLibraryMillis::optional(None)),
+            library_entries::trashed_ms.eq(None::<i64>),
         ))
         .execute(connection)?;
         Ok(StorageTrashReceipt::new(

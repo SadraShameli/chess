@@ -10,8 +10,6 @@ use diesel_migrations::FileBasedMigrations;
 
 type StorageMigrationContinuityResult = Result<(), Box<dyn std::error::Error>>;
 
-const BASELINE_VERSIONS: [&str; 1] = ["0001"];
-
 struct StorageMigrationContinuityFixture;
 
 impl StorageMigrationContinuityFixture {
@@ -93,7 +91,7 @@ async fn a_fresh_database_applies_the_baseline() -> StorageMigrationContinuityRe
     let mut connection = StorageMigrationContinuityFixture::open(&path)?;
     assert_eq!(
         StorageMigrationContinuityFixture::applied(&mut connection)?,
-        BASELINE_VERSIONS,
+        StorageMigrationRunner::embedded_versions()?,
     );
     let tables = StorageMigrationContinuityFixture::user_tables(&mut connection)?;
     for expected in [
@@ -127,7 +125,7 @@ async fn a_reopened_database_keeps_its_rows() -> StorageMigrationContinuityResul
     let mut connection = StorageMigrationContinuityFixture::open(&path)?;
     assert_eq!(
         StorageMigrationContinuityFixture::applied(&mut connection)?,
-        BASELINE_VERSIONS,
+        StorageMigrationRunner::embedded_versions()?,
     );
     assert_eq!(
         StorageMigrationContinuityFixture::data(&mut connection)?,

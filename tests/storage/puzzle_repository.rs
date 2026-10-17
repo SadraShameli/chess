@@ -29,6 +29,7 @@ use chess::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
 use chess::puzzle::storage_repository::PuzzleStorageDriver;
 use chess::puzzle::timer::PuzzleTimerEnumReadiness;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
+use chess::storage::migration::StorageMigrationRunner;
 use chess::storage::puzzle_repository::{StoragePuzzleError, StoragePuzzleRepository};
 use uuid::Uuid;
 
@@ -187,7 +188,7 @@ async fn transactional_receipt_survives_reopen_and_puzzle_rows_do_not_enter_game
     let mut connection = StorageSqliteInspector::open(path)?;
     let versions = connection
         .texts("SELECT version AS value FROM __diesel_schema_migrations ORDER BY version")?;
-    assert_eq!(versions, ["0001"]);
+    assert_eq!(versions, StorageMigrationRunner::embedded_versions()?);
     Ok(())
 }
 

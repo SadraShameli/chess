@@ -19,12 +19,6 @@ impl StorageConnection {
         Ok(Self { diesel })
     }
 
-    pub fn open_legacy(path: &Path) -> Result<rusqlite::Connection, StorageDocumentError> {
-        let connection = rusqlite::Connection::open(path)?;
-        connection.execute_batch(&Self::policy_script())?;
-        Ok(connection)
-    }
-
     pub fn diesel(&mut self) -> &mut SqliteConnection {
         &mut self.diesel
     }

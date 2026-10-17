@@ -21,6 +21,16 @@ impl StorageMigrationRunner {
         Self::run(connection, &Self::EMBEDDED)
     }
 
+    pub fn embedded_versions() -> Result<Vec<String>, StorageDocumentError> {
+        let mut versions: Vec<String> = MigrationSource::<Sqlite>::migrations(&Self::EMBEDDED)
+            .map_err(StorageDocumentError::Migration)?
+            .iter()
+            .map(|migration| migration.name().version().to_string())
+            .collect();
+        versions.sort();
+        Ok(versions)
+    }
+
     pub fn run<S: MigrationSource<Sqlite>>(
         connection: &mut SqliteConnection,
         source: &S,

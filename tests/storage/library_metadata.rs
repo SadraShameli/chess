@@ -12,12 +12,16 @@ use chess::game::library_organization::{
     GameLibraryOrganizationRevision, GameLibraryOrganizationTagId,
     GameLibraryOrganizationTagTarget, GameLibraryOrganizationTimestamp,
 };
+use chess::storage::connection::StorageConnection;
 use chess::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use chess::storage::library_metadata::{
     StorageLibraryMetadataEnumRequest, StorageLibraryMetadataEnumResponse,
     StorageLibraryMetadataRepository,
 };
 use chess::storage::library_repository::{StorageLibraryError, StorageLibraryRepository};
+use diesel::connection::SimpleConnection;
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 
 type StorageLibraryMetadataTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -633,7 +637,7 @@ async fn sqlite_metadata_errors_are_not_successful_empty_pages() -> StorageLibra
         .await?
         .close()
         .await?;
-    rusqlite::Connection::open(&path)?.execute_batch(
+    StorageConnection::open(&path)?.diesel().batch_execute(
         "PRAGMA foreign_keys = OFF; DROP TABLE library_entry_tags; DROP TABLE library_folders; DROP TABLE library_tags;",
     )?;
     let store = StorageDocumentStore::open(path, budget).await?;
@@ -719,12 +723,17 @@ async fn orphaned_rows_are_not_reinterpreted_as_roots() -> StorageLibraryMetadat
     let path = fixture._directory.path().join("metadata.sqlite");
     fixture.store.close().await?;
     {
-        let connection = rusqlite::Connection::open(&path)?;
-        connection.pragma_update(None, "foreign_keys", false)?;
-        connection.execute(
-            "INSERT INTO library_folders(folder_id, parent_id, revision, name) VALUES (?1, ?2, '0', ?3)",
-            rusqlite::params![orphan.to_string(), missing_parent.to_string(), "Actual orphan"],
-        )?;
+        let mut connection = StorageConnection::open(&path)?;
+        connection
+            .diesel()
+            .batch_execute("PRAGMA foreign_keys = OFF")?;
+        diesel::sql_query(
+            "INSERT INTO library_folders(folder_id, parent_id, revision, name) VALUES (?, ?, '0', ?)",
+        )
+        .bind::<Text, _>(orphan.to_string())
+        .bind::<Text, _>(missing_parent.to_string())
+        .bind::<Text, _>("Actual orphan")
+        .execute(connection.diesel())?;
     }
     let store = StorageDocumentStore::open(path, fixture.budget.clone()).await?;
     let metadata = StorageLibraryMetadataRepository::new(store.client());

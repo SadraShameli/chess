@@ -7,7 +7,6 @@ use crate::storage::library_prepared::{
     StorageLibraryEnumContentChange, StorageLibraryPreparedIdentity, StorageLibraryPreparedWrite,
     StorageLibraryProjection,
 };
-use crate::storage::library_query::StorageLibraryMillis;
 use crate::storage::library_repository::{StorageLibraryContentReceipt, StorageLibraryError};
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::rows::StorageLibraryTransactionRows;
@@ -154,11 +153,11 @@ impl StorageLibraryTransactionContent {
             library_entries::identity_initial_fen.eq(write.identity.initial_fen()),
             library_entries::identity_mainline_uci.eq(write.identity.mainline()),
             library_entries::content_sha256.eq(digest.as_slice()),
-            library_entries::modified_ms.eq(StorageLibraryMillis::optional(write.modified)),
+            library_entries::modified_ms.eq(write.modified),
             library_entries::favorite.eq(0),
             library_entries::folder_id.eq(write.folder.map(|folder| folder.to_string())),
             library_entries::location.eq(StorageTrashEnumLocation::Library.sql()),
-            library_entries::trashed_ms.eq(StorageLibraryMillis::optional(None)),
+            library_entries::trashed_ms.eq(None::<i64>),
         );
         diesel::insert_into(library_entries::table)
             .values(row)

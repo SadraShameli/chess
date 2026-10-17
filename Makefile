@@ -23,7 +23,7 @@ RUSTFMT ?= rustfmt
 schema-check:
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
 	$(DIESEL) migration run --database-url "$$tmp/schema.sqlite3" --migration-dir src/storage/migrations && \
-	$(DIESEL) print-schema --database-url "$$tmp/schema.sqlite3" > "$$tmp/schema.rs" && \
+	$(DIESEL) print-schema --patch-file src/storage/schema.patch --database-url "$$tmp/schema.sqlite3" > "$$tmp/schema.rs" && \
 	$(RUSTFMT) --edition 2024 --config-path rustfmt.toml "$$tmp/schema.rs" && \
 	diff -u src/storage/schema.rs "$$tmp/schema.rs"
 

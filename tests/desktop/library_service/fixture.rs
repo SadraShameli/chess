@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use diesel::connection::SimpleConnection;
 use rand::{SeedableRng, rngs::StdRng};
-use rusqlite::Connection;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::Instant;
 
@@ -48,6 +48,7 @@ use crate::game::storage_repository::{
     GameStorageRevision, GameStorageWallTimeError, GameStorageWallTimeProvider,
 };
 use crate::notation::pgn_import::NotationPgnImport;
+use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::game_document::StorageGameDocument;
 use crate::storage::library_prepared::StorageLibraryEnumContentChange;
@@ -348,10 +349,18 @@ impl DesktopLibraryServiceFixture {
     pub(crate) async fn sql(&self, statement: &'static str) -> DesktopLibraryServiceTestResult {
         let path = self.directory.path().join("library.sqlite");
         self.executor
-            .submit_waiting(move |_cancellation| Connection::open(path)?.execute_batch(statement))
+            .submit_waiting(
+                move |_cancellation| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                    StorageConnection::open(&path)?
+                        .diesel()
+                        .batch_execute(statement)?;
+                    Ok(())
+                },
+            )
             .await?
             .join()
-            .await??;
+            .await?
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 

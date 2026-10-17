@@ -62,11 +62,11 @@ diesel::table! {
         identity_initial_fen -> Text,
         identity_mainline_uci -> Text,
         content_sha256 -> Binary,
-        modified_ms -> Nullable<Integer>,
+        modified_ms -> Nullable<BigInt>,
         favorite -> Integer,
         folder_id -> Nullable<Text>,
         location -> Text,
-        trashed_ms -> Nullable<Integer>,
+        trashed_ms -> Nullable<BigInt>,
     }
 }
 
