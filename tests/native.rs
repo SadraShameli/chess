@@ -10,6 +10,9 @@ mod native_host_lifecycle;
 #[path = "native/engine_live_game.rs"]
 mod native_engine_live_game;
 
+#[path = "native/engine_lifecycle.rs"]
+mod native_engine_lifecycle;
+
 #[path = "native/engine_analysis_session.rs"]
 mod native_engine_analysis_session;
 
@@ -48,6 +51,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::path::Path::new(directory),
             )?;
         }
+        [operation, directory, cycles] if operation == "--engine-lifecycle" => {
+            native_engine_lifecycle::NativeEngineLifecycleHarness::run(
+                std::path::Path::new(directory),
+                cycles.to_string_lossy().parse()?,
+            )?;
+        }
         [operation, directory] if operation == "--engine-options" => {
             native_engine_options::NativeEngineOptionsHarness::run(std::path::Path::new(
                 directory,
@@ -63,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "Usage: native [--host-lifecycle | --game-composition | --engine-composition | --engine-live-game ENGINE_DIRECTORY | --engine-options ENGINE_DIRECTORY | --engine-analysis-session ENGINE_DIRECTORY | --workbench ENGINE_DIRECTORY]"
+                "Usage: native [--host-lifecycle | --game-composition | --engine-composition | --engine-live-game ENGINE_DIRECTORY | --engine-lifecycle ENGINE_DIRECTORY CYCLES | --engine-options ENGINE_DIRECTORY | --engine-analysis-session ENGINE_DIRECTORY | --workbench ENGINE_DIRECTORY]"
                     .into(),
             );
         }

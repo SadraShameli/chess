@@ -69,10 +69,18 @@ has no executed evidence and no task marker was changed for it.
 
 All of this is uncompiled and unrun.
 
+## Tests added in the third no-cargo batch
+
+- `confirm_game_trash_for_an_open_game_needs_its_live_revision_and_closes_it` in
+  `tests/desktop/library_service/pagination.rs`.
+- `file_selection_round_trip_sends_file_select_then_dispatches_import_with_the_handle`
+  in `tests/presentation/app_library.rs`.
+
 ## Not done
 
 - Story scenarios 1 through 9 and exact round-trip, duplicate and Trash results.
-- A test for the open-game Trash path and for the native file-selection round trip.
-- Windows import backend (needs the extra filesystem directory argument).
+- Windows import backend: it needs a space and volume-identity provider built on
+  Windows-only calls and the extra directory argument of the filesystem adapter; it
+  cannot be written or checked without a Windows host, so import stays unavailable there.
 - T097 and T100 remaining items are physical staging, space and measurement
   acceptance: external evidence.

@@ -317,3 +317,14 @@ unwind-table warning remains visible and unresolved.
   Quit through the application with the three-second shutdown windows, but Sleep
   (`AppLifecycle::Suspended`) interrupts only the puzzle timer. Live games and
   searches are not interrupted on sleep.
+
+## T046 sleep handling (written, not compiled or run)
+
+The native host now watches `AppLifecycle` suspend and resume messages. On the first
+suspend it calls `PresentationApp::interrupt_for_sleep`, which sends a Pause with the
+`ComputerSleep` cause for every active game through the ordinary game bridge, so the
+engine barrier and clock stop apply as for any pause. Focus loss does not touch live
+games. Resume leaves games paused for explicit resume. The three-second graceful
+shutdown window already exists in the coordinator, game registry, supervisor and
+bootstrap. Test: `computer_sleep_pauses_an_active_game_with_the_sleep_cause` in
+`tests/presentation/app.rs`.

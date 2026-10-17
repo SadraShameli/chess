@@ -605,3 +605,77 @@ async fn certified_native_open_retry_keeps_its_fresh_request_during_busy_admissi
     assert!(visible && stable && retained_origin && opened && distinct && original_failed && idle);
     Ok(())
 }
+
+#[tokio::test]
+async fn file_selection_round_trip_sends_file_select_then_dispatches_import_with_the_handle()
+-> DesktopLibraryServiceTestResult {
+    use crate::clock::duration::ClockInstant;
+    use crate::desktop::file_handle::{
+        DesktopFileEnumPurpose, DesktopFileHandleRegistry, DesktopFileHandleRequest,
+    };
+    use crate::desktop::library_service::{
+        DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumImportAction,
+    };
+    use crate::desktop::messages::DesktopMessagesEntityId;
+    use crate::presentation::library::view::PresentationLibraryEnumFileRequest;
+
+    let mut fixture = PresentationAppLibraryFixture::new().await?;
+    let port = fixture.application.port();
+    fixture
+        .library()?
+        .select_file(PresentationLibraryEnumFileRequest::ImportSource, &port)?;
+    let work = fixture
+        .application
+        .try_next()?
+        .ok_or("missing file selection work")?;
+    let asked = matches!(
+        work.request().command().operation(),
+        DesktopEnumCommand::FileSelect {
+            owner,
+            purpose: DesktopFileEnumPurpose::ReadFile
+        } if *owner == fixture.source.workspace
+    );
+    assert!(asked);
+    assert!(
+        fixture
+            .library()?
+            .select_file(PresentationLibraryEnumFileRequest::ImportSource, &port)
+            .is_err()
+    );
+    fixture.application.begin_commit(&work)?;
+    let source = fixture.source.directory.path().join("games.pgn");
+    std::fs::write(&source, "1. e4 *\n")?;
+    let mut registry = DesktopFileHandleRegistry::new();
+    let handle = registry
+        .register_selection(
+            source,
+            DesktopFileHandleRequest::new(
+                DesktopMessagesEntityId::new().file_handle_owner(),
+                DesktopFileEnumPurpose::ReadFile,
+                ClockInstant::from_nanos(1),
+            ),
+            &fixture.source.executor,
+        )
+        .await?;
+    fixture.application.complete_value(
+        &work,
+        DesktopEnumValue::FileSelect(Some(handle)),
+        None,
+    )?;
+    fixture.app.synchronize_library(&port)?;
+    let import = fixture
+        .application
+        .try_next()?
+        .ok_or("missing import work after file selection")?;
+    let prepared = matches!(
+        import.request().command().operation(),
+        DesktopEnumCommand::Library(operation) if matches!(
+            operation.action(),
+            DesktopLibraryServiceEnumAction::Import(
+                DesktopLibraryServiceEnumImportAction::Prepare(file)
+            ) if file.handle() == handle
+        )
+    );
+    assert!(prepared);
+    Ok(())
+}

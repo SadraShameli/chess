@@ -52,3 +52,13 @@ Remaining limits: no blocked-position (locked pawn chain) recognizer exists, so
 closed fortress positions with many pieces return Unknown rather than Impossible.
 Practical coverage on the adversarial corpus is unmeasured and stays a release
 blocker; T062 should not be checked until that gate passes.
+
+## Locked-pawn-chain recognizer decision
+
+No fortress recognizer was added and closed positions keep returning Unknown. A
+recognizer has to prove, for every legal continuation, that no pawn can move or
+capture, no piece can ever capture a pawn, and no king or piece can reach a square
+that changes that property; a missed case turns a playable game into a false draw.
+That proof needs the adversarial corpus and an exhaustive differential check against
+the bounded reachability search, neither of which can be run in this batch. Practical
+coverage therefore stays a release blocker and T062 stays unchecked.

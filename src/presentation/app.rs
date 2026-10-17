@@ -742,6 +742,32 @@ impl PresentationApp {
         true
     }
 
+    pub fn interrupt_for_sleep<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
+        let targets: Vec<_> = self
+            .games
+            .iter()
+            .filter(|game| game.snapshot.phase() == GameEnumPhase::Active)
+            .map(|game| (game.snapshot.id(), game.snapshot.revision()))
+            .collect();
+        let mut first_failure = None;
+        for (game, revision) in targets {
+            let operation = DesktopGameBridgeEnumOperation::Session {
+                game,
+                revision,
+                action: DesktopGameCommandsEnumAction::Pause {
+                    cause: GamePauseEnumCause::ComputerSleep,
+                },
+            };
+            if let Err(error) = self.activate_game(operation, DesktopRequestId::new(), port) {
+                first_failure.get_or_insert(error);
+            }
+        }
+        first_failure.map_or(Ok(()), Err)
+    }
+
     pub fn activate_game<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
         &mut self,
         operation: DesktopGameBridgeEnumOperation,

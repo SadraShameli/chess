@@ -316,3 +316,50 @@ async fn confirm_game_trash_uses_the_registry_close_certificate_for_move_and_del
     assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Deleted(deleted));
     fixture.close().await
 }
+
+#[tokio::test]
+async fn confirm_game_trash_for_an_open_game_needs_its_live_revision_and_closes_it()
+-> DesktopLibraryServiceTestResult {
+    use crate::desktop::game_editor::DesktopGameEditorEnumSource;
+    use crate::storage::trash::{StorageTrashEnumAppliedAction, StorageTrashPreviewRequest};
+    let mut fixture = DesktopLibraryServiceFixture::new().await?;
+    let mut session = DesktopLibraryServiceFixture::played(980)?;
+    session.begin_analysis(
+        session.revision(),
+        crate::clock::duration::ClockInstant::from_nanos(0),
+    )?;
+    let storage_revision = fixture.seed_played(&session).await?;
+    let game = DesktopLibraryServiceFixture::id(980)?;
+    let opened = fixture.open(980, storage_revision).await?;
+    let DesktopGameEditorEnumSource::Played { revision } = opened.context().source() else {
+        return Err("expected a played source".into());
+    };
+    let DesktopLibraryServiceEnumResult::TrashPlan(plan) = fixture
+        .execute(DesktopLibraryServiceEnumAction::PreviewTrash(
+            StorageTrashPreviewRequest::MoveToTrash(game),
+        ))
+        .await?
+    else {
+        return Err("missing open game plan".into());
+    };
+    let refused = fixture
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+            plan: plan.clone(),
+            open_revision: None,
+        })
+        .await;
+    assert!(refused.is_err());
+    let DesktopLibraryServiceEnumResult::Trashed(receipt) = fixture
+        .execute(DesktopLibraryServiceEnumAction::ConfirmGameTrash {
+            plan,
+            open_revision: Some(revision),
+        })
+        .await?
+    else {
+        return Err("missing open game receipt".into());
+    };
+    assert_eq!(receipt.action(), StorageTrashEnumAppliedAction::Trashed(game));
+    assert!(fixture.open(980, storage_revision).await.is_err());
+    drop(opened);
+    fixture.close().await
+}

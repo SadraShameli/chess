@@ -35,7 +35,8 @@ use bevy::render::view::window::{ExtractedWindow, SurfaceData};
 use bevy::render::{Render, RenderApp, RenderPlugin, RenderStartup, RenderSystems};
 use bevy::shader::ShaderCacheError;
 use bevy::window::{
-    ExitCondition, PrimaryWindow, RawHandleWrapper, Window, WindowCloseRequested, WindowPlugin,
+    AppLifecycle, ExitCondition, PrimaryWindow, RawHandleWrapper, Window, WindowCloseRequested,
+    WindowPlugin,
     WindowResizeConstraints,
 };
 use bevy::winit::{EventLoopProxyWrapper, UpdateMode, WINIT_WINDOWS, WinitPlugin, WinitSettings};
@@ -259,6 +260,8 @@ struct DesktopNativeHostState {
     failure: Option<DesktopNativeHostError>,
     fault_received_at: Option<ClockInstant>,
     interruption_announced: bool,
+    lifecycle_events: MessageCursor<AppLifecycle>,
+    sleeping: bool,
     quit: DesktopNativeHostEnumQuit,
     teardown: DesktopNativeHostEnumTeardown,
     replacement: Option<RenderResources>,
@@ -706,6 +709,8 @@ impl DesktopNativeHost {
             failure: None,
             fault_received_at: None,
             interruption_announced: false,
+            lifecycle_events: MessageCursor::default(),
+            sleeping: false,
             quit: DesktopNativeHostEnumQuit::Idle,
             teardown: DesktopNativeHostEnumTeardown::Active,
             replacement: None,
@@ -956,6 +961,26 @@ impl DesktopNativeHost {
         ))
     }
 
+    fn observe_sleep(world: &World, state: &mut DesktopNativeHostState) {
+        let Some(events) = world.get_resource::<Messages<AppLifecycle>>() else {
+            return;
+        };
+        let mut suspend = false;
+        for event in state.lifecycle_events.read(events) {
+            match event {
+                AppLifecycle::WillSuspend | AppLifecycle::Suspended => suspend = true,
+                AppLifecycle::WillResume | AppLifecycle::Running => state.sleeping = false,
+                AppLifecycle::Idle => {}
+            }
+        }
+        if suspend && !state.sleeping {
+            state.sleeping = true;
+            if let Err(error) = state.presentation.interrupt_for_sleep(&state.services.port) {
+                state.presentation.report_notice(error.to_string());
+            }
+        }
+    }
+
     fn setup(world: &mut World) {
         world.spawn(Camera2d);
         let outcome = world.resource_scope(
@@ -998,6 +1023,7 @@ impl DesktopNativeHost {
         state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
         state.presentation.poll();
+        Self::observe_sleep(world, state);
         Self::update_puzzles(world, state)?;
         Self::activate_window(world, state);
         #[cfg(target_os = "macos")]

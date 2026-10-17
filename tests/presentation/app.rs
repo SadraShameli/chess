@@ -1794,3 +1794,38 @@ fn mounted_stale_promotion_returns_focus_only_after_the_current_board_is_mounted
     assert!(fixture.application.try_next()?.is_none());
     Ok(())
 }
+
+#[test]
+fn computer_sleep_pauses_an_active_game_with_the_sleep_cause() -> PresentationAppTestResult {
+    use crate::game_transition_fixture::GameTransitionFixture;
+    use chess::desktop::game_bridge::DesktopGameBridgeEnumOperation;
+    use chess::desktop::game_commands::DesktopGameCommandsEnumAction;
+    use chess::desktop::game_snapshot::DesktopGameSnapshot;
+    use chess::game::pause::GamePauseEnumCause;
+
+    let mut fixture = PresentationAppFixture::new();
+    let session = GameTransitionFixture::session(
+        chess::clock::time_control::ClockTimeControl::untimed(),
+        None,
+    )?;
+    let snapshot = DesktopGameSnapshot::capture(&session, ClockInstant::from_nanos(0))?;
+    assert!(fixture.presentation.accept_game_snapshot(snapshot));
+    let port = fixture.application.port();
+    fixture.presentation.interrupt_for_sleep(&port)?;
+    let work = fixture
+        .application
+        .try_next()?
+        .ok_or("missing sleep pause work")?;
+    let slept = matches!(
+        work.request().command().operation(),
+        chess::desktop::messages::DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Session {
+            game,
+            action: DesktopGameCommandsEnumAction::Pause {
+                cause: GamePauseEnumCause::ComputerSleep
+            },
+            ..
+        }) if *game == session.id()
+    );
+    assert!(slept);
+    Ok(())
+}
