@@ -14,6 +14,8 @@ pub enum PresentationSettingsShortcutError {
     Reserved,
     #[error("The shortcut is already used by {0:?}")]
     Conflict(DesktopPreferencesEnumShortcutAction),
+    #[error("The shortcut is already used for {0} in a focused context")]
+    ContextConflict(&'static str),
 }
 
 pub struct PresentationSettingsShortcuts;
@@ -30,6 +32,11 @@ impl PresentationSettingsShortcuts {
         }
         if let Some(other) = PresentationShortcuts::conflict(draft.pending(), action, chord) {
             return Err(PresentationSettingsShortcutError::Conflict(other));
+        }
+        if let Some(binding) = PresentationShortcuts::context_conflict(chord) {
+            return Err(PresentationSettingsShortcutError::ContextConflict(
+                binding.action(),
+            ));
         }
         let stored = (chord != action.default_chord()).then_some(chord);
         Ok(draft.edit(DesktopPreferencesEnumPatch::Shortcut(action, stored)))

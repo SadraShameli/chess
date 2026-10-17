@@ -196,3 +196,18 @@ fn low_time_flags_fire_once_per_side_and_survive_restore() -> Result<(), Box<dyn
     assert!(!restored.observe(BoardEnumColor::Black, low));
     Ok(())
 }
+
+#[test]
+fn alert_flags_round_trip_through_the_persisted_clock_warnings() {
+    use chess::clock::state::ClockState;
+    use chess::clock::time_control::ClockTimeControl;
+
+    let mut clock = ClockState::new(ClockTimeControl::untimed(), BoardEnumColor::White);
+    let mut alerts = GameAlertsLowTime::default();
+    assert!(alerts.observe(BoardEnumColor::Black, ClockDuration::from_nanos(1)));
+    alerts.merge_into(&mut clock);
+    assert_eq!(
+        GameAlertsLowTime::from_clock(&clock).flags(),
+        (false, true)
+    );
+}

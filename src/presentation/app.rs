@@ -30,11 +30,7 @@ use crate::desktop::messages::{
     DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId, DesktopMessagesEnumResult,
     DesktopRequest,
 };
-use crate::desktop::preferences::{
-    DesktopPreferences, DesktopPreferencesEnumAid, DesktopPreferencesEnumAudioCategory,
-    DesktopPreferencesEnumPatch, DesktopPreferencesEnumSection,
-    DesktopPreferencesEnumShortcutAction, DesktopPreferencesPercent,
-};
+use crate::desktop::preferences::DesktopPreferences;
 use crate::desktop::puzzle_service::DesktopPuzzleServiceError;
 use crate::desktop::stream::DesktopStream;
 use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
@@ -49,6 +45,10 @@ use crate::presentation::app::editor::{
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumNavigation,
 };
+use crate::presentation::settings::controller::{
+    PresentationSettingsConnection, PresentationSettingsController, PresentationSettingsOutcome,
+};
+use crate::presentation::settings::view::PresentationSettingsView;
 use crate::presentation::board::animation::PresentationBoardAnimationFrame;
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::markings::{PresentationBoardMark, PresentationBoardMarkRequest};
@@ -290,7 +290,7 @@ pub struct PresentationApp {
     quit_ready: bool,
     quit_retry_frame: Option<u64>,
     theme_initialized: bool,
-    preferences: DesktopPreferences,
+    settings: PresentationSettingsController,
     settings_open: bool,
     settings_toggle_frame: Option<u64>,
     markings_identity: Option<(PresentationAppEnumWorkspace, Option<GameId>, Option<GameId>)>,
@@ -309,9 +309,11 @@ impl PresentationApp {
     const MAX_GAME_REQUESTS: usize = 128;
 
     pub fn new(clock: Arc<dyn ClockTimeProvider>) -> Self {
-        let preferences = DesktopPreferences::default();
-        let mut board =
-            PresentationBoardView::with_animation(clock, preferences.motion().is_reduced());
+        let settings = PresentationSettingsController::new(None);
+        let mut board = PresentationBoardView::with_animation(
+            clock,
+            settings.effective().motion().is_reduced(),
+        );
         board.rest_panel(true);
         Self {
             snapshot: None,
@@ -347,7 +349,7 @@ impl PresentationApp {
             quit_ready: false,
             quit_retry_frame: None,
             theme_initialized: false,
-            preferences,
+            settings,
             settings_open: false,
             settings_toggle_frame: None,
             markings_identity: None,
@@ -789,7 +791,26 @@ impl PresentationApp {
     }
 
     pub const fn preferences(&self) -> &DesktopPreferences {
-        &self.preferences
+        self.settings.effective()
+    }
+
+    pub fn mount_settings(&mut self, connection: PresentationSettingsConnection) {
+        self.settings = PresentationSettingsController::new(Some(connection));
+        self.board
+            .set_reduced_motion(self.settings.effective().motion().is_reduced());
+        self.theme_initialized = false;
+    }
+
+    fn apply_settings_outcome(&mut self, ctx: &egui::Context, outcome: PresentationSettingsOutcome) {
+        if outcome.appearance_changed {
+            PresentationThemeTokens::apply(ctx, self.settings.effective().theme());
+            self.board
+                .set_reduced_motion(self.settings.effective().motion().is_reduced());
+            ctx.request_discard("apply appearance before layout");
+        }
+        if outcome.close {
+            self.settings_open = false;
+        }
     }
 
     pub const fn is_settings_open(&self) -> bool {
@@ -1333,97 +1354,12 @@ impl PresentationApp {
     }
 
     fn show_settings(&mut self, ui: &mut Ui) {
-        ui.heading("Settings");
-        ui.label("Appearance applies immediately for this session. Saving preferences across launches is not available yet.");
         if ui.button("Reset Layout").clicked() {
             self.layout.reset();
             self.layout_reset_requested = true;
         }
-        for &section in DesktopPreferences::sections() {
-            ui.separator();
-            ui.heading(section.label());
-            match section {
-                DesktopPreferencesEnumSection::Appearance => {
-                    let mut theme = self.preferences.theme();
-                    for &choice in DesktopPreferences::themes() {
-                        ui.radio_value(&mut theme, choice, choice.label());
-                    }
-                    if self.preferences.set_theme(theme) {
-                        PresentationThemeTokens::apply(ui.ctx(), theme);
-                        ui.ctx().request_discard("apply appearance before layout");
-                    }
-                    let mut motion = self.preferences.motion();
-                    for &choice in DesktopPreferences::motions() {
-                        ui.radio_value(&mut motion, choice, choice.label());
-                    }
-                    if self.preferences.set_motion(motion) {
-                        self.board.set_reduced_motion(motion.is_reduced());
-                    }
-                }
-                DesktopPreferencesEnumSection::BoardAids => {
-                    for aid in DesktopPreferencesEnumAid::ALL {
-                        let mut enabled = self.preferences.aid(aid);
-                        if ui.checkbox(&mut enabled, aid.label()).changed() {
-                            self.preferences
-                                .apply(DesktopPreferencesEnumPatch::Aid(aid, enabled));
-                        }
-                    }
-                }
-                DesktopPreferencesEnumSection::Audio => {
-                    let mut master = self.preferences.master_volume().value();
-                    if ui
-                        .add(
-                            bevy_egui::egui::Slider::new(
-                                &mut master,
-                                0..=DesktopPreferencesPercent::MAX,
-                            )
-                            .text("Master volume"),
-                        )
-                        .changed()
-                        && let Ok(volume) = DesktopPreferencesPercent::new(master)
-                    {
-                        self.preferences
-                            .apply(DesktopPreferencesEnumPatch::MasterVolume(volume));
-                    }
-                    for category in DesktopPreferencesEnumAudioCategory::ALL {
-                        let entry = self.preferences.category(category);
-                        let mut enabled = entry.enabled();
-                        if ui.checkbox(&mut enabled, category.label()).changed() {
-                            self.preferences
-                                .apply(DesktopPreferencesEnumPatch::CategoryEnabled(
-                                    category, enabled,
-                                ));
-                        }
-                        let mut level = entry.volume().value();
-                        if ui
-                            .add(
-                                bevy_egui::egui::Slider::new(
-                                    &mut level,
-                                    0..=DesktopPreferencesPercent::MAX,
-                                )
-                                .text(format!("{} volume", category.label())),
-                            )
-                            .changed()
-                            && let Ok(volume) = DesktopPreferencesPercent::new(level)
-                        {
-                            self.preferences
-                                .apply(DesktopPreferencesEnumPatch::CategoryVolume(
-                                    category, volume,
-                                ));
-                        }
-                    }
-                }
-                DesktopPreferencesEnumSection::Shortcuts => {
-                    for action in DesktopPreferencesEnumShortcutAction::ALL {
-                        let text = self
-                            .preferences
-                            .shortcut(action)
-                            .map_or_else(|| "Default".to_owned(), |chord| chord.key().to_string());
-                        ui.label(format!("{}: {text}", action.label()));
-                    }
-                }
-            }
-        }
+        let outcome = PresentationSettingsView::show(ui, &mut self.settings);
+        self.apply_settings_outcome(&ui.ctx().clone(), outcome);
     }
 
     pub fn show<C, W, P>(
@@ -1439,11 +1375,13 @@ impl PresentationApp {
         P: PresentationBoardPickingProvider,
     {
         if !self.theme_initialized {
-            PresentationThemeTokens::apply(ui.ctx(), self.preferences.theme());
+            PresentationThemeTokens::apply(ui.ctx(), self.settings.effective().theme());
             self.theme_initialized = true;
             ui.ctx()
                 .request_discard("apply initial native theme before layout");
         }
+        let settings_outcome = self.settings.poll();
+        self.apply_settings_outcome(&ui.ctx().clone(), settings_outcome);
         self.poll();
         if let Err(error) = self.synchronize_library(port) {
             self.report_failure(error);
@@ -1524,7 +1462,11 @@ impl PresentationApp {
                     }
                     if ui.button("Settings").clicked() && self.settings_toggle_frame != Some(frame)
                     {
-                        self.settings_open = !self.settings_open;
+                        if !self.settings_open {
+                            self.settings_open = true;
+                        } else if self.settings.request_close() {
+                            self.settings_open = false;
+                        }
                         self.settings_toggle_frame = Some(frame);
                         self.board.cancel_gesture();
                     }

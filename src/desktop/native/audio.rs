@@ -58,3 +58,16 @@ impl<P: DesktopNativeAudioPort> DesktopNativeAudio<P> {
         &self.port
     }
 }
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DesktopNativeAudioUnavailable;
+
+impl DesktopNativeAudioPort for DesktopNativeAudioUnavailable {
+    fn play(
+        &mut self,
+        _category: DesktopPreferencesEnumAudioCategory,
+        _gain: f32,
+    ) -> Result<(), DesktopNativeAudioError> {
+        Err(DesktopNativeAudioError::DeviceUnavailable)
+    }
+}

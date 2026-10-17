@@ -51,6 +51,17 @@ struct DesktopPreferencesShortcutWire {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+struct DesktopPreferencesEngineWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    threads: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hash_mib: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    move_overhead_ms: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 struct DesktopPreferencesDocument {
     version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,6 +72,8 @@ struct DesktopPreferencesDocument {
     audio: Option<DesktopPreferencesAudioWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shortcuts: Option<Vec<DesktopPreferencesShortcutWire>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    engine: Option<DesktopPreferencesEngineWire>,
 }
 
 #[derive(Deserialize)]
@@ -113,7 +126,18 @@ impl DesktopPreferencesCodec {
                     })
                     .collect(),
             ),
+            engine: None,
         };
+        if preferences.engine_threads().is_some()
+            || preferences.engine_hash_mib().is_some()
+            || preferences.engine_move_overhead_ms().is_some()
+        {
+            document.engine = Some(DesktopPreferencesEngineWire {
+                threads: preferences.engine_threads(),
+                hash_mib: preferences.engine_hash_mib(),
+                move_overhead_ms: preferences.engine_move_overhead_ms(),
+            });
+        }
         if document
             .shortcuts
             .as_ref()
@@ -184,6 +208,19 @@ impl DesktopPreferencesCodec {
                     entry.action,
                     entry.chord,
                 ));
+            }
+        }
+        if let Some(engine) = document.engine {
+            if engine.threads.is_some() {
+                patches.push(DesktopPreferencesEnumPatch::engine_threads(engine.threads)?);
+            }
+            if engine.hash_mib.is_some() {
+                patches.push(DesktopPreferencesEnumPatch::engine_hash(engine.hash_mib)?);
+            }
+            if engine.move_overhead_ms.is_some() {
+                patches.push(DesktopPreferencesEnumPatch::engine_move_overhead(
+                    engine.move_overhead_ms,
+                )?);
             }
         }
         Ok(patches)

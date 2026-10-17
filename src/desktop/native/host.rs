@@ -130,6 +130,7 @@ pub struct DesktopNativeHostServices {
     pub puzzle_panel: Option<PresentationPuzzlePanelConnection>,
     pub library_workspace: Option<crate::desktop::messages::DesktopMessagesEntityId>,
     pub editor: Option<crate::presentation::app::editor::PresentationAppEditorConnection>,
+    pub preferences: Option<crate::presentation::settings::controller::PresentationSettingsConnection>,
     pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub clock: Arc<ClockTimeProviderMonotonic>,
@@ -683,6 +684,9 @@ impl DesktopNativeHost {
         }
         if let Some(connection) = services.editor.take() {
             presentation.mount_editor(connection);
+        }
+        if let Some(connection) = services.preferences.take() {
+            presentation.mount_settings(connection);
         }
         app.insert_resource(DesktopNativeHostState {
             services,

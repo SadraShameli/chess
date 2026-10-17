@@ -191,3 +191,25 @@ fn section_and_all_reset_restore_defaults_without_touching_other_sections() {
     assert_eq!(state.pending(), DesktopPreferences::default());
     assert_eq!(state.saved().theme(), DesktopPreferencesEnumTheme::Light);
 }
+
+#[test]
+fn engine_overrides_validate_bounds_round_trip_and_reset() -> DesktopPreferencesTestResult {
+    assert!(DesktopPreferencesEnumPatch::engine_threads(Some(0)).is_err());
+    assert!(DesktopPreferencesEnumPatch::engine_threads(Some(513)).is_err());
+    assert!(DesktopPreferencesEnumPatch::engine_hash(Some(262_145)).is_err());
+    assert!(DesktopPreferencesEnumPatch::engine_move_overhead(Some(2_001)).is_err());
+    let mut preferences = DesktopPreferences::default();
+    preferences.apply(DesktopPreferencesEnumPatch::engine_threads(Some(8))?);
+    preferences.apply(DesktopPreferencesEnumPatch::engine_hash(Some(256))?);
+    assert_eq!(preferences.engine_threads(), Some(8));
+    assert_eq!(preferences.engine_move_overhead_ms(), None);
+    let text = DesktopPreferencesCodec::encode(preferences)?;
+    assert_eq!(DesktopPreferencesCodec::load(text.as_bytes())?, preferences);
+    assert!(DesktopPreferencesCodec::load(br#"{"version":1,"engine":{"threads":0}}"#).is_err());
+    let reset = DesktopPreferencesResetPreview::new(
+        preferences,
+        DesktopPreferencesEnumResetScope::Section(DesktopPreferencesEnumSection::Engine),
+    );
+    assert_eq!(reset.changes().len(), 2);
+    Ok(())
+}

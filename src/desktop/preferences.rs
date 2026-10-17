@@ -5,6 +5,13 @@ use thiserror::Error;
 pub enum DesktopPreferencesError {
     #[error("A volume of {0} percent is outside 0 to 100")]
     Percent(u8),
+    #[error("The engine {name} value {value} must be between {minimum} and {maximum}")]
+    EngineValue {
+        name: &'static str,
+        value: u32,
+        minimum: u32,
+        maximum: u32,
+    },
     #[error("The shortcut key {0:?} is not a printable ASCII character")]
     ShortcutKey(char),
     #[error("The settings document version {0} is not supported")]
@@ -163,6 +170,10 @@ impl DesktopPreferencesEnumShortcutAction {
         }
     }
 
+    pub const fn slot(self) -> usize {
+        self.index()
+    }
+
     const fn index(self) -> usize {
         match self {
             Self::Palette => 0,
@@ -180,6 +191,7 @@ pub enum DesktopPreferencesEnumSection {
     BoardAids,
     Audio,
     Shortcuts,
+    Engine,
 }
 
 impl DesktopPreferencesEnumSection {
@@ -189,6 +201,7 @@ impl DesktopPreferencesEnumSection {
             Self::BoardAids => "Board aids",
             Self::Audio => "Audio",
             Self::Shortcuts => "Shortcuts",
+            Self::Engine => "Engine",
         }
     }
 }
@@ -342,9 +355,48 @@ pub enum DesktopPreferencesEnumPatch {
         DesktopPreferencesEnumShortcutAction,
         Option<DesktopPreferencesChord>,
     ),
+    EngineThreads(Option<u32>),
+    EngineHash(Option<u32>),
+    EngineMoveOverhead(Option<u32>),
 }
 
 impl DesktopPreferencesEnumPatch {
+    pub const MAX_ENGINE_THREADS: u32 = 512;
+    pub const MAX_ENGINE_HASH_MIB: u32 = 262_144;
+    pub const MAX_ENGINE_OVERHEAD_MS: u32 = 2_000;
+
+    fn bounded(
+        name: &'static str,
+        value: Option<u32>,
+        minimum: u32,
+        maximum: u32,
+    ) -> Result<Option<u32>, DesktopPreferencesError> {
+        match value {
+            Some(found) if found < minimum || found > maximum => {
+                Err(DesktopPreferencesError::EngineValue {
+                    name,
+                    value: found,
+                    minimum,
+                    maximum,
+                })
+            }
+            other => Ok(other),
+        }
+    }
+
+    pub fn engine_threads(value: Option<u32>) -> Result<Self, DesktopPreferencesError> {
+        Self::bounded("threads", value, 1, Self::MAX_ENGINE_THREADS).map(Self::EngineThreads)
+    }
+
+    pub fn engine_hash(value: Option<u32>) -> Result<Self, DesktopPreferencesError> {
+        Self::bounded("hash", value, 1, Self::MAX_ENGINE_HASH_MIB).map(Self::EngineHash)
+    }
+
+    pub fn engine_move_overhead(value: Option<u32>) -> Result<Self, DesktopPreferencesError> {
+        Self::bounded("move overhead", value, 0, Self::MAX_ENGINE_OVERHEAD_MS)
+            .map(Self::EngineMoveOverhead)
+    }
+
     pub const fn section(self) -> DesktopPreferencesEnumSection {
         match self {
             Self::Theme(_) | Self::Motion(_) => DesktopPreferencesEnumSection::Appearance,
@@ -353,6 +405,9 @@ impl DesktopPreferencesEnumPatch {
                 DesktopPreferencesEnumSection::Audio
             }
             Self::Shortcut(..) => DesktopPreferencesEnumSection::Shortcuts,
+            Self::EngineThreads(_) | Self::EngineHash(_) | Self::EngineMoveOverhead(_) => {
+                DesktopPreferencesEnumSection::Engine
+            }
         }
     }
 }
@@ -365,10 +420,17 @@ pub struct DesktopPreferences {
     master: DesktopPreferencesPercent,
     categories: [DesktopPreferencesAudioCategory; 4],
     shortcuts: [Option<DesktopPreferencesChord>; 4],
+    engine: [Option<u32>; 3],
 }
 
 impl Default for DesktopPreferences {
     fn default() -> Self {
+        Self::new_default()
+    }
+}
+
+impl DesktopPreferences {
+    pub const fn new_default() -> Self {
         Self {
             theme: DesktopPreferencesEnumTheme::Dark,
             motion: DesktopPreferencesEnumMotion::Full,
@@ -376,16 +438,18 @@ impl Default for DesktopPreferences {
             master: DesktopPreferencesPercent::DEFAULT_MASTER,
             categories: [DesktopPreferencesAudioCategory::DEFAULT; 4],
             shortcuts: [None; 4],
+            engine: [None; 3],
         }
     }
 }
 
 impl DesktopPreferences {
-    const SECTIONS: [DesktopPreferencesEnumSection; 4] = [
+    const SECTIONS: [DesktopPreferencesEnumSection; 5] = [
         DesktopPreferencesEnumSection::Appearance,
         DesktopPreferencesEnumSection::BoardAids,
         DesktopPreferencesEnumSection::Audio,
         DesktopPreferencesEnumSection::Shortcuts,
+        DesktopPreferencesEnumSection::Engine,
     ];
     const THEMES: [DesktopPreferencesEnumTheme; 2] = [
         DesktopPreferencesEnumTheme::Dark,
@@ -455,6 +519,18 @@ impl DesktopPreferences {
         self.shortcuts[action.index()]
     }
 
+    pub const fn engine_threads(self) -> Option<u32> {
+        self.engine[0]
+    }
+
+    pub const fn engine_hash_mib(self) -> Option<u32> {
+        self.engine[1]
+    }
+
+    pub const fn engine_move_overhead_ms(self) -> Option<u32> {
+        self.engine[2]
+    }
+
     pub fn apply(&mut self, patch: DesktopPreferencesEnumPatch) -> bool {
         let before = *self;
         match patch {
@@ -471,6 +547,9 @@ impl DesktopPreferences {
             DesktopPreferencesEnumPatch::Shortcut(action, chord) => {
                 self.shortcuts[action.index()] = chord;
             }
+            DesktopPreferencesEnumPatch::EngineThreads(value) => self.engine[0] = value,
+            DesktopPreferencesEnumPatch::EngineHash(value) => self.engine[1] = value,
+            DesktopPreferencesEnumPatch::EngineMoveOverhead(value) => self.engine[2] = value,
         }
         *self != before
     }
@@ -502,6 +581,9 @@ impl DesktopPreferences {
                 .into_iter()
                 .map(|action| DesktopPreferencesEnumPatch::Shortcut(action, self.shortcut(action))),
         );
+        patches.push(DesktopPreferencesEnumPatch::EngineThreads(self.engine[0]));
+        patches.push(DesktopPreferencesEnumPatch::EngineHash(self.engine[1]));
+        patches.push(DesktopPreferencesEnumPatch::EngineMoveOverhead(self.engine[2]));
         patches
     }
 

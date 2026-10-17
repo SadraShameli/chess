@@ -195,3 +195,52 @@ fn audio_controls_validate_and_combine_multiplicatively() {
         0.0
     );
 }
+
+#[test]
+fn the_controller_guards_leaving_with_pending_changes_and_previews_reset() {
+    use chess::desktop::preferences::{DesktopPreferencesEnumSection, DesktopPreferencesEnumTheme};
+    use chess::desktop::preferences_reset::DesktopPreferencesEnumResetScope;
+    use chess::presentation::settings::controller::{
+        PresentationSettingsController, PresentationSettingsEnumPrompt,
+    };
+
+    let mut controller = PresentationSettingsController::new(None);
+    assert!(controller.request_close());
+    let outcome = controller.edit(chess::desktop::preferences::DesktopPreferencesEnumPatch::Theme(
+        DesktopPreferencesEnumTheme::Light,
+    ));
+    assert!(outcome.appearance_changed);
+    assert_eq!(controller.effective().theme(), DesktopPreferencesEnumTheme::Light);
+    assert!(!controller.request_close());
+    assert_eq!(controller.prompt(), &PresentationSettingsEnumPrompt::Leave);
+    controller.stay();
+    assert!(!controller.can_save());
+    let outcome = controller.leave_discarding();
+    assert!(outcome.close && outcome.appearance_changed);
+    assert_eq!(controller.effective().theme(), DesktopPreferencesEnumTheme::Dark);
+    controller.begin_reset(DesktopPreferencesEnumResetScope::Section(
+        DesktopPreferencesEnumSection::Audio,
+    ));
+    assert_eq!(controller.prompt(), &PresentationSettingsEnumPrompt::None);
+}
+
+#[test]
+fn the_controller_previews_an_import_before_changing_pending_values() {
+    use chess::presentation::settings::controller::{
+        PresentationSettingsController, PresentationSettingsEnumPrompt,
+    };
+
+    let mut controller = PresentationSettingsController::new(None);
+    controller
+        .exchange_mut()
+        .push_str(r#"{"version":1,"audio":{"master":20}}"#);
+    controller.begin_import();
+    assert!(matches!(
+        controller.prompt(),
+        PresentationSettingsEnumPrompt::Import(_)
+    ));
+    assert_eq!(controller.draft().pending().master_volume().value(), 70);
+    controller.confirm_prompt();
+    assert_eq!(controller.draft().pending().master_volume().value(), 20);
+    assert!(controller.draft().status().has_pending_changes());
+}

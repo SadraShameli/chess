@@ -1,5 +1,6 @@
 use crate::board::enums::BoardEnumColor;
 use crate::clock::duration::ClockDuration;
+use crate::clock::state::ClockState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GameAlertsLowTime {
@@ -14,6 +15,22 @@ impl GameAlertsLowTime {
         Self {
             white_used,
             black_used,
+        }
+    }
+
+    pub fn from_clock(clock: &ClockState) -> Self {
+        Self::restore(
+            clock.warning_used(BoardEnumColor::White),
+            clock.warning_used(BoardEnumColor::Black),
+        )
+    }
+
+    pub fn merge_into(self, clock: &mut ClockState) {
+        if self.white_used {
+            clock.merge_warning_used(BoardEnumColor::White);
+        }
+        if self.black_used {
+            clock.merge_warning_used(BoardEnumColor::Black);
         }
     }
 

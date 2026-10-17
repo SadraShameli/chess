@@ -29,6 +29,7 @@ pub mod opening_commands;
 pub mod preferences;
 pub mod preferences_import;
 pub mod preferences_reset;
+pub mod preferences_store;
 pub mod profile;
 pub mod puzzle_bridge;
 pub mod puzzle_commands;

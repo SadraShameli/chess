@@ -57,3 +57,6 @@ mod desktop_workbench_commands;
 mod engine_coverage;
 #[path = "engine/report_persistence_codecs.rs"]
 mod engine_report_persistence_codecs;
+
+#[path = "engine/configuration.rs"]
+mod engine_configuration;

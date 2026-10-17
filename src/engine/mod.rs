@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod capabilities;
+pub mod configuration;
 pub(crate) mod diagnostic;
 pub mod diagnostics;
 pub mod enums;
