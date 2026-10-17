@@ -58,7 +58,7 @@ impl StorageMigrationContinuityFixture {
             .collect::<Vec<_>>()
             .join(" || '|' || ");
         connection.texts(&format!(
-            "SELECT {cells} AS value FROM {table} ORDER BY rowid"
+            "SELECT {cells} AS value FROM {table} ORDER BY value"
         ))
     }
 
