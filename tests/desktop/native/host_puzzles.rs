@@ -3,11 +3,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bevy::asset::{Assets, Handle};
-use bevy::gltf::{GltfMaterial, GltfMesh, GltfNode, GltfPrimitive, gltf};
-use bevy::platform::collections::HashMap;
-use bevy::prelude::{Entity, Image, Mesh, StandardMaterial, Transform, World};
-use bevy::shape::Cuboid;
+use bevy::asset::Handle;
+use bevy::prelude::{Entity, World};
 use bevy::window::Window;
 use bevy_egui::{EguiContext, EguiUserTextures, PrimaryEguiContext, egui};
 use tokio::runtime::Handle as RuntimeHandle;
@@ -62,10 +59,10 @@ use crate::puzzle::run::PuzzleRunEnumStatus;
 use crate::puzzle::selection::PuzzleSelectionFilter;
 use crate::puzzle::session::{PuzzleSessionConfig, PuzzleSessionId};
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
-use crate::scene::assets::{SceneAssets, SceneAssetsPieceKey};
 use crate::scene::camera::SceneCamera;
 use crate::scene::picking::ScenePickingViewport;
 use crate::scene::renderer::SceneRenderer;
+use crate::scene::renderer::fixture::SceneRendererFixture;
 use crate::storage::document_store::StorageDocumentStore;
 use crate::storage::puzzle_repository::StoragePuzzleRepository;
 
@@ -155,60 +152,6 @@ impl DesktopNativeHostPuzzleFixture {
         )?)
     }
 
-    fn renderer(world: &mut World) -> DesktopNativeHostPuzzleTestResult<SceneRenderer> {
-        let source = gltf::Gltf::from_slice(include_bytes!("../../../resources/pieces/chess.glb"))?;
-        let source_node = source.document.nodes().next().ok_or("missing piece node")?;
-        let geometry = world
-            .resource_mut::<Assets<Mesh>>()
-            .add(Cuboid::new(0.5, 0.8, 0.5));
-        let mut materials = Assets::<GltfMaterial>::default();
-        let material = materials.add(GltfMaterial::default());
-        let mut meshes = Assets::<GltfMesh>::default();
-        let mesh = meshes.add(GltfMesh {
-            index: 0,
-            name: "readiness_fixture".into(),
-            primitives: vec![GltfPrimitive {
-                index: 0,
-                parent_mesh_index: 0,
-                name: "readiness_fixture".into(),
-                mesh: geometry,
-                material: Some(material),
-                extras: None,
-                material_extras: None,
-            }],
-            extras: None,
-        });
-        let mut nodes = Assets::<GltfNode>::default();
-        let node = nodes.add(GltfNode::new(
-            &source_node,
-            Vec::new(),
-            Some(mesh),
-            Transform::default(),
-            None,
-            None,
-        ));
-        let names = SceneAssetsPieceKey::all()
-            .map(|key| (key.name().into_boxed_str(), node.clone()))
-            .collect::<HashMap<_, _>>();
-        let assets = SceneAssets::resolve(
-            &names,
-            &nodes,
-            &meshes,
-            &materials,
-            &mut world.resource_mut::<Assets<StandardMaterial>>(),
-        )?;
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(64.0, 64.0));
-        let mut renderer = SceneRenderer::spawn(
-            world,
-            assets,
-            ScenePickingViewport::new(rect, rect, 1.0, 1.0)?,
-            SceneCamera::initial(BoardEnumColor::White),
-        )?;
-        renderer.apply_position(world, &BoardPosition::standard())?;
-        renderer.mark_ready(renderer.generation())?;
-        Ok(renderer)
-    }
-
     async fn new() -> DesktopNativeHostPuzzleTestResult<Self> {
         let directory = tempfile::tempdir()?;
         let budget = CapacityBudget::new(
@@ -259,9 +202,6 @@ impl DesktopNativeHostPuzzleFixture {
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("resources"),
         )?;
         let mut world = World::new();
-        world.init_resource::<Assets<Mesh>>();
-        world.init_resource::<Assets<Image>>();
-        world.init_resource::<Assets<StandardMaterial>>();
         world.init_resource::<EguiUserTextures>();
         let mut egui = EguiContext::default();
         let context = egui.get_mut().clone();
@@ -274,7 +214,7 @@ impl DesktopNativeHostPuzzleFixture {
                 ..Window::default()
             })
             .id();
-        let renderer = Self::renderer(&mut world)?;
+        let renderer = SceneRendererFixture::spawn(&mut world)?;
         world.insert_resource(renderer);
         let mut service = DesktopNativePuzzleService::new(DesktopNativePuzzleServiceOptions {
             repository: repository.clone(),

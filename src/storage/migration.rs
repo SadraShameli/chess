@@ -1,5 +1,9 @@
-use rusqlite::Connection;
+use diesel::Connection;
+use diesel::connection::SimpleConnection;
+use diesel::sqlite::SqliteConnection;
 
+use crate::storage::database::StorageDatabase;
+use crate::storage::database::enums::StorageDatabaseEnumIntegerProperty;
 use crate::storage::document_store::StorageDocumentError;
 
 pub struct StorageMigration {
@@ -21,7 +25,7 @@ impl StorageMigration {
     }
 
     pub(super) fn apply(
-        connection: &mut Connection,
+        connection: &mut SqliteConnection,
         migrations: &[Self],
     ) -> Result<(), StorageDocumentError> {
         if migrations.is_empty() {
@@ -32,7 +36,10 @@ impl StorageMigration {
                 return Err(StorageDocumentError::InvalidMigrations);
             }
         }
-        let current: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let current = u32::try_from(StorageDatabase::integer(
+            connection,
+            StorageDatabaseEnumIntegerProperty::UserVersion,
+        )?)?;
         let latest = u32::try_from(migrations.len())?;
         if current > latest {
             return Err(StorageDocumentError::FutureSchema {
@@ -40,15 +47,16 @@ impl StorageMigration {
                 supported: latest,
             });
         }
-        let transaction = connection.transaction()?;
-        for migration in migrations
-            .iter()
-            .filter(|migration| migration.version > current)
-        {
-            transaction.execute_batch(&migration.sql)?;
-            transaction.pragma_update(None, "user_version", migration.version)?;
-        }
-        transaction.commit()?;
-        Ok(())
+        connection.transaction(|connection| {
+            for migration in migrations
+                .iter()
+                .filter(|migration| migration.version > current)
+            {
+                connection.batch_execute(&migration.sql)?;
+                connection
+                    .batch_execute(&format!("PRAGMA user_version = {}", migration.version))?;
+            }
+            Ok(())
+        })
     }
 }

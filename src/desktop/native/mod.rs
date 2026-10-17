@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod activation;
 pub mod analysis_resources;
 pub mod bootstrap;

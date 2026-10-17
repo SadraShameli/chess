@@ -4,7 +4,7 @@
 
 **Input**: [plan](plan.md), [specification](spec.md), [data model](data-model.md),
 [decisions](decisions.md), [research](research.md), [quickstart](quickstart.md)
-and the six [contracts](contracts/). All 13 P1 journeys remain first-release scope.
+and the [contracts](contracts/). All 13 P1 journeys remain first-release scope.
 This generation updates planning only and authorizes no implementation, commit,
 push, credential setup, workflow activation or release publication.
 
@@ -829,8 +829,73 @@ publication or external contact occurs as part of generating this list.
 | US12 | 23 | T239..T261 |
 | US13 | 18 | T262..T279 |
 | Phase 16 | 16 | T280..T295 |
+| Storage ORM foundation | 8 | T296..T303 |
 
-**Total**: 295 tasks: 28 historical completed, 16 native tasks completed, 18 live-game tasks completed, 14 analysis tasks completed, 4 local and library tasks completed, 8 puzzle tasks completed, 2 dataset tasks completed and 205 pending.
+**Total**: 303 tasks: 101 checked and 202 pending. Checkboxes retain the existing task history and do not substitute for the linked evidence or current verification.
 **Pending parallel tasks**: 33 across disjoint contract-test files; 13 additional
 `[P]` markers belong to completed rows, including three historical rows. No native task is accepted
 merely by this generation.
+
+## Phase 17: Storage ORM Migration
+
+**Goal**: Implement the owner's actual-ORM requirement from
+[the specification assumptions](spec.md#dependencies-and-validation-conditions)
+and [the revised storage plan](plan.md#storage-orm-migration), preserving the
+existing player-facing storage behavior and database formats.
+
+**Dependencies**: Historical T013/T019/T020 and the currently implemented library
+and puzzle repositories. This is the next foundational storage increment before
+adding further database adapters. Its placement preserves all existing IDs and
+history; execute T296 through T303 now, in order, before resuming other pending
+storage work. The owner requires solo execution, including the research and
+verification stages. No parallel agent or additional worktree is used.
+
+**Independent Test**: Existing and new isolated real-SQLite fixtures produce the
+same validated records, revisions, query order, atomic failure outcomes and
+durable receipts through the ORM-backed actor. All production record access uses
+Diesel, with a raw SQLite driver retained only for independent fixture setup.
+
+- [X] T296 Inventory production storage access and establish the existing storage and private transaction baseline through `tests/storage.rs`, `tests/storage/library_import_space_review.rs`, `src/storage/library_transaction/tests.rs` and existing desktop storage consumers; record actual commands/counts and scope in `specs/001-reckless-desktop-chess/evidence/storage-orm.md`. Reuse meaningful behavior fixtures; a refactor baseline does not require an invented failing test. Observed baseline: 181 public storage, 166 private storage/import and 10 desktop consumer tests passed; existing linker warning remains recorded in the evidence.
+- [X] T297 Resolve Diesel 2.3.14 with the existing bundled SQLite ABI in `Cargo.toml` and `Cargo.lock`, and introduce the canonical typed mappings and connection/configuration owner in `src/storage/schema.rs`, `src/storage/database.rs` and `src/storage/mod.rs`. Preserve "One actor-owned connection preserves each existing atomic boundary" from `data-model.md`; use the pinned stable toolchain, no new pool/runtime or rusqlite compatibility API.
+- [X] T298 Migrate the existing actor document save/read/inventory and numbered migrations in `src/storage/document_store.rs` and `src/storage/migration.rs` to Diesel ORM operations, preserving schema versions, exact stored body/canonical revision strings, future-schema refusal, compare-and-swap, library catalog invalidation, WAL/FULL/foreign-key settings and receipt-after-commit. Extend `tests/storage/document_store.rs`, `tests/storage/document_inventory.rs` and `tests/storage/schema.rs` only for missing compatibility boundaries, retaining independent raw-SQLite setup.
+- [X] T299 Migrate library content, metadata, organization and destruction through `src/storage/library_transaction.rs`, `src/storage/library_transaction/content.rs`, `src/storage/library_transaction/metadata.rs`, `src/storage/library_transaction/organization.rs`, `src/storage/library_transaction/destruction.rs` and `src/storage/library_repository.rs`, using typed Diesel row/write mappings and the same transaction owner. Preserve atomic content/projection revisions, folder/tag constraints, modified-time policy, Trash/Restore and typed rollback/retirement failures; validate with existing `tests/storage/library_metadata.rs`, `tests/storage/library_played.rs`, `tests/storage/library_import.rs` and private transaction fixtures.
+- [X] T300 Migrate library paging, duplicate/import reads and atomic space guards in `src/storage/library_query.rs`, `src/storage/library_transaction/rows.rs`, `src/storage/library_transaction/import.rs`, `src/storage/library_import/page_limit.rs`, `src/storage/library_import/space.rs` and `src/storage/library_import/space/{layout,trees}.rs` to typed Diesel queries and scoped SQLite-specific SQL. Preserve "nullable metadata" and canonical text counters from `data-model.md`, keyset/cursor identity, memory reservations before bounded decoding, actual page-ceiling restoration and connection retirement. Reuse `tests/storage/library_filters.rs`, `tests/storage/library_import_space_review.rs` and the private transaction fixtures as actual behavior evidence.
+- [X] T301 Migrate `src/storage/puzzle_repository.rs` to Diesel mappings and transactions for collections/runs/events/attempts/checkpoints, preserving "existing byte bodies and puzzle journal proofs" from `data-model.md`, contiguous event ordinals, pinned collection identity, compare-and-swap, deterministic inventory order, corruption refusal and receipt-after-commit. Validate existing real repository and desktop/native-service hermetic fixtures through `tests/storage/puzzle_repository.rs` and `tests/desktop/native/puzzle_service.rs`; this task does not claim GPU/native OS acceptance.
+- [X] T302 Align private fixture connections and changed error expectations in `src/storage/library_transaction/tests.rs` and source-mirrored storage/desktop tests with the canonical ORM owner. Move rusqlite to test-only dependencies in `Cargo.toml`, update `Cargo.lock`, and remove all production driver callers. Preserve independent raw-SQLite reference setup and meaningful rollback/continuity tests; do not weaken checks, introduce ignores or repair unrelated report production code.
+- [ ] T303 Complete pinned formatting, focused storage/desktop compatibility checks and the final ordered gates from `Makefile`; audit canonical owner/type naming, no comments, bounded memory and actual transaction cleanup. Update `specs/001-reckless-desktop-chess/evidence/storage-orm.md`, `plan.md` and `quickstart.md` with implemented behavior, actual test counts and unresolved platform/performance evidence. Run the read-only analysis and append-only convergence workflows; mark only genuinely completed tasks and preserve the separate report regression export.
+
+**Requirement allocation**: T296..T303 refine the existing FR-004/FR-014,
+FR-021/FR-025 and SC-007/SC-010/SC-013 storage acceptance under the owner-directed
+ORM selection. No product journey or release requirement is removed.
+
+**Execution strategy**: Establish the real baseline, then migrate the canonical
+connection and documents, library writes, library queries/import, and puzzles.
+Keep public domain/repository contracts stable and migrate their owning callers
+together. Shared connection/schema/manifest edits are sequential. Existing
+disjoint fixture reads can be batched inline; the owner's solo-work constraint
+takes precedence over generic parallel-work examples. Verify each increment,
+then complete the final ordered gates and convergence audit.
+
+## Phase 18: Convergence
+
+Source assessment after the ORM implementation and Spec Kit analysis on 2026-10-17. These follow-ups retain the existing task chains and their dependencies. They do not accept prior checkboxes as native/runtime evidence. The original task-count table above describes its 303-task generation; this append adds 19 pending follow-ups, for 322 total tasks, 101 checked and 221 pending at this checkpoint.
+
+- [ ] T304 CRITICAL: Resolve the unsuppressed macOS compact-unwind linker warning without disabling checks, then complete optimized application/native-harness verification and record the actual gate status in `specs/001-reckless-desktop-chess/evidence/storage-orm.md` per Constitution I, verification: zero warnings, T303 (partial)
+- [ ] T305 Complete owning-window active native-dialog cancellation and bounded observed cleanup in `src/desktop/native/dialogs.rs` and `tests/desktop/dialogs.rs`, retaining parent/future/capacity ownership through completion per plan: native ownership, T038 (partial)
+- [ ] T306 Complete preparation/steady/recovery acceptance and bounded application CPU-chunk evidence through `src/capacity/phase.rs`, `src/desktop/native/task_pools.rs` and `tests/capacity/native_partition.rs` per FR-010, SC-009, T039 (partial)
+- [ ] T307 Wire native AccessKit actions into the actual egui input path in `src/desktop/native/accessibility.rs` and `src/desktop/native/host.rs`; verify bounded generation-aware delivery, all semantic squares and camera-independent White/Black keyboard orientation per FR-012, SC-008, T044 (missing)
+- [ ] T308 Complete actual graphics recovery, power/quit/unsaved-edit integration and current-host native foundation acceptance through `src/desktop/native/{host,lifecycle,recovery}.rs` and the existing native harness per FR-001, FR-014, SC-006, T045 through T051 (partial)
+- [ ] T309 Complete bounded exact-adjudication coverage and native real-engine game acceptance using `src/game/mate_proof.rs` and the existing rules/game fixtures, preserving Unknown interruption and explicit Retry per FR-002, SC-001, T062, T071 (partial)
+- [ ] T310 Complete local tablebase preparation/loading diagnostics and full analysis/workbench capability acceptance using `src/engine/tablebase/` and the existing engine/native suites per FR-005 through FR-009, SC-002, T080 through T092 (partial)
+- [ ] T311 Complete native library/import/export/organization/Trash/annotation workflows through `src/desktop/library_commands.rs`, `src/presentation/library/` and existing canonical storage owners per FR-003, FR-004, SC-007, T100 through T111 (partial)
+- [ ] T312 Complete board visuals, geometry-safe input, remembered layout/camera, quality adaptation, modal semantics and actual accessibility acceptance through `src/presentation/board/`, `src/scene/` and native fixtures per FR-011, FR-012, SC-003, SC-008, T112 through T128 (partial)
+- [ ] T313 Implement and verify target-specific native installers, engine/resource packaging and recovery guidance through `tools/packaging/` and `resources/desktop/`, retaining unresolved external gates explicitly per FR-013 through FR-016, SC-006, T129 through T145 (missing)
+- [ ] T314 Implement persisted validated editor drafts, local Undo/Redo, FEN transfer, explicit save prompts and valid-only Play from Position through `src/board/editor/`, `src/storage/editor_repository.rs` and `src/presentation/editor/` per FR-017, SC-010, T146 through T155 (missing)
+- [ ] T315 Integrate report models/scoring only after actual engine/job regression reds, then add durable repository, scheduling, triggers and mounted findings through `src/report/`, `src/storage/report_repository.rs` and `src/presentation/report/`; preserve the frozen source-only regression export per FR-018, SC-011, T156 through T175 (partial)
+- [ ] T316 Implement corpus/index/statistics/explorer and Standard-only Polyglot study workflows through `src/opening/`, `src/storage/opening_repository.rs` and `src/presentation/opening/`, preserving played history per FR-019, FR-020, SC-012, T165 through T175 (missing)
+- [ ] T317 Complete durable puzzle history deletion/recomputation, run Resume/exhaustion/history views and native focus/sleep acceptance through `src/puzzle/history.rs`, `src/presentation/puzzle/` and existing real repositories/services per FR-021, SC-013, T187 through T193 (partial)
+- [ ] T318 Complete concurrent-game overview, thread/hash rebalance and resource/fault/native acceptance through existing game owners and `src/presentation/game/` per FR-001, FR-010, SC-009, T194 through T207 (partial)
+- [ ] T319 Implement complete persisted Settings groups/import/reset, shared palette/actions, shortcuts and focus-aware audio through `src/desktop/preferences.rs`, `src/storage/preferences_repository.rs` and `src/presentation/settings/` per FR-023, FR-024, SC-014, T208 through T224 (partial)
+- [ ] T320 Implement consistent ORM-backed snapshots, scheduling/retention, validated preview and safety-backed replacement restore through `src/storage/backup/` and native handlers, preserving the root lease and destination-local control data per FR-025, SC-007, T225 through T238 (missing)
+- [ ] T321 Implement authenticated private update transport/state/credential/helper and native approval/recovery flows through `src/update/` and packaging adapters; leave publication and credentials subject to owner authorization per FR-026, SC-006, T239 through T261 (missing)
+- [ ] T322 Complete shared bounded dataset preparation, licensed installed starters and joined final package/settings/backup/update/accessibility/performance acceptance through the owners in T262 through T295, recording each unavailable native gate per FR-013, FR-016, FR-022, SC-003 through SC-014 (partial)

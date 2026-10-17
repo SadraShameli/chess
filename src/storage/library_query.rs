@@ -1,4 +1,25 @@
-use rusqlite::types::Value;
+pub(crate) mod folders;
+
+use diesel::dsl::{count_star, exists, sql};
+use diesel::sql_types::{BigInt, Bool, Nullable, Text};
+use diesel::sqlite::Sqlite;
+use diesel::{
+    BoolExpressionMethods, BoxableExpression, ExpressionMethods, NullableExpressionMethods,
+    QueryDsl,
+};
+
+use crate::storage::library_query::folders::StorageLibraryQueryFolders;
+use crate::storage::schema::{library_entries, library_entry_tags};
+
+type StorageLibraryQueryPredicate =
+    Box<dyn BoxableExpression<library_entries::table, Sqlite, SqlType = Bool>>;
+type StorageLibraryQueryDatePredicate =
+    Box<dyn BoxableExpression<library_entries::table, Sqlite, SqlType = Nullable<Bool>>>;
+
+diesel::define_sql_function! {
+    #[sql_name = "instr"]
+    fn storage_library_query_instr(value: Nullable<Text>, pattern: Text) -> Nullable<BigInt>;
+}
 
 use crate::board::enums::BoardEnumVariant;
 use crate::capacity::executor::CapacityExecutorCancellation;
@@ -130,24 +151,45 @@ impl StorageLibraryEnumSort {
     }
     fn expressions(self) -> &'static [&'static str] {
         match self {
-            Self::UpdatedDescending | Self::UpdatedAscending => &["COALESCE(e.modified_ms, 0)"],
+            Self::UpdatedDescending | Self::UpdatedAscending => {
+                &["COALESCE(library_entries.modified_ms, 0)"]
+            }
             Self::DateDescending | Self::DateAscending => &[
-                "COALESCE(e.date_year, 0)",
-                "COALESCE(e.date_month, 0)",
-                "COALESCE(e.date_day, 0)",
+                "COALESCE(library_entries.date_year, 0)",
+                "COALESCE(library_entries.date_month, 0)",
+                "COALESCE(library_entries.date_day, 0)",
             ],
-            Self::PliesDescending | Self::PliesAscending => &["e.plies"],
+            Self::PliesDescending | Self::PliesAscending => &["library_entries.plies"],
         }
     }
     fn null_rank(self) -> &'static str {
         match self {
-            Self::UpdatedDescending | Self::UpdatedAscending => "(e.modified_ms IS NULL)",
-            Self::DateDescending | Self::DateAscending => {
-                "(e.date_year IS NULL OR e.date_month IS NULL OR e.date_day IS NULL)"
+            Self::UpdatedDescending | Self::UpdatedAscending => {
+                "(library_entries.modified_ms IS NULL)"
             }
-            Self::PliesDescending | Self::PliesAscending => "(e.plies IS NULL)",
+            Self::DateDescending | Self::DateAscending => {
+                "(library_entries.date_year IS NULL OR library_entries.date_month IS NULL OR library_entries.date_day IS NULL)"
+            }
+            Self::PliesDescending | Self::PliesAscending => "(library_entries.plies IS NULL)",
         }
     }
+    fn key_prefix(
+        self,
+        key: &StorageLibraryQueryKey,
+        count: usize,
+    ) -> Result<StorageLibraryQueryPredicate, StorageLibraryError> {
+        let mut predicate: StorageLibraryQueryPredicate =
+            Box::new(sql::<BigInt>(self.null_rank()).eq(key.rank));
+        for (index, expression) in self.expressions().iter().take(count).enumerate() {
+            let value = *key
+                .values
+                .get(index)
+                .ok_or(StorageLibraryError::CursorQuery)?;
+            predicate = Box::new(predicate.and(sql::<BigInt>(expression).eq(value)));
+        }
+        Ok(predicate)
+    }
+
     pub(crate) fn key(self, entry: &StorageLibraryQueryEntry) -> StorageLibraryQueryKey {
         let mut values = [0; 3];
         let rank = match self {
@@ -411,10 +453,10 @@ impl StorageLibraryQuery {
     pub(crate) fn is_date_filtered(&self) -> bool {
         matches!(self.criteria.date, StorageLibraryEnumFilter::Value(_))
     }
-    pub(crate) fn compile(
+    pub(crate) fn selection(
         &self,
         catalog: StorageLibraryCatalogRevision,
-    ) -> Result<StorageLibraryQuerySql, StorageLibraryError> {
+    ) -> Result<library_entries::BoxedQuery<'_, Sqlite>, StorageLibraryError> {
         if let Some(cursor) = &self.cursor {
             if cursor.catalog != catalog {
                 return Err(StorageLibraryError::StaleCursor);
@@ -423,109 +465,129 @@ impl StorageLibraryQuery {
                 return Err(StorageLibraryError::CursorQuery);
             }
         }
-        let mut sql = StorageLibraryQuerySql {
-            predicate: String::new(),
-            values: Vec::new(),
-            ordering: String::new(),
-        };
         let c = &self.criteria;
-        sql.equal("e.location", Value::Text(c.location.sql().to_owned()));
-        for (column, key) in [("e.white_key", &c.white), ("e.black_key", &c.black)] {
-            if let Some(key) = key {
-                sql.contains(column, key);
-            }
+        let mut query = library_entries::table
+            .filter(library_entries::location.eq(c.location.sql()))
+            .into_boxed::<Sqlite>();
+        if let Some(key) = &c.white {
+            query = query.filter(
+                storage_library_query_instr(library_entries::white_key, key.as_str()).gt(0_i64),
+            );
+        }
+        if let Some(key) = &c.black {
+            query = query.filter(
+                storage_library_query_instr(library_entries::black_key, key.as_str()).gt(0_i64),
+            );
         }
         if let Some(key) = &c.either {
-            let bound = sql.bind(Value::Text(key.clone()));
-            sql.and(&format!(
-                "(instr(e.white_key, {bound}) > 0 OR instr(e.black_key, {bound}) > 0)"
-            ));
+            query = query.filter(
+                storage_library_query_instr(library_entries::white_key, key.as_str())
+                    .gt(0_i64)
+                    .or(
+                        storage_library_query_instr(library_entries::black_key, key.as_str())
+                            .gt(0_i64),
+                    ),
+            );
         }
         if let StorageLibraryEnumFilter::Value(_) = c.date {
             let windows = self
                 .windows
                 .as_ref()
                 .ok_or(StorageLibraryError::UnpreparedQuery)?;
-            let mut clauses = Vec::with_capacity(windows.len());
+            let mut alternatives: StorageLibraryQueryDatePredicate =
+                Box::new(sql::<Bool>("0").nullable());
             for window in windows {
-                let month = sql.bind(Value::Integer(i64::from(window.month)));
-                let day = sql.bind(Value::Integer(i64::from(window.day)));
-                let first = sql.bind(Value::Integer(i64::from(window.first)));
-                let last = sql.bind(Value::Integer(i64::from(window.last)));
-                let leap = if window.month == 2 && window.day == 29 {
-                    " AND (e.date_year IS NULL OR e.date_year % 400 = 0 OR (e.date_year % 4 = 0 AND e.date_year % 100 <> 0))"
-                } else {
-                    ""
-                };
-                clauses.push(format!("((e.date_month IS NULL OR e.date_month = {month}) AND (e.date_day IS NULL OR e.date_day = {day}) AND (e.date_year IS NULL OR e.date_year BETWEEN {first} AND {last}){leap})"));
+                let mut clause: StorageLibraryQueryDatePredicate = Box::new(
+                    library_entries::date_month
+                        .is_null()
+                        .or(library_entries::date_month.eq(i64::from(window.month)))
+                        .and(
+                            library_entries::date_day
+                                .is_null()
+                                .or(library_entries::date_day.eq(i64::from(window.day))),
+                        )
+                        .and(
+                            library_entries::date_year
+                                .is_null()
+                                .or(library_entries::date_year
+                                    .between(i64::from(window.first), i64::from(window.last))),
+                        ),
+                );
+                if window.month == 2 && window.day == 29 {
+                    clause = Box::new(clause.and(library_entries::date_year.is_null().or(
+                        sql::<Bool>("(library_entries.date_year % 400 = 0 OR (library_entries.date_year % 4 = 0 AND library_entries.date_year % 100 <> 0))").nullable(),
+                    )));
+                }
+                alternatives = Box::new(alternatives.or(clause));
             }
-            let alternatives = if clauses.is_empty() {
-                "0".to_owned()
-            } else {
-                clauses.join(" OR ")
-            };
-            sql.and(&format!("((e.date_year IS NOT NULL OR e.date_month IS NOT NULL OR e.date_day IS NOT NULL) AND ({alternatives}))"));
+            query = query.filter(
+                library_entries::date_year
+                    .is_not_null()
+                    .or(library_entries::date_month.is_not_null())
+                    .or(library_entries::date_day.is_not_null())
+                    .and(alternatives),
+            );
         }
         if let StorageLibraryEnumFilter::Value(result) = c.result {
-            sql.equal("e.result", Value::Text(result.pgn_token().to_owned()));
+            query = query.filter(library_entries::result.eq(result.pgn_token()));
         }
         if let StorageLibraryEnumFilter::Value(variant) = c.variant {
-            sql.equal(
-                "e.rules_variant",
-                Value::Text(StorageLibraryProjection::variant_sql(variant).to_owned()),
+            query = query.filter(
+                library_entries::rules_variant.eq(StorageLibraryProjection::variant_sql(variant)),
             );
         }
         if let StorageLibraryEnumFilter::Value(start) = c.start {
-            sql.equal("e.start_kind", Value::Text(start.sql().to_owned()));
+            query = query.filter(library_entries::start_kind.eq(start.sql()));
         }
         if let StorageLibraryEnumFilter::Value(mode) = c.mode {
-            sql.equal(
-                "e.mode",
-                Value::Text(StorageLibraryProjection::mode_sql(mode).to_owned()),
-            );
+            query =
+                query.filter(library_entries::mode.eq(StorageLibraryProjection::mode_sql(mode)));
         }
         if let StorageLibraryEnumFilter::Value(favorite) = c.favorite {
-            sql.equal("e.favorite", Value::Integer(i64::from(favorite)));
+            query = query.filter(library_entries::favorite.eq(i64::from(favorite)));
         }
         if let Some(opening) = &c.opening {
-            sql.contains("e.opening_key", opening);
+            query = query.filter(
+                storage_library_query_instr(library_entries::opening_key, opening.as_str())
+                    .gt(0_i64),
+            );
         }
         if let StorageLibraryEnumFilter::Value(code) = &c.code {
-            sql.equal("e.opening_code", Value::Text(code.as_str().to_owned()));
+            query = query.filter(library_entries::opening_code.eq(code.as_str()));
         }
         if let StorageLibraryEnumFilter::Value(plies) = c.plies {
-            let lower = sql.bind(Value::Integer(i64::from(plies.minimum)));
-            let upper = sql.bind(Value::Integer(i64::from(plies.maximum)));
-            sql.and(&format!("e.plies BETWEEN {lower} AND {upper}"));
+            query = query.filter(
+                library_entries::plies.between(i64::from(plies.minimum), i64::from(plies.maximum)),
+            );
         }
         match &c.folder {
             StorageLibraryEnumFolderFilter::Any => {}
-            StorageLibraryEnumFolderFilter::Unfiled => sql.and("e.folder_id IS NULL"),
+            StorageLibraryEnumFolderFilter::Unfiled => {
+                query = query.filter(library_entries::folder_id.is_null());
+            }
             StorageLibraryEnumFolderFilter::Exact(id) => {
-                sql.equal("e.folder_id", Value::Text(id.to_string()))
+                query = query.filter(library_entries::folder_id.eq(id.to_string()));
             }
             StorageLibraryEnumFolderFilter::Subtree(id) => {
-                let bound = sql.bind(Value::Text(id.to_string()));
-                sql.and(&format!("e.folder_id IN (WITH RECURSIVE folders(id) AS (SELECT folder_id FROM library_folders WHERE folder_id = {bound} UNION SELECT f.folder_id FROM library_folders f JOIN folders p ON f.parent_id = p.id) SELECT id FROM folders)"));
+                query = query.filter(StorageLibraryQueryFolders::predicate(*id));
             }
         }
         match &c.tags {
             StorageLibraryEnumTagFilter::Any => {}
             StorageLibraryEnumTagFilter::AnyOf(tags) | StorageLibraryEnumTagFilter::AllOf(tags) => {
-                let bound: Vec<_> = tags
-                    .ids()
-                    .iter()
-                    .map(|id| sql.bind(Value::Text(id.to_string())))
-                    .collect();
-                let subquery = format!(
-                    "SELECT COUNT(*) FROM library_entry_tags t WHERE t.game_id = e.game_id AND t.tag_id IN ({})",
-                    bound.join(",")
-                );
+                let keys: Vec<String> = tags.ids().iter().map(ToString::to_string).collect();
+                let matched = library_entry_tags::table
+                    .filter(library_entry_tags::game_id.eq(library_entries::game_id))
+                    .filter(library_entry_tags::tag_id.eq_any(keys));
                 match &c.tags {
-                    StorageLibraryEnumTagFilter::AnyOf(_) => sql.and(&format!("({subquery}) > 0")),
+                    StorageLibraryEnumTagFilter::AnyOf(_) => query = query.filter(exists(matched)),
                     StorageLibraryEnumTagFilter::AllOf(tags) => {
-                        let count = sql.bind(Value::Integer(i64::try_from(tags.ids().len())?));
-                        sql.and(&format!("({subquery}) = {count}"));
+                        query = query.filter(
+                            matched
+                                .select(count_star())
+                                .single_value()
+                                .eq(Some(i64::try_from(tags.ids().len())?)),
+                        );
                     }
                     StorageLibraryEnumTagFilter::Any => return Err(StorageLibraryError::Protocol),
                 }
@@ -534,67 +596,40 @@ impl StorageLibraryQuery {
         let sort = c.sort;
         let rank = sort.null_rank();
         let expressions = sort.expressions();
-        let direction = if sort.descending() { "DESC" } else { "ASC" };
-        sql.ordering = format!(
-            "{rank} ASC, {}",
-            expressions
-                .iter()
-                .map(|column| format!("{column} {direction}"))
-                .chain(std::iter::once("e.game_id ASC".to_owned()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        query = query.order(sql::<BigInt>(rank).asc());
+        for expression in expressions {
+            query = if sort.descending() {
+                query.then_order_by(sql::<BigInt>(expression).desc())
+            } else {
+                query.then_order_by(sql::<BigInt>(expression).asc())
+            };
+        }
+        query = query.then_order_by(library_entries::game_id.asc());
         if let Some(cursor) = &self.cursor {
-            let rank_bound = sql.bind(Value::Integer(cursor.key.rank));
-            let mut alternatives = vec![format!("{rank} > {rank_bound}")];
-            let mut prefix = format!("{rank} = {rank_bound}");
-            let comparison = if sort.descending() { "<" } else { ">" };
+            let mut alternatives: StorageLibraryQueryPredicate =
+                Box::new(sql::<BigInt>(rank).gt(cursor.key.rank));
             for (index, expression) in expressions.iter().enumerate() {
-                let bound = sql.bind(Value::Integer(cursor.key.values[index]));
-                alternatives.push(format!("({prefix} AND {expression} {comparison} {bound})"));
-                prefix.push_str(&format!(" AND {expression} = {bound}"));
+                let value = *cursor
+                    .key
+                    .values
+                    .get(index)
+                    .ok_or(StorageLibraryError::CursorQuery)?;
+                let comparison: StorageLibraryQueryPredicate = if sort.descending() {
+                    Box::new(sql::<BigInt>(expression).lt(value))
+                } else {
+                    Box::new(sql::<BigInt>(expression).gt(value))
+                };
+                alternatives =
+                    Box::new(alternatives.or(sort.key_prefix(&cursor.key, index)?.and(comparison)));
             }
-            let id = sql.bind(Value::Text(cursor.key.id.as_uuid().to_string()));
-            alternatives.push(format!("({prefix} AND e.game_id > {id})"));
-            sql.and(&format!("({})", alternatives.join(" OR ")));
+            let equal = sort.key_prefix(&cursor.key, expressions.len())?;
+            alternatives =
+                Box::new(alternatives.or(
+                    equal.and(library_entries::game_id.gt(cursor.key.id.as_uuid().to_string())),
+                ));
+            query = query.filter(alternatives);
         }
-        Ok(sql)
-    }
-}
-
-pub(crate) struct StorageLibraryQuerySql {
-    predicate: String,
-    values: Vec<Value>,
-    ordering: String,
-}
-
-impl StorageLibraryQuerySql {
-    fn bind(&mut self, value: Value) -> String {
-        self.values.push(value);
-        format!("?{}", self.values.len())
-    }
-    fn and(&mut self, predicate: &str) {
-        if !self.predicate.is_empty() {
-            self.predicate.push_str(" AND ");
-        }
-        self.predicate.push_str(predicate);
-    }
-    fn equal(&mut self, column: &str, value: Value) {
-        let bound = self.bind(value);
-        self.and(&format!("{column} = {bound}"));
-    }
-    fn contains(&mut self, column: &str, value: &str) {
-        let bound = self.bind(Value::Text(value.to_owned()));
-        self.and(&format!("instr({column}, {bound}) > 0"));
-    }
-    pub(crate) fn predicate(&self) -> &str {
-        &self.predicate
-    }
-    pub(crate) fn ordering(&self) -> &str {
-        &self.ordering
-    }
-    pub(crate) fn values(&self) -> &[Value] {
-        &self.values
+        Ok(query.limit(i64::try_from(Self::PAGE_SIZE + 1)?))
     }
 }
 

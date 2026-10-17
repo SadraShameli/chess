@@ -556,6 +556,14 @@ explicit mainline-only alternative.
 
 ## StorageGameDocument and preferences
 
+The owner's ORM requirement changes the internal persistence adapter according
+to [the storage ORM plan](plan.md#storage-orm-migration) and
+[compatibility contract](contracts/storage-orm.md). It does not change any domain
+entity or persisted schema. Typed database mappings retain canonical text IDs and
+unsigned revision strings, nullable metadata, existing byte bodies and puzzle
+journal proofs. ORM row construction never substitutes for the current domain
+validation. One actor-owned connection preserves each existing atomic boundary.
+
 The owner selected SQLite for indexed game-library and opening-statistics data,
 with PGN/FEN interchange. Schema, adapter, transaction boundaries, migration,
 snapshot implementation, migration recovery and backup restore follow

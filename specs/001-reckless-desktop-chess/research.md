@@ -95,8 +95,9 @@ Sources:
 **Decision**: Wrap shakmaty 0.30.2 in owning BoardPosition/GameSession types; use
 pgn-reader 0.29.1 helpers with a strict owned bounded PGN lexer, and an owned
 exporter for the supported move-tree/annotation contract. The owner selected SQLite for indexed
-data, with PGN/FEN interchange. Select bundled rusqlite and the storage actor/
-schema ownership in resolved decisions.
+data, with PGN/FEN interchange. The owner-directed
+[ORM selection](#storage-orm-selection-2026-10-17) supersedes the original
+rusqlite adapter while retaining storage actor/schema ownership.
 
 **Rationale**: Legality, FEN/SAN/UCI conversions, castling, and standard/Chess960
 support are concrete library facilities. pgn-reader moved into the shakmaty
@@ -772,7 +773,7 @@ locked graph during implementation; these selections are not a built native app.
 | winit | Bevy-compatible 0.30.13; direct matching dependency for native attention types, sharing the same resolved instance |
 | Tokio / Rayon | Existing 1.53.3 / 1.12.0 |
 | shakmaty / pgn-reader | Existing 0.30.2 / 0.29.1 |
-| rusqlite / schemars / Serde | Existing 0.40.2 / 1.2.3 / 1.0.229 |
+| Storage ORM / schema / serialization | Diesel 2.3.14 with SQLite / schemars 1.2.3 / Serde 1.0.229; rusqlite 0.40.2 retained only for independent test fixtures after migration |
 | rfd / directories | 0.17.2 / 6.0.0 |
 | Profile activation | interprocess 2.4.5 with `tokio`; pinned std file locks |
 | Windows activation security | winsafe 0.0.29 with `advapi`, widestring 1.0.2; target-specific only |
@@ -791,6 +792,58 @@ window/audio/portal dependencies. Approved PCM WAV sounds require the WAV
 decoder feature rather than assuming the default Vorbis audio profile suffices.
 Embedded fonts, LUTs and other resources retain their own notices; Inter and
 any enabled default font payloads are not covered by a blanket crate license.
+
+### Storage ORM selection, 2026-10-17
+
+**Decision**: Use Diesel 2.3.14 with the SQLite backend and typed schema/query
+models for production persistence. The owner explicitly requires an ORM and
+accepts the internal refactor. Keep the existing dedicated storage actor and
+SQLite file format. Existing rusqlite fixture construction remains a test-only
+independent reference after production callers are replaced.
+
+**Rationale**: Diesel provides an actual ORM and typed query builder while its
+synchronous SQLite connection fits the existing bounded blocking actor. It adds
+no pool or independent runtime. SQLite transactions still own revision checks,
+atomic projection/content updates, puzzle journal/checkpoint commits and receipt
+publication. Existing domain ports and validated encodings remain authoritative.
+
+**Verified source facts**: The stable 2.3.14 release is dated 2026-10-07 and is
+not yanked. Its manifest declares Rust 1.86 minimum, within the project's 1.99
+pin, and MIT OR Apache-2.0 licensing. Its native SQLite requirement accepts
+`libsqlite3-sys >=0.17.2, <0.39.0`, including the current locked 0.38.2. Select
+only SQLite and the table-column support required by the existing schema.
+`SqliteConnection::immediate_transaction` and `Connection::transaction` expose
+closure-based write/read transactions. Queryable/Selectable and Insertable
+derive mappings support typed rows and writes; scoped raw SQL supports SQLite
+administration and physical-layout queries. Transaction failure/retirement,
+bounded decoding and path handling require implementation tests, not assumptions
+based on the ORM name.
+
+**Alternatives considered**: Continuing with rusqlite alone does not satisfy the
+owner's ORM requirement. An asynchronous ORM/pool would add connection/runtime
+ownership changes to an already serialized SQLite actor. A home-grown ORM or
+compatibility API reproducing the old driver is not selected.
+
+**Backup compatibility**: Diesel exposes serialization of a complete database
+buffer but no supported safe SQLite online-backup handle API. The selected
+backup owner will use SQLite's `VACUUM INTO` through Diesel at an idle transaction
+boundary. SQLite documents the output as a consistent live-database snapshot
+and accepts a bound filename expression. Owned staging, database validation,
+sync and the existing revision-consistent archive manifest preserve the selected
+backup/recovery guarantees. Snapshot interruption cannot produce a completed
+backup receipt. This revises the implementation mechanism without relaxing
+consistency or safety-backup prerequisites.
+
+**Evidence limit**: These are source/manifest findings. Locked resolution,
+compilation, compatibility and behavioral checks belong to T296 through T303;
+none is claimed by this research amendment.
+
+Sources: [stable tagged manifest](https://github.com/diesel-rs/diesel/blob/v2.3.14/diesel/Cargo.toml),
+[SQLite connection implementation](https://github.com/diesel-rs/diesel/blob/v2.3.14/diesel/src/sqlite/connection/mod.rs),
+[transaction ownership](https://github.com/diesel-rs/diesel/blob/v2.3.14/diesel/src/connection/transaction_manager.rs),
+[typed raw SQL boundary](https://github.com/diesel-rs/diesel/blob/v2.3.14/diesel/src/query_builder/sql_query.rs),
+[release metadata](https://index.crates.io/di/es/diesel),
+[SQLite snapshot semantics](https://sqlite.org/lang_vacuum.html#vacuum_with_an_into_clause).
 
 ### Native runtime, dialogs and accessibility acceptance
 

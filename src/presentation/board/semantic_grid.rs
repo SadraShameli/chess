@@ -49,7 +49,6 @@ impl PresentationBoardSemanticGridFeedback {
 
 impl PresentationBoardSemanticGrid {
     const ID: &'static str = "chess.board.semantic";
-    const DIRECTION_ALIGNMENT: f32 = std::f32::consts::FRAC_1_SQRT_2 - 0.0001;
 
     pub fn squares() -> impl Iterator<Item = BoardSquare> {
         (0..ScenePicking::SQUARES).filter_map(|index| BoardSquare::try_from(index).ok())
@@ -138,31 +137,14 @@ impl PresentationBoardSemanticGrid {
         direction: PresentationBoardEnumDirection,
         scene: &PresentationBoardScene,
     ) -> Option<BoardSquare> {
-        let direction = direction.vector();
+        let (file_offset, rank_offset) = direction.offset(scene.camera().orientation());
         let index = u8::from(square);
-        let origin = scene
-            .camera()
-            .project(ScenePicking::square_center(square))?;
-        let mut nearest = None;
-        let mut best_alignment = Self::DIRECTION_ALIGNMENT;
-        for candidate in Self::squares() {
-            let next = u8::from(candidate);
-            let file_distance = (index % ScenePicking::FILES).abs_diff(next % ScenePicking::FILES);
-            let rank_distance = (index / ScenePicking::FILES).abs_diff(next / ScenePicking::FILES);
-            if file_distance + rank_distance != 1 {
-                continue;
-            }
-            let point = scene
-                .camera()
-                .project(ScenePicking::square_center(candidate))?;
-            let delta = egui::vec2(point.x - origin.x, point.y - origin.y).normalized();
-            let alignment = delta.dot(direction);
-            if alignment > best_alignment {
-                best_alignment = alignment;
-                nearest = Some(candidate);
-            }
+        let file = (index % ScenePicking::FILES).checked_add_signed(file_offset)?;
+        let rank = (index / ScenePicking::FILES).checked_add_signed(rank_offset)?;
+        if file >= ScenePicking::FILES || rank >= ScenePicking::FILES {
+            return None;
         }
-        nearest
+        BoardSquare::try_from(rank * ScenePicking::FILES + file).ok()
     }
 
     pub fn show(

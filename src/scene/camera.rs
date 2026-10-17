@@ -173,6 +173,7 @@ impl SceneCamera {
                 .fold(0.0, f32::max);
         Ok(SceneCameraFrame {
             size,
+            orientation: self.orientation,
             transform: Transform::from_translation(offset * distance).with_rotation(rotation),
             projection,
         })
@@ -196,11 +197,16 @@ impl SceneCamera {
 #[derive(Debug, Clone)]
 pub struct SceneCameraFrame {
     size: UVec2,
+    orientation: BoardEnumColor,
     transform: Transform,
     projection: PerspectiveProjection,
 }
 
 impl SceneCameraFrame {
+    pub const fn orientation(&self) -> BoardEnumColor {
+        self.orientation
+    }
+
     pub const fn transform(&self) -> Transform {
         self.transform
     }

@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../../tests/scene/renderer_fixture.rs"]
+pub(crate) mod fixture;
+
 use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::camera::{RenderTarget, Viewport, visibility::RenderLayers};
 use bevy::math::{UVec2, Vec3};

@@ -61,6 +61,7 @@ use crate::clock::time_provider::ClockTimeProviderMonotonic;
 use crate::desktop::application::{DesktopApplicationError, DesktopApplicationPort};
 use crate::desktop::dto::DesktopBoardSnapshot;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult};
+use crate::desktop::native::accessibility::DesktopNativeAccessibility;
 use crate::desktop::native::dialogs::{
     DesktopNativeDialogs, DesktopNativeDialogsError, DesktopNativeDialogsPort,
     DesktopNativeDialogsRfd,
@@ -588,6 +589,7 @@ impl DesktopNativeHost {
                 EguiPlugin::default().bindless_mode_array_size
             },
         })
+        .add_plugins(DesktopNativeAccessibility)
         .insert_resource(WinitSettings::continuous())
         .insert_resource(RenderErrorHandler(Self::render_error))
         .add_systems(Startup, Self::setup)
@@ -1400,6 +1402,9 @@ impl DesktopNativeHost {
         world: &mut World,
         state: &mut DesktopNativeHostState,
     ) -> Result<(), DesktopNativeHostError> {
+        if let Some(error) = DesktopNativeAccessibility::take_failure(world) {
+            state.presentation.report_failure(error.into());
+        }
         let mut contexts = world.query_filtered::<&mut EguiContext, With<PrimaryEguiContext>>();
         let Ok(mut context) = contexts.single_mut(world) else {
             return Ok(());

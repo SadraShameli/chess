@@ -1,20 +1,25 @@
-use rusqlite::{OptionalExtension, Transaction, params};
+use diesel::dsl::{case_when, exists, sql};
+use diesel::sql_types::{Bool, Text};
+use diesel::sqlite::{Sqlite, SqliteConnection};
+use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, RunQueryDsl};
 
 use crate::game::enums::GameId;
 use crate::game::library_organization::{
     GameLibraryOrganizationEnumMutation, GameLibraryOrganizationEnumTarget,
     GameLibraryOrganizationError, GameLibraryOrganizationFolderId,
     GameLibraryOrganizationFolderTarget, GameLibraryOrganizationGameTarget,
-    GameLibraryOrganizationReceipt, GameLibraryOrganizationRequest,
+    GameLibraryOrganizationName, GameLibraryOrganizationReceipt, GameLibraryOrganizationRequest,
     GameLibraryOrganizationRevision, GameLibraryOrganizationTagId,
     GameLibraryOrganizationTagTarget, GameLibraryOrganizationTimestamp,
 };
 use crate::storage::library_query::StorageLibraryQuery;
+use crate::storage::library_query::folders::StorageLibraryQueryFolders;
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::rows::{
     StorageLibraryTransactionEntryState, StorageLibraryTransactionRows,
 };
+use crate::storage::schema::{library_entries, library_entry_tags, library_folders, library_tags};
 
 #[derive(Clone, Copy)]
 pub(super) enum StorageLibraryTransactionOrganizationEnumScope {
@@ -24,29 +29,23 @@ pub(super) enum StorageLibraryTransactionOrganizationEnumScope {
 }
 
 impl StorageLibraryTransactionOrganizationEnumScope {
-    fn predicate(self) -> &'static str {
+    fn selection(self) -> library_entries::BoxedQuery<'static, Sqlite> {
+        let query = library_entries::table.into_boxed::<Sqlite>();
         match self {
-            Self::FolderSubtree(_) => {
-                "e.folder_id IN (WITH RECURSIVE folders(id) AS (SELECT folder_id FROM library_folders WHERE folder_id = ?1 UNION SELECT f.folder_id FROM library_folders f JOIN folders p ON f.parent_id = p.id) SELECT id FROM folders)"
-            }
-            Self::Tag(_) => {
-                "EXISTS(SELECT 1 FROM library_entry_tags t WHERE t.game_id = e.game_id AND t.tag_id = ?1)"
-            }
-            Self::Game(_) => "e.game_id = ?1",
-        }
-    }
-    fn key(self) -> String {
-        match self {
-            Self::FolderSubtree(id) => id.to_string(),
-            Self::Tag(id) => id.to_string(),
-            Self::Game(id) => id.as_uuid().to_string(),
+            Self::FolderSubtree(id) => query.filter(StorageLibraryQueryFolders::predicate(id)),
+            Self::Tag(id) => query.filter(exists(
+                library_entry_tags::table
+                    .filter(library_entry_tags::game_id.eq(library_entries::game_id))
+                    .filter(library_entry_tags::tag_id.eq(id.to_string())),
+            )),
+            Self::Game(id) => query.filter(library_entries::game_id.eq(id.as_uuid().to_string())),
         }
     }
 }
 
 pub(super) struct StorageLibraryTransactionOrganizationFolder {
     revision: GameLibraryOrganizationRevision,
-    name: String,
+    name: GameLibraryOrganizationName,
     parent: Option<GameLibraryOrganizationFolderId>,
 }
 
@@ -60,50 +59,52 @@ pub(super) struct StorageLibraryTransactionOrganization;
 
 impl StorageLibraryTransactionOrganization {
     pub(super) fn folder(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         id: GameLibraryOrganizationFolderId,
     ) -> Result<StorageLibraryTransactionOrganizationFolder, StorageLibraryError> {
-        let row: Option<(String, String, Option<String>)> = transaction
-            .query_row(
-                "SELECT revision, name, parent_id FROM library_folders WHERE folder_id = ?1",
-                [id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
+        let row: Option<(String, String, Option<String>)> = library_folders::table
+            .find(id.to_string())
+            .select((
+                library_folders::revision,
+                library_folders::name,
+                library_folders::parent_id,
+            ))
+            .first(transaction)
             .optional()?;
         let (revision, name, parent) = row.ok_or(StorageLibraryError::MissingFolder(id))?;
-        crate::game::library_organization::GameLibraryOrganizationName::new(name.clone())?;
         Ok(StorageLibraryTransactionOrganizationFolder {
             revision: revision.parse()?,
-            name,
+            name: GameLibraryOrganizationName::new(name)?,
             parent: parent.as_deref().map(str::parse).transpose()?,
         })
     }
+
     fn folder_target(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         target: GameLibraryOrganizationFolderTarget,
     ) -> Result<StorageLibraryTransactionOrganizationFolder, StorageLibraryError> {
         let folder = Self::folder(transaction, target.id())?;
         folder.revision.check(target.expected())?;
         Ok(folder)
     }
+
     fn tag(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         target: GameLibraryOrganizationTagTarget,
     ) -> Result<(GameLibraryOrganizationRevision, String), StorageLibraryError> {
-        let row: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT revision, name FROM library_tags WHERE tag_id = ?1",
-                [target.id().to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+        let row: Option<(String, String)> = library_tags::table
+            .find(target.id().to_string())
+            .select((library_tags::revision, library_tags::name))
+            .first(transaction)
             .optional()?;
         let (revision, name) = row.ok_or(StorageLibraryError::MissingTag(target.id()))?;
         let revision: GameLibraryOrganizationRevision = revision.parse()?;
         revision.check(target.expected())?;
         Ok((revision, name))
     }
+
     fn game(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         target: GameLibraryOrganizationGameTarget,
     ) -> Result<StorageLibraryTransactionEntryState, StorageLibraryError> {
         let game = StorageLibraryTransactionRows::state(transaction, target.id())?
@@ -111,8 +112,9 @@ impl StorageLibraryTransactionOrganization {
         game.organization().revision().check(target.expected())?;
         Ok(game)
     }
+
     fn parent(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         target: Option<GameLibraryOrganizationFolderTarget>,
     ) -> Result<Option<GameLibraryOrganizationFolderId>, StorageLibraryError> {
         target
@@ -122,31 +124,27 @@ impl StorageLibraryTransactionOrganization {
             })
             .transpose()
     }
+
     pub(super) fn touch(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         scope: StorageLibraryTransactionOrganizationEnumScope,
         timestamp: GameLibraryOrganizationTimestamp,
     ) -> Result<u64, StorageLibraryError> {
-        let sql = format!(
-            "SELECT e.game_id, e.organization_revision FROM library_entries e WHERE {} AND (?2 IS NULL OR e.game_id > ?2) ORDER BY e.game_id LIMIT ?3",
-            scope.predicate()
-        );
         let mut after: Option<String> = None;
         let mut count = 0_u64;
         loop {
-            let page: Vec<(String, String)> = {
-                let mut statement = transaction.prepare(&sql)?;
-                statement
-                    .query_map(
-                        params![
-                            scope.key(),
-                            after,
-                            i64::try_from(StorageLibraryQuery::PAGE_SIZE)?
-                        ],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )?
-                    .collect::<Result<_, _>>()?
-            };
+            let mut query = scope.selection();
+            if let Some(after) = &after {
+                query = query.filter(library_entries::game_id.gt(after.clone()));
+            }
+            let page: Vec<(String, String)> = query
+                .order(library_entries::game_id.asc())
+                .limit(i64::try_from(StorageLibraryQuery::PAGE_SIZE)?)
+                .select((
+                    library_entries::game_id,
+                    library_entries::organization_revision,
+                ))
+                .load(transaction)?;
             if page.is_empty() {
                 break;
             }
@@ -154,7 +152,17 @@ impl StorageLibraryTransactionOrganization {
                 let _validated_id: GameId = id.parse()?;
                 let revision: GameLibraryOrganizationRevision = revision.parse()?;
                 let next = revision.next()?;
-                transaction.execute("UPDATE library_entries SET organization_revision = ?1, modified_ms = MAX(COALESCE(modified_ms, ?2), ?2) WHERE game_id = ?3", params![next.to_string(), timestamp.value(), id])?;
+                let modified = case_when(
+                    library_entries::modified_ms.gt(Some(timestamp.value())),
+                    library_entries::modified_ms,
+                )
+                .otherwise(Some(timestamp.value()));
+                diesel::update(library_entries::table.find(id))
+                    .set((
+                        library_entries::organization_revision.eq(next.to_string()),
+                        library_entries::modified_ms.eq(modified),
+                    ))
+                    .execute(transaction)?;
                 count = count
                     .checked_add(1)
                     .ok_or(GameLibraryOrganizationError::Exhausted)?;
@@ -163,23 +171,30 @@ impl StorageLibraryTransactionOrganization {
         }
         Ok(count)
     }
+
     pub(super) fn execute(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         request: &GameLibraryOrganizationRequest,
     ) -> Result<GameLibraryOrganizationReceipt, StorageLibraryError> {
         let timestamp = request.timestamp();
         let receipt = match request.mutation() {
             GameLibraryOrganizationEnumMutation::CreateFolder(id, parent, name) => {
                 let parent = Self::parent(transaction, *parent)?;
-                let exists: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM library_folders WHERE folder_id = ?1)",
-                    [id.to_string()],
-                    |row| row.get(0),
-                )?;
-                if exists {
+                let found: bool =
+                    diesel::select(exists(library_folders::table.find(id.to_string())))
+                        .get_result(transaction)?;
+                if found {
                     return Err(StorageLibraryError::FolderExists);
                 }
-                transaction.execute("INSERT INTO library_folders(folder_id, parent_id, revision, name) VALUES (?1, ?2, '0', ?3)", params![id.to_string(), parent.map(|id| id.to_string()), name.as_str()])?;
+                diesel::insert_into(library_folders::table)
+                    .values((
+                        library_folders::folder_id.eq(id.to_string()),
+                        library_folders::parent_id.eq(parent.map(|id| id.to_string())),
+                        library_folders::revision
+                            .eq(GameLibraryOrganizationRevision::ZERO.to_string()),
+                        library_folders::name.eq(name.as_str()),
+                    ))
+                    .execute(transaction)?;
                 GameLibraryOrganizationReceipt::new(
                     GameLibraryOrganizationEnumTarget::Folder(*id),
                     GameLibraryOrganizationRevision::ZERO,
@@ -189,7 +204,7 @@ impl StorageLibraryTransactionOrganization {
             }
             GameLibraryOrganizationEnumMutation::RenameFolder(target, name) => {
                 let folder = Self::folder_target(transaction, *target)?;
-                let changed = folder.name != name.as_str();
+                let changed = folder.name.as_str() != name.as_str();
                 let revision = if changed {
                     folder.revision.next()?
                 } else {
@@ -201,10 +216,12 @@ impl StorageLibraryTransactionOrganization {
                         StorageLibraryTransactionOrganizationEnumScope::FolderSubtree(target.id()),
                         timestamp,
                     )?;
-                    transaction.execute(
-                        "UPDATE library_folders SET name = ?1, revision = ?2 WHERE folder_id = ?3",
-                        params![name.as_str(), revision.to_string(), target.id().to_string()],
-                    )?;
+                    diesel::update(library_folders::table.find(target.id().to_string()))
+                        .set((
+                            library_folders::name.eq(name.as_str()),
+                            library_folders::revision.eq(revision.to_string()),
+                        ))
+                        .execute(transaction)?;
                     count
                 } else {
                     0
@@ -220,7 +237,15 @@ impl StorageLibraryTransactionOrganization {
                 let folder = Self::folder_target(transaction, *target)?;
                 let parent = Self::parent(transaction, *parent)?;
                 if let Some(parent) = parent {
-                    let cycle: bool = transaction.query_row("WITH RECURSIVE folders(id) AS (SELECT folder_id FROM library_folders WHERE folder_id = ?1 UNION SELECT f.folder_id FROM library_folders f JOIN folders p ON f.parent_id = p.id) SELECT EXISTS(SELECT 1 FROM folders WHERE id = ?2)", params![target.id().to_string(), parent.to_string()], |row| row.get(0))?;
+                    let cycle: bool = diesel::select(
+                        sql::<Bool>(&format!("EXISTS({}", StorageLibraryQueryFolders::PREFIX))
+                            .bind::<Text, _>(target.id().to_string())
+                            .sql(StorageLibraryQueryFolders::SUFFIX)
+                            .sql("SELECT 1 FROM folders WHERE id = ")
+                            .bind::<Text, _>(parent.to_string())
+                            .sql(")"),
+                    )
+                    .get_result(transaction)?;
                     if cycle {
                         return Err(GameLibraryOrganizationError::FolderCycle.into());
                     }
@@ -237,7 +262,12 @@ impl StorageLibraryTransactionOrganization {
                         StorageLibraryTransactionOrganizationEnumScope::FolderSubtree(target.id()),
                         timestamp,
                     )?;
-                    transaction.execute("UPDATE library_folders SET parent_id = ?1, revision = ?2 WHERE folder_id = ?3", params![parent.map(|id| id.to_string()), revision.to_string(), target.id().to_string()])?;
+                    diesel::update(library_folders::table.find(target.id().to_string()))
+                        .set((
+                            library_folders::parent_id.eq(parent.map(|id| id.to_string())),
+                            library_folders::revision.eq(revision.to_string()),
+                        ))
+                        .execute(transaction)?;
                     count
                 } else {
                     0
@@ -250,18 +280,19 @@ impl StorageLibraryTransactionOrganization {
                 )
             }
             GameLibraryOrganizationEnumMutation::CreateTag(id, name) => {
-                let exists: bool = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM library_tags WHERE tag_id = ?1)",
-                    [id.to_string()],
-                    |row| row.get(0),
-                )?;
-                if exists {
+                let found: bool = diesel::select(exists(library_tags::table.find(id.to_string())))
+                    .get_result(transaction)?;
+                if found {
                     return Err(StorageLibraryError::TagExists);
                 }
-                transaction.execute(
-                    "INSERT INTO library_tags(tag_id, revision, name) VALUES (?1, '0', ?2)",
-                    params![id.to_string(), name.as_str()],
-                )?;
+                diesel::insert_into(library_tags::table)
+                    .values((
+                        library_tags::tag_id.eq(id.to_string()),
+                        library_tags::revision
+                            .eq(GameLibraryOrganizationRevision::ZERO.to_string()),
+                        library_tags::name.eq(name.as_str()),
+                    ))
+                    .execute(transaction)?;
                 GameLibraryOrganizationReceipt::new(
                     GameLibraryOrganizationEnumTarget::Tag(*id),
                     GameLibraryOrganizationRevision::ZERO,
@@ -279,10 +310,12 @@ impl StorageLibraryTransactionOrganization {
                         StorageLibraryTransactionOrganizationEnumScope::Tag(target.id()),
                         timestamp,
                     )?;
-                    transaction.execute(
-                        "UPDATE library_tags SET name = ?1, revision = ?2 WHERE tag_id = ?3",
-                        params![name.as_str(), revision.to_string(), target.id().to_string()],
-                    )?;
+                    diesel::update(library_tags::table.find(target.id().to_string()))
+                        .set((
+                            library_tags::name.eq(name.as_str()),
+                            library_tags::revision.eq(revision.to_string()),
+                        ))
+                        .execute(transaction)?;
                     count
                 } else {
                     0
@@ -301,10 +334,8 @@ impl StorageLibraryTransactionOrganization {
                     StorageLibraryTransactionOrganizationEnumScope::Tag(target.id()),
                     timestamp,
                 )?;
-                transaction.execute(
-                    "DELETE FROM library_tags WHERE tag_id = ?1",
-                    [target.id().to_string()],
-                )?;
+                diesel::delete(library_tags::table.find(target.id().to_string()))
+                    .execute(transaction)?;
                 GameLibraryOrganizationReceipt::new(
                     GameLibraryOrganizationEnumTarget::Tag(target.id()),
                     previous.next()?,
@@ -315,11 +346,10 @@ impl StorageLibraryTransactionOrganization {
             GameLibraryOrganizationEnumMutation::SetFavorite(target, favorite) => {
                 let game = Self::game(transaction, *target)?;
                 let changed = game.organization().is_favorite() != *favorite;
-                Self::assign_game(transaction, *target, timestamp, changed, || {
-                    transaction.execute(
-                        "UPDATE library_entries SET favorite = ?1 WHERE game_id = ?2",
-                        params![i64::from(*favorite), target.id().as_uuid().to_string()],
-                    )?;
+                Self::assign_game(transaction, *target, timestamp, changed, |transaction| {
+                    diesel::update(library_entries::table.find(target.id().as_uuid().to_string()))
+                        .set(library_entries::favorite.eq(i64::from(*favorite)))
+                        .execute(transaction)?;
                     Ok(())
                 })?
             }
@@ -327,40 +357,37 @@ impl StorageLibraryTransactionOrganization {
                 let game = Self::game(transaction, *target)?;
                 let folder = Self::parent(transaction, *parent)?;
                 let changed = game.organization().folder() != folder;
-                Self::assign_game(transaction, *target, timestamp, changed, || {
-                    transaction.execute(
-                        "UPDATE library_entries SET folder_id = ?1 WHERE game_id = ?2",
-                        params![
-                            folder.map(|id| id.to_string()),
-                            target.id().as_uuid().to_string()
-                        ],
-                    )?;
+                Self::assign_game(transaction, *target, timestamp, changed, |transaction| {
+                    diesel::update(library_entries::table.find(target.id().as_uuid().to_string()))
+                        .set(library_entries::folder_id.eq(folder.map(|id| id.to_string())))
+                        .execute(transaction)?;
                     Ok(())
                 })?
             }
             GameLibraryOrganizationEnumMutation::ReplaceTags(target, tags) => {
                 let game = Self::game(transaction, *target)?;
                 for id in tags.ids() {
-                    let exists: bool = transaction.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM library_tags WHERE tag_id = ?1)",
-                        [id.to_string()],
-                        |row| row.get(0),
-                    )?;
-                    if !exists {
+                    let found: bool =
+                        diesel::select(exists(library_tags::table.find(id.to_string())))
+                            .get_result(transaction)?;
+                    if !found {
                         return Err(StorageLibraryError::MissingTag(*id));
                     }
                 }
                 let changed = game.organization().tags() != tags;
-                Self::assign_game(transaction, *target, timestamp, changed, || {
-                    transaction.execute(
-                        "DELETE FROM library_entry_tags WHERE game_id = ?1",
-                        [target.id().as_uuid().to_string()],
-                    )?;
+                Self::assign_game(transaction, *target, timestamp, changed, |transaction| {
+                    let game = target.id().as_uuid().to_string();
+                    diesel::delete(
+                        library_entry_tags::table.filter(library_entry_tags::game_id.eq(&game)),
+                    )
+                    .execute(transaction)?;
                     for id in tags.ids() {
-                        transaction.execute(
-                            "INSERT INTO library_entry_tags(game_id, tag_id) VALUES (?1, ?2)",
-                            params![target.id().as_uuid().to_string(), id.to_string()],
-                        )?;
+                        diesel::insert_into(library_entry_tags::table)
+                            .values((
+                                library_entry_tags::game_id.eq(&game),
+                                library_entry_tags::tag_id.eq(id.to_string()),
+                            ))
+                            .execute(transaction)?;
                     }
                     Ok(())
                 })?
@@ -371,15 +398,16 @@ impl StorageLibraryTransactionOrganization {
         }
         Ok(receipt)
     }
-    fn assign_game<F: FnOnce() -> Result<(), StorageLibraryError>>(
-        transaction: &Transaction<'_>,
+
+    fn assign_game(
+        transaction: &mut SqliteConnection,
         target: GameLibraryOrganizationGameTarget,
         timestamp: GameLibraryOrganizationTimestamp,
         changed: bool,
-        assign: F,
+        assign: impl FnOnce(&mut SqliteConnection) -> Result<(), StorageLibraryError>,
     ) -> Result<GameLibraryOrganizationReceipt, StorageLibraryError> {
         let revision = if changed {
-            assign()?;
+            assign(transaction)?;
             Self::touch(
                 transaction,
                 StorageLibraryTransactionOrganizationEnumScope::Game(target.id()),

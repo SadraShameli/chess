@@ -78,6 +78,17 @@ coverage. Required real-engine scope remains in [the capability matrix](contract
 
 ## Required end-to-end scenarios
 
+The [Diesel ORM migration](plan.md#storage-orm-migration) now implements production
+storage through one actor-owned connection. Its isolated existing-format SQLite
+fixtures passed 183 public storage and 166 private storage/import cases; the
+full hermetic selection passed 1,835 tests. These cover durable receipts,
+revision conflicts, rollback, legacy body/schema continuity, paging/metadata/Trash,
+import page ceilings and puzzle journal replay. The final ordered optimized builds
+and acceptance audit remain in progress, with the existing macOS linker warning
+unresolved. See [the actual results](evidence/storage-orm.md) before interpreting
+the [Makefile](../../Makefile) gate. The [ORM contract](contracts/storage-orm.md) owns the full
+compatibility boundary; player-facing behavior remains as specified below.
+
 | Area | Validation and expected result |
 | --- | --- |
 | Native startup | Offline app opens at selected logical size with original 3D pieces, correct font/theme and actual adapter/backend shown in diagnostics |

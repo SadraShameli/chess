@@ -1162,6 +1162,11 @@ verified no-overage CI as obligations before release support can be claimed.
 
 ### Dependencies and validation conditions
 
+- The owner requires an actual relational object-mapping layer for persisted
+  records and accepts the required internal refactor. Existing saved data,
+  identifiers, revisions, atomic-save guarantees, search results and puzzle
+  recovery must remain compatible. The selected adapter and validation work are
+  recorded in [the plan](plan.md#storage-orm-migration).
 - The description comes from the agreed conversation and existing feature,
   with explicit owner delegation for remaining recommendations. No unrecorded
   product defaults or deferred preference questions are introduced.

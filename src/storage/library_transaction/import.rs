@@ -1,6 +1,14 @@
 use std::sync::Arc;
 
-use rusqlite::{OptionalExtension, Transaction, params};
+use diesel::connection::DefaultLoadingMode;
+use diesel::dsl::{case_when, sql};
+use diesel::sql_types::BigInt;
+use diesel::sqlite::SqliteConnection;
+use diesel::{
+    ExpressionMethods, JoinOnDsl, NullableExpressionMethods, OptionalExtension, QueryDsl,
+    Queryable, RunQueryDsl,
+};
+use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
 use crate::storage::document_store::StorageDocumentClient;
@@ -23,12 +31,21 @@ use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::content::{
     StorageLibraryTransactionContent, StorageLibraryTransactionContentInsert,
 };
+use crate::storage::schema::{documents, library_entries, library_folders};
+
+#[derive(Queryable)]
+struct StorageLibraryTransactionImportCandidateMetadata {
+    actual: Option<String>,
+    projected: Option<String>,
+    bytes: i64,
+    digest: Option<Vec<u8>>,
+}
 
 pub(super) struct StorageLibraryTransactionImport;
 
 impl StorageLibraryTransactionImport {
     pub(super) fn snapshot(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         destination: StorageImportSessionDestination,
         certified: bool,
     ) -> Result<StorageImportSessionSnapshot, StorageLibraryError> {
@@ -43,16 +60,14 @@ impl StorageLibraryTransactionImport {
     }
 
     fn destination(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         destination: StorageImportSessionDestination,
     ) -> Result<(), StorageLibraryError> {
         if let Some(folder) = destination.folder_id() {
-            let revision: Option<String> = transaction
-                .query_row(
-                    "SELECT revision FROM library_folders WHERE folder_id = ?1",
-                    [folder.to_string()],
-                    |row| row.get(0),
-                )
+            let revision: Option<String> = library_folders::table
+                .find(folder.to_string())
+                .select(library_folders::revision)
+                .first(transaction)
                 .optional()?;
             if revision.as_deref().map(str::parse::<crate::game::library_organization::GameLibraryOrganizationRevision>).transpose()?.map(|revision| revision.value()) != Some(destination.revision()) { return Err(StorageLibraryError::ImportDestination); }
         } else if destination.revision() != 0 {
@@ -62,7 +77,7 @@ impl StorageLibraryTransactionImport {
     }
 
     fn validate(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         snapshot: StorageImportSessionSnapshot,
         certified: bool,
     ) -> Result<(), StorageLibraryError> {
@@ -78,7 +93,7 @@ impl StorageLibraryTransactionImport {
     }
 
     pub(super) fn candidates(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         request: &StorageLibraryImportCandidateRequest,
         certified: bool,
         memory: &Arc<Semaphore>,
@@ -101,28 +116,33 @@ impl StorageLibraryTransactionImport {
                 })
                 .ok_or(StorageLibraryError::TextTooLarge)?,
         )?;
-        let mut statement = transaction.prepare_cached("SELECT e.game_id, d.revision FROM library_entries e JOIN documents d ON d.id = e.game_id WHERE e.content_revision = d.revision AND e.rules_variant = ?1 AND e.identity_initial_fen = ?2 AND e.plies = ?3 AND e.identity_mainline_uci = ?4 AND e.game_id > ?5 ORDER BY e.game_id LIMIT ?6")?;
         let key = query.structural_key();
         let after = query
             .cursor()
             .boundary()
             .map(|game| game.as_uuid().to_string())
             .unwrap_or_default();
-        let mut rows = statement.query(params![
-            StorageLibraryProjection::variant_sql(key.variant()),
-            key.initial_fen(),
-            i64::try_from(key.mainline_uci().len())?,
-            request.mainline(),
-            after,
-            i64::try_from(limit + 1)?
-        ])?;
+        let rows = library_entries::table
+            .inner_join(documents::table.on(documents::id.eq(library_entries::game_id)))
+            .filter(library_entries::content_revision.eq(documents::revision))
+            .filter(
+                library_entries::rules_variant
+                    .eq(StorageLibraryProjection::variant_sql(key.variant())),
+            )
+            .filter(library_entries::identity_initial_fen.eq(key.initial_fen()))
+            .filter(library_entries::plies.eq(i64::try_from(key.mainline_uci().len())?))
+            .filter(library_entries::identity_mainline_uci.eq(request.mainline()))
+            .filter(library_entries::game_id.gt(after))
+            .order(library_entries::game_id.asc())
+            .limit(i64::try_from(limit + 1)?)
+            .select((library_entries::game_id, documents::revision))
+            .load_iter::<(String, String), DefaultLoadingMode>(transaction)?;
         let mut candidates = Vec::with_capacity(limit + 1);
-        while let Some(row) = rows.next()? {
-            let id = row.get_ref(0)?.as_str()?;
-            let revision = row.get_ref(1)?.as_str()?;
+        for row in rows {
+            let (id, revision) = row?;
             candidates.push(StorageImportSessionCandidate::new(
                 id.parse()?,
-                StorageLibraryError::content_revision(revision)?.value(),
+                StorageLibraryError::content_revision(&revision)?.value(),
             ));
         }
         let more = candidates.len() > limit;
@@ -146,44 +166,75 @@ impl StorageLibraryTransactionImport {
     }
 
     pub(super) fn candidate(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         candidate: StorageImportSessionCandidate,
         memory: &Arc<Semaphore>,
     ) -> Result<StorageImportSessionCandidateBody, StorageLibraryError> {
-        let mut statement = transaction.prepare_cached("SELECT d.revision, e.content_revision, d.body, e.content_sha256 FROM documents d JOIN library_entries e ON e.game_id = d.id WHERE d.id = ?1")?;
-        let mut rows = statement.query([candidate.game().as_uuid().to_string()])?;
-        let row = rows.next()?.ok_or(StorageLibraryError::ImportCandidate)?;
-        let actual = row.get_ref(0)?.as_str()?;
-        let projected = row.get_ref(1)?.as_str()?;
-        if StorageLibraryError::content_revision(actual)?.value() != candidate.revision()
+        let key = candidate.game().as_uuid().to_string();
+        let maximum_digits = i64::try_from(u64::MAX.to_string().len())?;
+        let metadata = documents::table
+            .inner_join(library_entries::table.on(library_entries::game_id.eq(documents::id)))
+            .filter(documents::id.eq(&key))
+            .select((
+                case_when(
+                    sql::<BigInt>("length(CAST(documents.revision AS BLOB))").le(maximum_digits),
+                    documents::revision.nullable(),
+                )
+                .otherwise(None::<String>),
+                case_when(
+                    sql::<BigInt>("length(CAST(library_entries.content_revision AS BLOB))")
+                        .le(maximum_digits),
+                    library_entries::content_revision.nullable(),
+                )
+                .otherwise(None::<String>),
+                sql::<BigInt>("length(CAST(documents.body AS BLOB))"),
+                case_when(
+                    sql::<BigInt>("length(library_entries.content_sha256)")
+                        .eq(i64::try_from(Sha256::output_size())?),
+                    library_entries::content_sha256.nullable(),
+                )
+                .otherwise(None::<Vec<u8>>),
+            ))
+            .first::<StorageLibraryTransactionImportCandidateMetadata>(transaction)
+            .optional()?
+            .ok_or(StorageLibraryError::ImportCandidate)?;
+        let actual = metadata
+            .actual
+            .ok_or(StorageLibraryError::StoredDiscriminant)?;
+        let projected = metadata
+            .projected
+            .ok_or(StorageLibraryError::StoredDiscriminant)?;
+        if StorageLibraryError::content_revision(&actual)?.value() != candidate.revision()
             || projected != actual
         {
             return Err(StorageLibraryError::ImportCandidate);
         }
-        let body = row.get_ref(2)?.as_str()?;
-        let digest = row.get_ref(3)?.as_blob()?;
-        let bytes = body
-            .len()
+        let digest = metadata
+            .digest
+            .ok_or(StorageLibraryError::ProjectionStale)?;
+        let bytes = usize::try_from(metadata.bytes)?
             .checked_add(StorageImportSessionCandidateBody::reserved_overhead())
             .ok_or(StorageLibraryError::TextTooLarge)?;
         let reservation = StorageDocumentClient::reserve_memory(memory, bytes)?;
+        let body: String = documents::table
+            .find(&key)
+            .select(documents::body)
+            .first(transaction)?;
         if crate::package::digest::PackageDigest::hash_slice(body.as_bytes())
             .bytes()
             .as_slice()
-            != digest
+            != digest.as_slice()
         {
             return Err(StorageLibraryError::ProjectionStale);
         }
-        Ok(StorageImportSessionCandidateBody::from_reserved(
-            candidate,
-            body.to_owned(),
-            reservation,
+        Ok(
+            StorageImportSessionCandidateBody::from_reserved(candidate, body, reservation)
+                .map_err(StorageImportSessionError::from)?,
         )
-        .map_err(StorageImportSessionError::from)?)
     }
 
     pub(super) fn estimate(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         snapshot: StorageImportSessionSnapshot,
         footprint: StorageImportSessionCommitFootprint,
         certified: bool,
@@ -193,7 +244,7 @@ impl StorageLibraryTransactionImport {
     }
 
     pub(super) fn commit(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         request: &mut StorageLibraryImportCommitRequest,
         certified: bool,
         origin: uuid::Uuid,

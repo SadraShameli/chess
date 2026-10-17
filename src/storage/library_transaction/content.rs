@@ -1,5 +1,7 @@
-use rusqlite::{Transaction, params};
+use diesel::sqlite::SqliteConnection;
+use diesel::{AsChangeset, ExpressionMethods, Insertable, QueryDsl, RunQueryDsl};
 
+use crate::game::library_organization::GameLibraryOrganizationRevision;
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::library_prepared::{
     StorageLibraryEnumContentChange, StorageLibraryPreparedAdoption,
@@ -10,13 +12,14 @@ use crate::storage::library_repository::{
 };
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::rows::StorageLibraryTransactionRows;
+use crate::storage::schema::{documents, library_entries};
 use crate::storage::trash::StorageTrashEnumLocation;
 
 pub(super) struct StorageLibraryTransactionContent;
 
 impl StorageLibraryTransactionContent {
     pub(super) fn save(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         prepared: &StorageLibraryPreparedWrite,
     ) -> Result<StorageLibraryContentReceipt, StorageLibraryError> {
         let id = prepared.id();
@@ -70,14 +73,12 @@ impl StorageLibraryTransactionContent {
                 },
             )?;
         } else {
-            transaction.execute(
-                "UPDATE documents SET revision = ?2, body = ?3 WHERE id = ?1",
-                params![
-                    id.as_uuid().to_string(),
-                    revision.value().to_string(),
-                    prepared.body()
-                ],
-            )?;
+            diesel::update(documents::table.find(id.as_uuid().to_string()))
+                .set((
+                    documents::revision.eq(revision.value().to_string()),
+                    documents::body.eq(prepared.body()),
+                ))
+                .execute(transaction)?;
             Self::project(
                 transaction,
                 StorageLibraryTransactionContentProjection {
@@ -97,16 +98,19 @@ impl StorageLibraryTransactionContent {
         ))
     }
     pub(super) fn insert_new(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         insert: StorageLibraryTransactionContentInsert<'_>,
     ) -> Result<(), StorageLibraryError> {
         if StorageLibraryTransactionRows::document_revision(transaction, insert.id)?.is_some() {
             return Err(StorageLibraryError::ImportExisting);
         }
-        transaction.execute(
-            "INSERT INTO documents(id, revision, body) VALUES (?1, '1', ?2)",
-            params![insert.id.as_uuid().to_string(), insert.body],
-        )?;
+        diesel::insert_into(documents::table)
+            .values((
+                documents::id.eq(insert.id.as_uuid().to_string()),
+                documents::revision.eq(GameStorageRevision::new(1).value().to_string()),
+                documents::body.eq(insert.body),
+            ))
+            .execute(transaction)?;
         Self::project(
             transaction,
             StorageLibraryTransactionContentProjection {
@@ -120,7 +124,7 @@ impl StorageLibraryTransactionContent {
         )
     }
     pub(super) fn adopt(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         prepared: &StorageLibraryPreparedAdoption,
     ) -> Result<StorageLibraryEnumAdoptionOutcome, StorageLibraryError> {
         let current = StorageLibraryTransactionRows::document_revision(transaction, prepared.id())?;
@@ -152,24 +156,79 @@ impl StorageLibraryTransactionContent {
         ))
     }
     fn project(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         write: StorageLibraryTransactionContentProjection<'_>,
     ) -> Result<(), StorageLibraryError> {
         let p = write.projection;
         let date = p.date();
-        transaction.execute(
-            "INSERT INTO library_entries(game_id, content_revision, organization_revision, content_kind, rules_variant, start_kind, mode, result, white_display, white_key, black_display, black_key, date_year, date_month, date_day, opening_display, opening_key, opening_code, plies, identity_initial_fen, identity_mainline_uci, content_sha256, modified_ms, favorite, folder_id, location, trashed_ms)
-             VALUES (?1, ?2, '0', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, 0, ?23, 'library', NULL)
-             ON CONFLICT(game_id) DO UPDATE SET content_revision = excluded.content_revision, content_kind = excluded.content_kind, rules_variant = excluded.rules_variant, start_kind = excluded.start_kind, mode = excluded.mode, result = excluded.result, white_display = excluded.white_display, white_key = excluded.white_key, black_display = excluded.black_display, black_key = excluded.black_key, date_year = excluded.date_year, date_month = excluded.date_month, date_day = excluded.date_day, opening_display = excluded.opening_display, opening_key = excluded.opening_key, opening_code = excluded.opening_code, plies = excluded.plies, identity_initial_fen = excluded.identity_initial_fen, identity_mainline_uci = excluded.identity_mainline_uci, content_sha256 = excluded.content_sha256, modified_ms = excluded.modified_ms",
-            params![write.id.as_uuid().to_string(), write.revision.value().to_string(), StorageLibraryProjection::kind_sql(p.kind()),
-                StorageLibraryProjection::variant_sql(p.variant()), p.start().sql(), p.mode().map(StorageLibraryProjection::mode_sql), p.result().pgn_token(),
-                p.white().map(|text| text.as_str()), p.white_key(), p.black().map(|text| text.as_str()), p.black_key(),
-                date.and_then(|date| date.year()), date.and_then(|date| date.month()), date.and_then(|date| date.day()),
-                p.opening().map(|text| text.as_str()), p.opening_key(), p.code().map(|code| code.as_str()), p.plies(),
-                write.identity.initial_fen(), write.identity.mainline(), write.identity.body_digest().bytes().as_slice(), write.modified, write.folder.map(|folder| folder.to_string())],
-        )?;
+        let digest = write.identity.body_digest();
+        let fields = StorageLibraryTransactionContentFields {
+            content_revision: write.revision.value().to_string(),
+            content_kind: StorageLibraryProjection::kind_sql(p.kind()),
+            rules_variant: StorageLibraryProjection::variant_sql(p.variant()),
+            start_kind: p.start().sql(),
+            mode: p.mode().map(StorageLibraryProjection::mode_sql),
+            result: p.result().pgn_token(),
+            white_display: p.white().map(|text| text.as_str()),
+            white_key: p.white_key(),
+            black_display: p.black().map(|text| text.as_str()),
+            black_key: p.black_key(),
+            date_year: date.and_then(|date| date.year()).map(i64::from),
+            date_month: date.and_then(|date| date.month()).map(i64::from),
+            date_day: date.and_then(|date| date.day()).map(i64::from),
+            opening_display: p.opening().map(|text| text.as_str()),
+            opening_key: p.opening_key(),
+            opening_code: p.code().map(|code| code.as_str()),
+            plies: i64::from(p.plies()),
+            identity_initial_fen: write.identity.initial_fen(),
+            identity_mainline_uci: write.identity.mainline(),
+            content_sha256: digest.bytes().as_slice(),
+            modified_ms: write.modified,
+        };
+        diesel::insert_into(library_entries::table)
+            .values((
+                library_entries::game_id.eq(write.id.as_uuid().to_string()),
+                library_entries::organization_revision
+                    .eq(GameLibraryOrganizationRevision::ZERO.to_string()),
+                library_entries::favorite.eq(i64::from(false)),
+                library_entries::folder_id.eq(write.folder.map(|folder| folder.to_string())),
+                library_entries::location.eq(StorageTrashEnumLocation::Library.sql()),
+                library_entries::trashed_ms.eq(None::<i64>),
+                &fields,
+            ))
+            .on_conflict(library_entries::game_id)
+            .do_update()
+            .set(&fields)
+            .execute(transaction)?;
         Ok(())
     }
+}
+
+#[derive(Insertable, AsChangeset)]
+#[diesel(table_name = library_entries)]
+#[diesel(treat_none_as_null = true, treat_none_as_default_value = false)]
+struct StorageLibraryTransactionContentFields<'a> {
+    content_revision: String,
+    content_kind: &'a str,
+    rules_variant: &'a str,
+    start_kind: &'a str,
+    mode: Option<&'a str>,
+    result: &'a str,
+    white_display: Option<&'a str>,
+    white_key: Option<&'a str>,
+    black_display: Option<&'a str>,
+    black_key: Option<&'a str>,
+    date_year: Option<i64>,
+    date_month: Option<i64>,
+    date_day: Option<i64>,
+    opening_display: Option<&'a str>,
+    opening_key: Option<&'a str>,
+    opening_code: Option<&'a str>,
+    plies: i64,
+    identity_initial_fen: &'a str,
+    identity_mainline_uci: &'a str,
+    content_sha256: &'a [u8],
+    modified_ms: Option<i64>,
 }
 
 struct StorageLibraryTransactionContentProjection<'a> {

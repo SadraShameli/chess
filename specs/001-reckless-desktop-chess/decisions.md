@@ -491,9 +491,15 @@ teardown. This guard must not be an independently dropped Bevy resource.
 
 ## Storage, imports, and backup recovery
 
-Use bundled SQLite via rusqlite on one dedicated async-facing storage actor;
+Use bundled SQLite via the Diesel 2.3.14 ORM on one dedicated async-facing storage actor;
 no blocking database work on runtime workers. WAL, foreign_keys=ON,
 synchronous=FULL, 5-second busy timeout, and transactional numbered migrations.
+The owner required an actual ORM on 2026-10-17 and accepted the internal
+refactor. This supersedes the former rusqlite adapter selection while retaining
+the existing schema, data and domain contracts. Typed ORM mappings and the
+single actor-owned connection follow [the migration plan](plan.md#storage-orm-migration).
+Driver-based SQLite fixture setup remains test-only; production record access
+uses the ORM. Source/API findings do not establish completed migration or gates.
 Tables own games, move nodes, notes/marks, clock snapshots, folders, tags,
 reports/jobs/results, datasets/provenance, puzzle definitions/attempts/runs,
 preferences, and backup history. Add foreign-key and query indexes; immutable
@@ -509,8 +515,15 @@ them Saved. Migration and restore preserve either the complete last valid
 snapshot or the complete validated replacement, with no mixed data/settings
 versions. A backup guarantees its recorded consistent revision, not later edits.
 
-Use the SQLite online-backup API and a revision-consistent manifest in a
+Use SQLite's transactionally consistent `VACUUM INTO` snapshot operation through
+the actor-owned ORM connection and a revision-consistent manifest in a
 checksummed archive; keep credentials, update installers and datasets out.
+This replaces the former online-backup C-API selection because the chosen ORM
+does not expose its raw connection handle through a supported safe backup API.
+Run snapshot creation at an idle transaction boundary into owned staging,
+validate the completed database, sync it and publish only the completed receipt.
+Do not publish interrupted snapshot files. The ORM change preserves the selected
+consistent-snapshot and recovery behavior; it does not claim backup implementation.
 Validate archive paths, entry count, decompression size and checksums before
 restore. First automatic backup is due 24 hours after first successful user-data
 creation if no earlier automatic backup exists. An overdue launch schedules it

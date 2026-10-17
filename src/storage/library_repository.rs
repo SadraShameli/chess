@@ -39,7 +39,7 @@ pub enum StorageLibraryError {
     #[error(transparent)]
     Store(#[from] StorageDocumentError),
     #[error(transparent)]
-    Sqlite(#[from] rusqlite::Error),
+    Sqlite(#[from] diesel::result::Error),
     #[error(transparent)]
     Codec(#[from] StorageGameDocumentError),
     #[error(transparent)]
@@ -64,8 +64,6 @@ pub enum StorageLibraryError {
     Channel(#[from] oneshot::error::RecvError),
     #[error(transparent)]
     Import(#[from] crate::storage::import_session::StorageImportSessionError),
-    #[error("Invalid stored import value: {0}")]
-    ImportValue(#[from] rusqlite::types::FromSqlError),
     #[error("The import catalog changed")]
     ImportCatalog,
     #[error("The import destination changed")]
@@ -98,7 +96,7 @@ pub enum StorageLibraryError {
     #[error("Library operation failed ({primary}); rollback also failed ({rollback})")]
     Rollback {
         primary: Box<Self>,
-        rollback: rusqlite::Error,
+        rollback: diesel::result::Error,
     },
     #[error("The library response does not match its request")]
     Protocol,

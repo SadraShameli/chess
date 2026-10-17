@@ -2,7 +2,15 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::Path;
 
-use rusqlite::Transaction;
+use diesel::RunQueryDsl;
+use diesel::dsl::sql;
+use diesel::sql_types::Bool;
+use diesel::sqlite::SqliteConnection;
+
+use crate::storage::database::StorageDatabase;
+use crate::storage::database::enums::{
+    StorageDatabaseEnumIntegerProperty, StorageDatabaseEnumTextProperty,
+};
 
 use crate::storage::import_session::StorageImportSessionError;
 use crate::storage::library_import::space::StorageLibraryImportSpace;
@@ -27,24 +35,22 @@ impl StorageLibraryImportSpaceLayout {
         }
     }
 
-    pub(super) fn read(transaction: &Transaction<'_>) -> Result<Self, StorageLibraryError> {
-        let page = u64::try_from(
-            transaction.pragma_query_value(None, "page_size", |row| row.get::<_, i64>(0))?,
-        )?;
-        let pages = u64::try_from(
-            transaction.pragma_query_value(None, "page_count", |row| row.get::<_, i64>(0))?,
-        )?;
-        let auto_vacuum: u32 =
-            transaction.pragma_query_value(None, "auto_vacuum", |row| row.get(0))?;
-        let journal: String =
-            transaction.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
-        let encoding: String =
-            transaction.pragma_query_value(None, "encoding", |row| row.get(0))?;
-        let triggers: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('documents', 'library_entries', 'library_state'))",
-            [],
-            |row| row.get(0),
-        )?;
+    pub(super) fn read(transaction: &mut SqliteConnection) -> Result<Self, StorageLibraryError> {
+        let page = u64::try_from(StorageDatabase::integer(
+            transaction,
+            StorageDatabaseEnumIntegerProperty::PageSize,
+        )?)?;
+        let pages = u64::try_from(StorageDatabase::integer(
+            transaction,
+            StorageDatabaseEnumIntegerProperty::PageCount,
+        )?)?;
+        let auto_vacuum =
+            StorageDatabase::integer(transaction, StorageDatabaseEnumIntegerProperty::AutoVacuum)?;
+        let journal =
+            StorageDatabase::text(transaction, StorageDatabaseEnumTextProperty::JournalMode)?;
+        let encoding =
+            StorageDatabase::text(transaction, StorageDatabaseEnumTextProperty::Encoding)?;
+        let triggers: bool = diesel::select(sql::<Bool>("EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('documents', 'library_entries', 'library_state'))")).get_result(transaction)?;
         if !(512..=65_536).contains(&page)
             || !page.is_power_of_two()
             || auto_vacuum != 0
@@ -54,11 +60,11 @@ impl StorageLibraryImportSpaceLayout {
         {
             return Err(StorageLibraryError::ImportLayout);
         }
-        let path = transaction
-            .path()
-            .filter(|path| !path.is_empty())
-            .ok_or(StorageLibraryError::ImportLayout)?;
-        let mut file = std::fs::File::open(path).map_err(StorageImportSessionError::from)?;
+        let path = StorageDatabase::text(transaction, StorageDatabaseEnumTextProperty::MainPath)?;
+        if path.is_empty() {
+            return Err(StorageLibraryError::ImportLayout);
+        }
+        let mut file = std::fs::File::open(&path).map_err(StorageImportSessionError::from)?;
         let main = file
             .metadata()
             .map_err(StorageImportSessionError::from)?
@@ -69,10 +75,10 @@ impl StorageLibraryImportSpaceLayout {
         if header[20] != 0 {
             return Err(StorageLibraryError::ImportLayout);
         }
-        let mut wal_path = OsString::from(path);
+        let mut wal_path = OsString::from(&path);
         wal_path.push("-wal");
         let wal = Self::length(Path::new(&wal_path))?;
-        let mut shm_path = OsString::from(path);
+        let mut shm_path = OsString::from(&path);
         shm_path.push("-shm");
         let shm = Self::length(Path::new(&shm_path))?;
         if wal != 0 {
@@ -96,11 +102,10 @@ impl StorageLibraryImportSpaceLayout {
                 StorageLibraryImportSpace::WAL_FRAME_HEADER_BYTES,
             )?,
         )?;
-        let has_temporary_triggers: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE type = 'trigger')",
-            [],
-            |row| row.get(0),
-        )?;
+        let has_temporary_triggers: bool = diesel::select(sql::<Bool>(
+            "EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE type = 'trigger')",
+        ))
+        .get_result(transaction)?;
         Ok(Self {
             page,
             pages,

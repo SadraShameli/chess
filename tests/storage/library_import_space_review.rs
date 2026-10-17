@@ -1,3 +1,14 @@
+use diesel::RunQueryDsl;
+use diesel::connection::{AnsiTransactionManager, SimpleConnection, TransactionManager};
+use diesel::dsl::sql;
+use diesel::sql_types::BigInt;
+use diesel::sqlite::SqliteConnection;
+
+use crate::storage::database::StorageDatabase;
+use crate::storage::database::enums::StorageDatabaseEnumIntegerProperty;
+use crate::storage::library_import::StorageLibraryImportPageLimit;
+use crate::storage::library_repository::StorageLibraryError;
+
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -557,98 +568,129 @@ async fn a_stricter_existing_page_ceiling_is_preserved_after_sqlite_full()
     fixture.close().await
 }
 
+struct StorageLibraryImportSpaceReviewPageLimitFixture {
+    connection: SqliteConnection,
+}
+
+impl StorageLibraryImportSpaceReviewPageLimitFixture {
+    fn new(ceiling: Option<u64>) -> StorageLibraryImportTestResult<Self> {
+        let mut connection = StorageDatabase::open(Path::new(":memory:"))?;
+        connection.batch_execute("CREATE TABLE scope_payload(body BLOB)")?;
+        if let Some(ceiling) = ceiling {
+            let actual = StorageDatabase::set_max_page_count(&mut connection, ceiling)?;
+            if actual != ceiling {
+                return Err(format!(
+                    "Initial page ceiling differs: expected {ceiling}, observed {actual}"
+                )
+                .into());
+            }
+        }
+        Ok(Self { connection })
+    }
+
+    fn begin(&mut self) -> StorageLibraryImportTestResult {
+        AnsiTransactionManager::begin_transaction(&mut self.connection)?;
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> StorageLibraryImportTestResult {
+        if !StorageDatabase::is_resolved(&mut self.connection) {
+            AnsiTransactionManager::rollback_transaction(&mut self.connection)?;
+        }
+        Ok(())
+    }
+
+    fn property(
+        &mut self,
+        property: StorageDatabaseEnumIntegerProperty,
+    ) -> StorageLibraryImportTestResult<u64> {
+        Ok(u64::try_from(StorageDatabase::integer(
+            &mut self.connection,
+            property,
+        )?)?)
+    }
+}
+
 #[test]
 fn page_limit_uses_sqlites_returned_ceiling_and_restores_a_stricter_limit()
 -> StorageLibraryImportTestResult {
-    use crate::storage::library_import::StorageLibraryImportPageLimit;
-
-    let mut connection = rusqlite::Connection::open_in_memory()?;
-    connection.execute_batch("CREATE TABLE scope_payload(body BLOB); PRAGMA max_page_count = 8")?;
-    let transaction = connection.transaction()?;
+    let mut fixture = StorageLibraryImportSpaceReviewPageLimitFixture::new(Some(8))?;
+    fixture.begin()?;
     let mut scope = None;
-    StorageLibraryImportPageLimit::install(&transaction, 100, &mut scope)?;
-    let actual = u64::try_from(
-        transaction.pragma_query_value(None, "max_page_count", |row| row.get::<_, i64>(0))?,
-    )?;
+    StorageLibraryImportPageLimit::install(&mut fixture.connection, 100, &mut scope)?;
+    let actual = fixture.property(StorageDatabaseEnumIntegerProperty::MaxPageCount)?;
+    fixture
+        .connection
+        .batch_execute("INSERT INTO scope_payload VALUES (zeroblob(8))")?;
+    AnsiTransactionManager::commit_transaction(&mut fixture.connection)?;
+    StorageLibraryImportPageLimit::finish(&mut fixture.connection, scope, Ok(()))?;
+    let restored = fixture.property(StorageDatabaseEnumIntegerProperty::MaxPageCount)?;
+    let resolved = StorageDatabase::is_resolved(&mut fixture.connection);
+    drop(fixture);
     assert_eq!(actual, 8);
-    transaction.execute("INSERT INTO scope_payload VALUES (zeroblob(8))", [])?;
-    transaction.commit()?;
-    StorageLibraryImportPageLimit::finish(&connection, scope, Ok(()))?;
-    let restored =
-        u64::try_from(
-            connection.pragma_query_value(None, "max_page_count", |row| row.get::<_, i64>(0))?,
-        )?;
     assert_eq!(restored, 8);
+    assert!(resolved);
     Ok(())
 }
 
 #[test]
 fn page_limit_refuses_growth_before_sqlite_can_exceed_the_scoped_ceiling()
 -> StorageLibraryImportTestResult {
-    use crate::storage::library_import::StorageLibraryImportPageLimit;
-
-    let mut connection = rusqlite::Connection::open_in_memory()?;
-    connection.execute_batch("CREATE TABLE scope_payload(body BLOB)")?;
-    let previous =
-        u64::try_from(
-            connection.pragma_query_value(None, "max_page_count", |row| row.get::<_, i64>(0))?,
-        )?;
-    let transaction = connection.transaction()?;
+    let mut fixture = StorageLibraryImportSpaceReviewPageLimitFixture::new(None)?;
+    let previous = fixture.property(StorageDatabaseEnumIntegerProperty::MaxPageCount)?;
+    fixture.begin()?;
     let mut scope = None;
-    StorageLibraryImportPageLimit::install(&transaction, 4, &mut scope)?;
-    let error = transaction
-        .execute("INSERT INTO scope_payload VALUES (zeroblob(65536))", [])
+    StorageLibraryImportPageLimit::install(&mut fixture.connection, 4, &mut scope)?;
+    let error = fixture
+        .connection
+        .batch_execute("INSERT INTO scope_payload VALUES (zeroblob(65536))")
         .err()
-        .ok_or("expected real SQLITE_FULL")?;
-    assert!(
-        matches!(error, rusqlite::Error::SqliteFailure(ref failure, _) if failure.code == rusqlite::ErrorCode::DiskFull)
-    );
-    let pages = u64::try_from(
-        transaction.pragma_query_value(None, "page_count", |row| row.get::<_, i64>(0))?,
-    )?;
+        .ok_or("expected actual SQLite full error")?;
+    let is_full = matches!(&error, diesel::result::Error::DatabaseError(_, information) if information.message() == "database or disk is full");
+    let pages = fixture.property(StorageDatabaseEnumIntegerProperty::PageCount)?;
+    fixture.rollback()?;
+    StorageLibraryImportPageLimit::finish(&mut fixture.connection, scope, Ok(()))?;
+    let restored = fixture.property(StorageDatabaseEnumIntegerProperty::MaxPageCount)?;
+    let rows: i64 =
+        sql::<BigInt>("SELECT count(*) FROM scope_payload").get_result(&mut fixture.connection)?;
+    let resolved = StorageDatabase::is_resolved(&mut fixture.connection);
+    drop(fixture);
+    assert!(is_full, "{error}");
     assert!(pages <= 4);
-    if !transaction.is_autocommit() {
-        transaction.rollback()?;
-    } else {
-        drop(transaction);
-    }
-    StorageLibraryImportPageLimit::finish(&connection, scope, Ok(()))?;
-    let restored =
-        u64::try_from(
-            connection.pragma_query_value(None, "max_page_count", |row| row.get::<_, i64>(0))?,
-        )?;
+    assert_eq!(rows, 0);
     assert_eq!(restored, previous);
+    assert!(resolved);
     Ok(())
 }
 
 #[test]
 fn failed_limit_restore_retains_primary_and_rollback_causes_and_retires_connection()
 -> StorageLibraryImportTestResult {
-    use crate::storage::library_import::StorageLibraryImportPageLimit;
-    use crate::storage::library_repository::StorageLibraryError;
-
-    let mut connection = rusqlite::Connection::open_in_memory()?;
-    connection.execute_batch("CREATE TABLE scope_payload(body BLOB); PRAGMA max_page_count = 8")?;
-    let transaction = connection.transaction()?;
+    let mut fixture = StorageLibraryImportSpaceReviewPageLimitFixture::new(Some(8))?;
+    fixture.begin()?;
     let mut scope = None;
-    StorageLibraryImportPageLimit::install(&transaction, 4, &mut scope)?;
-    transaction.rollback()?;
-    let rollback = connection
-        .execute_batch("ROLLBACK")
+    StorageLibraryImportPageLimit::install(&mut fixture.connection, 4, &mut scope)?;
+    fixture.rollback()?;
+    let rollback = fixture
+        .connection
+        .batch_execute("ROLLBACK")
         .err()
         .ok_or("expected actual rollback error")?;
-    connection.execute_batch(
+    fixture.connection.batch_execute(
         "PRAGMA max_page_count = 100; INSERT INTO scope_payload VALUES (zeroblob(65536))",
     )?;
     let primary = StorageLibraryError::Rollback {
         primary: Box::new(StorageLibraryError::ImportProof),
         rollback,
     };
-    let error = StorageLibraryImportPageLimit::finish::<()>(&connection, scope, Err(primary))
-        .err()
-        .ok_or("expected limit restore failure")?;
-    assert!(error.requires_connection_retirement());
+    let error =
+        StorageLibraryImportPageLimit::finish::<()>(&mut fixture.connection, scope, Err(primary))
+            .err()
+            .ok_or("expected page ceiling restoration failure")?;
+    let retired = error.requires_connection_retirement();
     let diagnostic = error.to_string();
+    drop(fixture);
+    assert!(retired);
     assert!(diagnostic.contains("projection proof"), "{diagnostic}");
     assert!(diagnostic.contains("rollback"), "{diagnostic}");
     assert!(diagnostic.contains("ceiling"), "{diagnostic}");
@@ -658,61 +700,55 @@ fn failed_limit_restore_retains_primary_and_rollback_causes_and_retires_connecti
 #[test]
 fn unresolved_transaction_keeps_the_limit_scope_and_reports_primary_cause()
 -> StorageLibraryImportTestResult {
-    use crate::storage::library_import::StorageLibraryImportPageLimit;
-    use crate::storage::library_repository::StorageLibraryError;
-
-    let mut connection = rusqlite::Connection::open_in_memory()?;
-    connection.execute_batch("CREATE TABLE scope_payload(body BLOB)")?;
-    let transaction = connection.transaction()?;
+    let mut fixture = StorageLibraryImportSpaceReviewPageLimitFixture::new(None)?;
+    fixture.begin()?;
     let mut scope = None;
-    StorageLibraryImportPageLimit::install(&transaction, 4, &mut scope)?;
+    StorageLibraryImportPageLimit::install(&mut fixture.connection, 4, &mut scope)?;
     let error = StorageLibraryImportPageLimit::finish::<()>(
-        &transaction,
+        &mut fixture.connection,
         scope,
         Err(StorageLibraryError::ImportProof),
     )
     .err()
     .ok_or("expected unresolved scope")?;
-    assert!(error.requires_connection_retirement());
-    assert!(error.to_string().contains("projection proof"));
-    let actual = u64::try_from(
-        transaction.pragma_query_value(None, "max_page_count", |row| row.get::<_, i64>(0))?,
-    )?;
+    let retired = error.requires_connection_retirement();
+    let diagnostic = error.to_string();
+    let actual = fixture.property(StorageDatabaseEnumIntegerProperty::MaxPageCount)?;
+    fixture.rollback()?;
+    let resolved = StorageDatabase::is_resolved(&mut fixture.connection);
+    drop(fixture);
+    assert!(retired);
+    assert!(diagnostic.contains("projection proof"));
     assert_eq!(actual, 4);
-    transaction.rollback()?;
+    assert!(resolved);
     Ok(())
 }
 
 #[test]
 fn rejected_page_ceiling_restores_after_sqlite_returns_its_actual_minimum()
 -> StorageLibraryImportTestResult {
-    use crate::storage::library_import::StorageLibraryImportPageLimit;
-    use crate::storage::library_repository::StorageLibraryError;
-
-    let mut connection = rusqlite::Connection::open_in_memory()?;
-    connection.execute_batch("CREATE TABLE scope_payload(body BLOB); PRAGMA max_page_count = 8")?;
-    let transaction = connection.transaction()?;
-    let pages = u64::try_from(
-        transaction.pragma_query_value(None, "page_count", |row| row.get::<_, i64>(0))?,
-    )?;
-    assert!(pages > 1);
+    let mut fixture = StorageLibraryImportSpaceReviewPageLimitFixture::new(Some(8))?;
+    fixture.begin()?;
+    let pages = fixture.property(StorageDatabaseEnumIntegerProperty::PageCount)?;
     let mut scope = None;
-    let error = StorageLibraryImportPageLimit::install(&transaction, 1, &mut scope)
+    let error = StorageLibraryImportPageLimit::install(&mut fixture.connection, 1, &mut scope)
         .err()
-        .ok_or("expected SQLite to clamp the ceiling")?;
-    assert!(
-        matches!(error, StorageLibraryError::ImportPageCeiling { requested: 1, actual } if actual == pages)
-    );
-    transaction.rollback()?;
-    let error = StorageLibraryImportPageLimit::finish::<()>(&connection, scope, Err(error))
-        .err()
-        .ok_or("lost primary ceiling refusal")?;
-    assert!(!error.requires_connection_retirement());
-    let restored =
-        u64::try_from(
-            connection.pragma_query_value(None, "max_page_count", |row| row.get::<_, i64>(0))?,
-        )?;
+        .ok_or("expected SQLite to clamp the page ceiling")?;
+    let is_clamped = matches!(error, StorageLibraryError::ImportPageCeiling { requested: 1, actual } if actual == pages);
+    fixture.rollback()?;
+    let error =
+        StorageLibraryImportPageLimit::finish::<()>(&mut fixture.connection, scope, Err(error))
+            .err()
+            .ok_or("lost primary page ceiling refusal")?;
+    let retired = error.requires_connection_retirement();
+    let restored = fixture.property(StorageDatabaseEnumIntegerProperty::MaxPageCount)?;
+    let resolved = StorageDatabase::is_resolved(&mut fixture.connection);
+    drop(fixture);
+    assert!(pages > 1);
+    assert!(is_clamped);
+    assert!(!retired);
     assert_eq!(restored, 8);
+    assert!(resolved);
     Ok(())
 }
 

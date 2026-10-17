@@ -31,6 +31,7 @@ use crate::desktop::stream::DesktopStream;
 use crate::game::enums::{GameEnumPhase, GameEnumSeat, GameId};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
+use crate::presentation::accessibility::PresentationAccessibilityError;
 use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::scene::PresentationBoardScene;
@@ -60,6 +61,8 @@ use crate::scene::picking::ScenePickingViewport;
 
 #[derive(Debug, Error)]
 pub enum PresentationAppError {
+    #[error(transparent)]
+    Accessibility(#[from] PresentationAccessibilityError),
     #[error(transparent)]
     Time(#[from] ClockDurationError),
     #[error(transparent)]

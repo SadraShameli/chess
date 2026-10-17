@@ -1,5 +1,6 @@
-use bevy_egui::egui::{Color32, Key, Vec2, Visuals};
+use bevy_egui::egui::{Color32, Key, Visuals};
 
+use crate::board::enums::BoardEnumColor;
 use crate::board::square::BoardSquare;
 use crate::game::premove::GamePremoveIntent;
 
@@ -80,12 +81,16 @@ impl PresentationBoardEnumDirection {
         }
     }
 
-    pub const fn vector(self) -> Vec2 {
+    pub(crate) const fn offset(self, orientation: BoardEnumColor) -> (i8, i8) {
+        let sign = match orientation {
+            BoardEnumColor::White => 1,
+            BoardEnumColor::Black => -1,
+        };
         match self {
-            Self::Up => Vec2::new(0.0, -1.0),
-            Self::Down => Vec2::new(0.0, 1.0),
-            Self::Left => Vec2::new(-1.0, 0.0),
-            Self::Right => Vec2::new(1.0, 0.0),
+            Self::Up => (0, sign),
+            Self::Down => (0, -sign),
+            Self::Left => (-sign, 0),
+            Self::Right => (sign, 0),
         }
     }
 }

@@ -1,7 +1,10 @@
 mod layout;
 mod trees;
 
-use rusqlite::Transaction;
+use diesel::sqlite::SqliteConnection;
+
+use crate::storage::database::StorageDatabase;
+use crate::storage::database::enums::StorageDatabaseEnumIntegerProperty;
 
 use crate::storage::import_session::StorageImportSessionCommitFootprint;
 use crate::storage::library_import::space::layout::StorageLibraryImportSpaceLayout;
@@ -52,7 +55,7 @@ impl StorageLibraryImportSpace {
     }
 
     pub(crate) fn plan(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         footprint: StorageImportSessionCommitFootprint,
     ) -> Result<Self, StorageLibraryError> {
         let layout = StorageLibraryImportSpaceLayout::read(transaction)?;
@@ -60,10 +63,9 @@ impl StorageLibraryImportSpace {
         let page_ceiling =
             Self::add(layout.pages, growth.additional_pages)?.min(Self::SQLITE_MAX_PAGES);
         let additional_pages = page_ceiling.saturating_sub(layout.pages);
-        let free = u64::try_from(transaction.pragma_query_value(
-            None,
-            "freelist_count",
-            |row| row.get::<_, i64>(0),
+        let free = u64::try_from(StorageDatabase::integer(
+            transaction,
+            StorageDatabaseEnumIntegerProperty::FreelistCount,
         )?)?;
         let allocator_dirty = free.min(Self::mul(
             growth.allocator_operations,

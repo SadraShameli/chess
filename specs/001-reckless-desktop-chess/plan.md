@@ -56,7 +56,7 @@ work while deriving reusable backend contracts.
 | Graphics | Bevy scene/assets/PBR/cameras/shadows/picking through its compatible wgpu graph; automatic native backend selection; no separate renderer/device or eframe dependency |
 | Engine | Reckless v0.9.0, commit `0e92358f5acd66e5ac77b1bf558202e47c515435`; verified packaged native UCI child |
 | Rules/notation | Existing shakmaty 0.30.2 and pgn-reader 0.29.1; separate proof-adjudication boundary |
-| Storage | Existing bundled rusqlite 0.40.2, serialized storage actor, WAL/FULL transactions, separate starter indexes |
+| Storage | Diesel 2.3.14 ORM with bundled SQLite, one serialized storage actor, WAL/FULL transactions, separate starter indexes; implemented compatibility results and pending gates in [storage evidence](evidence/storage-orm.md) |
 | Internal interface | Typed in-process Rust commands/events, checked revisions and correlation; no UI JSON serialization or generated TypeScript |
 | Profile ownership | Standard-library exclusive file lease before mutable startup; interprocess 2.4.5 activation-only local sockets; authenticated user scope, bounded requests and durable installer intent |
 | External formats | Serde, bounded validated PGN/FEN/CSV/Polyglot, versioned settings/backup/update schemas; persistence compatibility retained |
@@ -75,6 +75,42 @@ actual locked compilation and API/license verification. No installed native-egui
 compatibility, package execution or performance result is asserted here.
 
 ## Behavioral ownership and native execution
+
+### Storage ORM migration
+
+The owner's 2026-10-17 requirement selects an actual ORM and authorizes the
+internal storage refactor. Use Diesel 2.3.14 with its SQLite backend and typed
+schema/query mappings. Retain the one existing `StorageDocumentActor`, capacity
+admission, bounded queues and domain-facing repository contracts. The actor owns
+one database connection; this change adds neither a connection pool nor another
+runtime. Typed ORM reads, inserts, updates and deletes replace production
+rusqlite calls. SQLite-specific migrations, PRAGMA, recursive hierarchy and
+physical-layout inspection may use narrowly scoped typed SQL through Diesel.
+Do not introduce a replacement driver API that merely imitates rusqlite.
+The existing backup tasks use SQLite's consistent `VACUUM INTO` operation through
+the idle actor-owned connection, with owned staging/validation/sync and the same
+manifest/recovery guarantees. This avoids depending on an unsupported raw-handle
+backup API or adding another production driver.
+
+Keep the existing database schema, migration versions, canonical text counters,
+document bytes, identifiers, journal proofs and durable receipt semantics.
+Existing SQLite fixtures provide independent compatibility references. A direct
+driver may remain a test-only dependency for constructing and inspecting those
+fixtures. All production persistence uses Diesel. T297 through T302 are
+implemented: the migrated public storage suite passed 183 cases, the private
+storage/import suite passed 166, and the full hermetic selection passed 1,835.
+The ordered optimized builds and T303 acceptance audit remain in progress;
+the existing macOS compact-unwind warning is still an acceptance discrepancy.
+
+The source inventory and API findings are in [ORM research](research.md#storage-orm-selection-2026-10-17),
+the compatibility contract is [storage ORM](contracts/storage-orm.md), and
+T296 through T303 in [tasks.md](tasks.md#phase-17-storage-orm-migration)
+form the foundational storage increment. Finish its remaining acceptance gate
+before adding new storage adapters. Existing task IDs and historical completion evidence stay
+intact. Recheck all seven canonical Constitution Check rows against the actual
+implementation and report remaining checks explicitly.
+
+### Native ownership
 
 Bootstrap first resolves the existing local profile and obtains its
 [exclusive profile lease](decisions.md#local-profile-ownership-and-activation).

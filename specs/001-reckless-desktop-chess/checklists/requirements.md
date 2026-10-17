@@ -39,6 +39,11 @@ or passed runtime acceptance tests.
 
 ## Notes
 
+The 2026-10-17 amendment records the owner's requirement for relational object
+mapping and compatibility of existing records. Adapter/library choices stay in
+plan/research. The 16 requirements-quality criteria remain satisfied; these
+markers establish neither ORM implementation nor executed acceptance checks.
+
 The initial review found implementation selections in the input and visual
 requirements, including "Tauri 2, Vue" and "direct Three.js inside Vue".
 The browser selections have since been superseded by the native UI revision;

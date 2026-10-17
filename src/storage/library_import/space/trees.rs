@@ -1,4 +1,8 @@
-use rusqlite::{Transaction, params};
+use diesel::connection::DefaultLoadingMode;
+use diesel::dsl::sql;
+use diesel::sql_types::{BigInt, Bool, Nullable, Text};
+use diesel::sqlite::SqliteConnection;
+use diesel::{OptionalExtension, RunQueryDsl};
 
 use crate::storage::import_session::StorageImportSessionCommitFootprint;
 use crate::storage::library_import::space::StorageLibraryImportSpace;
@@ -83,15 +87,14 @@ impl StorageLibraryImportSpaceTree {
     const MAX_DEPTH: u64 = 20;
 
     fn read(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         name: &str,
         kind: StorageLibraryImportSpaceEnumTreeKind,
     ) -> Result<Self, StorageLibraryError> {
-        let (pages, records, depth) = transaction.query_row(
-            "SELECT count(*) FILTER (WHERE pagetype <> 'overflow'), coalesce(sum(CASE WHEN pagetype = 'leaf' OR (?2 AND pagetype = 'internal') THEN ncell ELSE 0 END), 0), coalesce(max(CASE WHEN pagetype <> 'overflow' THEN length(path) - length(replace(path, '/', '')) END), 0) FROM dbstat WHERE name = ?1",
-            params![name, kind.is_index()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
-        )?;
+        let (pages, records, depth): (i64, i64, i64) = sql::<(BigInt, BigInt, BigInt)>("SELECT count(*) FILTER (WHERE pagetype <> 'overflow'), coalesce(sum(CASE WHEN pagetype = 'leaf' OR (")
+            .bind::<Bool, _>(kind.is_index())
+            .sql(" AND pagetype = 'internal') THEN ncell ELSE 0 END), 0), coalesce(max(CASE WHEN pagetype <> 'overflow' THEN length(path) - length(replace(path, '/', '')) END), 0) FROM dbstat WHERE name = ")
+            .bind::<Text, _>(name).get_result(transaction)?;
         let result = Self {
             pages: u64::try_from(pages)?,
             records: u64::try_from(records)?,
@@ -160,18 +163,19 @@ impl StorageLibraryImportSpaceTrees {
     }
 
     fn index_payload(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         name: &str,
         footprint: StorageImportSessionCommitFootprint,
     ) -> Result<StorageLibraryImportSpacePayload, StorageLibraryError> {
-        let mut statement = transaction.prepare("SELECT cid, name FROM pragma_index_xinfo(?1)")?;
-        let mut rows = statement.query([name])?;
+        let rows = sql::<(BigInt, Nullable<Text>)>("SELECT cid, name FROM pragma_index_xinfo(")
+            .bind::<Text, _>(name)
+            .sql(")")
+            .load_iter::<(i64, Option<String>), DefaultLoadingMode>(transaction)?;
         let mut columns = 0_u64;
         let mut fixed = 0_u64;
         let mut variable = false;
-        while let Some(row) = rows.next()? {
-            let cid: i64 = row.get(0)?;
-            let name: Option<String> = row.get(1)?;
+        for row in rows {
+            let (cid, name) = row?;
             let bytes = match name.as_deref() {
                 None if cid == -1 => 8,
                 Some("id" | "game_id" | "folder_id") => Self::UUID_BYTES,
@@ -222,7 +226,7 @@ impl StorageLibraryImportSpaceTrees {
     }
 
     pub(super) fn bound(
-        transaction: &Transaction<'_>,
+        transaction: &mut SqliteConnection,
         footprint: StorageImportSessionCommitFootprint,
         page: u64,
     ) -> Result<Self, StorageLibraryError> {
@@ -256,10 +260,17 @@ impl StorageLibraryImportSpaceTrees {
                 footprint.count(),
             )?;
         }
-        let mut statement = transaction.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name IN ('documents', 'library_entries')")?;
-        let mut rows = statement.query([])?;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(0)?;
+        let mut after: Option<String> = None;
+        loop {
+            let name = sql::<Text>("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name IN ('documents', 'library_entries') AND (")
+                .bind::<Nullable<Text>, _>(after.as_deref())
+                .sql(" IS NULL OR name > ")
+                .bind::<Nullable<Text>, _>(after.as_deref())
+                .sql(") ORDER BY name LIMIT 1")
+                .get_result::<String>(transaction).optional()?;
+            let Some(name) = name else {
+                break;
+            };
             bound.include(
                 StorageLibraryImportSpaceTree::read(
                     transaction,
@@ -270,6 +281,7 @@ impl StorageLibraryImportSpaceTrees {
                 page,
                 footprint.count(),
             )?;
+            after = Some(name);
         }
         Ok(bound)
     }

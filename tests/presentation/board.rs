@@ -21,6 +21,9 @@ use chess::scene::enums::SceneEnumLifecycle;
 use chess::scene::picking::{ScenePicking, ScenePickingViewport};
 use chess::scene::renderer::SceneRendererGeneration;
 
+#[path = "board/accessibility.rs"]
+mod accessibility;
+
 type PresentationBoardTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct PresentationBoardFixture {

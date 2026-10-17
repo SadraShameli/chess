@@ -1,4 +1,5 @@
 pub mod atomic_file;
+pub mod database;
 pub mod dataset_package;
 pub mod dataset_selection;
 pub mod document_store;
@@ -16,4 +17,5 @@ pub mod library_repository;
 pub(crate) mod library_transaction;
 pub mod migration;
 pub mod puzzle_repository;
+pub(crate) mod schema;
 pub mod trash;
