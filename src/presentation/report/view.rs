@@ -26,6 +26,9 @@ impl PresentationReportView {
         cursor: &mut PresentationStudyCursor,
     ) -> Option<PresentationReportIntent> {
         ui.heading("Game report");
+        for failure in controller.failures() {
+            ui.colored_label(ui.visuals().warn_fg_color, failure);
+        }
         let Some(view) = controller.view() else {
             ui.label("No report is available for this game");
             return None;
@@ -37,19 +40,13 @@ impl PresentationReportView {
         Self::show_findings(ui, view, cursor);
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(
-                    controller.can_cancel(),
-                    Self::button("Cancel Report"),
-                )
+                .add_enabled(controller.can_cancel(), Self::button("Cancel Report"))
                 .clicked()
             {
                 intent = Some(PresentationReportIntent::Cancel(view.id));
             }
             if ui
-                .add_enabled(
-                    controller.can_reanalyze(),
-                    Self::button("Reanalyze Game"),
-                )
+                .add_enabled(controller.can_reanalyze(), Self::button("Reanalyze Game"))
                 .clicked()
             {
                 intent = Some(PresentationReportIntent::PreviewReanalysis(view.id));
@@ -114,10 +111,7 @@ impl PresentationReportView {
         if view.coverage == ReportScoringEnumCoverage::Partial {
             ui.label("Partial report: accuracy covers analyzed moves only");
         }
-        ui.small(format!(
-            "Scoring policy version {}",
-            view.policy.version()
-        ));
+        ui.small(format!("Scoring policy version {}", view.policy.version()));
     }
 
     fn show_accuracy(ui: &mut Ui, view: &DesktopReportView) {
@@ -139,7 +133,9 @@ impl PresentationReportView {
 
     fn show_graph(ui: &mut Ui, view: &DesktopReportView, cursor: &mut PresentationStudyCursor) {
         ui.label("Evaluation graph");
-        let width = ui.available_width().max(PresentationThemeTokens::MIN_TARGET);
+        let width = ui
+            .available_width()
+            .max(PresentationThemeTokens::MIN_TARGET);
         let (response, painter) =
             ui.allocate_painter(egui::vec2(width, Self::GRAPH_HEIGHT), Sense::click());
         let rect = response.rect;
@@ -198,7 +194,8 @@ impl PresentationReportView {
             let index = (0..count)
                 .min_by(|left, right| {
                     let left = (f32::from(u16::try_from(*left).unwrap_or(u16::MAX)) - index).abs();
-                    let right = (f32::from(u16::try_from(*right).unwrap_or(u16::MAX)) - index).abs();
+                    let right =
+                        (f32::from(u16::try_from(*right).unwrap_or(u16::MAX)) - index).abs();
                     left.total_cmp(&right)
                 })
                 .unwrap_or(0);
@@ -208,11 +205,7 @@ impl PresentationReportView {
         }
     }
 
-    fn show_findings(
-        ui: &mut Ui,
-        view: &DesktopReportView,
-        cursor: &mut PresentationStudyCursor,
-    ) {
+    fn show_findings(ui: &mut Ui, view: &DesktopReportView, cursor: &mut PresentationStudyCursor) {
         ui.heading("Move findings");
         if view.findings.is_empty() {
             ui.label("This game has no moves to analyze");
@@ -223,9 +216,7 @@ impl PresentationReportView {
             } else if finding.missed_mate {
                 "Missed mate"
             } else {
-                finding
-                    .label
-                    .map_or("Not scored", Self::label_text)
+                finding.label.map_or("Not scored", Self::label_text)
             };
             let text = format!("Move {}: {} {label}", finding.index + 1, finding.played_uci);
             if ui

@@ -113,10 +113,7 @@ impl PresentationReportMounted {
         }
     }
 
-    fn mount(
-        view: DesktopReportView,
-        preview: bool,
-    ) -> Harness<'static, Self> {
+    fn mount(view: DesktopReportView, preview: bool) -> Harness<'static, Self> {
         let mut controller = PresentationReportController::new();
         controller.observe(view);
         controller.set_replacement_preview(preview);
@@ -146,17 +143,15 @@ fn findings_labels_missing_data_and_selection_continue_across_the_shared_cursor(
     harness.get_by_label("Report status: Analyzing");
     harness.get_by_label("Analyzed positions: 3 of 4");
     harness.get_by_label("Partial report: accuracy covers analyzed moves only");
-    harness.get_by_label(
-        "White accuracy: 91.5% (2 scored, 0 forced, 0 not scored)",
-    );
-    harness.get_by_label(
-        "Black accuracy: unavailable (0 scored, 1 forced, 0 not scored)",
-    );
+    harness.get_by_label("White accuracy: 91.5% (2 scored, 0 forced, 0 not scored)");
+    harness.get_by_label("Black accuracy: unavailable (0 scored, 1 forced, 0 not scored)");
     harness.get_by_label("Move 1: e2e4 Acceptable");
     harness.get_by_label("Move 2: e7e5 Forced");
     harness.get_by_label("Move 3: d1h5 Blunder");
     assert_eq!(harness.state().cursor.selected(), None);
-    harness.get_by_label("Move 3: d1h5 Blunder").click_accesskit();
+    harness
+        .get_by_label("Move 3: d1h5 Blunder")
+        .click_accesskit();
     harness.run_ok().ok_or("Selection did not settle")?;
     assert_eq!(
         harness.state().cursor.selected(),
@@ -187,11 +182,60 @@ fn outdated_reports_are_labeled_and_can_only_be_reanalyzed_through_a_confirmed_p
     preview.run_ok().ok_or("Preview did not mount")?;
     preview.get_by_label("Replace this report?");
     assert!(preview.state().intents.is_empty());
-    preview.get_by_label("Confirm Replacement").click_accesskit();
+    preview
+        .get_by_label("Confirm Replacement")
+        .click_accesskit();
     preview.run_ok().ok_or("Confirmation did not settle")?;
     assert_eq!(
         preview.state().intents,
         vec![PresentationReportIntent::ConfirmReplacement(id)]
     );
+    Ok(())
+}
+
+#[test]
+fn report_failures_are_shown_with_and_without_a_report_and_stay_bounded()
+-> PresentationReportTestResult {
+    let view = PresentationReportFixture::view(
+        ReportJobEnumState::Completed,
+        ReportJobEnumFreshness::Current,
+        ReportScoringEnumCoverage::Complete,
+    )?;
+    let mut harness = PresentationReportMounted::mount(view, false);
+    harness.state_mut().controller.observe_failures(vec![
+        "The report could not be cancelled: the job already ended".to_owned(),
+    ]);
+    harness.run_ok().ok_or("Failure did not render")?;
+    harness.get_by_label("The report could not be cancelled: the job already ended");
+    harness.state_mut().controller.observe_failures(Vec::new());
+    harness.run_ok().ok_or("Failure did not clear")?;
+    assert!(
+        harness
+            .query_by_label("The report could not be cancelled: the job already ended")
+            .is_none()
+    );
+
+    let mut empty = Harness::builder()
+        .with_size(egui::vec2(900.0, 400.0))
+        .build_ui_state(
+            PresentationReportMounted::show,
+            PresentationReportMounted {
+                controller: PresentationReportController::new(),
+                cursor: PresentationStudyCursor::new(),
+                intents: Vec::new(),
+            },
+        );
+    empty
+        .state_mut()
+        .controller
+        .observe_failures((0..20).map(|index| format!("failure {index}")).collect());
+    empty.run_ok().ok_or("Empty report did not render")?;
+    empty.get_by_label("failure 0");
+    empty.get_by_label("No report is available for this game");
+    assert_eq!(
+        empty.state().controller.failures().len(),
+        PresentationReportController::MAX_FAILURES
+    );
+    assert!(empty.query_by_label("failure 8").is_none());
     Ok(())
 }

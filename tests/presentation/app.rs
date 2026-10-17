@@ -1829,3 +1829,176 @@ fn computer_sleep_pauses_an_active_game_with_the_sleep_cause() -> PresentationAp
     assert!(slept);
     Ok(())
 }
+
+fn tab_session(
+    id: &str,
+    root: u128,
+) -> PresentationAppTestResult<chess::game::session::GameSession> {
+    use chess::board::start::BoardStart;
+    use chess::clock::state::ClockState;
+    use chess::clock::time_control::ClockTimeControl;
+    use chess::game::enums::{GameEnumEngineReadiness, GameEnumMode, GameEnumSeat};
+    use chess::game::session::{GameMetadata, GameSeats, GameSession, GameSessionOptions};
+    let start = BoardStart::standard();
+    let mut session = GameSession::new(GameSessionOptions {
+        id: id.parse()?,
+        root: crate::game_transition_fixture::GameTransitionFixture::id(root)?,
+        clock: ClockState::new(ClockTimeControl::initial_default(), start.position().turn()),
+        start,
+        seats: GameSeats::new(
+            GameEnumMode::LocalTwoPlayer,
+            GameEnumSeat::Human,
+            GameEnumSeat::Human,
+        )?,
+        metadata: GameMetadata::default(),
+    })?;
+    session.start(
+        session.revision(),
+        ClockInstant::from_nanos(0),
+        GameEnumEngineReadiness::NotRequired,
+        &crate::game_transition_fixture::GameTransitionFixtureProof,
+    )?;
+    Ok(session)
+}
+
+fn tab_event(output: &egui::FullOutput, prefix: &str) -> PresentationAppTestResult<egui::Event> {
+    let (target, _) = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .ok_or("missing native tab semantics")?
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label().is_some_and(|label| label.starts_with(prefix)))
+        .ok_or("missing game tab")?;
+    Ok(egui::Event::AccessKitActionRequest(
+        accesskit::ActionRequest {
+            action: accesskit::Action::Click,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: *target,
+            data: None,
+        },
+    ))
+}
+
+#[test]
+fn mounted_game_tabs_switch_selection_and_return_to_live_targets_the_selected_tab()
+-> PresentationAppTestResult {
+    use crate::game_transition_fixture::GameTransitionFixture;
+    use chess::desktop::game_bridge::DesktopGameBridgeEnumOperation;
+    use chess::desktop::game_commands::DesktopGameCommandsEnumAction;
+
+    let mut first = GameTransitionFixture::session(
+        chess::clock::time_control::ClockTimeControl::initial_default(),
+        None,
+    )?;
+    let root = first.live();
+    GameTransitionFixture::play(&mut first, 2, "e2e4", 0)?;
+    GameTransitionFixture::play(&mut first, 3, "e7e5", 0)?;
+    first.select_view(root)?;
+    let second = tab_session("123e4567-e89b-42d3-a456-426614174099", 901)?;
+    let mut fixture = PresentationAppFixture::new();
+    let scene = fixture.mount(&first)?;
+    fixture.update_game(&second)?;
+
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    assert_eq!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing selected game")?
+            .id(),
+        first.id()
+    );
+    let event = PresentationAppFixture::control_event(&output, "Return to Live")?;
+    fixture.frame(Some(&scene), vec![event])?;
+    let work = fixture
+        .application
+        .try_next()?
+        .ok_or("missing Return to Live request")?;
+    assert!(matches!(work.request().command().operation(),
+        DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Session {
+            game, revision, action: DesktopGameCommandsEnumAction::ReturnToLive,
+        }) if *game == first.id() && *revision == first.revision()
+    ));
+
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    let event = tab_event(&output, "Game 2")?;
+    fixture.frame(Some(&scene), vec![event])?;
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    assert_eq!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing second game")?
+            .id(),
+        second.id()
+    );
+    assert!(PresentationAppFixture::control_event(&output, "Return to Live").is_err());
+    assert!(fixture.application.try_next()?.is_none());
+
+    let event = tab_event(&output, "Game 1")?;
+    fixture.frame(Some(&scene), vec![event])?;
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    assert_eq!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing first game")?
+            .id(),
+        first.id()
+    );
+    assert!(
+        !fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing first game")?
+            .is_viewing_live()
+    );
+    assert!(PresentationAppFixture::control_event(&output, "Return to Live").is_ok());
+    Ok(())
+}
+
+#[test]
+fn closing_with_several_games_open_needs_an_explicit_confirmation_and_keep_open_changes_nothing()
+-> PresentationAppTestResult {
+    let first = tab_session("123e4567-e89b-42d3-a456-426614174098", 902)?;
+    let second = tab_session("123e4567-e89b-42d3-a456-426614174097", 903)?;
+    let mut fixture = PresentationAppFixture::new();
+    let scene = fixture.mount(&first)?;
+    fixture.update_game(&second)?;
+    fixture.frame(Some(&scene), Vec::new())?;
+
+    fixture.presentation.request_quit();
+    assert!(fixture.presentation.is_quit_confirmation_open());
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    fixture.frame(
+        Some(&scene),
+        vec![PresentationAppFixture::control_event(&output, "Keep open")?],
+    )?;
+    assert!(!fixture.presentation.is_quit_confirmation_open());
+    assert!(!fixture.presentation.take_confirmed_quit_request());
+    assert!(fixture.application.try_next()?.is_none());
+    assert_eq!(
+        fixture
+            .presentation
+            .game_snapshot()
+            .ok_or("missing game after keeping the window open")?
+            .id(),
+        first.id()
+    );
+
+    fixture.presentation.request_quit();
+    let (output, _) = fixture.frame(Some(&scene), Vec::new())?;
+    fixture.frame(
+        Some(&scene),
+        vec![PresentationAppFixture::control_event(
+            &output,
+            "Confirm quit",
+        )?],
+    )?;
+    assert!(!fixture.presentation.is_quit_confirmation_open());
+    assert!(fixture.presentation.take_confirmed_quit_request());
+    assert!(fixture.application.try_next()?.is_none());
+    Ok(())
+}

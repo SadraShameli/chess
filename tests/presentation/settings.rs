@@ -206,18 +206,26 @@ fn the_controller_guards_leaving_with_pending_changes_and_previews_reset() {
 
     let mut controller = PresentationSettingsController::new(None);
     assert!(controller.request_close());
-    let outcome = controller.edit(chess::desktop::preferences::DesktopPreferencesEnumPatch::Theme(
-        DesktopPreferencesEnumTheme::Light,
-    ));
+    let outcome = controller.edit(
+        chess::desktop::preferences::DesktopPreferencesEnumPatch::Theme(
+            DesktopPreferencesEnumTheme::Light,
+        ),
+    );
     assert!(outcome.appearance_changed);
-    assert_eq!(controller.effective().theme(), DesktopPreferencesEnumTheme::Light);
+    assert_eq!(
+        controller.effective().theme(),
+        DesktopPreferencesEnumTheme::Light
+    );
     assert!(!controller.request_close());
     assert_eq!(controller.prompt(), &PresentationSettingsEnumPrompt::Leave);
     controller.stay();
     assert!(!controller.can_save());
     let outcome = controller.leave_discarding();
     assert!(outcome.close && outcome.appearance_changed);
-    assert_eq!(controller.effective().theme(), DesktopPreferencesEnumTheme::Dark);
+    assert_eq!(
+        controller.effective().theme(),
+        DesktopPreferencesEnumTheme::Dark
+    );
     controller.begin_reset(DesktopPreferencesEnumResetScope::Section(
         DesktopPreferencesEnumSection::Audio,
     ));
@@ -243,4 +251,93 @@ fn the_controller_previews_an_import_before_changing_pending_values() {
     controller.confirm_prompt();
     assert_eq!(controller.draft().pending().master_volume().value(), 20);
     assert!(controller.draft().status().has_pending_changes());
+}
+
+#[test]
+fn every_settings_section_is_registered_once_with_its_own_label() {
+    use chess::desktop::preferences::DesktopPreferencesEnumSection;
+    let sections = DesktopPreferences::sections();
+    assert_eq!(
+        sections,
+        [
+            DesktopPreferencesEnumSection::Appearance,
+            DesktopPreferencesEnumSection::BoardAids,
+            DesktopPreferencesEnumSection::Audio,
+            DesktopPreferencesEnumSection::Shortcuts,
+            DesktopPreferencesEnumSection::Engine,
+        ]
+    );
+    let mut labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
+    labels.sort_unstable();
+    labels.dedup();
+    assert_eq!(labels.len(), sections.len());
+    assert!(labels.iter().all(|label| !label.is_empty()));
+}
+
+#[test]
+fn saved_pending_and_effective_options_stay_distinct_until_a_newer_revision_is_committed()
+-> Result<(), Box<dyn std::error::Error>> {
+    use chess::desktop::preferences::{DesktopPreferencesEnumPatch, DesktopPreferencesEnumTheme};
+    use chess::presentation::settings::controller::PresentationSettingsController;
+
+    let mut draft = draft();
+    let saved_theme = draft.saved().theme();
+    assert_ne!(saved_theme, DesktopPreferencesEnumTheme::Light);
+    assert!(draft.edit(DesktopPreferencesEnumPatch::Theme(
+        DesktopPreferencesEnumTheme::Light
+    )));
+    assert_eq!(draft.saved().theme(), saved_theme);
+    assert_eq!(draft.pending().theme(), DesktopPreferencesEnumTheme::Light);
+    assert!(draft.status().has_pending_changes());
+    assert_eq!(
+        draft.status().saved_revision(),
+        DesktopPreferencesRevision::INITIAL
+    );
+    assert!(draft.commit(DesktopPreferencesRevision::INITIAL).is_err());
+    draft.commit(DesktopPreferencesRevision::INITIAL.next()?)?;
+    assert_eq!(draft.saved().theme(), DesktopPreferencesEnumTheme::Light);
+    assert!(!draft.status().has_pending_changes());
+
+    let mut controller = PresentationSettingsController::new(None);
+    let outcome = controller.edit(DesktopPreferencesEnumPatch::Theme(
+        DesktopPreferencesEnumTheme::Light,
+    ));
+    assert!(outcome.appearance_changed);
+    assert_eq!(
+        controller.effective().theme(),
+        DesktopPreferencesEnumTheme::Light
+    );
+    assert_eq!(controller.draft().saved().theme(), saved_theme);
+    assert!(controller.can_save());
+    Ok(())
+}
+
+#[test]
+fn saving_reports_an_unavailable_store_and_keeps_the_pending_changes() {
+    use chess::desktop::preferences::{DesktopPreferencesEnumPatch, DesktopPreferencesEnumTheme};
+    use chess::presentation::settings::controller::PresentationSettingsController;
+
+    let mut controller = PresentationSettingsController::new(None);
+    controller.edit(DesktopPreferencesEnumPatch::Theme(
+        DesktopPreferencesEnumTheme::Light,
+    ));
+    controller.save();
+    assert_eq!(controller.notice(), Some("Saving settings is unavailable"));
+    assert!(!controller.is_saving());
+    assert!(controller.draft().status().has_pending_changes());
+}
+
+#[test]
+fn update_credentials_stay_out_of_exported_preferences() {
+    use chess::presentation::settings::controller::PresentationSettingsController;
+
+    let mut controller = PresentationSettingsController::new(None);
+    controller
+        .update_credential_mut()
+        .push_str("secret-update-credential");
+    controller.export();
+    let exported = controller.exchange_mut().clone();
+    assert!(!exported.is_empty());
+    assert!(!exported.contains("secret-update-credential"));
+    assert!(!exported.to_lowercase().contains("credential"));
 }

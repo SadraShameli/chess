@@ -4,18 +4,13 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use crate::board::position::BoardPosition;
+use crate::capacity::lease::CapacityLease;
+use crate::desktop::dataset_commands::{DesktopDatasetCommands, DesktopDatasetStarter};
 use crate::desktop::opening_commands::{
     DesktopOpeningCommands, DesktopOpeningCommandsError, DesktopOpeningExplorerView,
 };
-use crate::desktop::report_commands::{DesktopReportCommands, DesktopReportCommandsError};
-use crate::capacity::lease::CapacityLease;
-use crate::desktop::dataset_commands::{DesktopDatasetCommands, DesktopDatasetStarter};
 use crate::desktop::report_commands::DesktopReportEnumConfirmation;
-use crate::presentation::opening::controller::PresentationOpeningIntent;
-use crate::presentation::report::controller::PresentationReportIntent;
-use crate::presentation::settings::datasets::PresentationSettingsDatasetsIntent;
-use crate::presentation::study::PresentationStudy;
-use crate::storage::dataset_integrity::StorageDatasetIntegrityReport;
+use crate::desktop::report_commands::{DesktopReportCommands, DesktopReportCommandsError};
 use crate::engine::process_provider::EngineProcess;
 use crate::engine::search::session::{
     EngineSearchSession, EngineSearchSessionEnumEvent, EngineSearchSessionError,
@@ -23,22 +18,29 @@ use crate::engine::search::session::{
 use crate::engine::session::EngineSession;
 use crate::game::enums::{GameId, GameMoveId, GameRevision};
 use crate::game::tree::GameTree;
-use crate::report::configuration::{ReportJobBudget, ReportJobConfiguration, ReportJobConfigurationError};
+use crate::presentation::opening::controller::PresentationOpeningIntent;
+use crate::presentation::report::controller::PresentationReportIntent;
+use crate::presentation::settings::datasets::PresentationSettingsDatasetsIntent;
+use crate::presentation::study::PresentationStudy;
+use crate::report::configuration::{
+    ReportJobBudget, ReportJobConfiguration, ReportJobConfigurationError,
+};
+use crate::report::job::ReportJob;
 use crate::report::job::{ReportJobError, ReportJobId};
+use crate::report::scheduler::ReportScheduler;
 use crate::report::scheduler::ReportSchedulerError;
 use crate::report::scheduler::policy::ReportSchedulerEnumDecision;
-use crate::report::scoring::ReportScoringEnumPolicyVersion;
-use crate::report::source::ReportJobSourceLimits;
-use crate::report::job::ReportJob;
-use crate::report::scheduler::ReportScheduler;
 use crate::report::scheduler::policy::{ReportSchedulerDemand, ReportSchedulerEnumActivity};
+use crate::report::scoring::ReportScoringEnumPolicyVersion;
 use crate::report::service::{ReportService, ReportServiceEnumOutcome};
+use crate::report::source::ReportJobSourceLimits;
 use crate::report::source::{ReportJobSource, ReportJobSourceError};
-use crate::storage::document_store::StorageDocumentClient;
+use crate::storage::dataset_integrity::StorageDatasetIntegrityReport;
 use crate::storage::dataset_registry::{
     StorageDatasetRegistryEnumHolder, StorageDatasetRegistryEnumKind, StorageDatasetRegistryError,
     StorageDatasetRepository,
 };
+use crate::storage::document_store::StorageDocumentClient;
 use crate::storage::opening_repository::StorageOpeningRepository;
 
 #[derive(Debug, Error)]
@@ -118,11 +120,7 @@ impl DesktopNativeReportHost {
         game: GameId,
         capture: impl FnMut() -> Result<ReportJobSource, ReportJobSourceError>,
     ) -> Result<usize, DesktopNativeReportHostError> {
-        Ok(self
-            .reports
-            .lock()
-            .await
-            .observe_game_line(game, capture)?)
+        Ok(self.reports.lock().await.observe_game_line(game, capture)?)
     }
 
     pub async fn live_games_changed(
@@ -254,15 +252,26 @@ impl DesktopNativeReportHost {
         integrity: &StorageDatasetIntegrityReport,
     ) -> Result<DesktopNativeStudyPending, DesktopNativeReportHostError> {
         let mut reanalysis = Vec::new();
+        let mut failures = Vec::new();
         {
             let mut reports = self.reports.lock().await;
             for intent in study.take_report_intents() {
                 match intent {
-                    PresentationReportIntent::Cancel(id) => reports.cancel(id)?,
+                    PresentationReportIntent::Cancel(id) => {
+                        if let Err(error) = reports.cancel(id) {
+                            failures.push(format!("The report could not be cancelled: {error}"));
+                        }
+                    }
                     PresentationReportIntent::PreviewReanalysis(id) => reanalysis.push(id),
                     PresentationReportIntent::ConfirmReplacement(id) => {
-                        reports.confirm_replacement(id, DesktopReportEnumConfirmation::Confirmed)?;
-                        study.report_mut().set_replacement_preview(false);
+                        match reports
+                            .confirm_replacement(id, DesktopReportEnumConfirmation::Confirmed)
+                        {
+                            Ok(_) => study.report_mut().set_replacement_preview(false),
+                            Err(error) => {
+                                failures.push(format!("The report could not be replaced: {error}"))
+                            }
+                        }
                     }
                     PresentationReportIntent::DiscardReplacement(id) => {
                         reports.discard_replacement(id);
@@ -271,24 +280,39 @@ impl DesktopNativeReportHost {
                 }
             }
             let current = study.report_mut().view().map(|view| view.id);
-            let listed = reports.list()?;
-            let target = current
-                .filter(|id| listed.iter().any(|entry| entry.id == *id))
-                .or_else(|| listed.first().map(|entry| entry.id));
-            if let Some(id) = target {
-                study.report_mut().observe(reports.read(id)?);
+            match reports.list() {
+                Ok(listed) => {
+                    let target = current
+                        .filter(|id| listed.iter().any(|entry| entry.id == *id))
+                        .or_else(|| listed.first().map(|entry| entry.id));
+                    if let Some(id) = target {
+                        match reports.read(id) {
+                            Ok(view) => study.report_mut().observe(view),
+                            Err(error) => {
+                                failures.push(format!("The report could not be read: {error}"))
+                            }
+                        }
+                    }
+                }
+                Err(error) => failures.push(format!("The reports could not be listed: {error}")),
             }
         }
+        study.report_mut().observe_failures(failures.clone());
         study
             .opening_mut()
             .observe_explorer(self.explore(position).await?);
-        let rows = DesktopDatasetCommands::rows_from_entries(self.datasets.list().await?, integrity);
+        let rows =
+            DesktopDatasetCommands::rows_from_entries(self.datasets.list().await?, integrity);
         study.set_datasets(starters.to_vec(), rows);
         Ok(DesktopNativeStudyPending {
             opening: study.take_opening_intents(),
             datasets: study.take_dataset_intents(),
             reanalysis,
-            failures: self.take_failures(),
+            failures: {
+                let mut all = self.take_failures();
+                all.extend(failures);
+                all
+            },
         })
     }
 }

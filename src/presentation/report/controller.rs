@@ -13,6 +13,7 @@ pub enum PresentationReportIntent {
 pub struct PresentationReportController {
     view: Option<DesktopReportView>,
     replacement_preview: bool,
+    failures: Vec<String>,
 }
 
 impl PresentationReportController {
@@ -20,11 +21,27 @@ impl PresentationReportController {
         Self {
             view: None,
             replacement_preview: false,
+            failures: Vec::new(),
         }
     }
 
+    pub const MAX_FAILURES: usize = 8;
+
+    pub fn observe_failures(&mut self, mut failures: Vec<String>) {
+        failures.truncate(Self::MAX_FAILURES);
+        self.failures = failures;
+    }
+
+    pub fn failures(&self) -> &[String] {
+        &self.failures
+    }
+
     pub fn observe(&mut self, view: DesktopReportView) {
-        if self.view.as_ref().is_none_or(|current| current.id != view.id) {
+        if self
+            .view
+            .as_ref()
+            .is_none_or(|current| current.id != view.id)
+        {
             self.replacement_preview = false;
         }
         self.view = Some(view);

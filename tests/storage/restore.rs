@@ -793,3 +793,75 @@ async fn an_older_schema_backup_is_migrated_in_the_staged_copy_before_it_replace
     assert_eq!(state, "1");
     Ok(())
 }
+
+#[tokio::test]
+async fn a_full_backup_carries_every_user_table_and_saved_options_but_no_credential_or_control_state()
+-> StorageBackupTestResult {
+    use diesel::connection::SimpleConnection;
+    const TABLES: &str = "SELECT group_concat(name, ',') AS value FROM (SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name)";
+    let fixture = StorageRestoreFixture::new()?;
+    let database = fixture.database();
+    StorageBackupFixture::write(&database, 1, "{}").await?;
+    {
+        let mut connection = SqliteConnection::establish(&database.to_string_lossy())?;
+        connection.batch_execute(
+            "INSERT OR REPLACE INTO preferences (singleton, schema_version, revision, body) VALUES (1, 1, '3', '{\"theme\":\"light\"}');",
+        )?;
+    }
+    let archive = fixture.archive(BackupEnumCategory::Manual, 80, 1_000)?;
+    let preview = StorageBackupFixture::inspect(archive.path())?;
+    let scratch = fixture.directory.path();
+
+    let live = StorageRestoreDatasetFixture::scalar(&database, TABLES)?;
+    let payload = StorageBackupFixture::payload_scalar(&preview, scratch, TABLES)?;
+    assert_eq!(payload, live);
+    for required in [
+        "backup_state",
+        "dataset_leases",
+        "datasets",
+        "editor_drafts",
+        "library_entries",
+        "preferences",
+        "puzzle_runs",
+        "report_jobs",
+    ] {
+        assert!(
+            payload.split(',').any(|table| table == required),
+            "{required}"
+        );
+    }
+    for forbidden in ["credential", "secret", "token", "owner", "activation"] {
+        assert!(!payload.contains(forbidden), "{forbidden}");
+    }
+    let options = StorageBackupFixture::payload_scalar(
+        &preview,
+        scratch,
+        "SELECT body AS value FROM preferences WHERE singleton = 1",
+    )?;
+    assert_eq!(options, r#"{"theme":"light"}"#);
+
+    let bytes = fs::read(archive.path())?;
+    let control = fixture.lease.identity().control_directory().to_path_buf();
+    let mut names = 0;
+    for entry in fs::read_dir(control)? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        names += 1;
+        assert!(
+            name.len() < 8
+                || !bytes
+                    .windows(name.len())
+                    .any(|window| window == name.as_bytes()),
+            "{name}"
+        );
+    }
+    assert!(names > 0);
+    assert!(
+        fs::read_dir(fixture.backups())?
+            .filter_map(Result::ok)
+            .all(
+                |entry| entry.path().extension().and_then(|value| value.to_str())
+                    == Some("chessbackup")
+            )
+    );
+    Ok(())
+}
