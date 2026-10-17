@@ -240,3 +240,34 @@ Contract coverage added: `tests/engine/options.rs`, `tests/game/configuration.rs
 `tests/engine/package.rs`, `tests/desktop/game_recovery_policy.rs` and
 `tests/puzzle/csv_import.rs` check each spelling, its round trip and the
 `EnumIter` order.
+
+## T311 strum, `src/storage/**` increment (lane-e)
+
+Written, not compiled or run. Every persisted spelling is kept with an explicit
+`#[strum(serialize = ...)]`.
+
+| Owner | Table replaced | Now |
+| --- | --- | --- |
+| `dataset_registry.rs` `StorageDatasetRegistryEnumKind` | `text`/`parse` (`corpus`, `book`, `puzzles`) | `EnumString`, `AsRefStr`, `Display`, `EnumIter`, Diesel `AsExpression`/`FromSqlRow` |
+| `dataset_registry.rs` `StorageDatasetRegistryEnumOrigin` | `text`/`parse` (`starter`, `personal`) | same derives |
+| `dataset_registry.rs` `StorageDatasetRegistryEnumHolder` | `text` (`run`, `query`, `report`, `history`) | same derives |
+| `dataset_package.rs` `StorageDatasetPackageEnumFormat` | `format_text`/`parse_format` (`pgn`, `polyglot`, `puzzle_csv`, `prepared_puzzle_catalog_v1`) | same derives; serde names unchanged |
+| `dataset_package.rs` `StorageDatasetPackageEnumValidation` | `validation_text`/`parse_validation` (`unchecked`, `integrity_verified`) | same derives |
+| `text_column.rs` | none for the five enums above | five `storage_text_column!` entries; the registry now binds and loads the enums directly instead of strings |
+| `backup/manifest.rs` `BackupEnumCategory` | `slug`, `from_slug`, hand-kept `ALL` (`manual`, `automatic`, `pre-restore`, `pre-update`) | `EnumString`, `IntoStaticStr`, `EnumIter`; `slug()` returns the static name; serde snake_case unchanged; retention iterates `iter()` |
+| `dataset_package/provenance.rs` `StorageDatasetPackageEnumRawField` | `name()` | `AsRefStr` |
+| `library_import/space/trees.rs` `StorageLibraryImportSpaceEnumTable` | `from_name` and test-only `ALL` | `EnumString` (`documents`, `library_entries`) mapped to `StorageLibraryError::ImportLayout`, and `EnumIter` |
+| `import_session/disk.rs` `StorageImportSessionDiskEnumFile` | hand-kept `ALL` (13) | `EnumIter` |
+| `dataset_selection/sequence.rs` `StorageDatasetSelectionEnumSubset` | hand-kept `ORDER` | `EnumIter` (declaration order is the policy order) |
+| `dataset_selection/caps.rs` `StorageDatasetSelectionEnumComponent` | hand-kept `ORDER` and `ORDER.len()` array sizes | `EnumIter`, `EnumCount` (`COUNT`) |
+
+Consumers updated for the removed `ORDER`: `dataset_package/{manifest,measurement}.rs`,
+`tools/data/build.rs`, `tests/storage/{dataset_selection,dataset_package}.rs`,
+`tests/opening/starter_data.rs`, and the private-table test in
+`tests/storage/library_import_planning_work.rs`.
+
+Left alone: enums that already used strum (`StorageReportEnum*`,
+`StorageGameDocumentEnumContentKind`, `StorageLibraryEnum*`, `StorageTrashEnumLocation`);
+the SQL probe text in `library_import/space/layout.rs` (`query`), which is query
+text and not an enum spelling table; `disk.rs` `index()`, which is a positional
+index and not a spelling.

@@ -1,4 +1,5 @@
 use serde::ser::SerializeStruct;
+use strum::IntoEnumIterator;
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::storage::dataset_package::{StorageDatasetPackageArtifact, StorageDatasetPackageError};
@@ -91,7 +92,7 @@ impl StorageDatasetPackageMeasurements {
         if !components
             .iter()
             .map(StorageDatasetPackageMeasurement::component)
-            .eq(StorageDatasetSelectionEnumComponent::ORDER)
+            .eq(StorageDatasetSelectionEnumComponent::iter())
         {
             return Err(StorageDatasetPackageError::Measurements);
         }
@@ -124,8 +125,7 @@ impl StorageDatasetPackageMeasurements {
                 .map(StorageDatasetPackageArtifact::installed_artifact)
                 .collect::<Result<Vec<_>, _>>()?,
         )?;
-        let components = StorageDatasetSelectionEnumComponent::ORDER
-            .into_iter()
+        let components = StorageDatasetSelectionEnumComponent::iter()
             .map(|component| {
                 let fixed_bytes = artifacts
                     .iter()

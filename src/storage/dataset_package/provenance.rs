@@ -115,30 +115,26 @@ impl StorageDatasetPackageSourceRecord {
     }
 }
 
+#[derive(strum::AsRefStr)]
 enum StorageDatasetPackageEnumRawField {
+    #[strum(serialize = "WhiteElo")]
     WhiteElo,
+    #[strum(serialize = "BlackElo")]
     BlackElo,
+    #[strum(serialize = "TimeControl")]
     TimeControl,
+    #[strum(serialize = "Rating")]
     Rating,
+    #[strum(serialize = "Themes")]
     Themes,
 }
 
 impl StorageDatasetPackageEnumRawField {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::WhiteElo => "WhiteElo",
-            Self::BlackElo => "BlackElo",
-            Self::TimeControl => "TimeControl",
-            Self::Rating => "Rating",
-            Self::Themes => "Themes",
-        }
-    }
-
     fn read(
         self,
         fields: &[StorageDatasetPackageRawField],
     ) -> Result<Option<&str>, StorageDatasetPackageError> {
-        let name = self.name();
+        let name = self.as_ref();
         let mut values = fields
             .iter()
             .filter(|field| field.name == name)

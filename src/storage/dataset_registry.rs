@@ -51,72 +51,75 @@ impl StorageDatasetLeaseId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    strum::EnumIter,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageDatasetRegistryEnumKind {
+    #[strum(serialize = "corpus")]
     Corpus,
+    #[strum(serialize = "book")]
     Book,
+    #[strum(serialize = "puzzles")]
     Puzzles,
 }
 
-impl StorageDatasetRegistryEnumKind {
-    const fn text(self) -> &'static str {
-        match self {
-            Self::Corpus => "corpus",
-            Self::Book => "book",
-            Self::Puzzles => "puzzles",
-        }
-    }
-
-    fn parse(value: &str) -> Result<Self, StorageDatasetRegistryError> {
-        match value {
-            "corpus" => Ok(Self::Corpus),
-            "book" => Ok(Self::Book),
-            "puzzles" => Ok(Self::Puzzles),
-            _ => Err(StorageDatasetRegistryError::Corrupt),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    strum::EnumIter,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageDatasetRegistryEnumOrigin {
+    #[strum(serialize = "starter")]
     Starter,
+    #[strum(serialize = "personal")]
     Personal,
 }
 
-impl StorageDatasetRegistryEnumOrigin {
-    const fn text(self) -> &'static str {
-        match self {
-            Self::Starter => "starter",
-            Self::Personal => "personal",
-        }
-    }
-
-    fn parse(value: &str) -> Result<Self, StorageDatasetRegistryError> {
-        match value {
-            "starter" => Ok(Self::Starter),
-            "personal" => Ok(Self::Personal),
-            _ => Err(StorageDatasetRegistryError::Corrupt),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    strum::EnumIter,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageDatasetRegistryEnumHolder {
+    #[strum(serialize = "run")]
     Run,
+    #[strum(serialize = "query")]
     Query,
+    #[strum(serialize = "report")]
     Report,
+    #[strum(serialize = "history")]
     History,
-}
-
-impl StorageDatasetRegistryEnumHolder {
-    const fn text(self) -> &'static str {
-        match self {
-            Self::Run => "run",
-            Self::Query => "query",
-            Self::Report => "report",
-            Self::History => "history",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,15 +154,15 @@ pub struct StorageDatasetRegistryEntry {
 
 type StorageDatasetRegistryRow = (
     i32,
+    StorageDatasetRegistryEnumKind,
+    StorageDatasetRegistryEnumOrigin,
+    String,
+    String,
+    StorageDatasetPackageEnumFormat,
     String,
     String,
     String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
+    StorageDatasetPackageEnumValidation,
     Option<i32>,
     i32,
 );
@@ -167,66 +170,40 @@ type StorageDatasetRegistryRow = (
 pub struct StorageDatasetRegistry;
 
 impl StorageDatasetRegistry {
-    const fn format_text(format: StorageDatasetPackageEnumFormat) -> &'static str {
-        match format {
-            StorageDatasetPackageEnumFormat::Pgn => "pgn",
-            StorageDatasetPackageEnumFormat::Polyglot => "polyglot",
-            StorageDatasetPackageEnumFormat::PuzzleCsv => "puzzle_csv",
-            StorageDatasetPackageEnumFormat::PreparedPuzzleCatalogV1 => {
-                "prepared_puzzle_catalog_v1"
-            }
-        }
-    }
-
-    fn parse_format(
-        value: &str,
-    ) -> Result<StorageDatasetPackageEnumFormat, StorageDatasetRegistryError> {
-        match value {
-            "pgn" => Ok(StorageDatasetPackageEnumFormat::Pgn),
-            "polyglot" => Ok(StorageDatasetPackageEnumFormat::Polyglot),
-            "puzzle_csv" => Ok(StorageDatasetPackageEnumFormat::PuzzleCsv),
-            "prepared_puzzle_catalog_v1" => {
-                Ok(StorageDatasetPackageEnumFormat::PreparedPuzzleCatalogV1)
-            }
-            _ => Err(StorageDatasetRegistryError::Corrupt),
-        }
-    }
-
-    const fn validation_text(validation: StorageDatasetPackageEnumValidation) -> &'static str {
-        match validation {
-            StorageDatasetPackageEnumValidation::Unchecked => "unchecked",
-            StorageDatasetPackageEnumValidation::IntegrityVerified => "integrity_verified",
-        }
-    }
-
-    fn parse_validation(
-        value: &str,
-    ) -> Result<StorageDatasetPackageEnumValidation, StorageDatasetRegistryError> {
-        match value {
-            "unchecked" => Ok(StorageDatasetPackageEnumValidation::Unchecked),
-            "integrity_verified" => Ok(StorageDatasetPackageEnumValidation::IntegrityVerified),
-            _ => Err(StorageDatasetRegistryError::Corrupt),
-        }
-    }
-
-    fn entry(row: StorageDatasetRegistryRow) -> Result<StorageDatasetRegistryEntry, StorageDatasetRegistryError> {
-        let (id, kind, origin, name, version, format, license, checksum, location, validation, records, superseded) =
-            row;
-        Ok(StorageDatasetRegistryEntry {
-            id: StorageDatasetId(id),
-            kind: StorageDatasetRegistryEnumKind::parse(&kind)?,
-            origin: StorageDatasetRegistryEnumOrigin::parse(&origin)?,
+    fn entry(
+        row: StorageDatasetRegistryRow,
+    ) -> Result<StorageDatasetRegistryEntry, StorageDatasetRegistryError> {
+        let (
+            id,
+            kind,
+            origin,
             name,
             version,
-            format: Self::parse_format(&format)?,
+            format,
+            license,
+            checksum,
+            location,
+            validation,
+            records,
+            superseded,
+        ) = row;
+        Ok(StorageDatasetRegistryEntry {
+            id: StorageDatasetId(id),
+            kind,
+            origin,
+            name,
+            version,
+            format,
             license,
             checksum: checksum
                 .parse()
                 .map_err(|_error| StorageDatasetRegistryError::Corrupt)?,
             location,
-            validation: Self::parse_validation(&validation)?,
+            validation,
             records: records
-                .map(|count| u32::try_from(count).map_err(|_error| StorageDatasetRegistryError::Corrupt))
+                .map(|count| {
+                    u32::try_from(count).map_err(|_error| StorageDatasetRegistryError::Corrupt)
+                })
                 .transpose()?,
             superseded: superseded != 0,
         })
@@ -249,15 +226,15 @@ impl StorageDatasetRegistry {
             .transpose()?;
         let inserted = diesel::insert_into(datasets::table)
             .values((
-                datasets::kind.eq(dataset.kind.text()),
-                datasets::origin.eq(dataset.origin.text()),
+                datasets::kind.eq(dataset.kind),
+                datasets::origin.eq(dataset.origin),
                 datasets::name.eq(&dataset.name),
                 datasets::version.eq(&dataset.version),
-                datasets::format.eq(Self::format_text(dataset.format)),
+                datasets::format.eq(dataset.format),
                 datasets::license.eq(&dataset.license),
                 datasets::checksum.eq(dataset.checksum.to_string()),
                 datasets::location.eq(&dataset.location),
-                datasets::validation.eq(Self::validation_text(dataset.validation)),
+                datasets::validation.eq(dataset.validation),
                 datasets::records.eq(records),
             ))
             .execute(connection);
@@ -270,7 +247,7 @@ impl StorageDatasetRegistry {
             Err(error) => return Err(error.into()),
         }
         let id = datasets::table
-            .filter(datasets::kind.eq(dataset.kind.text()))
+            .filter(datasets::kind.eq(dataset.kind))
             .filter(datasets::name.eq(&dataset.name))
             .filter(datasets::version.eq(&dataset.version))
             .select(datasets::dataset_id)
@@ -350,7 +327,7 @@ impl StorageDatasetRegistry {
         diesel::insert_into(dataset_leases::table)
             .values((
                 dataset_leases::dataset_id.eq(dataset.0),
-                dataset_leases::holder.eq(holder.text()),
+                dataset_leases::holder.eq(holder),
                 dataset_leases::holder_ref.eq(reference),
             ))
             .execute(connection)?;
@@ -395,10 +372,10 @@ impl StorageDatasetRegistry {
             let (kind, name, version) = datasets::table
                 .filter(datasets::dataset_id.eq(old.0))
                 .select((datasets::kind, datasets::name, datasets::version))
-                .first::<(String, String, String)>(connection)
+                .first::<(StorageDatasetRegistryEnumKind, String, String)>(connection)
                 .optional()?
                 .ok_or(StorageDatasetRegistryError::Unknown(old))?;
-            if kind != replacement.kind.text()
+            if kind != replacement.kind
                 || name != replacement.name
                 || version == replacement.version
             {
@@ -471,7 +448,7 @@ impl StorageDatasetRegistry {
                 reference,
             } => connection.immediate_transaction(|connection| {
                 let active = datasets::table
-                    .filter(datasets::kind.eq(kind.text()))
+                    .filter(datasets::kind.eq(kind))
                     .filter(datasets::superseded.eq(0))
                     .select(datasets::dataset_id)
                     .load::<i32>(connection)?;

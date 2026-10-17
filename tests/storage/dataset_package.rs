@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
 
 use chess::board::position::BoardPosition;
@@ -450,8 +451,7 @@ fn malformed_references_digests_strata_and_fixed_measurements_are_rejected()
 fn reduction_record_uses_core_transition_and_refuses_forged_history()
 -> StorageDatasetPackageTestResult {
     let measurements = StorageDatasetPackageMeasurements::new(
-        StorageDatasetSelectionEnumComponent::ORDER
-            .into_iter()
+        StorageDatasetSelectionEnumComponent::iter()
             .map(|component| {
                 StorageDatasetPackageMeasurement::new(
                     component,
@@ -741,7 +741,7 @@ impl StorageDatasetPackageManifestFixture {
             ],
         )?];
         let mut observations = Vec::new();
-        for subset in StorageDatasetSelectionEnumSubset::ORDER {
+        for subset in StorageDatasetSelectionEnumSubset::iter() {
             let (component, source) = match subset {
                 StorageDatasetSelectionEnumSubset::Master => {
                     (StorageDatasetSelectionEnumComponent::Master, &games)
@@ -817,8 +817,7 @@ fn manifest_replays_ordered_book_reduction_and_reproduces_smaller_master_prefix(
     let mut input = StorageDatasetPackageManifestFixture::input()?;
     input.initial_prefixes = StorageDatasetSelectionPrefixes::new(10, 10, 10)?;
     let measurements = StorageDatasetPackageMeasurements::new(
-        StorageDatasetSelectionEnumComponent::ORDER
-            .into_iter()
+        StorageDatasetSelectionEnumComponent::iter()
             .map(|component| {
                 StorageDatasetPackageMeasurement::new(
                     component,
@@ -873,7 +872,7 @@ fn manifest_replays_ordered_book_reduction_and_reproduces_smaller_master_prefix(
     assert_eq!(manifest.reductions().len(), 1);
     let decoded = StorageDatasetPackageManifest::from_json(&manifest.to_json()?)?;
     assert_eq!(decoded, manifest);
-    for subset in StorageDatasetSelectionEnumSubset::ORDER {
+    for subset in StorageDatasetSelectionEnumSubset::iter() {
         decoded.validate_reproduction(
             subset,
             &StorageDatasetPackageManifestFixture::sequence_many(subset)?,
@@ -942,7 +941,7 @@ fn manifest_roundtrip_reproduces_real_sequences_and_installed_accounting()
         StorageDatasetSelectionPrefixes::new(1, 1, 1)?
     );
     assert_eq!(manifest.measurements().total_bytes(), 153);
-    for subset in StorageDatasetSelectionEnumSubset::ORDER {
+    for subset in StorageDatasetSelectionEnumSubset::iter() {
         manifest.validate_reproduction(
             subset,
             &StorageDatasetPackageManifestFixture::sequence(subset)?,

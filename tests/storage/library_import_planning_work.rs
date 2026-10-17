@@ -8,6 +8,7 @@ use diesel::connection::InstrumentationEvent;
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Text};
+use strum::IntoEnumIterator;
 use tokio::sync::Semaphore;
 
 use crate::board::start::BoardStart;
@@ -668,9 +669,7 @@ async fn bounded_probes_distinguish_exact_cardinality_from_a_lower_bound()
                     false,
                     |transaction| {
                         let mut steps = [0; 2];
-                        for (index, table) in StorageLibraryImportSpaceEnumTable::ALL
-                            .into_iter()
-                            .enumerate()
+                        for (index, table) in StorageLibraryImportSpaceEnumTable::iter().enumerate()
                         {
                             let probe =
                                 table.probe(transaction, limit, &mut || cancellation.check())?;

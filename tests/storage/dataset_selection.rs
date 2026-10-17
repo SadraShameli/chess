@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use strum::IntoEnumIterator;
 
 use chess::board::enums::{BoardEnumColor, BoardEnumVariant};
 use chess::board::position::BoardPosition;
@@ -70,8 +71,7 @@ impl StorageDatasetSelectionFixture {
         fixed: [u64; 5],
     ) -> Result<StorageDatasetSelectionFootprint, StorageDatasetSelectionError> {
         StorageDatasetSelectionFootprint::from_artifacts(
-            StorageDatasetSelectionEnumComponent::ORDER
-                .into_iter()
+            StorageDatasetSelectionEnumComponent::iter()
                 .zip(sizes)
                 .zip(fixed)
                 .map(|((component, bytes), fixed_bytes)| {
@@ -1177,14 +1177,14 @@ fn observed_stratum_counts_reject_empty_and_unknown_fields_at_the_boundary()
 #[test]
 fn manifest_subset_and_component_keys_have_one_closed_external_vocabulary()
 -> StorageDatasetSelectionTestResult {
-    for subset in StorageDatasetSelectionEnumSubset::ORDER {
+    for subset in StorageDatasetSelectionEnumSubset::iter() {
         let encoded = serde_json::to_string(&subset)?;
         assert_eq!(
             serde_json::from_str::<StorageDatasetSelectionEnumSubset>(&encoded)?,
             subset
         );
     }
-    for component in StorageDatasetSelectionEnumComponent::ORDER {
+    for component in StorageDatasetSelectionEnumComponent::iter() {
         let encoded = serde_json::to_string(&component)?;
         assert_eq!(
             serde_json::from_str::<StorageDatasetSelectionEnumComponent>(&encoded)?,

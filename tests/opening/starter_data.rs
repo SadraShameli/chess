@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use strum::IntoEnumIterator;
 
 use chess::board::position::BoardPosition;
 use chess::board::r#move::BoardMove;
@@ -178,8 +179,7 @@ impl StorageDatasetPreparationBuilder for StarterDataBuilder {
         prefixes: StorageDatasetSelectionPrefixes,
     ) -> Result<StorageDatasetSelectionFootprint, Self::Error> {
         self.builds += 1;
-        let artifacts = StorageDatasetSelectionEnumComponent::ORDER
-            .into_iter()
+        let artifacts = StorageDatasetSelectionEnumComponent::iter()
             .map(|component| {
                 let bytes = if component == StorageDatasetSelectionEnumComponent::Master
                     && prefixes.master() > 90_000

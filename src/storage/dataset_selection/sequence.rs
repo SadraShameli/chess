@@ -8,7 +8,9 @@ use crate::storage::dataset_selection::{
     StorageDatasetSelectionIdentity, StorageDatasetSelectionPuzzleStratum,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, strum::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageDatasetSelectionEnumSubset {
     Master,
@@ -17,8 +19,6 @@ pub enum StorageDatasetSelectionEnumSubset {
 }
 
 impl StorageDatasetSelectionEnumSubset {
-    pub const ORDER: [Self; 3] = [Self::Master, Self::Broad, Self::Puzzles];
-
     pub const fn upper_target(self) -> usize {
         match self {
             Self::Master => 100_000,

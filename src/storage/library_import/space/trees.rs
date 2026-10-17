@@ -50,16 +50,15 @@ struct StorageLibraryImportSpaceProbe {
     inventory_vm_steps: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::EnumString, strum::EnumIter)]
 enum StorageLibraryImportSpaceEnumTable {
+    #[strum(serialize = "documents")]
     Documents,
+    #[strum(serialize = "library_entries")]
     Entries,
 }
 
 impl StorageLibraryImportSpaceEnumTable {
-    #[cfg(test)]
-    const ALL: [Self; 2] = [Self::Documents, Self::Entries];
-
     #[cfg(test)]
     pub(super) fn probe_sql(self) -> String {
         let sql = match self {
@@ -98,14 +97,6 @@ impl StorageLibraryImportSpaceEnumTable {
                 .limit(limit)
                 .load(connection)?,
         })
-    }
-
-    fn from_name(name: &str) -> Result<Self, StorageLibraryError> {
-        match name {
-            "documents" => Ok(Self::Documents),
-            "library_entries" => Ok(Self::Entries),
-            _ => Err(StorageLibraryError::ImportLayout),
-        }
     }
 
     fn probe(
@@ -399,7 +390,9 @@ impl StorageLibraryImportSpaceTrees {
         check()?;
         for (name, table) in indexes {
             check()?;
-            let table = StorageLibraryImportSpaceEnumTable::from_name(&table)?;
+            let table = table
+                .parse::<StorageLibraryImportSpaceEnumTable>()
+                .map_err(|_error| StorageLibraryError::ImportLayout)?;
             let cardinality = match table {
                 StorageLibraryImportSpaceEnumTable::Documents => documents.cardinality,
                 StorageLibraryImportSpaceEnumTable::Entries => entries.cardinality,

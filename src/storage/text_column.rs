@@ -7,6 +7,13 @@ use thiserror::Error;
 
 use crate::board::enums::BoardEnumVariant;
 use crate::game::enums::GameEnumMode;
+use crate::storage::dataset_package::{
+    StorageDatasetPackageEnumFormat, StorageDatasetPackageEnumValidation,
+};
+use crate::storage::dataset_registry::{
+    StorageDatasetRegistryEnumHolder, StorageDatasetRegistryEnumKind,
+    StorageDatasetRegistryEnumOrigin,
+};
 use crate::storage::game_document::StorageGameDocumentEnumContentKind;
 use crate::storage::library_prepared::{StorageLibraryEnumResult, StorageLibraryEnumStartKind};
 use crate::storage::report_repository::{StorageReportEnumFreshness, StorageReportEnumState};
@@ -51,3 +58,8 @@ storage_text_column!(StorageLibraryEnumResult);
 storage_text_column!(StorageTrashEnumLocation);
 storage_text_column!(StorageReportEnumState);
 storage_text_column!(StorageReportEnumFreshness);
+storage_text_column!(StorageDatasetPackageEnumFormat);
+storage_text_column!(StorageDatasetPackageEnumValidation);
+storage_text_column!(StorageDatasetRegistryEnumKind);
+storage_text_column!(StorageDatasetRegistryEnumOrigin);
+storage_text_column!(StorageDatasetRegistryEnumHolder);

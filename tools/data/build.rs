@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use strum::IntoEnumIterator;
 
 use chess::storage::dataset_preparation::{
     StorageDatasetPreparationBuild, StorageDatasetPreparationBuildError,
@@ -89,8 +90,7 @@ impl StorageDatasetPreparationBuilder for ToolsDataBuildBuilder {
         let book = self.copy_fixed("book.bin")?;
         let labels = self.copy_fixed("labels.json")?;
         let measured = [master, broad, puzzles, book, labels];
-        let artifacts = StorageDatasetSelectionEnumComponent::ORDER
-            .into_iter()
+        let artifacts = StorageDatasetSelectionEnumComponent::iter()
             .zip(measured)
             .map(|(component, bytes)| {
                 StorageDatasetSelectionInstalledArtifact::new(

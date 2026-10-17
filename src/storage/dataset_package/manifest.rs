@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use strum::IntoEnumIterator;
 
 use crate::storage::dataset_package::StorageDatasetPackageEnumUnavailableCategory;
 
@@ -108,7 +109,7 @@ impl StorageDatasetPackageManifest {
             .observations
             .iter()
             .map(StorageDatasetPackageObservation::subset)
-            .eq(StorageDatasetSelectionEnumSubset::ORDER)
+            .eq(StorageDatasetSelectionEnumSubset::iter())
         {
             return Err(StorageDatasetPackageError::ObservationOrder);
         }

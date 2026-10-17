@@ -4,40 +4,38 @@ use uuid::Uuid;
 use crate::package::digest::PackageDigest;
 use crate::storage::backup::error::BackupError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BackupEnumCategory {
+    #[strum(serialize = "manual")]
     Manual,
+    #[strum(serialize = "automatic")]
     Automatic,
+    #[strum(serialize = "pre-restore")]
     PreRestore,
+    #[strum(serialize = "pre-update")]
     PreUpdate,
 }
 
 impl BackupEnumCategory {
-    pub const ALL: [Self; 4] = [
-        Self::Manual,
-        Self::Automatic,
-        Self::PreRestore,
-        Self::PreUpdate,
-    ];
-
-    pub const fn slug(self) -> &'static str {
-        match self {
-            Self::Manual => "manual",
-            Self::Automatic => "automatic",
-            Self::PreRestore => "pre-restore",
-            Self::PreUpdate => "pre-update",
-        }
+    pub fn slug(self) -> &'static str {
+        self.into()
     }
 
     pub const fn is_safety(self) -> bool {
         matches!(self, Self::PreRestore | Self::PreUpdate)
-    }
-
-    pub fn from_slug(slug: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|category| category.slug() == slug)
     }
 }
 

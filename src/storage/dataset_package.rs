@@ -114,12 +114,31 @@ pub enum StorageDatasetPackageError {
     Executor(#[from] CapacityExecutorError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    strum::EnumIter,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageDatasetPackageEnumFormat {
+    #[strum(serialize = "pgn")]
     Pgn,
+    #[strum(serialize = "polyglot")]
     Polyglot,
+    #[strum(serialize = "puzzle_csv")]
     PuzzleCsv,
+    #[strum(serialize = "prepared_puzzle_catalog_v1")]
     PreparedPuzzleCatalogV1,
 }
 
@@ -169,9 +188,24 @@ impl StorageDatasetPackageSemanticReceipt {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::Display,
+    strum::EnumIter,
+    diesel::AsExpression,
+    diesel::FromSqlRow,
+)]
+#[diesel(sql_type = diesel::sql_types::Text)]
 pub enum StorageDatasetPackageEnumValidation {
+    #[strum(serialize = "unchecked")]
     Unchecked,
+    #[strum(serialize = "integrity_verified")]
     IntegrityVerified,
 }
 

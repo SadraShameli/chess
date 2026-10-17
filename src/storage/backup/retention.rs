@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::storage::backup::archive::BackupArchiveFormat;
 use crate::storage::backup::error::BackupError;
+use strum::IntoEnumIterator;
+
 use crate::storage::backup::manifest::{BackupEnumCategory, BackupManifest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +53,7 @@ impl BackupRetention {
 
     pub fn expired(entries: &[BackupRetentionEntry]) -> Vec<&BackupRetentionEntry> {
         let mut expired = Vec::new();
-        for category in BackupEnumCategory::ALL {
+        for category in BackupEnumCategory::iter() {
             let limit = match category {
                 BackupEnumCategory::Manual => continue,
                 BackupEnumCategory::Automatic => Self::AUTOMATIC_LIMIT,

@@ -1,12 +1,25 @@
 use std::collections::BTreeSet;
 
+use strum::{EnumCount, IntoEnumIterator};
 use serde::{Deserialize, Serialize};
 
 use crate::storage::dataset_selection::{
     StorageDatasetSelection, StorageDatasetSelectionEnumSubset, StorageDatasetSelectionError,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    strum::EnumCount,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageDatasetSelectionEnumComponent {
     Master,
@@ -17,14 +30,6 @@ pub enum StorageDatasetSelectionEnumComponent {
 }
 
 impl StorageDatasetSelectionEnumComponent {
-    pub const ORDER: [Self; 5] = [
-        Self::Master,
-        Self::Broad,
-        Self::Puzzles,
-        Self::Book,
-        Self::Labels,
-    ];
-
     pub const fn ceiling_bytes(self) -> u64 {
         match self {
             Self::Master | Self::Broad => 800_000_000,
@@ -74,7 +79,7 @@ impl StorageDatasetSelectionPrefixes {
             broad,
             puzzles,
         };
-        for subset in StorageDatasetSelectionEnumSubset::ORDER {
+        for subset in StorageDatasetSelectionEnumSubset::iter() {
             subset.validate_target(prefixes.count(subset))?;
         }
         Ok(prefixes)
@@ -101,7 +106,7 @@ impl StorageDatasetSelectionPrefixes {
     }
 
     fn validate_required(self) -> Result<(), StorageDatasetSelectionError> {
-        for subset in StorageDatasetSelectionEnumSubset::ORDER {
+        for subset in StorageDatasetSelectionEnumSubset::iter() {
             if self.count(subset) == 0 {
                 return Err(StorageDatasetSelectionError::RequiredEmpty(subset));
             }
@@ -170,8 +175,8 @@ impl StorageDatasetSelectionInstalledArtifact {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StorageDatasetSelectionFootprint {
-    component_bytes: [u64; StorageDatasetSelectionEnumComponent::ORDER.len()],
-    fixed_bytes: [u64; StorageDatasetSelectionEnumComponent::ORDER.len()],
+    component_bytes: [u64; StorageDatasetSelectionEnumComponent::COUNT],
+    fixed_bytes: [u64; StorageDatasetSelectionEnumComponent::COUNT],
     total_bytes: u64,
 }
 
@@ -181,8 +186,8 @@ impl StorageDatasetSelectionFootprint {
     ) -> Result<Self, StorageDatasetSelectionError> {
         let mut identities = BTreeSet::new();
         let mut footprint = Self {
-            component_bytes: [0; StorageDatasetSelectionEnumComponent::ORDER.len()],
-            fixed_bytes: [0; StorageDatasetSelectionEnumComponent::ORDER.len()],
+            component_bytes: [0; StorageDatasetSelectionEnumComponent::COUNT],
+            fixed_bytes: [0; StorageDatasetSelectionEnumComponent::COUNT],
             total_bytes: 0,
         };
         for artifact in artifacts {
@@ -222,7 +227,7 @@ impl StorageDatasetSelectionFootprint {
         prefixes: StorageDatasetSelectionPrefixes,
     ) -> Result<StorageDatasetSelectionEnumTransition, StorageDatasetSelectionError> {
         prefixes.validate_required()?;
-        for component in StorageDatasetSelectionEnumComponent::ORDER {
+        for component in StorageDatasetSelectionEnumComponent::iter() {
             let actual = self.component_bytes(component);
             if actual <= component.ceiling_bytes() {
                 continue;

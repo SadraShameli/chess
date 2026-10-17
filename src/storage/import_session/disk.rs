@@ -3,6 +3,7 @@ use std::io::{ErrorKind, Read};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
+use strum::IntoEnumIterator;
 
 use crate::game::enums::GameId;
 use crate::storage::import_session::model::{
@@ -15,7 +16,7 @@ pub(crate) struct StorageImportSessionDisk {
     pub(crate) filesystem: Arc<dyn StorageImportSessionFilesystemProvider>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, strum::EnumIter)]
 pub(crate) enum StorageImportSessionDiskEnumFile {
     Source,
     Bodies,
@@ -33,22 +34,6 @@ pub(crate) enum StorageImportSessionDiskEnumFile {
 }
 
 impl StorageImportSessionDiskEnumFile {
-    pub(crate) const ALL: [Self; 13] = [
-        Self::Source,
-        Self::Bodies,
-        Self::Projections,
-        Self::Directory,
-        Self::Metadata,
-        Self::StructuralIndex,
-        Self::IdentityIndex,
-        Self::Sort,
-        Self::Commit,
-        Self::CompleteIndex,
-        Self::ClassIndex,
-        Self::ClassMembers,
-        Self::IncompleteIndex,
-    ];
-
     const fn index(self) -> usize {
         match self {
             Self::Source => 0,
@@ -224,9 +209,7 @@ impl StorageImportSessionDisk {
     }
 
     pub(crate) fn initialize(&mut self) -> Result<(), StorageImportSessionError> {
-        for _kind in StorageImportSessionDiskEnumFile::ALL
-            .iter()
-            .skip(self.files.len())
+        for _kind in StorageImportSessionDiskEnumFile::iter().skip(self.files.len())
         {
             let file = self.filesystem.create_spool()?;
             self.files
@@ -245,7 +228,7 @@ impl StorageImportSessionDisk {
     }
 
     pub(crate) fn take_commit(&mut self) -> Result<File, StorageImportSessionError> {
-        if self.files.len() != StorageImportSessionDiskEnumFile::ALL.len() {
+        if self.files.len() != StorageImportSessionDiskEnumFile::iter().count() {
             return Err(StorageImportSessionError::State);
         }
         Ok(self
