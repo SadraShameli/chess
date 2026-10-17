@@ -8,21 +8,31 @@ use bevy::asset::{
     AssetPlugin, AssetServer, Assets, DependencyLoadState, Handle, LoadState,
     RecursiveDependencyLoadState, RenderAssetUsages,
 };
-use bevy::ecs::schedule::ScheduleLabel;
+use bevy::camera::{CameraOutputMode, NormalizedRenderTarget};
+use bevy::ecs::entity::ContainsEntity;
+use bevy::ecs::schedule::{IntoScheduleConfigs, ScheduleLabel};
 use bevy::ecs::system::{NonSendMarker, SystemParam};
 use bevy::gltf::Gltf;
 use bevy::math::Vec3;
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::{
-    App, AppExit, Camera3d, ClearColor, Color, Commands, DefaultPlugins, Image, Mesh, Mesh3d,
-    MessageReader, MessageWriter, On, PluginGroup, Query, Res, ResMut, Resource, Startup,
-    Transform, Update, With,
+    App, AppExit, Camera3d, ClearColor, Color, Commands, DefaultPlugins, Entity, Image, Mesh,
+    Mesh3d, MessageReader, MessageWriter, On, PluginGroup, Query, Res, ResMut, Resource, Startup,
+    Transform, Update, With, World,
 };
-use bevy::render::RenderPlugin;
+use bevy::render::camera::{ExtractedCamera, SortedCameras};
 use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::render::renderer::RenderAdapterInfo;
+use bevy::render::render_resource::{
+    CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, TextureDimension,
+    TextureFormat,
+};
+use bevy::render::renderer::{RenderAdapterInfo, RenderGraph, RenderGraphSystems, render_system};
+use bevy::render::sync_world::MainEntity;
+use bevy::render::view::ViewTarget;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::window::{ExtractedWindow, SurfaceData};
+use bevy::render::{Render, RenderApp, RenderPlugin, RenderSystems};
+use bevy::shader::ShaderCacheError;
 use bevy::shape::Cuboid;
 use bevy::tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool};
 use bevy::window::{PrimaryWindow, Window, WindowOccluded, WindowPlugin};
@@ -120,6 +130,315 @@ struct NativeCompatibilityReport {
     geometry_pixels: usize,
     text_pixels: usize,
     dimensions: (u32, u32),
+    render_diagnostics: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeCompatibilityRenderEnumCount {
+    Exact(u64),
+    Overflowed,
+}
+
+impl Default for NativeCompatibilityRenderEnumCount {
+    fn default() -> Self {
+        Self::Exact(0)
+    }
+}
+
+impl NativeCompatibilityRenderEnumCount {
+    fn increment(&mut self) {
+        if let Self::Exact(value) = self {
+            *self = match value.checked_add(1) {
+                Some(next) => Self::Exact(next),
+                None => Self::Overflowed,
+            };
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NativeCompatibilityRenderText {
+    bytes: [u8; NativeCompatibilityRenderText::CAPACITY],
+    length: usize,
+    truncated: bool,
+    format_failed: bool,
+}
+
+impl NativeCompatibilityRenderText {
+    const CAPACITY: usize = 1024;
+
+    fn capture(arguments: std::fmt::Arguments<'_>) -> Self {
+        let mut text = Self {
+            bytes: [0; Self::CAPACITY],
+            length: 0,
+            truncated: false,
+            format_failed: false,
+        };
+        text.format_failed = std::fmt::write(&mut text, arguments).is_err();
+        text
+    }
+}
+
+impl std::fmt::Write for NativeCompatibilityRenderText {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        if self.truncated {
+            return Ok(());
+        }
+        let mut length = value.len().min(Self::CAPACITY - self.length);
+        while !value.is_char_boundary(length) {
+            length -= 1;
+        }
+        let end = self.length + length;
+        self.bytes[self.length..end].copy_from_slice(&value.as_bytes()[..length]);
+        self.length = end;
+        self.truncated = length != value.len();
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for NativeCompatibilityRenderText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCompatibilityRenderText")
+            .field("text", &std::str::from_utf8(&self.bytes[..self.length]))
+            .field("truncated", &self.truncated)
+            .field("format_failed", &self.format_failed)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeCompatibilityRenderEnumPipelineKind {
+    Render,
+    Compute,
+    Mesh,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeCompatibilityRenderEnumPipelineFailure {
+    ShaderNotLoaded,
+    ProcessShader,
+    ShaderImportNotYetAvailable,
+    CreateShaderModule,
+}
+
+#[derive(Clone, Copy)]
+struct NativeCompatibilityRenderPipelineError {
+    index: usize,
+    kind: NativeCompatibilityRenderEnumPipelineKind,
+    failure: NativeCompatibilityRenderEnumPipelineFailure,
+    detail: NativeCompatibilityRenderText,
+}
+
+impl NativeCompatibilityRenderPipelineError {
+    fn observe(index: usize, descriptor: &PipelineDescriptor, error: &ShaderCacheError) -> Self {
+        let (kind, label) = match descriptor {
+            PipelineDescriptor::RenderPipelineDescriptor(descriptor) => (
+                NativeCompatibilityRenderEnumPipelineKind::Render,
+                &descriptor.label,
+            ),
+            PipelineDescriptor::ComputePipelineDescriptor(descriptor) => (
+                NativeCompatibilityRenderEnumPipelineKind::Compute,
+                &descriptor.label,
+            ),
+            PipelineDescriptor::MeshPipelineDescriptor(descriptor) => (
+                NativeCompatibilityRenderEnumPipelineKind::Mesh,
+                &descriptor.label,
+            ),
+        };
+        let failure = match error {
+            ShaderCacheError::ShaderNotLoaded(_) => {
+                NativeCompatibilityRenderEnumPipelineFailure::ShaderNotLoaded
+            }
+            ShaderCacheError::ProcessShaderError(_) => {
+                NativeCompatibilityRenderEnumPipelineFailure::ProcessShader
+            }
+            ShaderCacheError::ShaderImportNotYetAvailable => {
+                NativeCompatibilityRenderEnumPipelineFailure::ShaderImportNotYetAvailable
+            }
+            ShaderCacheError::CreateShaderModule(_) => {
+                NativeCompatibilityRenderEnumPipelineFailure::CreateShaderModule
+            }
+        };
+        Self {
+            index,
+            kind,
+            failure,
+            detail: NativeCompatibilityRenderText::capture(format_args!(
+                "{error}; label={label:?}"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Debug for NativeCompatibilityRenderPipelineError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCompatibilityRenderPipelineError")
+            .field("index", &self.index)
+            .field("kind", &self.kind)
+            .field("failure", &self.failure)
+            .field("detail", &self.detail)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct NativeCompatibilityRenderPipelines {
+    ready: NativeCompatibilityRenderEnumCount,
+    pending: NativeCompatibilityRenderEnumCount,
+    errors: NativeCompatibilityRenderEnumCount,
+    omitted_errors: NativeCompatibilityRenderEnumCount,
+    details: [Option<NativeCompatibilityRenderPipelineError>;
+        NativeCompatibilityRenderPipelines::MAX_ERRORS],
+}
+
+impl NativeCompatibilityRenderPipelines {
+    const MAX_ERRORS: usize = 4;
+
+    fn observe(cache: &PipelineCache) -> Self {
+        let mut observed = Self::default();
+        for (index, pipeline) in cache.pipelines().enumerate() {
+            match &pipeline.state {
+                CachedPipelineState::Queued | CachedPipelineState::Creating(_) => {
+                    observed.pending.increment();
+                }
+                CachedPipelineState::Ok(_) => observed.ready.increment(),
+                CachedPipelineState::Err(error) => {
+                    observed.errors.increment();
+                    if let Some(slot) = observed.details.iter_mut().find(|slot| slot.is_none()) {
+                        *slot = Some(NativeCompatibilityRenderPipelineError::observe(
+                            index,
+                            &pipeline.descriptor,
+                            error,
+                        ));
+                    } else {
+                        observed.omitted_errors.increment();
+                    }
+                }
+            }
+        }
+        observed
+    }
+}
+
+impl std::fmt::Debug for NativeCompatibilityRenderPipelines {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCompatibilityRenderPipelines")
+            .field("ready", &self.ready)
+            .field("pending", &self.pending)
+            .field("errors", &self.errors)
+            .field("omitted_errors", &self.omitted_errors)
+            .field("details", &self.details)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NativeCompatibilityRenderWindow {
+    main_entity: Entity,
+    dimensions: (u32, u32),
+    surface_data_present: bool,
+    swap_chain_texture_present: bool,
+    swap_chain_view_present: bool,
+    swap_chain_texture_format: Option<TextureFormat>,
+    swap_chain_view_format: Option<TextureFormat>,
+}
+
+impl std::fmt::Debug for NativeCompatibilityRenderWindow {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCompatibilityRenderWindow")
+            .field("main_entity", &self.main_entity)
+            .field("dimensions", &self.dimensions)
+            .field("surface_data_present", &self.surface_data_present)
+            .field(
+                "swap_chain_texture_present",
+                &self.swap_chain_texture_present,
+            )
+            .field("swap_chain_view_present", &self.swap_chain_view_present)
+            .field("swap_chain_texture_format", &self.swap_chain_texture_format)
+            .field("swap_chain_view_format", &self.swap_chain_view_format)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct NativeCompatibilityRenderCameras {
+    sorted: Option<NativeCompatibilityRenderEnumCount>,
+    sorted_writers: Option<NativeCompatibilityRenderEnumCount>,
+    extracted: NativeCompatibilityRenderEnumCount,
+    extracted_writers: NativeCompatibilityRenderEnumCount,
+    view_targets: NativeCompatibilityRenderEnumCount,
+    outputs: NativeCompatibilityRenderEnumCount,
+    output_formats: NativeCompatibilityRenderEnumCount,
+}
+
+impl NativeCompatibilityRenderCameras {
+    fn targets_window(target: &Option<NormalizedRenderTarget>, main_entity: Entity) -> bool {
+        matches!(target, Some(NormalizedRenderTarget::Window(window)) if window.entity() == main_entity)
+    }
+}
+
+impl std::fmt::Debug for NativeCompatibilityRenderCameras {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCompatibilityRenderCameras")
+            .field("sorted", &self.sorted)
+            .field("sorted_writers", &self.sorted_writers)
+            .field("extracted", &self.extracted)
+            .field("extracted_writers", &self.extracted_writers)
+            .field("view_targets", &self.view_targets)
+            .field("outputs", &self.outputs)
+            .field("output_formats", &self.output_formats)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NativeCompatibilityRenderObservation {
+    primary_windows: NativeCompatibilityRenderEnumCount,
+    window: Option<NativeCompatibilityRenderWindow>,
+    cameras: Option<NativeCompatibilityRenderCameras>,
+    pipelines: Option<NativeCompatibilityRenderPipelines>,
+}
+
+impl std::fmt::Debug for NativeCompatibilityRenderObservation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeCompatibilityRenderObservation")
+            .field("primary_windows", &self.primary_windows)
+            .field("window", &self.window)
+            .field("cameras", &self.cameras)
+            .field("pipelines", &self.pipelines)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Resource)]
+struct NativeCompatibilityRenderDiagnostics {
+    pre_render_observations: NativeCompatibilityRenderEnumCount,
+    graph_finishes: NativeCompatibilityRenderEnumCount,
+    latest: Option<NativeCompatibilityRenderObservation>,
+}
+
+#[derive(SystemParam)]
+struct NativeCompatibilityRenderProbe<'w, 's> {
+    windows: Query<
+        'w,
+        's,
+        (
+            &'static MainEntity,
+            &'static ExtractedWindow,
+            Option<&'static SurfaceData>,
+        ),
+        With<PrimaryWindow>,
+    >,
+    cameras: Query<'w, 's, (&'static ExtractedCamera, Option<&'static ViewTarget>)>,
+    sorted_cameras: Option<Res<'w, SortedCameras>>,
+    pipelines: Option<Res<'w, PipelineCache>>,
+    diagnostics: ResMut<'w, NativeCompatibilityRenderDiagnostics>,
 }
 
 #[derive(Clone, Copy)]
@@ -190,6 +509,7 @@ struct NativeCompatibilityState {
     window: Option<NativeCompatibilityWindow>,
     occluded: Option<bool>,
     capture_dimensions: Option<(u32, u32)>,
+    render_diagnostics: Option<NativeCompatibilityRenderDiagnostics>,
 }
 
 impl NativeCompatibilityState {
@@ -275,12 +595,34 @@ impl NativeCompatibilityHarness {
             window: None,
             occluded: None,
             capture_dimensions: None,
+            render_diagnostics: None,
         })
         .insert_resource(ClearColor(Color::BLACK))
         .add_systems(Startup, Self::setup)
         .add_systems(Update, Self::probe)
         .add_systems(EguiPrimaryContextPass, Self::show_status)
         .add_systems(NativeCompatibilityFinalExit, Self::exit);
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app
+                .init_resource::<NativeCompatibilityRenderDiagnostics>()
+                .add_systems(
+                    Render,
+                    Self::observe_render
+                        .in_set(RenderSystems::Render)
+                        .after(RenderSystems::PrepareViews)
+                        .before(render_system),
+                )
+                .add_systems(
+                    RenderGraph,
+                    Self::finish_render_graph.in_set(RenderGraphSystems::Finish),
+                );
+            if let Some(mut extract) = render_app.take_extract() {
+                render_app.set_extract(move |main_world, render_world| {
+                    Self::transfer_render_diagnostics(main_world, render_world);
+                    extract(main_world, render_world);
+                });
+            }
+        }
         app.world_mut()
             .resource_mut::<MainScheduleOrder>()
             .insert_after(Last, NativeCompatibilityFinalExit);
@@ -299,6 +641,89 @@ impl NativeCompatibilityHarness {
     ) -> Result<(), Box<dyn std::error::Error>> {
         asset_comparison::NativeAssetComparisonHarness::run(candidate, output_directory)?;
         Ok(())
+    }
+
+    fn observe_render(mut probe: NativeCompatibilityRenderProbe<'_, '_>) {
+        let mut primary_windows = NativeCompatibilityRenderEnumCount::default();
+        let mut window = None;
+        for (main_entity, extracted, surface) in &probe.windows {
+            primary_windows.increment();
+            window.get_or_insert(NativeCompatibilityRenderWindow {
+                main_entity: main_entity.id(),
+                dimensions: (extracted.physical_width, extracted.physical_height),
+                surface_data_present: surface.is_some(),
+                swap_chain_texture_present: extracted.swap_chain_texture.is_some(),
+                swap_chain_view_present: extracted.swap_chain_texture_view.is_some(),
+                swap_chain_texture_format: extracted.swap_chain_texture_format,
+                swap_chain_view_format: extracted.swap_chain_texture_view_format,
+            });
+        }
+        let cameras = window.as_ref().map(|window| {
+            let mut observed = NativeCompatibilityRenderCameras::default();
+            if let Some(sorted) = &probe.sorted_cameras {
+                let mut matching = NativeCompatibilityRenderEnumCount::default();
+                let mut writers = NativeCompatibilityRenderEnumCount::default();
+                for camera in &sorted.0 {
+                    if NativeCompatibilityRenderCameras::targets_window(
+                        &camera.target,
+                        window.main_entity,
+                    ) {
+                        matching.increment();
+                        if matches!(camera.output_mode, CameraOutputMode::Write { .. }) {
+                            writers.increment();
+                        }
+                    }
+                }
+                observed.sorted = Some(matching);
+                observed.sorted_writers = Some(writers);
+            }
+            for (camera, view_target) in &probe.cameras {
+                if NativeCompatibilityRenderCameras::targets_window(
+                    &camera.target,
+                    window.main_entity,
+                ) {
+                    observed.extracted.increment();
+                    if matches!(camera.output_mode, CameraOutputMode::Write { .. }) {
+                        observed.extracted_writers.increment();
+                    }
+                    if let Some(view_target) = view_target {
+                        observed.view_targets.increment();
+                        if view_target.out_texture().is_some() {
+                            observed.outputs.increment();
+                        }
+                        if view_target.out_texture_view_format().is_some() {
+                            observed.output_formats.increment();
+                        }
+                    }
+                }
+            }
+            observed
+        });
+        let pipelines = probe
+            .pipelines
+            .as_deref()
+            .map(NativeCompatibilityRenderPipelines::observe);
+        probe.diagnostics.pre_render_observations.increment();
+        probe.diagnostics.latest = Some(NativeCompatibilityRenderObservation {
+            primary_windows,
+            window,
+            cameras,
+            pipelines,
+        });
+    }
+
+    fn finish_render_graph(mut diagnostics: ResMut<'_, NativeCompatibilityRenderDiagnostics>) {
+        diagnostics.graph_finishes.increment();
+    }
+
+    fn transfer_render_diagnostics(main_world: &mut World, render_world: &World) {
+        if let Some(diagnostics) =
+            render_world.get_resource::<NativeCompatibilityRenderDiagnostics>()
+            && diagnostics.latest.is_some()
+            && let Some(mut state) = main_world.get_resource_mut::<NativeCompatibilityState>()
+        {
+            state.render_diagnostics = Some(*diagnostics);
+        }
     }
 
     fn host(asset_path: String, title: &str, dimensions: (u32, u32)) -> App {
@@ -478,7 +903,7 @@ impl NativeCompatibilityHarness {
                 model_loaded,
                 asset_states,
                 diagnostics: format!(
-                    "first_readback={:?}, latest_readback={:?}, window={:?}",
+                    "first_readback={:?}, latest_readback={:?}, window={:?}, render={:?}",
                     probe.state.first_readback.as_ref().map(ToString::to_string),
                     probe
                         .state
@@ -486,6 +911,7 @@ impl NativeCompatibilityHarness {
                         .as_ref()
                         .map(ToString::to_string),
                     probe.state.window.as_ref().map(ToString::to_string),
+                    probe.state.render_diagnostics,
                 ),
             };
             probe.state.complete(Err(failure))?;
@@ -575,6 +1001,7 @@ impl NativeCompatibilityHarness {
             geometry_pixels,
             text_pixels,
             dimensions: actual_dimensions,
+            render_diagnostics: format!("{:?}", state.render_diagnostics),
         };
         state.complete(Ok(report))?;
         Ok(())
@@ -719,14 +1146,15 @@ impl NativeCompatibilityHarness {
             .try_recv()
             .map_err(|_error| NativeCompatibilityError::Incomplete)??;
         println!(
-            "Native compatibility passed: {} via {}, {} declared GLB pieces, {} geometry pixels, {} text pixels, {}x{} physical pixels",
+            "Native compatibility passed: {} via {}, {} declared GLB pieces, {} geometry pixels, {} text pixels, {}x{} physical pixels, render={}",
             report.adapter,
             report.backend,
             report.named_pieces,
             report.geometry_pixels,
             report.text_pixels,
             report.dimensions.0,
-            report.dimensions.1
+            report.dimensions.1,
+            report.render_diagnostics
         );
         Ok(())
     }
