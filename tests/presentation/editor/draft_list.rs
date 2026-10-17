@@ -106,3 +106,93 @@ async fn editor_and_library_borrow_the_same_repository_page_and_open_the_same_in
     assert!(same_page);
     Ok(())
 }
+
+#[tokio::test]
+async fn delete_needs_confirmation_carries_the_listed_revision_and_keep_cancels()
+-> DesktopEditorCommandsTestResult {
+    let mut fixture = DesktopEditorCommandsFixture::new().await?;
+    fixture.create(1, None).await?;
+    let id = fixture.snapshot()?.context().draft();
+    fixture.save().await?;
+    fixture.owner.finish_write().await?;
+    let DesktopEditorCommandsEnumResult::List(page) = fixture
+        .dispatch(DesktopEditorCommandsEnumOperation::List { after: None })
+        .await?
+    else {
+        return Err("missing list".into());
+    };
+    let revision = page
+        .page()
+        .entries()
+        .iter()
+        .find(|entry| entry.id() == id)
+        .ok_or("missing listed draft")?
+        .storage_revision();
+    fixture.close().await?;
+    for is_library in [false, true] {
+        let mut harness = PresentationEditorDraftListFixture::harness(page.clone(), is_library)?;
+        assert!(harness.query_by_label("Valid position draft").is_some());
+        harness
+            .get_by_label(&format!("Delete draft {id}"))
+            .click_accesskit();
+        harness.run_ok().ok_or("delete prompt did not settle")?;
+        assert!(harness.state().actions.is_empty());
+        harness.get_by_label("Keep Saved Draft").click_accesskit();
+        harness.run_ok().ok_or("keep did not settle")?;
+        harness.run_steps(3);
+        assert!(harness.state().actions.is_empty());
+        assert!(harness.query_by_label("Confirm Delete Draft").is_none());
+        harness
+            .get_by_label(&format!("Delete draft {id}"))
+            .click_accesskit();
+        harness.run_ok().ok_or("second prompt did not settle")?;
+        harness
+            .get_by_label("Confirm Delete Draft")
+            .click_accesskit();
+        harness.run_ok().ok_or("confirm did not settle")?;
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().actions,
+            [PresentationEditorDraftListEnumAction::Delete {
+                id,
+                storage_revision: revision,
+                expected: None,
+            }]
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn refresh_starts_from_the_first_page_and_lists_stay_distinct_from_games()
+-> DesktopEditorCommandsTestResult {
+    let mut fixture = DesktopEditorCommandsFixture::new().await?;
+    fixture.create(1, None).await?;
+    fixture.save().await?;
+    fixture.owner.finish_write().await?;
+    let DesktopEditorCommandsEnumResult::List(page) = fixture
+        .dispatch(DesktopEditorCommandsEnumOperation::List { after: None })
+        .await?
+    else {
+        return Err("missing list".into());
+    };
+    fixture.close().await?;
+    for is_library in [false, true] {
+        let mut harness = PresentationEditorDraftListFixture::harness(page.clone(), is_library)?;
+        assert!(harness.query_by_label("Saved position drafts").is_some());
+        assert_eq!(
+            harness.query_by_label("Positions").is_some(),
+            is_library
+        );
+        harness
+            .get_by_label("Refresh Position Drafts")
+            .click_accesskit();
+        harness.run_ok().ok_or("refresh did not settle")?;
+        harness.run_steps(3);
+        assert_eq!(
+            harness.state().actions,
+            [PresentationEditorDraftListEnumAction::List { after: None }]
+        );
+    }
+    Ok(())
+}
