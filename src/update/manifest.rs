@@ -33,15 +33,7 @@ pub enum UpdateManifestError {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    strum::EnumString,
-    strum::AsRefStr,
-    strum::Display,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumString, strum::AsRefStr, strum::Display,
 )]
 pub enum UpdateTarget {
     #[strum(serialize = "macos-arm64")]
@@ -55,13 +47,17 @@ pub enum UpdateTarget {
 }
 
 impl UpdateTarget {
+    pub fn appimage_path() -> Option<std::path::PathBuf> {
+        std::env::var_os("APPIMAGE").map(std::path::PathBuf::from)
+    }
+
     pub fn detect() -> Option<Self> {
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             Some(Self::MacosArm64)
         } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
             Some(Self::WindowsX86_64)
         } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-            if std::env::var_os("APPIMAGE").is_some() {
+            if Self::appimage_path().is_some() {
                 Some(Self::LinuxAppImage)
             } else {
                 Some(Self::LinuxDeb)
@@ -151,7 +147,9 @@ impl UpdateManifestAsset {
                 break;
             }
             total = total
-                .checked_add(u64::try_from(read).map_err(|_error| UpdateManifestError::PackageMismatch)?)
+                .checked_add(
+                    u64::try_from(read).map_err(|_error| UpdateManifestError::PackageMismatch)?,
+                )
                 .ok_or(UpdateManifestError::PackageMismatch)?;
             if total > self.length {
                 return Err(UpdateManifestError::PackageMismatch);
@@ -237,7 +235,10 @@ impl UpdateManifest {
         if wire.length == 0 || wire.length > Self::MAX_PACKAGE_BYTES {
             return Err(invalid());
         }
-        let target = wire.target.parse::<UpdateTarget>().map_err(|_error| invalid())?;
+        let target = wire
+            .target
+            .parse::<UpdateTarget>()
+            .map_err(|_error| invalid())?;
         let sha256 = Self::hex32(&wire.sha256).ok_or_else(invalid)?;
         Ok(UpdateManifestAsset {
             id: wire.id,
@@ -251,15 +252,14 @@ impl UpdateManifest {
     pub fn is_safe_asset_name(name: &str) -> bool {
         const RESERVED: [&str; 22] = [
             "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
-            "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8",
-            "LPT9",
+            "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
         ];
         let stem = name.split('.').next().unwrap_or(name);
         !name.is_empty()
             && name.len() <= 255
-            && !name.chars().any(|character| {
-                matches!(character, '/' | '\\' | ':') || character.is_control()
-            })
+            && !name
+                .chars()
+                .any(|character| matches!(character, '/' | '\\' | ':') || character.is_control())
             && name != "."
             && name != ".."
             && !name.ends_with(['.', ' '])

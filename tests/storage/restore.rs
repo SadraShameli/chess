@@ -85,9 +85,8 @@ impl StorageRestoreFixture {
     ) -> StorageBackupTestResult<BackupArchive> {
         let database = self.database();
         let backups = self.backups();
-        let owner = StorageBackupFixture::new()?;
         Ok(BackupCreator::create_blocking(
-            owner.request(&database, &backups, category, id, created_ms),
+            StorageBackupFixture::request(&database, &backups, category, id, created_ms),
             &BackupSpaceNative,
         )?)
     }
@@ -232,7 +231,7 @@ async fn archive_validation_rejects_corruption_truncation_signature_and_newer_sc
     fs::write(&path, &unsigned)?;
     assert!(StorageBackupFixture::inspect(&path).is_err());
 
-    let mut oversized = good.clone();
+    let mut oversized = good;
     oversized[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
     let path = scratch.join("oversized.chessbackup");
     fs::write(&path, &oversized)?;
@@ -510,6 +509,7 @@ async fn restore_drops_leases_keeps_this_machines_dataset_locations_and_flags_mi
 -> StorageBackupTestResult {
     use chess::desktop::backup_commands::{
         DesktopBackupCommands, DesktopBackupCommandsPrerequisites,
+        DesktopBackupCommandsRestoreRequest,
     };
     use chess::storage::backup::preview::BackupPreviewEnumFinding;
     let fixture = StorageRestoreFixture::new()?;
@@ -567,7 +567,10 @@ async fn restore_drops_leases_keeps_this_machines_dataset_locations_and_flags_mi
             BackupPreviewEnumFinding::DependencyUnavailable(dependency) => {
                 Some(dependency.name.clone())
             }
-            _ => None,
+            BackupPreviewEnumFinding::CrossPlatform { .. }
+            | BackupPreviewEnumFinding::DestinationLocationsKept { .. }
+            | BackupPreviewEnumFinding::DatasetReferenced(_)
+            | BackupPreviewEnumFinding::OlderSchemaWillMigrate { .. } => None,
         })
         .collect();
     assert_eq!(referenced, 2);
@@ -579,14 +582,16 @@ async fn restore_drops_leases_keeps_this_machines_dataset_locations_and_flags_mi
 
     commands.restore_blocking(
         &fixture.lease,
-        handle,
-        DesktopBackupCommandsPrerequisites {
-            games_paused_and_saved: true,
-            editors_have_no_unsaved_edits: true,
+        DesktopBackupCommandsRestoreRequest {
+            handle,
+            prerequisites: DesktopBackupCommandsPrerequisites {
+                games_paused_and_saved: true,
+                editors_have_no_unsaved_edits: true,
+            },
+            safety_id: Uuid::from_u128(41),
+            restore_id: Uuid::from_u128(42),
+            now_ms: 2_000,
         },
-        Uuid::from_u128(41),
-        Uuid::from_u128(42),
-        2_000,
     )?;
     assert_eq!(
         StorageRestoreFixture::body(&destination)?,
@@ -764,10 +769,9 @@ async fn an_older_schema_backup_is_migrated_in_the_staged_copy_before_it_replace
             "DROP TABLE backup_state; DELETE FROM __diesel_schema_migrations WHERE version = '{newest}';"
         ))?;
     }
-    let owner = StorageBackupFixture::new()?;
     let backups = old_directory.path().join("backups");
     let archive = BackupCreator::create_blocking(
-        owner.request(&old, &backups, BackupEnumCategory::Manual, 70, 1_000),
+        StorageBackupFixture::request(&old, &backups, BackupEnumCategory::Manual, 70, 1_000),
         &BackupSpaceNative,
     )?;
     assert!(!archive.manifest().schema_versions().contains(&newest));

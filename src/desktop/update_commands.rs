@@ -38,7 +38,12 @@ pub enum DesktopUpdateError {
     Install(String),
 }
 
-pub struct DesktopUpdateOptions<H: UpdateHttp + Clone, V: UpdateSignatureVerifier, S: UpdateCredentialStore, N: UpdateNetworkCostProvider> {
+pub struct DesktopUpdateOptions<
+    H: UpdateHttp + Clone,
+    V: UpdateSignatureVerifier,
+    S: UpdateCredentialStore,
+    N: UpdateNetworkCostProvider,
+> {
     pub http: H,
     pub verifier: V,
     pub repository: UpdateRepository,
@@ -127,7 +132,9 @@ impl<
         if let Some(until) = self.retry_not_before_ms
             && now_ms < until
         {
-            return Err(DesktopUpdateError::RetryAfter((until - now_ms).div_ceil(1000)));
+            return Err(DesktopUpdateError::RetryAfter(
+                (until - now_ms).div_ceil(1000),
+            ));
         }
         self.state.begin_check()?;
         let outcome = self
@@ -151,8 +158,12 @@ impl<
                     Some(now_ms.saturating_add(seconds.unwrap_or(60).saturating_mul(1000)));
                 self.state.fail(UpdateEnumFailure::RateLimited)?;
             }
-            Err(UpdateDiscoveryError::Deadline(_)) => self.state.fail(UpdateEnumFailure::Timeout)?,
-            Err(UpdateDiscoveryError::Manifest(_)) => self.state.fail(UpdateEnumFailure::Signature)?,
+            Err(UpdateDiscoveryError::Deadline(_)) => {
+                self.state.fail(UpdateEnumFailure::Timeout)?
+            }
+            Err(UpdateDiscoveryError::Manifest(_)) => {
+                self.state.fail(UpdateEnumFailure::Signature)?
+            }
             Err(_other) => self.state.fail(UpdateEnumFailure::Network)?,
         }
         Ok(())
@@ -168,7 +179,10 @@ impl<
         Ok(())
     }
 
-    pub fn observe_network(&mut self, cost: UpdateNetworkEnumCost) -> Result<bool, DesktopUpdateError> {
+    pub fn observe_network(
+        &mut self,
+        cost: UpdateNetworkEnumCost,
+    ) -> Result<bool, DesktopUpdateError> {
         self.state.network_observed(cost)?;
         Ok(matches!(
             self.state.phase(),
@@ -186,7 +200,10 @@ impl<
         space: &impl UpdateDiskSpace,
         cancel: watch::Receiver<bool>,
     ) -> Result<(), DesktopUpdateError> {
-        let found = self.discovered.clone().ok_or(DesktopUpdateError::NoRelease)?;
+        let found = self
+            .discovered
+            .clone()
+            .ok_or(DesktopUpdateError::NoRelease)?;
         let attempt = self
             .state
             .attempt()

@@ -1,6 +1,6 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use strum::IntoEnumIterator;
 
 use chess::engine::capabilities::{EngineCapabilities, EngineIdentity};
 use chess::engine::enums::EngineEnumOption;

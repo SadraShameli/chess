@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
+use strum::IntoEnumIterator;
 
 use bevy_egui::egui;
 use egui_kittest::Harness;

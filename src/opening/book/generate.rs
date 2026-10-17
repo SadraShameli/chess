@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use thiserror::Error;
 
-use crate::board::position::BoardPosition;
 use crate::board::r#move::{BoardMove, BoardMoveError};
+use crate::board::position::{BoardPosition, BoardPositionError};
 use crate::opening::book::OpeningBookError;
 use crate::opening::book::record::OpeningBookRecord;
 
@@ -13,6 +13,8 @@ pub enum OpeningBookGenerationError {
     Book(#[from] OpeningBookError),
     #[error(transparent)]
     Move(#[from] BoardMoveError),
+    #[error(transparent)]
+    Position(#[from] BoardPositionError),
     #[error("A book position count exceeds the checked integer range")]
     Count,
     #[error("The generation was cancelled")]

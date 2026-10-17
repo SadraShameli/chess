@@ -13,10 +13,10 @@ mod presentation_board_animation;
 mod presentation_board_input;
 #[path = "presentation/board/layout.rs"]
 mod presentation_board_layout;
-#[path = "presentation/strum_tables.rs"]
-mod presentation_strum_tables;
 #[path = "presentation/board/markings.rs"]
 mod presentation_board_markings;
+#[path = "presentation/strum_tables.rs"]
+mod presentation_strum_tables;
 
 #[path = "game/transition_fixture.rs"]
 mod game_transition_fixture;
@@ -26,27 +26,27 @@ mod presentation_action_registry;
 mod presentation_analysis;
 #[path = "presentation/app_editor.rs"]
 mod presentation_app_editor;
+#[path = "presentation/backup.rs"]
+mod presentation_backup;
 #[path = "presentation/engine_panels.rs"]
 mod presentation_engine_panels;
-#[path = "presentation/game/controller.rs"]
-mod presentation_game_controller;
 #[path = "presentation/game/concurrent_games.rs"]
 mod presentation_game_concurrent_games;
+#[path = "presentation/game/controller.rs"]
+mod presentation_game_controller;
 #[path = "presentation/game/new_game.rs"]
 mod presentation_game_new_game;
 #[path = "presentation/game/play.rs"]
 mod presentation_game_play;
-#[path = "presentation/backup.rs"]
-mod presentation_backup;
 #[path = "presentation/workbench.rs"]
 mod presentation_workbench;
 
+#[path = "presentation/audio.rs"]
+mod presentation_audio;
 #[path = "presentation/settings.rs"]
 mod presentation_settings;
 #[path = "presentation/shortcuts.rs"]
 mod presentation_shortcuts;
-#[path = "presentation/audio.rs"]
-mod presentation_audio;
 
 #[path = "presentation/update.rs"]
 mod presentation_update;

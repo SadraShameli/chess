@@ -6,7 +6,9 @@ use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesRevision,
 };
 use crate::desktop::preferences_import::DesktopPreferencesCodec;
-use crate::storage::preferences_repository::{StoragePreferencesError, StoragePreferencesRepository};
+use crate::storage::preferences_repository::{
+    StoragePreferencesError, StoragePreferencesRepository,
+};
 
 #[derive(Debug, Error)]
 pub enum DesktopPreferencesStoreError {
@@ -127,7 +129,11 @@ impl DesktopPreferencesStore {
     ) -> Result<DesktopPreferencesRevision, DesktopPreferencesStoreError> {
         let body = DesktopPreferencesCodec::encode(preferences)?;
         let saved = repository
-            .save(expected.value(), DesktopPreferencesCodec::CURRENT_VERSION, body)
+            .save(
+                expected.value(),
+                DesktopPreferencesCodec::CURRENT_VERSION,
+                body,
+            )
             .await?;
         Ok(DesktopPreferencesRevision::new(saved))
     }

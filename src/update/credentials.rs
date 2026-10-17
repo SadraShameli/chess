@@ -2,7 +2,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum UpdateCredentialError {
-    #[error("The update credential is empty, too long or contains whitespace or control characters")]
+    #[error(
+        "The update credential is empty, too long or contains whitespace or control characters"
+    )]
     Invalid,
     #[error("Secure credential storage is unavailable on this system")]
     SecureStorageUnavailable,

@@ -50,26 +50,28 @@ pub struct DesktopNativeStudyDriver {
     state: Mutex<DesktopNativeStudyDriverState>,
 }
 
+pub struct DesktopNativeStudyDriverOptions {
+    pub host: Arc<DesktopNativeReportHost>,
+    pub runtime: Handle,
+    pub wake: Arc<DesktopNativeEventLoopWake>,
+    pub dialogs: Arc<DesktopNativeDialogsProxy>,
+    pub reanalysis: mpsc::UnboundedSender<ReportJobId>,
+    pub database: PathBuf,
+    pub starters: Vec<DesktopDatasetStarter>,
+}
+
 impl DesktopNativeStudyDriver {
     pub const REFRESH: Duration = Duration::from_millis(500);
 
-    pub fn new(
-        host: Arc<DesktopNativeReportHost>,
-        runtime: Handle,
-        wake: Arc<DesktopNativeEventLoopWake>,
-        dialogs: Arc<DesktopNativeDialogsProxy>,
-        reanalysis: mpsc::UnboundedSender<ReportJobId>,
-        database: PathBuf,
-        starters: Vec<DesktopDatasetStarter>,
-    ) -> Self {
+    pub fn new(options: DesktopNativeStudyDriverOptions) -> Self {
         Self {
-            host,
-            runtime,
-            wake,
-            dialogs,
-            reanalysis,
-            database,
-            starters,
+            host: options.host,
+            runtime: options.runtime,
+            wake: options.wake,
+            dialogs: options.dialogs,
+            reanalysis: options.reanalysis,
+            database: options.database,
+            starters: options.starters,
             state: Mutex::new(DesktopNativeStudyDriverState {
                 inflight: None,
                 last_run: None,

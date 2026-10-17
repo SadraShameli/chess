@@ -1,6 +1,7 @@
 use bevy_egui::egui::{self, Ui};
 
 use crate::desktop::dataset_commands::{DesktopDatasetRow, DesktopDatasetStarter};
+use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::storage::dataset_registry::{
     StorageDatasetId, StorageDatasetRegistryEnumKind, StorageDatasetRegistryEnumOrigin,
@@ -84,6 +85,7 @@ impl PresentationSettingsDatasets {
             let modal = egui::Modal::new(egui::Id::new("settings.datasets.delete")).show(
                 ui.ctx(),
                 |ui| {
+                    PresentationAnalysisEditorModal::label(ui, "Delete this dataset");
                     ui.heading("Delete this dataset?");
                     ui.label("Saved history keeps its puzzle and game snapshots. Active work blocks deletion.");
                     cancel = ui.button("Keep Dataset").clicked();
@@ -110,9 +112,10 @@ impl PresentationSettingsDatasets {
             StorageDatasetRegistryEnumOrigin::Starter => "Packaged starter",
             StorageDatasetRegistryEnumOrigin::Personal => "Personal",
         };
-        let records = row
-            .records
-            .map_or_else(|| "record count unavailable".to_owned(), |count| format!("{count} records"));
+        let records = row.records.map_or_else(
+            || "record count unavailable".to_owned(),
+            |count| format!("{count} records"),
+        );
         ui.label(format!(
             "{} {}: {origin}, {records}, license {}",
             row.name, row.version, row.license

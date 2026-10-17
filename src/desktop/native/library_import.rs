@@ -2,22 +2,22 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::capacity::executor::CapacityExecutor;
-use crate::desktop::library_service::DesktopLibraryServiceImports;
 #[cfg(any(unix, windows))]
 use crate::desktop::library_service::DesktopLibraryServiceImportStorage;
+use crate::desktop::library_service::DesktopLibraryServiceImports;
 #[cfg(any(unix, windows))]
 use crate::game::enums::{GameId, GameIdentityError, GameMoveId};
 use crate::game::storage_repository::GameStorageWallTimeProvider;
 use crate::storage::document_store::StorageDocumentClient;
+#[cfg(unix)]
+use crate::storage::import_session::StorageImportSessionUnixSpace;
+#[cfg(windows)]
+use crate::storage::import_session::StorageImportSessionWindowsSpace;
 #[cfg(any(unix, windows))]
 use crate::storage::import_session::{
     StorageImportSessionDestination, StorageImportSessionFilesystem,
     StorageImportSessionIdentityProvider, StorageImportSessionResources,
 };
-#[cfg(unix)]
-use crate::storage::import_session::StorageImportSessionUnixSpace;
-#[cfg(windows)]
-use crate::storage::import_session::StorageImportSessionWindowsSpace;
 #[cfg(any(unix, windows))]
 use crate::storage::library_import::StorageLibraryImportRepository;
 
@@ -70,10 +70,8 @@ impl DesktopNativeLibraryImport {
     fn filesystem(
         staging: &Path,
         data_directory: &Path,
-    ) -> Result<
-        Arc<StorageImportSessionFilesystem<StorageImportSessionWindowsSpace>>,
-        std::io::Error,
-    > {
+    ) -> Result<Arc<StorageImportSessionFilesystem<StorageImportSessionWindowsSpace>>, std::io::Error>
+    {
         let stage = Self::open_directory(staging)?;
         let library = Self::open_directory(data_directory)?;
         let space = StorageImportSessionWindowsSpace::new(staging, data_directory)

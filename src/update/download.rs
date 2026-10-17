@@ -68,7 +68,9 @@ impl<H: UpdateHttp> UpdateDownloader<H> {
     ) -> Result<(), UpdateDownloadError> {
         let length = request.asset.length();
         if length > UpdateManifest::MAX_PACKAGE_BYTES {
-            return Err(UpdateDownloadError::TooLarge(UpdateManifest::MAX_PACKAGE_BYTES));
+            return Err(UpdateDownloadError::TooLarge(
+                UpdateManifest::MAX_PACKAGE_BYTES,
+            ));
         }
         let parent = request.partial.parent().unwrap_or_else(|| Path::new("."));
         let required = length.saturating_add(Self::SPACE_MARGIN_BYTES);
@@ -119,7 +121,10 @@ impl<H: UpdateHttp> UpdateDownloader<H> {
         if head.status != 200 {
             return Err(UpdateDownloadError::Status(head.status));
         }
-        if head.content_length.is_some_and(|declared| declared != length) {
+        if head
+            .content_length
+            .is_some_and(|declared| declared != length)
+        {
             return Err(UpdateDownloadError::Mismatch);
         }
         let mut file = tokio::fs::File::create(request.partial).await?;
@@ -141,7 +146,9 @@ impl<H: UpdateHttp> UpdateDownloader<H> {
                 break;
             };
             received = received
-                .checked_add(u64::try_from(chunk.len()).map_err(|_error| UpdateDownloadError::Mismatch)?)
+                .checked_add(
+                    u64::try_from(chunk.len()).map_err(|_error| UpdateDownloadError::Mismatch)?,
+                )
                 .ok_or(UpdateDownloadError::Mismatch)?;
             if received > length {
                 return Err(UpdateDownloadError::Mismatch);

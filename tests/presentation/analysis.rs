@@ -1,12 +1,12 @@
 #[path = "analysis/fixture.rs"]
 mod fixture;
 
-use strum::IntoEnumIterator;
 use bevy_egui::egui;
 use egui_kittest::{
     Harness,
     kittest::{NodeT, Queryable},
 };
+use strum::IntoEnumIterator;
 
 use chess::board::position::BoardPosition;
 use chess::desktop::error::{DesktopEnumFailureCode, DesktopFailure};

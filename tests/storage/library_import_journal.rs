@@ -168,7 +168,7 @@ impl StorageLibraryImportJournalStatements {
                     1,
                     token,
                 )?;
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(fixture.statements()?)
+                fixture.statements()
             })
             .await?;
         let result = job.join().await;

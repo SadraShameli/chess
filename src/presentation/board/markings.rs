@@ -212,6 +212,14 @@ pub struct PresentationBoardMarkings {
     entry_invalid: bool,
 }
 
+pub struct PresentationBoardMarkingsInput<'i, P> {
+    pub enabled: bool,
+    pub picker: &'i mut P,
+    pub hovered: bool,
+    pub scene: &'i PresentationBoardScene,
+    pub viewport: ScenePickingViewport,
+}
+
 impl PresentationBoardMarkings {
     const KINDS: [BoardEnumPieceKind; 6] = [
         BoardEnumPieceKind::Queen,
@@ -313,12 +321,15 @@ impl PresentationBoardMarkings {
     pub fn handle_input<P: PresentationBoardPickingProvider>(
         &mut self,
         ui: &Ui,
-        enabled: bool,
-        picker: &mut P,
-        hovered: bool,
-        scene: &PresentationBoardScene,
-        viewport: ScenePickingViewport,
+        input: PresentationBoardMarkingsInput<'_, P>,
     ) -> Result<(), SceneRendererError> {
+        let PresentationBoardMarkingsInput {
+            enabled,
+            picker,
+            hovered,
+            scene,
+            viewport,
+        } = input;
         let (pressed, released, point, modifiers, escape) = ui.input(|input| {
             (
                 input.pointer.button_pressed(egui::PointerButton::Secondary),
@@ -608,26 +619,21 @@ impl PresentationBoardMarkings {
                 ) else {
                     return;
                 };
-                Self::paint_arrow(
-                    painter,
-                    from.center(),
-                    to.center(),
-                    from.width(),
-                    color,
-                    saved,
-                );
+                Self::paint_arrow(painter, from, to, color, saved);
             }
         }
     }
 
     fn paint_arrow(
         painter: &Painter,
-        from: Pos2,
-        to: Pos2,
-        square_width: f32,
+        origin: egui::Rect,
+        destination: egui::Rect,
         color: PresentationBoardMarkColor,
         saved: bool,
     ) {
+        let from = origin.center();
+        let to = destination.center();
+        let square_width = origin.width();
         let direction = to - from;
         let length = direction.length();
         if length <= f32::EPSILON {

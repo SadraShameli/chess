@@ -59,7 +59,10 @@ fn context_bindings_cover_notation_editor_puzzle_and_promotion_keys() {
         "Redo",
         "Promote to queen",
     ] {
-        assert!(bindings.iter().any(|binding| binding.action() == action), "{action}");
+        assert!(
+            bindings.iter().any(|binding| binding.action() == action),
+            "{action}"
+        );
     }
 }
 
@@ -86,6 +89,8 @@ fn remapping_onto_a_focused_context_key_is_refused() {
             DesktopPreferencesEnumShortcutAction::FlipBoard,
             plain_p,
         ),
-        Err(PresentationSettingsShortcutError::ContextConflict("Pause or resume"))
+        Err(PresentationSettingsShortcutError::ContextConflict(
+            "Pause or resume"
+        ))
     );
 }

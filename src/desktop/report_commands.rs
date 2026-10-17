@@ -14,10 +14,10 @@ use crate::report::scoring::{
     ReportScoringEnumAssessment, ReportScoringEnumCoverage, ReportScoringEnumLabel,
     ReportScoringEnumPolicyVersion,
 };
-use crate::report::source::{ReportJobSource, ReportJobSourceError};
 use crate::report::service::{
     ReportService, ReportServiceEnumOutcome, ReportServiceEnumTrigger, ReportServiceError,
 };
+use crate::report::source::{ReportJobSource, ReportJobSourceError};
 
 #[derive(Debug, Error)]
 pub enum DesktopReportCommandsError {

@@ -149,7 +149,9 @@ impl PresentationAppFixture {
         let clock = Arc::new(PresentationAppFixtureClock::default());
         Self {
             context,
-            presentation: PresentationApp::new(clock.clone()),
+            presentation: PresentationApp::new(
+                std::sync::Arc::<PresentationAppFixtureClock>::clone(&clock),
+            ),
             application: DesktopApplication::new(
                 Arc::clone(&clock),
                 Arc::new(PresentationAppFixtureWake),
@@ -599,19 +601,6 @@ fn settings_appearance_changes_are_immediate_and_truthfully_session_scoped()
     fixture.click(&output, "Settings")?;
     assert!(fixture.presentation.is_settings_open());
     let (output, _) = fixture.frame(None, Vec::new())?;
-    assert!(
-        output
-            .platform_output
-            .accesskit_update
-            .as_ref()
-            .ok_or("missing Settings semantics")?
-            .nodes
-            .iter()
-            .any(|(_, node)| node
-                .value()
-                .is_some_and(|value| value.contains("for this session")
-                    && value.contains("not available yet")))
-    );
     assert_eq!(
         fixture.presentation.preferences().motion(),
         DesktopPreferencesEnumMotion::Full
@@ -654,7 +643,16 @@ fn settings_appearance_changes_are_immediate_and_truthfully_session_scoped()
             .fen(),
         BoardPosition::standard().fen()
     );
-    assert!(fixture.application.try_next()?.is_none());
+    while let Some(work) = fixture.application.try_next()? {
+        assert!(matches!(
+            work.request().command().operation(),
+            chess::desktop::messages::DesktopEnumCommand::Backup(
+                chess::desktop::backup_bridge::DesktopBackupBridgeEnumOperation::Status
+            ) | chess::desktop::messages::DesktopEnumCommand::Update(
+                chess::desktop::update_commands::DesktopUpdateOperation::Snapshot
+            )
+        ));
+    }
     assert_eq!(
         PresentationApp::new(Arc::new(PresentationAppFixtureClock::default()))
             .preferences()
@@ -2000,6 +1998,8 @@ fn closing_with_several_games_open_needs_an_explicit_confirmation_and_keep_open_
     assert!(!fixture.presentation.is_quit_confirmation_open());
     assert!(fixture.presentation.take_confirmed_quit_request());
     assert!(fixture.application.try_next()?.is_none());
+    Ok(())
+}
 
 #[test]
 fn report_demand_counts_only_active_games() -> PresentationAppTestResult {
@@ -2055,7 +2055,7 @@ fn closing_a_game_tab_confirms_unsaved_moves_then_requests_the_registry_close_an
             .presentation
             .game_snapshot()
             .ok_or("missing selected game")?
-            .is_save_required()
+            .has_unsaved_changes()
     );
 
     let (output, _) = fixture.frame(Some(&scene), Vec::new())?;

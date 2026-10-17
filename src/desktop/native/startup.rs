@@ -11,13 +11,13 @@ use crate::desktop::profile::installation::{
 use crate::desktop::profile::owner_record::{
     DesktopProfileOwnerRecord, DesktopProfileOwnerRecordError,
 };
-use crate::update::recovery::{
-    UpdateRecovery, UpdateRecoveryEnumDecision, UpdateRecoveryIntent, UpdateRecoveryObservation,
-};
 use crate::desktop::profile::{
     DesktopProfileAdmission, DesktopProfileEnumAdmission, DesktopProfileError, DesktopProfileId,
     DesktopProfileIdentity, DesktopProfileLease, DesktopProfileLockProvider,
     DesktopProfileSecurity,
+};
+use crate::update::recovery::{
+    UpdateRecovery, UpdateRecoveryEnumDecision, UpdateRecoveryIntent, UpdateRecoveryObservation,
 };
 
 #[derive(Debug, Error)]
@@ -148,10 +148,12 @@ impl<L: DesktopProfileLockProvider> DesktopNativeStartup<L> {
     fn helper_running() -> bool {
         let mut system = sysinfo::System::new();
         system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-        system
-            .processes()
-            .values()
-            .any(|process| process.name().to_string_lossy().contains("chess-update-helper"))
+        system.processes().values().any(|process| {
+            process
+                .name()
+                .to_string_lossy()
+                .contains("chess-update-helper")
+        })
     }
 
     pub fn inspect_existing_owner(

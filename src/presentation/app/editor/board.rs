@@ -5,7 +5,9 @@ use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::application::{DesktopApplicationPort, DesktopApplicationWakeProvider};
 use crate::desktop::editor_commands::DesktopEditorCommandsSnapshot;
 use crate::presentation::app::editor::{PresentationAppEditor, PresentationAppEditorError};
-use crate::presentation::board::markings::PresentationBoardMarkings;
+use crate::presentation::board::markings::{
+    PresentationBoardMarkings, PresentationBoardMarkingsInput,
+};
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::board::view::{
@@ -165,11 +167,13 @@ impl PresentationAppEditor {
             markings
                 .handle_input(
                     ui,
-                    input_marks_enabled,
-                    &mut *picker,
-                    response.contains_pointer(),
-                    scene,
-                    viewport,
+                    PresentationBoardMarkingsInput {
+                        enabled: input_marks_enabled,
+                        picker: &mut *picker,
+                        hovered: response.contains_pointer(),
+                        scene,
+                        viewport,
+                    },
                 )
                 .map_err(PresentationBoardViewError::from)?;
         } else {

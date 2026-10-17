@@ -33,8 +33,11 @@ impl PresentationSettingsUpdateInstall {
     pub fn show_confirmation(ui: &mut Ui, confirmed: &mut bool) -> bool {
         ui.label(Self::CONFIRMATION);
         ui.checkbox(confirmed, "I understand");
-        ui.add_enabled(*confirmed, bevy_egui::egui::Button::new("Install and relaunch"))
-            .clicked()
+        ui.add_enabled(
+            *confirmed,
+            bevy_egui::egui::Button::new("Install and relaunch"),
+        )
+        .clicked()
     }
 
     pub fn show_recovery(ui: &mut Ui, block: UpdateRecoveryEnumBlock) {

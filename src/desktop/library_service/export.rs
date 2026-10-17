@@ -2,8 +2,8 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use crate::desktop::annotation_owner::DesktopAnnotationOwnerResources;
-use crate::desktop::library_service::file::DesktopLibraryServiceFile;
 use crate::desktop::library_service::DesktopLibraryServiceError;
+use crate::desktop::library_service::file::DesktopLibraryServiceFile;
 use crate::game::enums::GameId;
 use crate::game::storage_repository::GameStorageRevision;
 use crate::notation::pgn_export::{NotationPgnExport, NotationPgnExportEnumSelection};
@@ -55,11 +55,10 @@ impl DesktopLibraryServiceExport {
         self,
         resources: DesktopAnnotationOwnerResources,
     ) -> Result<u64, DesktopLibraryServiceError> {
-        let loaded =
-            StorageLibraryRepository::new(resources.client.clone(), &resources.executor)
-                .load(self.game)
-                .await?
-                .ok_or(StorageLibraryError::MissingGame(self.game))?;
+        let loaded = StorageLibraryRepository::new(resources.client.clone(), &resources.executor)
+            .load(self.game)
+            .await?
+            .ok_or(StorageLibraryError::MissingGame(self.game))?;
         if loaded.location() != StorageTrashEnumLocation::Library {
             return Err(StorageLibraryError::InTrash(self.game).into());
         }

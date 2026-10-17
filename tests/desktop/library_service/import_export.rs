@@ -145,11 +145,10 @@ async fn import_session_is_single_active_and_cancel_releases_it() -> DesktopLibr
 {
     let fixture = DesktopLibraryServiceFixture::new().await?;
     let cancelled = Arc::new(AtomicBool::new(false));
-    let imports = DesktopLibraryServiceImports::new(Arc::new(
-        DesktopLibraryServiceImportFakeBackend {
+    let imports =
+        DesktopLibraryServiceImports::new(Arc::new(DesktopLibraryServiceImportFakeBackend {
             cancelled: Arc::clone(&cancelled),
-        },
-    ));
+        }));
     let source = fixture.directory.path().join("games.pgn");
     std::fs::write(&source, "1. e4 *\n")?;
     let missing = imports

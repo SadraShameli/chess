@@ -296,8 +296,9 @@ impl EnginePackagePlatform {
                         .flatten()
                         .filter(|entry| {
                             entry.file_name().to_str().is_some_and(|name| {
-                                name.strip_prefix("node")
-                                    .is_some_and(|rest| rest.bytes().all(|byte| byte.is_ascii_digit()))
+                                name.strip_prefix("node").is_some_and(|rest| {
+                                    rest.bytes().all(|byte| byte.is_ascii_digit())
+                                })
                             })
                         })
                         .count()

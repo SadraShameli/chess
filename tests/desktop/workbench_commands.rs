@@ -1,8 +1,8 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use strum::IntoEnumIterator;
 
 use chess::capacity::budget::CapacityBudget;
 use chess::clock::duration::ClockInstant;

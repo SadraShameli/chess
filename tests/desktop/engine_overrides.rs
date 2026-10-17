@@ -7,7 +7,8 @@ use chess::engine::configuration::EngineConfigurationOverrides;
 type DesktopEngineOverridesTestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
-fn overrides_are_bounded_by_the_automatic_policy_and_none_keeps_it() -> DesktopEngineOverridesTestResult {
+fn overrides_are_bounded_by_the_automatic_policy_and_none_keeps_it()
+-> DesktopEngineOverridesTestResult {
     let base = DesktopNativeGameResourcesPolicy::new(4, 256)?;
     let kept = base.with_overrides(EngineConfigurationOverrides {
         threads: None,

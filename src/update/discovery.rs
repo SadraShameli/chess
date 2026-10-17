@@ -9,7 +9,9 @@ use crate::update::credentials::UpdateCredential;
 use crate::update::http::{
     UpdateHttp, UpdateHttpError, UpdateHttpHead, UpdateHttpRequest, UpdateHttpStream,
 };
-use crate::update::manifest::{UpdateManifest, UpdateManifestAsset, UpdateManifestError, UpdateTarget};
+use crate::update::manifest::{
+    UpdateManifest, UpdateManifestAsset, UpdateManifestError, UpdateTarget,
+};
 use crate::update::state::UpdateReleaseIdentity;
 use crate::update::verifier::UpdateSignatureVerifier;
 
@@ -180,12 +182,7 @@ impl<H: UpdateHttp, V: UpdateSignatureVerifier> UpdateDiscovery<H, V> {
     pub const SIGNATURE_NAME: &'static str = "manifest.json.minisig";
     const METADATA_BYTES: u64 = 1024 * 1024;
 
-    pub fn new(
-        http: H,
-        verifier: V,
-        repository: UpdateRepository,
-        origins: UpdateOrigins,
-    ) -> Self {
+    pub fn new(http: H, verifier: V, repository: UpdateRepository, origins: UpdateOrigins) -> Self {
         Self {
             http,
             verifier,

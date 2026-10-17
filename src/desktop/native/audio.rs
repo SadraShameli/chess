@@ -165,7 +165,8 @@ impl DesktopNativeAudioPort for DesktopNativeAudioBevy {
             self.pending.clear();
             return Err(DesktopNativeAudioError::ServiceFailed);
         }
-        self.pending.push(DesktopNativeAudioRequest { category, gain });
+        self.pending
+            .push(DesktopNativeAudioRequest { category, gain });
         Ok(())
     }
 }

@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::Future;
@@ -6,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 use std::time::Duration;
+use strum::IntoEnumIterator;
 
 use chess::engine::capabilities::EngineIdentity;
 use chess::engine::enums::EngineEnumOption;

@@ -1,8 +1,8 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::Future;
 use std::task::{Context, Waker};
+use strum::IntoEnumIterator;
 
 use chess::board::position::BoardPosition;
 use chess::clock::duration::ClockDuration;

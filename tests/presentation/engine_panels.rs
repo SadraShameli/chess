@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use chess::board::start::BoardStart;
 use chess::clock::duration::ClockInstant;
 use chess::clock::state::ClockState;
@@ -7,6 +6,7 @@ use chess::desktop::game_snapshot::DesktopGameSnapshot;
 use chess::game::enums::{GameEnumMode, GameEnumSeat};
 use chess::game::session::{GameMetadata, GameSeats, GameSession, GameSessionOptions};
 use chess::presentation::engine_panels::PresentationEnginePanels;
+use strum::IntoEnumIterator;
 
 type PresentationEnginePanelsTestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

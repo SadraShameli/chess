@@ -272,7 +272,9 @@ fn board_squares_accept_only_click_and_focus_action_requests() -> PresentationBo
     input.try_forward(request(Action::Focus), generation)?;
     assert!(matches!(
         input.try_forward(request(Action::Increment), generation),
-        Err(PresentationAccessibilityError::UnsupportedSquareAction(Action::Increment))
+        Err(PresentationAccessibilityError::UnsupportedSquareAction(
+            Action::Increment
+        ))
     ));
     Ok(())
 }
@@ -280,7 +282,10 @@ fn board_squares_accept_only_click_and_focus_action_requests() -> PresentationBo
 #[test]
 fn the_published_notation_preference_controls_displayed_san_and_move_lines() {
     let context = bevy_egui::egui::Context::default();
-    assert_eq!(PresentationBoardFigurines::display(&context, "Nf3", None), "Nf3");
+    assert_eq!(
+        PresentationBoardFigurines::display(&context, "Nf3", None),
+        "Nf3"
+    );
     PresentationBoardFigurines::publish(&context, DesktopPreferencesEnumNotation::Figurines);
     assert_eq!(
         PresentationBoardFigurines::display(&context, "Nf3", Some(BoardEnumColor::Black)),

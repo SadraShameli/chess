@@ -30,7 +30,8 @@ fn overview_rows_keep_stable_ordinals_turns_clocks_and_running_status()
         rows[0].status(),
         PresentationGameOverviewEnumStatus::Running
     );
-    assert_eq!(rows[0].tab_label(), "Game 1");
+    assert!(rows[0].is_unsaved());
+    assert_eq!(rows[0].tab_label(), "Game 1 *");
     assert_ne!(rows[0].turn(), rows[1].turn());
     assert!(rows[0].resources().is_none());
     assert_eq!(

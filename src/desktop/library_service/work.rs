@@ -6,16 +6,23 @@ use crate::desktop::annotation_commands::{
     DesktopAnnotationCommands, DesktopAnnotationCommandsEnumAction,
     DesktopAnnotationCommandsEnumResult,
 };
+use crate::desktop::annotation_owner::DesktopAnnotationOwnerError;
 use crate::desktop::annotation_owner::DesktopAnnotationOwnerResources;
 use crate::desktop::game_editor::{DesktopGameEditorEnumSource, DesktopGameEditorPublication};
+use crate::desktop::game_registry::{
+    DesktopGameRegistryCloseCertificate, DesktopGameRegistryCloseEnumObservation,
+};
 use crate::desktop::game_registry::{
     DesktopGameRegistryError, DesktopGameRegistryPort, DesktopGameRegistrySavedOpenReceipt,
 };
 use crate::desktop::game_supervisor::DesktopGameSupervisorEditorReceipt;
+use crate::desktop::library_commands::{
+    DesktopLibraryCommandsConfirmation, DesktopLibraryCommandsError,
+};
+use crate::desktop::library_service::import::DesktopLibraryServiceImports;
 use crate::desktop::library_service::notation::{
     DesktopLibraryServiceNotation, DesktopLibraryServiceNotationProjection,
 };
-use crate::desktop::library_service::import::DesktopLibraryServiceImports;
 use crate::desktop::library_service::played::DesktopLibraryServicePlayed;
 use crate::desktop::library_service::port::{
     DesktopLibraryServiceEnvelope, DesktopLibraryServiceResponse,
@@ -24,19 +31,8 @@ use crate::desktop::library_service::{
     DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumResult,
     DesktopLibraryServiceEnumSaveReceipt, DesktopLibraryServiceError,
 };
-use crate::desktop::annotation_owner::DesktopAnnotationOwnerError;
 use crate::game::library_organization::GameLibraryOrganizationRequest;
-use crate::desktop::game_registry::{
-    DesktopGameRegistryCloseCertificate, DesktopGameRegistryCloseEnumObservation,
-};
-use crate::desktop::library_commands::{
-    DesktopLibraryCommandsConfirmation, DesktopLibraryCommandsError,
-};
 use crate::game::library_organization::GameLibraryOrganizationTimestamp;
-use crate::storage::trash::{
-    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
-    StorageTrashReceipt, StorageTrashRestoreRequest,
-};
 use crate::storage::library_metadata::StorageLibraryMetadataRepository;
 use crate::storage::library_query::StorageLibraryQuery;
 use crate::storage::library_record::StorageLibraryEnumContent;
@@ -44,6 +40,10 @@ use crate::storage::library_repository::{
     StorageLibraryEnumMutationReceipt, StorageLibraryError, StorageLibraryRepository,
 };
 use crate::storage::trash::StorageTrashEnumLocation;
+use crate::storage::trash::{
+    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
+    StorageTrashReceipt, StorageTrashRestoreRequest,
+};
 
 pub(super) struct DesktopLibraryServiceWork {
     pub(super) envelope: DesktopLibraryServiceEnvelope,
@@ -245,11 +245,9 @@ impl DesktopLibraryServiceWork {
                     imports.run(import).await?,
                 ))
             }
-            DesktopLibraryServiceEnumAction::Export(export) => {
-                Ok(DesktopLibraryServiceEnumResult::Exported(
-                    export.run(resources).await?,
-                ))
-            }
+            DesktopLibraryServiceEnumAction::Export(export) => Ok(
+                DesktopLibraryServiceEnumResult::Exported(export.run(resources).await?),
+            ),
             DesktopLibraryServiceEnumAction::PreviewTrash(request) => {
                 Ok(DesktopLibraryServiceEnumResult::TrashPlan(
                     StorageLibraryRepository::new(resources.client, &resources.executor)
@@ -266,7 +264,11 @@ impl DesktopLibraryServiceWork {
                     StorageLibraryEnumMutationReceipt::DestructionApplied(receipt) => {
                         Ok(DesktopLibraryServiceEnumResult::Trashed(receipt))
                     }
-                    _ => Err(StorageLibraryError::Protocol.into()),
+                    StorageLibraryEnumMutationReceipt::Saved(_)
+                    | StorageLibraryEnumMutationReceipt::Organized(_)
+                    | StorageLibraryEnumMutationReceipt::Restored(_) => {
+                        Err(StorageLibraryError::Protocol.into())
+                    }
                 }
             }
             DesktopLibraryServiceEnumAction::RemoveFolder(plan) => {
@@ -286,7 +288,11 @@ impl DesktopLibraryServiceWork {
                     StorageLibraryEnumMutationReceipt::DestructionApplied(receipt) => {
                         Ok(DesktopLibraryServiceEnumResult::Trashed(receipt))
                     }
-                    _ => Err(StorageLibraryError::Protocol.into()),
+                    StorageLibraryEnumMutationReceipt::Saved(_)
+                    | StorageLibraryEnumMutationReceipt::Organized(_)
+                    | StorageLibraryEnumMutationReceipt::Restored(_) => {
+                        Err(StorageLibraryError::Protocol.into())
+                    }
                 }
             }
             DesktopLibraryServiceEnumAction::ConfirmGameTrash {
@@ -346,7 +352,11 @@ impl DesktopLibraryServiceWork {
                     StorageLibraryEnumMutationReceipt::Restored(receipt) => {
                         Ok(DesktopLibraryServiceEnumResult::Restored(receipt))
                     }
-                    _ => Err(StorageLibraryError::Protocol.into()),
+                    StorageLibraryEnumMutationReceipt::Saved(_)
+                    | StorageLibraryEnumMutationReceipt::Organized(_)
+                    | StorageLibraryEnumMutationReceipt::DestructionApplied(_) => {
+                        Err(StorageLibraryError::Protocol.into())
+                    }
                 }
             }
             DesktopLibraryServiceEnumAction::Editor { expected, action } => {
@@ -378,6 +388,19 @@ impl DesktopLibraryServiceWork {
         timestamp: GameLibraryOrganizationTimestamp,
         resources: DesktopAnnotationOwnerResources,
     ) -> Result<StorageTrashReceipt, DesktopLibraryServiceError> {
+        let closed = certificate.storage_revision();
+        let plan = if plan.content_revision() == Some(closed) {
+            plan
+        } else {
+            let refreshed =
+                StorageLibraryRepository::new(resources.client.clone(), &resources.executor)
+                    .preview_destruction(plan.action())
+                    .await?;
+            if !plan.is_advanced_by_close(&refreshed, closed) {
+                return Err(StorageLibraryError::LifecycleRequired.into());
+            }
+            refreshed
+        };
         let request = DesktopLibraryCommandsConfirmation::confirm(plan)
             .prepare(certificate, timestamp)
             .map_err(|error| match error {
@@ -394,7 +417,11 @@ impl DesktopLibraryServiceWork {
             .await?
         {
             StorageLibraryEnumMutationReceipt::DestructionApplied(receipt) => Ok(receipt),
-            _ => Err(StorageLibraryError::Protocol.into()),
+            StorageLibraryEnumMutationReceipt::Saved(_)
+            | StorageLibraryEnumMutationReceipt::Organized(_)
+            | StorageLibraryEnumMutationReceipt::Restored(_) => {
+                Err(StorageLibraryError::Protocol.into())
+            }
         }
     }
 

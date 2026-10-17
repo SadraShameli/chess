@@ -30,7 +30,10 @@ impl StorageDatasetIntegrityEnumFeature {
 pub enum StorageDatasetIntegrityEnumProblem {
     Missing,
     Unreadable,
-    SizeMismatch { expected: u64, actual: u64 },
+    SizeMismatch {
+        expected: u64,
+        actual: u64,
+    },
     ChecksumMismatch {
         expected: PackageDigest,
         actual: PackageDigest,
@@ -89,7 +92,10 @@ impl StorageDatasetIntegrityReport {
     }
 
     pub fn affected(&self) -> BTreeSet<StorageDatasetIntegrityEnumFeature> {
-        self.findings.iter().map(|finding| finding.feature).collect()
+        self.findings
+            .iter()
+            .map(|finding| finding.feature)
+            .collect()
     }
 
     pub fn ensure_available(

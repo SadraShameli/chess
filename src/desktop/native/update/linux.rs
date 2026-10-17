@@ -32,7 +32,10 @@ impl DesktopNativeUpdateLinux {
         if path.canonicalize()? != path {
             return Err(unsafe_path());
         }
-        if path.extension().is_none_or(|extension| extension != "AppImage") {
+        if path
+            .extension()
+            .is_none_or(|extension| extension != "AppImage")
+        {
             return Err(unsafe_path());
         }
         Ok(path.to_path_buf())
@@ -133,7 +136,10 @@ impl DesktopNativeUpdateLinux {
             .tempdir_in(Self::PRIVATE_TEMPORARY)?;
         let copy = directory.path().join("package.deb");
         DesktopNativeUpdateStaging::copy_verified(package, digest, &copy)?;
-        let status = Command::new(Self::DPKG).arg("--install").arg(&copy).status()?;
+        let status = Command::new(Self::DPKG)
+            .arg("--install")
+            .arg(&copy)
+            .status()?;
         if status.success() {
             Ok(())
         } else {

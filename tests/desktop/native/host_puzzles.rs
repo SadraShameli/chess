@@ -31,7 +31,6 @@ use crate::desktop::native::host::{
     DesktopNativeHostEnumQuit, DesktopNativeHostEnumTeardown, DesktopNativeHostServices,
     DesktopNativeHostState,
 };
-use crate::presentation::timing::PresentationTimingSampler;
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
 use crate::desktop::native::puzzle_service::{
     DesktopNativePuzzleService, DesktopNativePuzzleServiceOptions,
@@ -53,6 +52,7 @@ use crate::presentation::app::{PresentationApp, PresentationAppEnumWorkspace};
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
+use crate::presentation::timing::PresentationTimingSampler;
 use crate::puzzle::definition::PuzzleDefinition;
 use crate::puzzle::enums::PuzzleEnumCountdownMode;
 use crate::puzzle::identity::PuzzleDefinitionIdentity;
@@ -317,6 +317,7 @@ impl DesktopNativeHostPuzzleFixture {
                 events,
                 budget,
                 dialog_ready,
+                timing_export: None,
                 clock: Arc::clone(&clock),
                 games: None,
                 layout: crate::desktop::layout::DesktopLayout::default(),

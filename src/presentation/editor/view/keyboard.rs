@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use bevy_egui::egui::{Key, Modifiers, Ui};
+use strum::IntoEnumIterator;
 
 use crate::board::enums::BoardEnumPieceKind;
 use crate::desktop::editor_commands::DesktopEditorCommandsEnumOperation;

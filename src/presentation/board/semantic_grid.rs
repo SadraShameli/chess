@@ -1,6 +1,6 @@
-use strum::IntoEnumIterator;
 use bevy::math::Vec3;
 use bevy_egui::egui::{self, Id, Key, Rect, Sense, Ui, UiBuilder, accesskit};
+use strum::IntoEnumIterator;
 
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind};
 use crate::board::square::BoardSquare;

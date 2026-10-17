@@ -14,7 +14,6 @@ use chess::board::position::BoardPosition;
 use chess::capacity::budget::CapacityBudget;
 use chess::capacity::executor::CapacityExecutor;
 use chess::clock::duration::ClockInstant;
-use chess::desktop::native::library_startup::DesktopNativeLibraryStartup;
 use chess::game::enums::{GameId, GameIdentityError, GameMoveId};
 use chess::game::library_organization::GameLibraryOrganizationTimestamp;
 use chess::game::session::GameMetadataText;
@@ -325,8 +324,7 @@ impl StorageBenchFixture {
             StorageLibraryEnumMutationReceipt::Saved(receipt) => Ok(receipt.content_revision()),
             StorageLibraryEnumMutationReceipt::Organized(_)
             | StorageLibraryEnumMutationReceipt::DestructionApplied(_)
-            | StorageLibraryEnumMutationReceipt::Restored(_)
-            | StorageLibraryEnumMutationReceipt::Adopted(_) => {
+            | StorageLibraryEnumMutationReceipt::Restored(_) => {
                 Err("unexpected library receipt".into())
             }
         }
@@ -388,12 +386,6 @@ impl StorageBenchRunner {
             )
             .await?;
         }
-        let mut startup = DesktopNativeLibraryStartup::new(
-            environment.store.client(),
-            Arc::clone(&environment.executor),
-            tokio::time::Instant::now() + Duration::from_secs(600),
-        );
-        startup.run().await?;
         let anchor = File::open(environment.directory.path())?;
         let filesystem = Arc::new(
             chess::storage::import_session::StorageImportSessionFilesystem::new(

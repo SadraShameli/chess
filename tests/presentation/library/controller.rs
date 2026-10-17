@@ -564,7 +564,11 @@ async fn organization_runs_in_its_own_lane_and_marks_the_page_for_resync()
             .ok_or("organize")?;
         let repeated = controller.organize(input, request)?.is_none();
         fixture.execute(&mut controller, &intent).await??;
-        Ok((repeated, controller.needs_resync(), controller.is_query_pending()))
+        Ok((
+            repeated,
+            controller.needs_resync(),
+            controller.is_query_pending(),
+        ))
     }
     .await;
     fixture.close().await?;
@@ -581,9 +585,7 @@ async fn trash_preview_runs_in_its_own_lane_without_resync() -> DesktopLibrarySe
         let mut controller = PresentationLibraryController::new(fixture.service.workspace);
         let input = DesktopRequestId::new();
         let request = crate::storage::trash::StorageTrashPreviewRequest::MoveToTrash(game);
-        let intent = controller
-            .preview_trash(input, request)?
-            .ok_or("preview")?;
+        let intent = controller.preview_trash(input, request)?.ok_or("preview")?;
         let repeated = controller.preview_trash(input, request)?.is_none();
         let busy = matches!(
             controller.preview_trash(DesktopRequestId::new(), request),

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use strum::{EnumCount, IntoEnumIterator};
 use serde::{Deserialize, Serialize};
+use strum::{EnumCount, IntoEnumIterator};
 
 use crate::storage::dataset_selection::{
     StorageDatasetSelection, StorageDatasetSelectionEnumSubset, StorageDatasetSelectionError,

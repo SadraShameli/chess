@@ -81,8 +81,16 @@ impl ToolsDataSelect {
         let sequences = games.finish()?;
         let master = sequences.master.prefix(master_prefix)?;
         let broad = sequences.broad.prefix(broad_prefix)?;
-        Self::write(&output.join("master.txt"), master.candidates().iter().map(|c| *c.handle()), master.digest())?;
-        Self::write(&output.join("broad.txt"), broad.candidates().iter().map(|c| *c.handle()), broad.digest())?;
+        Self::write(
+            &output.join("master.txt"),
+            master.candidates().iter().map(|c| *c.handle()),
+            master.digest(),
+        )?;
+        Self::write(
+            &output.join("broad.txt"),
+            broad.candidates().iter().map(|c| *c.handle()),
+            broad.digest(),
+        )?;
         Ok(ToolsDataSelectSummary {
             parsed,
             rejected,

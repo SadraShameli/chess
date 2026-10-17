@@ -14,7 +14,18 @@ pub enum DesktopLayoutError {
     Camera(#[from] SceneCameraError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+)]
 pub enum DesktopLayoutEnumTab {
     #[default]
     #[strum(serialize = "Game")]

@@ -17,7 +17,9 @@ pub enum StorageDatasetRegistryError {
     Duplicate,
     #[error("The dataset {0:?} is not installed")]
     Unknown(StorageDatasetId),
-    #[error("The dataset is referenced by {leases} active runs, queries, reports or history entries")]
+    #[error(
+        "The dataset is referenced by {leases} active runs, queries, reports or history entries"
+    )]
     InUse { leases: usize },
     #[error("A replacement must keep the kind and name and use a different version")]
     ReplacementMismatch,
@@ -222,7 +224,9 @@ impl StorageDatasetRegistry {
     ) -> Result<StorageDatasetId, StorageDatasetRegistryError> {
         let records = dataset
             .records
-            .map(|count| i32::try_from(count).map_err(|_error| StorageDatasetRegistryError::Corrupt))
+            .map(|count| {
+                i32::try_from(count).map_err(|_error| StorageDatasetRegistryError::Corrupt)
+            })
             .transpose()?;
         let inserted = diesel::insert_into(datasets::table)
             .values((
@@ -259,7 +263,11 @@ impl StorageDatasetRegistry {
         connection: &mut SqliteConnection,
     ) -> Result<Vec<StorageDatasetRegistryEntry>, StorageDatasetRegistryError> {
         datasets::table
-            .order((datasets::kind.asc(), datasets::name.asc(), datasets::version.asc()))
+            .order((
+                datasets::kind.asc(),
+                datasets::name.asc(),
+                datasets::version.asc(),
+            ))
             .select((
                 datasets::dataset_id,
                 datasets::kind,
@@ -439,9 +447,9 @@ impl StorageDatasetRegistry {
         request: StorageDatasetRegistryEnumRequest,
     ) -> Result<StorageDatasetRegistryEnumResponse, StorageDatasetRegistryError> {
         match request {
-            StorageDatasetRegistryEnumRequest::List => {
-                Ok(StorageDatasetRegistryEnumResponse::Entries(Self::list(connection)?))
-            }
+            StorageDatasetRegistryEnumRequest::List => Ok(
+                StorageDatasetRegistryEnumResponse::Entries(Self::list(connection)?),
+            ),
             StorageDatasetRegistryEnumRequest::LeaseActive {
                 kind,
                 holder,
@@ -485,7 +493,9 @@ impl StorageDatasetRepository {
         Self { client }
     }
 
-    pub async fn list(&self) -> Result<Vec<StorageDatasetRegistryEntry>, StorageDatasetRegistryError> {
+    pub async fn list(
+        &self,
+    ) -> Result<Vec<StorageDatasetRegistryEntry>, StorageDatasetRegistryError> {
         match self
             .client
             .dataset_registry(StorageDatasetRegistryEnumRequest::List)

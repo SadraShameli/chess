@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::collections::BTreeMap;
+use strum::IntoEnumIterator;
 
 use bevy_egui::egui::{self, Ui};
 
@@ -9,9 +9,6 @@ use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use crate::engine::options::EngineOptionsEnumValue;
 use crate::engine::package::manifest::EnginePackageManifest;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
-use crate::presentation::workbench::engine_information::{
-    PresentationWorkbenchEngineInformation, PresentationWorkbenchEngineInformationEnumState,
-};
 use crate::presentation::workbench::configuration::{
     PresentationWorkbenchConfiguration, PresentationWorkbenchConfigurationError,
 };
@@ -19,6 +16,9 @@ use crate::presentation::workbench::controller::{
     PresentationWorkbenchController, PresentationWorkbenchControllerContext,
     PresentationWorkbenchControllerEnumAdmission, PresentationWorkbenchControllerError,
     PresentationWorkbenchControllerIntent,
+};
+use crate::presentation::workbench::engine_information::{
+    PresentationWorkbenchEngineInformation, PresentationWorkbenchEngineInformationEnumState,
 };
 use crate::presentation::workbench::snapshot::{
     PresentationWorkbenchJobSnapshot, PresentationWorkbenchSnapshot,

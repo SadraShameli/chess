@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::path::Path;
+use strum::IntoEnumIterator;
 
 use thiserror::Error;
 use tokio::runtime::Builder;
@@ -138,7 +138,9 @@ impl NativeEngineOptionsHarness {
                         EngineOptionsSetting::new(value, session.identity().capabilities())?;
                     session.configure_option(setting).await?;
                 }
-                if covered != EngineEnumOption::iter().collect::<Vec<_>>() || session.generation() != generation {
+                if covered != EngineEnumOption::iter().collect::<Vec<_>>()
+                    || session.generation() != generation
+                {
                     return Err(NativeEngineOptionsError::Invariant(
                         "registry coverage and stable process generation",
                     ));

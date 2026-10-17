@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::collections::{BTreeMap, btree_map::Entry};
+use strum::IntoEnumIterator;
 
 use thiserror::Error;
 

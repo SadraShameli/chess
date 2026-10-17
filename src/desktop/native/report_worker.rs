@@ -19,20 +19,30 @@ use crate::report::source::ReportJobSourceLimits;
 
 pub struct DesktopNativeReportWorker;
 
+pub struct DesktopNativeReportWorkerOptions<P: EngineProcess> {
+    pub host: Arc<DesktopNativeReportHost>,
+    pub session: EngineSearchSession<P>,
+    pub games: watch::Receiver<Vec<DesktopGameSnapshot>>,
+    pub capacity: Arc<Mutex<CapacityPhase>>,
+    pub done: watch::Receiver<bool>,
+    pub reanalysis: mpsc::UnboundedReceiver<ReportJobId>,
+}
+
 impl DesktopNativeReportWorker {
     pub const TICK: Duration = Duration::from_millis(500);
     pub const SOURCE_POSITIONS: u32 = 10_000;
     pub const SOURCE_BYTES: u64 = 256 * 1024 * 1024;
     pub const SHUTDOWN: Duration = Duration::from_secs(3);
 
-    pub async fn run<P: EngineProcess>(
-        host: Arc<DesktopNativeReportHost>,
-        mut session: EngineSearchSession<P>,
-        mut games: watch::Receiver<Vec<DesktopGameSnapshot>>,
-        capacity: Arc<Mutex<CapacityPhase>>,
-        mut done: watch::Receiver<bool>,
-        mut reanalysis: mpsc::UnboundedReceiver<ReportJobId>,
-    ) {
+    pub async fn run<P: EngineProcess>(options: DesktopNativeReportWorkerOptions<P>) {
+        let DesktopNativeReportWorkerOptions {
+            host,
+            mut session,
+            mut games,
+            capacity,
+            mut done,
+            mut reanalysis,
+        } = options;
         let mut reported: HashSet<GameId> = HashSet::new();
         let mut reanalysis_open = true;
         loop {

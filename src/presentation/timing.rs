@@ -54,7 +54,8 @@ impl PresentationTimingSampler {
         }
         self.last_presented = Some(presented);
         while let Some(received) = self.pending_inputs.pop_front() {
-            self.input_latencies.push(presented.elapsed_since(received)?);
+            self.input_latencies
+                .push(presented.elapsed_since(received)?);
         }
         Ok(())
     }
@@ -91,7 +92,13 @@ impl PresentationTimingSampler {
         let list = |samples: &[ClockDuration]| {
             let values: Vec<String> = samples
                 .iter()
-                .map(|sample| format!("{}.{:06}", sample.as_nanos() / 1_000_000, sample.as_nanos() % 1_000_000))
+                .map(|sample| {
+                    format!(
+                        "{}.{:06}",
+                        sample.as_nanos() / 1_000_000,
+                        sample.as_nanos() % 1_000_000
+                    )
+                })
                 .collect();
             format!("[{}]", values.join(","))
         };

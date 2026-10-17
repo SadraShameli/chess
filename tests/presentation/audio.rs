@@ -206,8 +206,5 @@ fn alert_flags_round_trip_through_the_persisted_clock_warnings() {
     let mut alerts = GameAlertsLowTime::default();
     assert!(alerts.observe(BoardEnumColor::Black, ClockDuration::from_nanos(1)));
     alerts.merge_into(&mut clock);
-    assert_eq!(
-        GameAlertsLowTime::from_clock(&clock).flags(),
-        (false, true)
-    );
+    assert_eq!(GameAlertsLowTime::from_clock(&clock).flags(), (false, true));
 }

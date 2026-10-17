@@ -1846,8 +1846,7 @@ where
             .and_then(|engine| engine.allocation_view())
             .map(|view| DesktopGameSnapshotAllocation::new(view.workers(), view.hash_mib()));
         self.events.send_if_modified(|event| {
-            if event.snapshot.admission() == admission
-                && event.snapshot.allocation() == allocation
+            if event.snapshot.admission() == admission && event.snapshot.allocation() == allocation
             {
                 return false;
             }

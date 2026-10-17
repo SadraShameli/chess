@@ -4,9 +4,6 @@ use thiserror::Error;
 
 use crate::board::r#move::BoardMoveError;
 use crate::board::position::{BoardPosition, BoardPositionIdentity};
-use crate::opening::corpus::{OpeningCorpus, OpeningCorpusError, OpeningCorpusLimits};
-use crate::opening::query::{OpeningQuery, OpeningQueryFilters};
-use crate::opening::statistics::{OpeningStatistics, OpeningStatisticsResult};
 
 #[derive(Debug, Error)]
 pub enum OpeningExplorerError {
@@ -14,8 +11,6 @@ pub enum OpeningExplorerError {
     Definition,
     #[error(transparent)]
     Move(#[from] BoardMoveError),
-    #[error(transparent)]
-    Corpus(#[from] OpeningCorpusError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,46 +99,5 @@ impl OpeningExplorerNames {
         line.iter()
             .rev()
             .find_map(|position| self.deepest(position))
-    }
-}
-
-pub struct OpeningExplorerResult<'a, 'n> {
-    statistics: OpeningStatisticsResult<'a>,
-    label: Option<&'n OpeningExplorerLabel>,
-}
-
-impl<'a, 'n> OpeningExplorerResult<'a, 'n> {
-    pub const fn statistics(&self) -> &OpeningStatisticsResult<'a> {
-        &self.statistics
-    }
-
-    pub const fn label(&self) -> Option<&'n OpeningExplorerLabel> {
-        self.label
-    }
-}
-
-pub struct OpeningExplorer<'n> {
-    names: &'n OpeningExplorerNames,
-}
-
-impl<'n> OpeningExplorer<'n> {
-    pub const fn new(names: &'n OpeningExplorerNames) -> Self {
-        Self { names }
-    }
-
-    pub fn query<'a>(
-        &self,
-        corpora: &[&'a OpeningCorpus<'a>],
-        line: &[BoardPosition],
-        filters: OpeningQueryFilters,
-        limits: OpeningCorpusLimits,
-        cancelled: impl FnMut() -> bool,
-    ) -> Result<OpeningExplorerResult<'a, 'n>, OpeningExplorerError> {
-        let position = line.last().ok_or(OpeningExplorerError::Definition)?;
-        let query = OpeningQuery::new(position, filters)?;
-        Ok(OpeningExplorerResult {
-            statistics: OpeningStatistics::query(corpora, &query, limits, cancelled)?,
-            label: self.names.deepest_along(line),
-        })
     }
 }

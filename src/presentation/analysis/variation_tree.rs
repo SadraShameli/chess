@@ -17,12 +17,12 @@ use crate::desktop::game_editor::{
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::annotations::GameAnnotationsEnumVariationRequest;
 use crate::game::enums::GameMoveId;
-use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::analysis::editor_intent::{
     PresentationAnalysisEditorError, PresentationAnalysisEditorHistory,
     PresentationAnalysisEditorIntent, PresentationAnalysisEditorModal,
     PresentationAnalysisEditorPending,
 };
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 
 #[derive(Debug, Clone)]
@@ -728,8 +728,11 @@ impl PresentationAnalysisVariationTree {
     ) {
         ui.push_id(node.id(), |ui| {
             ui.horizontal_wrapped(|ui| {
-                let label =
-                    PresentationBoardFigurines::display(ui.ctx(), node.san().unwrap_or("Start"), None);
+                let label = PresentationBoardFigurines::display(
+                    ui.ctx(),
+                    node.san().unwrap_or("Start"),
+                    None,
+                );
                 if ui
                     .add_enabled(
                         enabled,

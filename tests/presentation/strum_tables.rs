@@ -49,8 +49,14 @@ fn presentation_labels_keep_their_spellings_and_order() {
 
 #[test]
 fn action_and_status_labels_are_unchanged() {
-    assert_eq!(PresentationActionEnumId::Subscribe.label(), "Subscribe to state");
-    assert_eq!(PresentationActionEnumId::ConfirmQuit.label(), "Confirm quit");
+    assert_eq!(
+        PresentationActionEnumId::Subscribe.label(),
+        "Subscribe to state"
+    );
+    assert_eq!(
+        PresentationActionEnumId::ConfirmQuit.label(),
+        "Confirm quit"
+    );
     assert_eq!(
         PresentationActionEnumWorkspace::OpenPalette.label(),
         "Open command palette"

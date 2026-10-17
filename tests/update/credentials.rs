@@ -12,7 +12,11 @@ struct UpdateFixtureStore {
 
 impl UpdateCredentialStore for UpdateFixtureStore {
     fn load(&self) -> Result<Option<UpdateCredential>, UpdateCredentialError> {
-        self.held.borrow().clone().map(UpdateCredential::new).transpose()
+        self.held
+            .borrow()
+            .clone()
+            .map(UpdateCredential::new)
+            .transpose()
     }
 
     fn store(&self, credential: &UpdateCredential) -> Result<(), UpdateCredentialError> {
@@ -35,15 +39,22 @@ fn credential() -> Result<UpdateCredential, UpdateCredentialError> {
 
 #[test]
 fn tokens_are_validated_and_never_printed() -> Result<(), UpdateCredentialError> {
-    assert_eq!(UpdateCredential::new(String::new()), Err(UpdateCredentialError::Invalid));
-    assert_eq!(UpdateCredential::new("has space".to_owned()), Err(UpdateCredentialError::Invalid));
+    assert_eq!(
+        UpdateCredential::new(String::new()),
+        Err(UpdateCredentialError::Invalid)
+    );
+    assert_eq!(
+        UpdateCredential::new("has space".to_owned()),
+        Err(UpdateCredentialError::Invalid)
+    );
     let shown = format!("{:?}", credential()?);
     assert!(!shown.contains("github_pat"));
     Ok(())
 }
 
 #[test]
-fn unavailable_secure_storage_never_persists_and_offers_session_use() -> Result<(), UpdateCredentialError> {
+fn unavailable_secure_storage_never_persists_and_offers_session_use()
+-> Result<(), UpdateCredentialError> {
     let store = UpdateFixtureStore {
         held: RefCell::new(None),
         unavailable: true,
@@ -56,13 +67,17 @@ fn unavailable_secure_storage_never_persists_and_offers_session_use() -> Result<
     );
     assert!(credentials.current().is_none());
     credentials.enter_session_only(credential()?);
-    assert_eq!(credentials.status(), UpdateCredentialEnumStatus::SessionOnly);
+    assert_eq!(
+        credentials.status(),
+        UpdateCredentialEnumStatus::SessionOnly
+    );
     assert!(credentials.current().is_some());
     Ok(())
 }
 
 #[test]
-fn a_rejected_credential_is_dropped_and_a_stored_one_reloads() -> Result<(), UpdateCredentialError> {
+fn a_rejected_credential_is_dropped_and_a_stored_one_reloads() -> Result<(), UpdateCredentialError>
+{
     let store = UpdateFixtureStore {
         held: RefCell::new(None),
         unavailable: false,

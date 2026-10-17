@@ -645,12 +645,14 @@ fn identity_inspection_refuses_symlinks_and_hardlinks_without_repairing_them()
 }
 
 fn current_version_bytes(owner: &DesktopNativeStartupOwner, state: &str) -> Vec<u8> {
-    String::from_utf8_lossy(&DesktopNativeStartupFixture::installation_bytes(owner, state))
-        .replace(
-            "\"package_version\":\"1.2.3\"",
-            &format!("\"package_version\":\"{}\"", env!("CARGO_PKG_VERSION")),
-        )
-        .into_bytes()
+    String::from_utf8_lossy(&DesktopNativeStartupFixture::installation_bytes(
+        owner, state,
+    ))
+    .replace(
+        "\"package_version\":\"1.2.3\"",
+        &format!("\"package_version\":\"{}\"", env!("CARGO_PKG_VERSION")),
+    )
+    .into_bytes()
 }
 
 #[test]

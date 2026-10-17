@@ -13,11 +13,11 @@ use crate::desktop::library_service::{
 };
 use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::enums::GameId;
-use crate::game::storage_repository::GameStorageRevision;
-use crate::notation::pgn_export::NotationPgnExportEnumSelection;
 use crate::game::library_organization::{
     GameLibraryOrganizationEnumMutation, GameLibraryOrganizationGameTarget,
 };
+use crate::game::storage_repository::GameStorageRevision;
+use crate::notation::pgn_export::NotationPgnExportEnumSelection;
 use crate::presentation::library::controller::PresentationLibraryController;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
@@ -264,8 +264,12 @@ impl PresentationLibraryPanel {
             ui.label("Open request pending. Any unsaved edits must be resolved before opening.");
         }
         let in_trash = self.in_trash();
-        let can_trash = !self.controller.is_pending(PresentationLibraryEnumLane::Trash);
-        let can_export = !self.controller.is_pending(PresentationLibraryEnumLane::Export);
+        let can_trash = !self
+            .controller
+            .is_pending(PresentationLibraryEnumLane::Trash);
+        let can_export = !self
+            .controller
+            .is_pending(PresentationLibraryEnumLane::Export);
         let Some(page) = self.controller.page() else {
             if !self.controller.is_query_pending() {
                 ui.label("Games are unavailable until the library is reloaded");
@@ -278,7 +282,9 @@ impl PresentationLibraryPanel {
         ui.label(format!("{} games on this page", page.entries().len()));
         let has_next = page.next_cursor().is_some();
         let can_open = !self.controller.is_open_pending();
-        let can_organize = !self.controller.is_pending(PresentationLibraryEnumLane::Organize);
+        let can_organize = !self
+            .controller
+            .is_pending(PresentationLibraryEnumLane::Organize);
         let mut selected = None;
         let mut favorite = None;
         let mut restore = None;
@@ -321,10 +327,8 @@ impl PresentationLibraryPanel {
                             {
                                 export = Some(request);
                             }
-                            let move_to_trash = ui.add_enabled(
-                                can_trash,
-                                egui::Button::new("Preview Move to Trash"),
-                            );
+                            let move_to_trash = ui
+                                .add_enabled(can_trash, egui::Button::new("Preview Move to Trash"));
                             if self.frame.clicked(ui, &move_to_trash) {
                                 trash = Some(StorageTrashPreviewRequest::MoveToTrash(row.id()));
                             }
@@ -377,9 +381,7 @@ impl PresentationLibraryPanel {
             self.collect(result, effects);
         }
         if let Some(mutation) = favorite {
-            let result = self
-                .controller
-                .organize(DesktopRequestId::new(), mutation);
+            let result = self.controller.organize(DesktopRequestId::new(), mutation);
             self.collect(result, effects);
         }
         let next = ui.add_enabled(

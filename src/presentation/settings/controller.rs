@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
-    DesktopPreferencesEnumMotion, DesktopPreferencesEnumPatch, DesktopPreferencesEnumShortcutAction,
-    DesktopPreferencesEnumTheme,
+    DesktopPreferencesEnumMotion, DesktopPreferencesEnumPatch,
+    DesktopPreferencesEnumShortcutAction, DesktopPreferencesEnumTheme,
 };
-use crate::desktop::preferences_import::{DesktopPreferencesCodec, DesktopPreferencesImportPreview};
+use crate::desktop::preferences_import::{
+    DesktopPreferencesCodec, DesktopPreferencesImportPreview,
+};
 use crate::desktop::preferences_reset::{
     DesktopPreferencesEnumResetScope, DesktopPreferencesResetPreview,
 };

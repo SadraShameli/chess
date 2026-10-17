@@ -50,7 +50,9 @@ impl EngineConfiguration {
     ) -> Result<EngineResourceConfig, EngineConfigurationError> {
         let threads = match overrides.threads {
             Some(value) => value,
-            None => EngineResourceConfig::advertised_default(capabilities, EngineEnumOption::Threads)?,
+            None => {
+                EngineResourceConfig::advertised_default(capabilities, EngineEnumOption::Threads)?
+            }
         };
         let hash_mib = match overrides.hash_mib {
             Some(value) => value,

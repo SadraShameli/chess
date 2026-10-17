@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use crate::packaging::plan::{
-    ToolsPackagingEnumPlatform, ToolsPackagingPlan, ToolsPackagingStep,
-};
+use crate::packaging::plan::{ToolsPackagingEnumPlatform, ToolsPackagingPlan, ToolsPackagingStep};
 
 pub(crate) struct ToolsPackagingWindows;
 
@@ -53,8 +51,18 @@ mod tests {
     fn the_windows_plan_builds_then_packages_an_unsigned_nsis_installer() {
         let plan = ToolsPackagingWindows::plan();
         assert_eq!(plan.steps.len(), 2);
-        assert!(plan.steps[1].arguments.iter().any(|argument| argument == "nsis"));
-        assert!(!plan.describe().to_lowercase().contains("webview2 runtime is required"));
+        assert!(
+            plan.steps[1]
+                .arguments
+                .iter()
+                .any(|argument| argument == "nsis")
+        );
+        assert!(
+            !plan
+                .describe()
+                .to_lowercase()
+                .contains("webview2 runtime is required")
+        );
         assert!(plan.guidance.contains("More info"));
     }
 }

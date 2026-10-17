@@ -27,7 +27,10 @@ fn listing(tag: &str, draft: bool, prerelease: bool, macos_size: u64) -> String 
 
 fn wired(tag: &str) -> UpdateFixtureHttp {
     let http = UpdateFixtureHttp::default();
-    http.route(LATEST, UpdateFixtureResponse::ok(listing(tag, false, false, 11).as_bytes()));
+    http.route(
+        LATEST,
+        UpdateFixtureResponse::ok(listing(tag, false, false, 11).as_bytes()),
+    );
     http.route(MANIFEST_ASSET, UpdateFixtureResponse::redirect(OBJECT));
     http.route(OBJECT, UpdateFixtureResponse::ok(MANIFEST));
     http.route(SIGNATURE_ASSET, UpdateFixtureResponse::ok(SIGNATURE));
@@ -50,10 +53,15 @@ fn credential() -> Result<UpdateCredential, Box<dyn std::error::Error>> {
 }
 
 #[tokio::test]
-async fn a_newer_signed_release_binds_release_asset_and_manifest_identity() -> UpdateDiscoveryTestResult {
+async fn a_newer_signed_release_binds_release_asset_and_manifest_identity()
+-> UpdateDiscoveryTestResult {
     let http = wired("v1.2.0");
     let found = discovery(&http)?
-        .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+        .discover(
+            &Version::new(1, 1, 0),
+            UpdateTarget::MacosArm64,
+            Some(&credential()?),
+        )
         .await?
         .ok_or("expected a release")?;
     assert_eq!(found.release.release_id, 77);
@@ -79,20 +87,38 @@ async fn a_newer_signed_release_binds_release_asset_and_manifest_identity() -> U
 async fn current_draft_and_prerelease_versions_offer_nothing() -> UpdateDiscoveryTestResult {
     let http = wired("v1.2.0");
     let current = discovery(&http)?
-        .discover(&Version::new(1, 2, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+        .discover(
+            &Version::new(1, 2, 0),
+            UpdateTarget::MacosArm64,
+            Some(&credential()?),
+        )
         .await?;
     assert!(current.is_none());
-    http.route(LATEST, UpdateFixtureResponse::ok(listing("v1.2.0", true, false, 11).as_bytes()));
+    http.route(
+        LATEST,
+        UpdateFixtureResponse::ok(listing("v1.2.0", true, false, 11).as_bytes()),
+    );
     assert!(
         discovery(&http)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await?
             .is_none()
     );
-    http.route(LATEST, UpdateFixtureResponse::ok(listing("v1.2.0", false, true, 11).as_bytes()));
+    http.route(
+        LATEST,
+        UpdateFixtureResponse::ok(listing("v1.2.0", false, true, 11).as_bytes()),
+    );
     assert!(
         discovery(&http)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await?
             .is_none()
     );
@@ -108,7 +134,11 @@ async fn a_tampered_manifest_fails_the_signature_before_parsing() -> UpdateDisco
     }
     http.route(OBJECT, UpdateFixtureResponse::ok(&altered));
     let outcome = discovery(&http)?
-        .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+        .discover(
+            &Version::new(1, 1, 0),
+            UpdateTarget::MacosArm64,
+            Some(&credential()?),
+        )
         .await;
     assert!(matches!(outcome, Err(UpdateDiscoveryError::Manifest(_))));
     Ok(())
@@ -116,11 +146,18 @@ async fn a_tampered_manifest_fails_the_signature_before_parsing() -> UpdateDisco
 
 #[tokio::test]
 async fn redirects_to_other_origins_or_plain_http_are_refused() -> UpdateDiscoveryTestResult {
-    for target in ["https://evil.example/manifest", "http://objects.githubusercontent.com/manifest"] {
+    for target in [
+        "https://evil.example/manifest",
+        "http://objects.githubusercontent.com/manifest",
+    ] {
         let http = wired("v1.2.0");
         http.route(MANIFEST_ASSET, UpdateFixtureResponse::redirect(target));
         let outcome = discovery(&http)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?),
+            )
             .await;
         assert!(matches!(
             outcome,
@@ -142,7 +179,11 @@ async fn credential_and_rate_limit_failures_are_typed() -> UpdateDiscoveryTestRe
     http.route(LATEST, UpdateFixtureResponse::status(401));
     assert!(matches!(
         discovery(&http)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await,
         Err(UpdateDiscoveryError::CredentialRejected)
     ));
@@ -155,7 +196,11 @@ async fn credential_and_rate_limit_failures_are_typed() -> UpdateDiscoveryTestRe
     );
     assert!(matches!(
         discovery(&http)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await,
         Err(UpdateDiscoveryError::RateLimited(Some(30)))
     ));
@@ -163,19 +208,31 @@ async fn credential_and_rate_limit_failures_are_typed() -> UpdateDiscoveryTestRe
 }
 
 #[tokio::test]
-async fn a_tag_that_disagrees_with_the_signed_version_or_asset_listing_is_refused() -> UpdateDiscoveryTestResult {
+async fn a_tag_that_disagrees_with_the_signed_version_or_asset_listing_is_refused()
+-> UpdateDiscoveryTestResult {
     let mismatch = wired("v1.3.0");
     assert!(matches!(
         discovery(&mismatch)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await,
         Err(UpdateDiscoveryError::Release(_))
     ));
     let wrong_size = wired("v1.2.0");
-    wrong_size.route(LATEST, UpdateFixtureResponse::ok(listing("v1.2.0", false, false, 12).as_bytes()));
+    wrong_size.route(
+        LATEST,
+        UpdateFixtureResponse::ok(listing("v1.2.0", false, false, 12).as_bytes()),
+    );
     assert!(matches!(
         discovery(&wrong_size)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await,
         Err(UpdateDiscoveryError::Release(_))
     ));
@@ -194,7 +251,11 @@ async fn the_whole_check_is_bounded_to_fifteen_seconds() -> UpdateDiscoveryTestR
     );
     assert!(matches!(
         discovery(&http)?
-            .discover(&Version::new(1, 1, 0), UpdateTarget::MacosArm64, Some(&credential()?))
+            .discover(
+                &Version::new(1, 1, 0),
+                UpdateTarget::MacosArm64,
+                Some(&credential()?)
+            )
             .await,
         Err(UpdateDiscoveryError::Deadline(_))
     ));

@@ -4,8 +4,12 @@ use std::path::Path;
 use chess::update::release::{UpdateReleaseCheck, UpdateReleaseCheckError, UpdateReleaseState};
 
 fn template(name: &str) -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflow-templates").join(name))
-        .unwrap_or_default()
+    fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".github/workflow-templates")
+            .join(name),
+    )
+    .unwrap_or_default()
 }
 
 #[test]
@@ -20,7 +24,10 @@ fn tags_must_be_exact_stable_versions_that_match_every_version_source() {
     assert!(UpdateReleaseCheck::versions_match("v1.2.3", "1.2.3", "1.2.3", "1.2.3").is_ok());
     assert!(matches!(
         UpdateReleaseCheck::versions_match("v1.2.3", "1.2.3", "1.2.4", "1.2.3"),
-        Err(UpdateReleaseCheckError::Mismatch { what: "package", .. })
+        Err(UpdateReleaseCheckError::Mismatch {
+            what: "package",
+            ..
+        })
     ));
 }
 
@@ -35,11 +42,27 @@ fn an_incomplete_unverified_or_unfunded_release_is_never_published() {
     };
     assert!(UpdateReleaseCheck::publication_allowed(complete).is_ok());
     for refused in [
-        UpdateReleaseState { draft: false, ..complete },
-        UpdateReleaseState { assets_uploaded: 3, ..complete },
-        UpdateReleaseState { assets_expected: 0, assets_uploaded: 0, ..complete },
-        UpdateReleaseState { all_verified: false, ..complete },
-        UpdateReleaseState { allowance_remaining: false, ..complete },
+        UpdateReleaseState {
+            draft: false,
+            ..complete
+        },
+        UpdateReleaseState {
+            assets_uploaded: 3,
+            ..complete
+        },
+        UpdateReleaseState {
+            assets_expected: 0,
+            assets_uploaded: 0,
+            ..complete
+        },
+        UpdateReleaseState {
+            all_verified: false,
+            ..complete
+        },
+        UpdateReleaseState {
+            allowance_remaining: false,
+            ..complete
+        },
     ] {
         assert!(UpdateReleaseCheck::publication_allowed(refused).is_err());
     }
@@ -60,5 +83,9 @@ fn the_templates_are_inert_minimal_and_publish_only_after_a_draft() {
     let publish = release.find("--draft=false");
     assert!(matches!((draft, publish), (Some(first), Some(second)) if first < second));
     assert!(!release.contains("actions/cache"));
-    assert!(!Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows").exists());
+    assert!(
+        !Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".github/workflows")
+            .exists()
+    );
 }

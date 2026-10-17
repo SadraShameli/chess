@@ -22,14 +22,14 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 enum UpdateHelperError {
-    #[error("Usage: chess-update-helper --data-dir <path> --package <path> --target <target> --version <version> --destination <path> --parent-pid <pid> --relaunch <path> --generation <id>")]
+    #[error(
+        "Usage: chess-update-helper --data-dir <path> --package <path> --target <target> --version <version> --destination <path> --parent-pid <pid> --relaunch <path> --generation <id>"
+    )]
     Usage,
     #[error("The helper argument {0} is invalid")]
     Argument(&'static str),
     #[error("The committed intent does not match this handoff")]
     Intent,
-    #[error("The profile is owned by another process")]
-    Busy,
     #[error("{0}")]
     Other(String),
 }
@@ -55,11 +55,8 @@ impl UpdateHelperArguments {
                 return Err(UpdateHelperError::Usage);
             }
         }
-        let mut take = |flag: &'static str| {
-            values
-                .remove(flag)
-                .ok_or(UpdateHelperError::Argument(flag))
-        };
+        let mut take =
+            |flag: &'static str| values.remove(flag).ok_or(UpdateHelperError::Argument(flag));
         let parsed = Self {
             data_dir: PathBuf::from(take("--data-dir")?),
             package: PathBuf::from(take("--package")?),

@@ -20,6 +20,7 @@ struct PresentationThemeTokensPalette {
 impl PresentationThemeTokens {
     pub const MIN_TARGET: f32 = 28.0;
     pub const PANEL_WIDTH: f32 = 360.0;
+    pub const MODAL_WIDTH: f32 = 360.0;
 
     pub const WINDOW_ELEVATION: u8 = 18;
     pub const POPUP_ELEVATION: u8 = 10;

@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use std::future::Future;
 use std::num::NonZeroU32;
 use std::sync::{
@@ -7,6 +6,7 @@ use std::sync::{
 };
 use std::task::Poll;
 use std::time::Duration;
+use strum::IntoEnumIterator;
 
 use chess::board::enums::BoardEnumVariant;
 use chess::board::position::BoardPosition;
@@ -195,7 +195,7 @@ impl EngineProcessProvider for EngineLifecycleProvider {
 
     fn spawn(&self, _package: &EnginePackageSelected) -> Result<Self::Process, EngineProcessError> {
         Ok(EngineLifecycleProcess {
-            input: self.input.clone(),
+            input: self.input.downgrade(),
             output: self
                 .output
                 .lock()
@@ -215,7 +215,7 @@ impl EngineProcessProvider for EngineLifecycleProvider {
 }
 
 pub(super) struct EngineLifecycleProcess {
-    input: mpsc::Sender<EngineProcessLine>,
+    input: mpsc::WeakSender<EngineProcessLine>,
     output: mpsc::Receiver<EngineProcessLine>,
     sent: mpsc::Sender<String>,
     stall_stop_write: bool,
@@ -245,6 +245,8 @@ impl EngineLifecycleProcess {
 
     pub(super) async fn emit(&self, text: String) -> Result<(), EngineProcessError> {
         self.input
+            .upgrade()
+            .ok_or_else(|| std::io::Error::other("fixture input closed"))?
             .send(EngineProcessLine::new(EngineProcessEnumPipe::Stdout, text)?)
             .await
             .map_err(|_error| std::io::Error::other("fixture input closed"))?;

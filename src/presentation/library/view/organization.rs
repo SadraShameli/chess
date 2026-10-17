@@ -38,8 +38,7 @@ impl PresentationLibraryPanel {
                     .folder_parent_target()
                     .and_then(|parent| Self::folder_mutation(&self.new_folder_name, parent))
                     .and_then(|mutation| {
-                        self.controller
-                            .organize(DesktopRequestId::new(), mutation)
+                        self.controller.organize(DesktopRequestId::new(), mutation)
                     });
                 if result.is_ok() {
                     self.new_folder_name.clear();
@@ -53,8 +52,7 @@ impl PresentationLibraryPanel {
             let create = ui.add_enabled(!busy, egui::Button::new("Create tag"));
             if self.frame.clicked(ui, &create) {
                 let result = Self::tag_mutation(&self.new_tag_name).and_then(|mutation| {
-                    self.controller
-                        .organize(DesktopRequestId::new(), mutation)
+                    self.controller.organize(DesktopRequestId::new(), mutation)
                 });
                 if result.is_ok() {
                     self.new_tag_name.clear();

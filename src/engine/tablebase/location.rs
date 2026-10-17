@@ -301,17 +301,20 @@ struct EngineTablebaseLocationJunction {
 }
 
 impl EngineTablebaseLocationJunction {
+    #[cfg(windows)]
     const SPECIAL: [char; 8] = ['"', '%', '&', '^', '|', '<', '>', '!'];
 
+    #[cfg(windows)]
     fn check_syntax(target: &Path) -> Result<(), EngineTablebaseLocationError> {
         let text = target
             .to_str()
             .ok_or_else(|| EngineTablebaseLocationError::JunctionSyntax {
                 path: target.to_path_buf(),
             })?;
-        if text.chars().any(|character| {
-            character.is_control() || Self::SPECIAL.contains(&character)
-        }) {
+        if text
+            .chars()
+            .any(|character| character.is_control() || Self::SPECIAL.contains(&character))
+        {
             return Err(EngineTablebaseLocationError::JunctionSyntax {
                 path: target.to_path_buf(),
             });
@@ -328,7 +331,8 @@ impl EngineTablebaseLocationJunction {
         };
         Self::check_syntax(link)?;
         Self::check_syntax(target)?;
-        let system = winsafe::GetSystemDirectory().map_err(|error| unavailable(io::Error::other(error)))?;
+        let system =
+            winsafe::GetSystemDirectory().map_err(|error| unavailable(io::Error::other(error)))?;
         let output = std::process::Command::new(Path::new(&system).join("cmd.exe"))
             .arg("/D")
             .arg("/C")
@@ -409,7 +413,10 @@ impl EngineTablebaseLocation {
         if let Err(operation) = location.link_files_blocking(files, &is_cancelled) {
             let eligible = policy.junction_fallback
                 && policy.platform == EngineTablebaseLocationEnumPlatform::Windows
-                && matches!(operation, EngineTablebaseLocationError::LinkUnavailable { .. });
+                && matches!(
+                    operation,
+                    EngineTablebaseLocationError::LinkUnavailable { .. }
+                );
             if let Err(cleanup) = location.cleanup_blocking() {
                 return Err(EngineTablebaseLocationError::Cleanup {
                     operation: Box::new(operation),
@@ -445,7 +452,11 @@ impl EngineTablebaseLocation {
             Ok(identity) => identity,
             Err(source) => {
                 let operation = EngineTablebaseLocationError::io(&path, source);
-                return Err(Self::cleanup_failure(operation, fs::remove_dir(&path), &path));
+                return Err(Self::cleanup_failure(
+                    operation,
+                    fs::remove_dir(&path),
+                    &path,
+                ));
             }
         };
         Ok(Self {

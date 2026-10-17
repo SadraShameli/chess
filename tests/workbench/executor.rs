@@ -1,10 +1,10 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use strum::IntoEnumIterator;
 
 use chess::board::enums::BoardEnumVariant;
 use chess::board::position::BoardPosition;

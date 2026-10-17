@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::path::{Path, PathBuf};
+use strum::IntoEnumIterator;
 
 use chess::package::digest::PackageDigest;
 use serde::Serialize;
@@ -209,7 +209,8 @@ impl ToolsAssetsSounds {
         let magnitudes: Vec<i16> = (0..=32_000).collect();
         for sample in samples {
             let scaled = (sample.clamp(-1.0, 1.0) * 32_000.0).round();
-            let index = magnitudes.partition_point(|candidate| f64::from(*candidate) < scaled.abs());
+            let index =
+                magnitudes.partition_point(|candidate| f64::from(*candidate) < scaled.abs());
             let magnitude = magnitudes.get(index).copied().unwrap_or(0);
             let value = if scaled < 0.0 { -magnitude } else { magnitude };
             bytes.extend_from_slice(&value.to_le_bytes());

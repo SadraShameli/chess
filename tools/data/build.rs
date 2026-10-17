@@ -43,11 +43,7 @@ struct ToolsDataBuildBuilder {
 }
 
 impl ToolsDataBuildBuilder {
-    fn write_prefix(
-        &self,
-        name: &str,
-        prefix: u64,
-    ) -> Result<u64, ToolsDataBuildBuilderError> {
+    fn write_prefix(&self, name: &str, prefix: u64) -> Result<u64, ToolsDataBuildBuilderError> {
         let limit = usize::try_from(prefix).unwrap_or(usize::MAX);
         let source = BufReader::new(File::open(self.input.join(name))?);
         let path = self.output.join(name);

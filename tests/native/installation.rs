@@ -1,5 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use chess::desktop::native::resources::{
+    DesktopNativeResources, DesktopNativeResourcesEnumDependency,
+    DesktopNativeResourcesEnumFailure, DesktopNativeResourcesError,
+};
 use chess::engine::package::host::EnginePackageHost;
 use chess::engine::package::manifest::EnginePackageEnumTarget;
 use chess::engine::package::selector::EnginePackageSelector;
@@ -8,15 +12,11 @@ use chess::game::pause::GamePauseEnumCause;
 use chess::game::recovery::{GameRecovery, GameRecoveryEnumAction, GameRecoveryEnumTrigger};
 use chess::game::save::GameSaveEnumStatus;
 use chess::game::save_coordinator::{GameSaveCoordinator, GameSaveCoordinatorEnumBarrier};
-use chess::desktop::native::resources::{
-    DesktopNativeResources, DesktopNativeResourcesEnumDependency, DesktopNativeResourcesEnumFailure,
-    DesktopNativeResourcesError,
-};
 
-pub struct NativeInstallationHarness;
+pub(crate) struct NativeInstallationHarness;
 
 impl NativeInstallationHarness {
-    pub fn run(resources: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn run(resources: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../fixtures/platform-dependencies.json"))?;
         Self::check_fixture(&fixture)?;
@@ -56,7 +56,8 @@ impl NativeInstallationHarness {
             .get("dependencies")
             .and_then(serde_json::Value::as_array)
             .ok_or("the fixture lists dependency failure classes")?;
-        for dependency in <DesktopNativeResourcesEnumDependency as strum::IntoEnumIterator>::iter() {
+        for dependency in <DesktopNativeResourcesEnumDependency as strum::IntoEnumIterator>::iter()
+        {
             let entry = classes
                 .iter()
                 .find(|entry| {
@@ -124,7 +125,10 @@ impl NativeInstallationHarness {
         resources: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let staged = Self::stage(resources, true, true)?;
-        std::fs::write(staged.path().join(DesktopNativeResources::PIECES_ASSET), b"corrupt")?;
+        std::fs::write(
+            staged.path().join(DesktopNativeResources::PIECES_ASSET),
+            b"corrupt",
+        )?;
         match DesktopNativeResources::from_directory(staged.path()) {
             Err(DesktopNativeResourcesError::Integrity(_)) => Ok(()),
             other => Err(format!("corrupt pieces must fail integrity: {other:?}").into()),
@@ -135,7 +139,8 @@ impl NativeInstallationHarness {
         let broken = tempfile::tempdir()?;
         match DesktopNativeResources::from_directory(broken.path()) {
             Err(
-                DesktopNativeResourcesError::Io { .. } | DesktopNativeResourcesError::InvalidFile(_),
+                DesktopNativeResourcesError::Io { .. }
+                | DesktopNativeResourcesError::InvalidFile(_),
             ) => Ok(()),
             other => {
                 Err(format!("an empty directory must be a required failure: {other:?}").into())
@@ -169,8 +174,8 @@ impl NativeInstallationHarness {
         Ok(())
     }
 
-    fn save_failure_keeps_unsaved_state_and_blocks_every_barrier(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn save_failure_keeps_unsaved_state_and_blocks_every_barrier()
+    -> Result<(), Box<dyn std::error::Error>> {
         let game: GameId = "00000000-0000-4000-8000-0000000000a1".parse()?;
         let revision = GameRevision::ZERO.next()?.next()?;
         let mut coordinator = GameSaveCoordinator::new(game, revision);

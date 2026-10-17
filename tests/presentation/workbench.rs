@@ -1,8 +1,8 @@
 #[path = "workbench/fixture.rs"]
 mod fixture;
 
-use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
+use strum::IntoEnumIterator;
 
 use egui_kittest::kittest::{NodeT, Queryable};
 

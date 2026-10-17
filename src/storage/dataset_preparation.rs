@@ -8,9 +8,9 @@ use crate::storage::dataset_selection::{
     StorageDatasetSelectionEnumSource, StorageDatasetSelectionEnumStratum,
     StorageDatasetSelectionEnumSubset, StorageDatasetSelectionEnumTransition,
     StorageDatasetSelectionError, StorageDatasetSelectionFootprint,
-    StorageDatasetSelectionPrefixes, StorageDatasetSelectionReduction,
     StorageDatasetSelectionGameClassification, StorageDatasetSelectionIdentity,
-    StorageDatasetSelectionPuzzleClassification, StorageDatasetSelectionSequence,
+    StorageDatasetSelectionPrefixes, StorageDatasetSelectionPuzzleClassification,
+    StorageDatasetSelectionReduction, StorageDatasetSelectionSequence,
 };
 
 pub struct StorageDatasetPreparationGame {
@@ -306,10 +306,8 @@ impl StorageDatasetPreparationBuild {
     pub fn run<B: StorageDatasetPreparationBuilder>(
         builder: &mut B,
         initial: StorageDatasetSelectionPrefixes,
-    ) -> Result<
-        StorageDatasetPreparationBuildOutcome,
-        StorageDatasetPreparationBuildError<B::Error>,
-    > {
+    ) -> Result<StorageDatasetPreparationBuildOutcome, StorageDatasetPreparationBuildError<B::Error>>
+    {
         let mut prefixes = initial;
         let mut reductions = Vec::new();
         loop {

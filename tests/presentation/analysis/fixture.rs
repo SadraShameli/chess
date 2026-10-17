@@ -1,7 +1,7 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
+use strum::IntoEnumIterator;
 
 use chess::board::position::BoardPosition;
 use chess::capacity::budget::CapacityBudget;

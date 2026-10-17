@@ -16,9 +16,7 @@ use crate::storage::library_import::{
     StorageLibraryImportCandidateRequest, StorageLibraryImportCommitRequest,
     StorageLibraryImportPageLimit, StorageLibraryImportSpace,
 };
-use crate::storage::library_prepared::{
-    StorageLibraryImportRecoveredProjection,
-};
+use crate::storage::library_prepared::StorageLibraryImportRecoveredProjection;
 use crate::storage::library_repository::StorageLibraryError;
 use crate::storage::library_transaction::StorageLibraryTransaction;
 use crate::storage::library_transaction::content::{
@@ -99,10 +97,7 @@ impl StorageLibraryTransactionImport {
         let mut rows = library_entries::table
             .inner_join(documents::table)
             .filter(library_entries::content_revision.eq(documents::revision))
-            .filter(
-                library_entries::rules_variant
-                    .eq(key.variant()),
-            )
+            .filter(library_entries::rules_variant.eq(key.variant()))
             .filter(library_entries::identity_initial_fen.eq(key.initial_fen()))
             .filter(library_entries::plies.eq(i32::try_from(key.mainline_uci().len())?))
             .filter(library_entries::identity_mainline_uci.eq(request.mainline()))

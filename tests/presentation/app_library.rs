@@ -657,11 +657,9 @@ async fn file_selection_round_trip_sends_file_select_then_dispatches_import_with
             &fixture.source.executor,
         )
         .await?;
-    fixture.application.complete_value(
-        &work,
-        DesktopEnumValue::FileSelect(Some(handle)),
-        None,
-    )?;
+    fixture
+        .application
+        .complete_value(&work, DesktopEnumValue::FileSelect(Some(handle)), None)?;
     fixture.app.synchronize_library(&port)?;
     let import = fixture
         .application

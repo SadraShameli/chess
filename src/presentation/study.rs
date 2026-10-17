@@ -1,5 +1,6 @@
 use bevy_egui::egui::{CollapsingHeader, Ui};
 
+use crate::desktop::dataset_commands::{DesktopDatasetRow, DesktopDatasetStarter};
 use crate::presentation::cursor::PresentationStudyCursor;
 use crate::presentation::opening::controller::{
     PresentationOpeningController, PresentationOpeningIntent,
@@ -12,7 +13,6 @@ use crate::presentation::report::view::PresentationReportView;
 use crate::presentation::settings::datasets::{
     PresentationSettingsDatasets, PresentationSettingsDatasetsIntent,
 };
-use crate::desktop::dataset_commands::{DesktopDatasetRow, DesktopDatasetStarter};
 
 #[derive(Default)]
 pub struct PresentationStudy {
@@ -71,7 +71,11 @@ impl PresentationStudy {
         self.datasets.show(ui, starters, rows)
     }
 
-    pub fn set_datasets(&mut self, starters: Vec<DesktopDatasetStarter>, rows: Vec<DesktopDatasetRow>) {
+    pub fn set_datasets(
+        &mut self,
+        starters: Vec<DesktopDatasetStarter>,
+        rows: Vec<DesktopDatasetRow>,
+    ) {
         self.starters = starters;
         self.rows = rows;
     }

@@ -27,7 +27,9 @@ pub enum DesktopPreferencesError {
     StaleRevision,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumTheme {
     #[strum(serialize = "Dark")]
@@ -42,7 +44,18 @@ impl DesktopPreferencesEnumTheme {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumNotation {
     #[default]
@@ -58,7 +71,9 @@ impl DesktopPreferencesEnumNotation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumMotion {
     #[strum(serialize = "Full motion")]
@@ -77,7 +92,9 @@ impl DesktopPreferencesEnumMotion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumAid {
     #[strum(serialize = "Board coordinates")]
@@ -100,7 +117,18 @@ impl DesktopPreferencesEnumAid {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumAudioCategory {
     #[strum(serialize = "Moves")]
@@ -123,7 +151,18 @@ impl DesktopPreferencesEnumAudioCategory {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumShortcutAction {
     #[strum(serialize = "Command palette")]
@@ -165,7 +204,18 @@ impl DesktopPreferencesEnumShortcutAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumSection {
     #[strum(serialize = "Appearance")]
@@ -538,13 +588,15 @@ impl DesktopPreferences {
                 entry.volume,
             ));
         }
-        patches.extend(
-            DesktopPreferencesEnumShortcutAction::iter()
-                .map(|action| DesktopPreferencesEnumPatch::Shortcut(action, self.shortcut(action))),
-        );
+        patches
+            .extend(DesktopPreferencesEnumShortcutAction::iter().map(|action| {
+                DesktopPreferencesEnumPatch::Shortcut(action, self.shortcut(action))
+            }));
         patches.push(DesktopPreferencesEnumPatch::EngineThreads(self.engine[0]));
         patches.push(DesktopPreferencesEnumPatch::EngineHash(self.engine[1]));
-        patches.push(DesktopPreferencesEnumPatch::EngineMoveOverhead(self.engine[2]));
+        patches.push(DesktopPreferencesEnumPatch::EngineMoveOverhead(
+            self.engine[2],
+        ));
         patches
     }
 

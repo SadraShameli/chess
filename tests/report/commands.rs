@@ -34,7 +34,10 @@ async fn start_list_read_and_cancel_expose_typed_partial_state() -> ReportFixtur
         fixture.job_with_id(&["e2e4", "e7e5"], 700)?,
     )? {
         ReportServiceEnumOutcome::Created(id) => id,
-        other => return Err(format!("unexpected {other:?}").into()),
+        other @ ReportServiceEnumOutcome::Existing(_)
+        | other @ ReportServiceEnumOutcome::Declined(_) => {
+            return Err(format!("unexpected {other:?}").into());
+        }
     };
     let entries = commands.list()?;
     assert_eq!(entries.len(), 1);
@@ -62,7 +65,10 @@ async fn replacement_needs_a_preview_and_explicit_confirmation() -> ReportFixtur
         fixture.job_with_id(&["e2e4", "e7e5"], 710)?,
     )? {
         ReportServiceEnumOutcome::Created(id) => id,
-        other => return Err(format!("unexpected {other:?}").into()),
+        other @ ReportServiceEnumOutcome::Existing(_)
+        | other @ ReportServiceEnumOutcome::Declined(_) => {
+            return Err(format!("unexpected {other:?}").into());
+        }
     };
     assert!(matches!(
         commands.confirm_replacement(previous, DesktopReportEnumConfirmation::Confirmed),

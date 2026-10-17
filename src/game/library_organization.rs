@@ -304,18 +304,18 @@ impl GameLibraryOrganizationRequest {
 impl GameLibraryOrganizationEnumMutation {
     pub fn payload_bytes(&self) -> usize {
         match self {
-                GameLibraryOrganizationEnumMutation::CreateFolder(_, _, name)
-                | GameLibraryOrganizationEnumMutation::RenameFolder(_, name)
-                | GameLibraryOrganizationEnumMutation::CreateTag(_, name)
-                | GameLibraryOrganizationEnumMutation::RenameTag(_, name) => name.as_str().len(),
-                GameLibraryOrganizationEnumMutation::ReplaceTags(_, tags) => {
-                    std::mem::size_of_val(tags.ids())
-                }
-                GameLibraryOrganizationEnumMutation::ReparentFolder(_, _)
-                | GameLibraryOrganizationEnumMutation::DeleteTag(_)
-                | GameLibraryOrganizationEnumMutation::SetFavorite(_, _)
-                | GameLibraryOrganizationEnumMutation::MoveToFolder(_, _) => 0,
+            GameLibraryOrganizationEnumMutation::CreateFolder(_, _, name)
+            | GameLibraryOrganizationEnumMutation::RenameFolder(_, name)
+            | GameLibraryOrganizationEnumMutation::CreateTag(_, name)
+            | GameLibraryOrganizationEnumMutation::RenameTag(_, name) => name.as_str().len(),
+            GameLibraryOrganizationEnumMutation::ReplaceTags(_, tags) => {
+                std::mem::size_of_val(tags.ids())
             }
+            GameLibraryOrganizationEnumMutation::ReparentFolder(_, _)
+            | GameLibraryOrganizationEnumMutation::DeleteTag(_)
+            | GameLibraryOrganizationEnumMutation::SetFavorite(_, _)
+            | GameLibraryOrganizationEnumMutation::MoveToFolder(_, _) => 0,
+        }
     }
 }
 

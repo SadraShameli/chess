@@ -209,8 +209,7 @@ impl StorageImportSessionDisk {
     }
 
     pub(crate) fn initialize(&mut self) -> Result<(), StorageImportSessionError> {
-        for _kind in StorageImportSessionDiskEnumFile::iter().skip(self.files.len())
-        {
+        for _kind in StorageImportSessionDiskEnumFile::iter().skip(self.files.len()) {
             let file = self.filesystem.create_spool()?;
             self.files
                 .push(StorageImportSessionDiskSpool { file, length: 0 });

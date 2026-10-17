@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::collections::BTreeSet;
+use strum::IntoEnumIterator;
 
 use chess::engine::enums::EngineEnumOption;
 use chess::workbench::enums::WorkbenchEnumOperation;

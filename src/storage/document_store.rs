@@ -14,13 +14,13 @@ use uuid::Uuid;
 
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::puzzle::history::PuzzleHistoryAuthorization;
+use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
+use crate::puzzle::session::PuzzleSessionId;
+use crate::storage::connection::StorageConnection;
 use crate::storage::dataset_registry::{
     StorageDatasetRegistry, StorageDatasetRegistryEnumRequest, StorageDatasetRegistryEnumResponse,
     StorageDatasetRegistryError,
 };
-use crate::puzzle::persistence::{PuzzlePersistenceReceipt, PuzzlePersistenceSaveRequest};
-use crate::puzzle::session::PuzzleSessionId;
-use crate::storage::connection::StorageConnection;
 use crate::storage::document_store::rows::{StorageDocumentRowContent, StorageDocumentRowReceipt};
 use crate::storage::editor_repository::{
     StorageEditorRepositoryEnumRequest, StorageEditorRepositoryEnumResponse,
@@ -38,13 +38,13 @@ use crate::storage::opening_repository::{
     StorageOpeningEnumRequest, StorageOpeningEnumResponse, StorageOpeningError,
     StorageOpeningTransaction,
 };
-use crate::storage::puzzle_repository::{
-    StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
-    StoragePuzzleWrite,
-};
 use crate::storage::preferences_repository::{
     StoragePreferencesEnumRequest, StoragePreferencesEnumResponse, StoragePreferencesError,
     StoragePreferencesTransaction,
+};
+use crate::storage::puzzle_repository::{
+    StoragePuzzleError, StoragePuzzleRecovered, StoragePuzzleRunPage, StoragePuzzleTransaction,
+    StoragePuzzleWrite,
 };
 use crate::storage::report_repository::{
     StorageReportEnumRequest, StorageReportEnumResponse, StorageReportError,
@@ -751,7 +751,8 @@ impl StorageDocumentActor {
                     _admission,
                     result,
                 } => {
-                    let outcome = StorageDatasetRegistry::execute(self.connection.diesel(), request);
+                    let outcome =
+                        StorageDatasetRegistry::execute(self.connection.diesel(), request);
                     drop((_admission, lease));
                     if let Err(abandoned_result) = result.send(outcome) {
                         drop(abandoned_result);

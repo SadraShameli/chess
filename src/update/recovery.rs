@@ -64,7 +64,9 @@ impl UpdateRecovery {
         match intent.state {
             DesktopProfileInstallationEnumState::Prepared => {
                 if observation.helper_quiescent {
-                    UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::PreparedUncommitted)
+                    UpdateRecoveryEnumDecision::Blocked(
+                        UpdateRecoveryEnumBlock::PreparedUncommitted,
+                    )
                 } else {
                     UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::HelperRunning)
                 }

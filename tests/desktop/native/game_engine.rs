@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -6,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
+use strum::IntoEnumIterator;
 
 use chess::board::enums::BoardEnumColor;
 use chess::board::position::BoardPosition;

@@ -15,9 +15,7 @@ use crate::storage::game_document::StorageGameDocumentEnumContentKind;
 use crate::storage::library_inventory::{
     StorageLibraryInventoryCursor, StorageLibraryInventoryEntry, StorageLibraryInventoryPage,
 };
-use crate::storage::library_prepared::{
-    StorageLibraryProjection, StorageLibraryProjectionOptions,
-};
+use crate::storage::library_prepared::{StorageLibraryProjection, StorageLibraryProjectionOptions};
 use crate::storage::library_query::{
     StorageLibraryQuery, StorageLibraryQueryEntry, StorageLibraryQueryEntryOptions,
     StorageLibraryQueryPage, StorageLibraryQueryRow,
@@ -362,9 +360,7 @@ impl StorageLibraryTransactionRows {
         let mut query = library_entries::table
             .inner_join(documents::table)
             .filter(library_entries::content_revision.eq(documents::revision))
-            .filter(
-                library_entries::content_kind.eq(StorageGameDocumentEnumContentKind::Played),
-            )
+            .filter(library_entries::content_kind.eq(StorageGameDocumentEnumContentKind::Played))
             .filter(library_entries::location.eq(StorageTrashEnumLocation::Library))
             .filter(library_entries::trashed_ms.is_null())
             .select((library_entries::game_id, library_entries::content_revision))

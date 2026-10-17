@@ -1,7 +1,7 @@
-use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use strum::IntoEnumIterator;
 
 use chess::capacity::budget::CapacityBudget;
 use chess::capacity::executor::CapacityExecutor;

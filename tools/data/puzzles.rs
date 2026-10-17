@@ -44,8 +44,11 @@ impl ToolsDataPuzzles {
         version: &str,
         prefix: usize,
     ) -> Result<ToolsDataPuzzlesSummary, ToolsDataPuzzlesError> {
-        let identity =
-            PuzzleDefinitionIdentity::new(source.to_owned(), version.to_owned(), "dataset".to_owned())?;
+        let identity = PuzzleDefinitionIdentity::new(
+            source.to_owned(),
+            version.to_owned(),
+            "dataset".to_owned(),
+        )?;
         let mut import = PuzzleCsvImport::new(
             BufReader::new(File::open(csv)?),
             PuzzleSelectionDataset::from_identity(&identity),
@@ -59,7 +62,9 @@ impl ToolsDataPuzzles {
                     accepted += 1;
                     let definition = row.definition();
                     let metadata = definition.metadata();
-                    let rating = metadata.difficulty().map(|rating| rating.rating().to_string());
+                    let rating = metadata
+                        .difficulty()
+                        .map(|rating| rating.rating().to_string());
                     let themes = metadata.themes().map(|themes| {
                         themes
                             .iter()
@@ -72,7 +77,9 @@ impl ToolsDataPuzzles {
                         handle,
                         StorageDatasetPreparationPuzzle {
                             record: format!("{definition:?}"),
-                            identity: StorageDatasetSelectionIdentity::puzzle(definition.identity()),
+                            identity: StorageDatasetSelectionIdentity::puzzle(
+                                definition.identity(),
+                            ),
                             rating,
                             themes,
                         },

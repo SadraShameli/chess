@@ -1,6 +1,6 @@
-use strum::IntoEnumIterator;
 use std::fmt::{Display, Formatter, Write};
 use std::marker::PhantomData;
+use strum::IntoEnumIterator;
 
 use serde::de::{DeserializeOwned, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -233,7 +233,8 @@ struct EngineIdentityRecordData {
     registry_version: u32,
     name: EngineRecordText<256>,
     author: EngineRecordText<256>,
-    descriptors: EngineRecordList<EngineRecordText<256>, { <EngineEnumOption as strum::EnumCount>::COUNT }>,
+    descriptors:
+        EngineRecordList<EngineRecordText<256>, { <EngineEnumOption as strum::EnumCount>::COUNT }>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

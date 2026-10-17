@@ -82,11 +82,25 @@ fn replacement_switches_versions_atomically_and_keeps_a_leased_version_until_rel
     )?;
     let listed = StorageDatasetRegistry::list(connection.diesel())?;
     assert_eq!(listed.len(), 2);
-    assert!(listed.iter().any(|entry| entry.id == first && entry.superseded));
-    assert!(listed.iter().any(|entry| entry.id == second && !entry.superseded));
-    assert_eq!(StorageDatasetRegistry::purge_released(connection.diesel())?, 0);
+    assert!(
+        listed
+            .iter()
+            .any(|entry| entry.id == first && entry.superseded)
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|entry| entry.id == second && !entry.superseded)
+    );
+    assert_eq!(
+        StorageDatasetRegistry::purge_released(connection.diesel())?,
+        0
+    );
     StorageDatasetRegistry::release(connection.diesel(), lease)?;
-    assert_eq!(StorageDatasetRegistry::purge_released(connection.diesel())?, 1);
+    assert_eq!(
+        StorageDatasetRegistry::purge_released(connection.diesel())?,
+        1
+    );
     let listed = StorageDatasetRegistry::list(connection.diesel())?;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, second);

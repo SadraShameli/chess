@@ -2,11 +2,13 @@ use std::error::Error;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
 
-use chess::board::position::BoardPosition;
 use chess::board::r#move::BoardMove;
+use chess::board::position::BoardPosition;
 use chess::capacity::budget::CapacityBudget;
 use chess::opening::corpus::OpeningCorpusGameId;
-use chess::opening::index::{OpeningIndexDepth, OpeningIndexGameInput, OpeningIndexKey, OpeningIndexer};
+use chess::opening::index::{
+    OpeningIndexDepth, OpeningIndexGameInput, OpeningIndexKey, OpeningIndexer,
+};
 use chess::package::digest::PackageDigest;
 use chess::storage::connection::StorageConnection;
 use chess::storage::dataset_package::{
@@ -67,7 +69,12 @@ impl OpeningBenchFixture {
         value.as_secs_f64() * 1_000.0
     }
 
-    fn emit(workload: &str, workers: usize, run: usize, mut samples: Vec<Duration>) -> OpeningBenchResult {
+    fn emit(
+        workload: &str,
+        workers: usize,
+        run: usize,
+        mut samples: Vec<Duration>,
+    ) -> OpeningBenchResult {
         samples.sort_unstable();
         let p50 = Self::nearest_rank(&samples, 50).ok_or("no samples")?;
         let p95 = Self::nearest_rank(&samples, 95).ok_or("no samples")?;
@@ -113,7 +120,8 @@ impl OpeningBenchRunner {
                 mainline: line,
                 recorded: None,
             };
-            if let Some(index) = OpeningIndexer::index(&input, OpeningIndexDepth::base(), || false)? {
+            if let Some(index) = OpeningIndexer::index(&input, OpeningIndexDepth::base(), || false)?
+            {
                 indexed.push(index);
             }
         }
@@ -186,7 +194,8 @@ impl OpeningBenchRunner {
                 "bench",
             )?;
             let started = Instant::now();
-            let next = StorageDatasetRegistry::replace(connection.diesel(), current, &dataset(version))?;
+            let next =
+                StorageDatasetRegistry::replace(connection.diesel(), current, &dataset(version))?;
             samples.push(started.elapsed());
             StorageDatasetRegistry::release(connection.diesel(), lease)?;
             StorageDatasetRegistry::purge_released(connection.diesel())?;
@@ -208,8 +217,14 @@ fn main() -> OpeningBenchResult {
         .enable_all()
         .build()?;
     println!("detected hardware threads: {detected}");
-    println!("games per run: {} (set {})", OpeningBenchFixture::games(), OpeningBenchFixture::GAMES_VARIABLE);
-    println!("| workload | workers | run | samples | min ms | p50 ms | p95 ms (nearest rank) | max ms |");
+    println!(
+        "games per run: {} (set {})",
+        OpeningBenchFixture::games(),
+        OpeningBenchFixture::GAMES_VARIABLE
+    );
+    println!(
+        "| workload | workers | run | samples | min ms | p50 ms | p95 ms (nearest rank) | max ms |"
+    );
     println!("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for workers in budgets {
         for run in 1..=OpeningBenchFixture::RUNS {
@@ -219,6 +234,8 @@ fn main() -> OpeningBenchResult {
     for run in 1..=OpeningBenchFixture::RUNS {
         OpeningBenchRunner::replacement(run)?;
     }
-    println!("peak memory is not captured by this harness; record it with the platform process monitor");
+    println!(
+        "peak memory is not captured by this harness; record it with the platform process monitor"
+    );
     Ok(())
 }

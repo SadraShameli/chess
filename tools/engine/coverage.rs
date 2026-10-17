@@ -1,8 +1,8 @@
-use strum::IntoEnumIterator;
 use std::collections::{BTreeMap, btree_map::Entry};
 use std::fmt::{Display, Formatter};
 use std::path::{Component, Path};
 use std::str::FromStr;
+use strum::IntoEnumIterator;
 
 use chess::engine::capabilities::EngineCapabilitiesVersion;
 use chess::engine::enums::EngineEnumOption;
@@ -42,7 +42,18 @@ pub(crate) enum ToolsEngineCoverageError {
     Workflow(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::IntoStaticStr, strum::Display, strum::EnumString)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::IntoStaticStr,
+    strum::Display,
+    strum::EnumString,
+)]
 pub(crate) enum ToolsEngineCoverageEnumCategory {
     #[strum(serialize = "OPT")]
     Option,

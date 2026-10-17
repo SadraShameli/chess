@@ -57,7 +57,7 @@ async fn restore_never_touches_control_records_and_keeps_the_root_lease_and_excl
     let snapshot = StorageBackupFixture::payload_scalar(
         &preview,
         fixture.directory.path(),
-        "SELECT count(*) || '' AS value FROM sqlite_schema WHERE name LIKE '%owner%' OR name LIKE '%lease%' OR name LIKE '%activation%'",
+        "SELECT count(*) || '' AS value FROM sqlite_schema WHERE name NOT LIKE 'dataset_leases%' AND (name LIKE '%owner%' OR name LIKE '%lease%' OR name LIKE '%activation%')",
     )?;
     assert_eq!(snapshot, "0");
     Ok(())

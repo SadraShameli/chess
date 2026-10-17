@@ -1,6 +1,6 @@
-use strum::IntoEnumIterator;
 use std::collections::HashMap;
 use std::sync::Arc;
+use strum::IntoEnumIterator;
 
 use bevy_egui::egui::{self, Pos2, Rect, Sense, Ui};
 use thiserror::Error;
@@ -21,7 +21,9 @@ use crate::presentation::board::enums::{
 use crate::presentation::board::input::{
     PresentationBoardInput, PresentationBoardInputEnumGesture,
 };
-use crate::presentation::board::markings::PresentationBoardMarkings;
+use crate::presentation::board::markings::{
+    PresentationBoardMarkings, PresentationBoardMarkingsInput,
+};
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::{
     PresentationBoardSemanticGrid, PresentationBoardSemanticGridFeedback,
@@ -517,11 +519,13 @@ impl PresentationBoardView {
         output.has_semantic_grid = true;
         self.markings.handle_input(
             ui,
-            input.marks_enabled,
-            &mut *input.picker,
-            response.contains_pointer(),
-            scene,
-            viewport,
+            PresentationBoardMarkingsInput {
+                enabled: input.marks_enabled,
+                picker: &mut *input.picker,
+                hovered: response.contains_pointer(),
+                scene,
+                viewport,
+            },
         )?;
         self.markings
             .paint(ui, scene, input.snapshot, self.selected);

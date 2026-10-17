@@ -1641,10 +1641,9 @@ impl PresentationApp {
             editors_have_no_unsaved_edits: !self.has_unsaved_editor_state(),
         };
         if self.settings.take_install_request() {
-            self.settings
-                .request_update(crate::desktop::update_commands::DesktopUpdateOperation::Install {
-                    prerequisites,
-                });
+            self.settings.request_update(
+                crate::desktop::update_commands::DesktopUpdateOperation::Install { prerequisites },
+            );
         }
         self.backup.show(ui, port, now_ms, prerequisites);
     }
@@ -2193,7 +2192,7 @@ impl PresentationApp {
                 .games
                 .iter()
                 .find(|current| current.snapshot.id() == game)
-                .map(|current| current.snapshot.is_save_required());
+                .map(|current| current.snapshot.has_unsaved_changes());
             match unsaved {
                 Some(true) => self.close_confirmation = Some(game),
                 Some(false) => self.dispatch_close(game, frame, port),

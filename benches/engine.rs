@@ -10,7 +10,9 @@ use chess::engine::package::host::EnginePackageHost;
 use chess::engine::package::selector::EnginePackageSelector;
 use chess::engine::process_provider::EngineNativeProcessProvider;
 use chess::engine::resource_config::EngineResourceConfig;
-use chess::engine::search::identity::{EngineSearchContext, EngineSearchGameId, EngineSearchRevision};
+use chess::engine::search::identity::{
+    EngineSearchContext, EngineSearchGameId, EngineSearchRevision,
+};
 use chess::engine::search::limit::EngineSearchLimit;
 use chess::engine::search::position::EngineSearchPosition;
 use chess::engine::search::session::{
@@ -56,7 +58,10 @@ impl EngineBenchRunner {
             let tag = session
                 .start(EngineSearchSessionRequest::new(
                     context,
-                    EngineSearchPosition::new(BoardPosition::standard(), std::iter::empty::<&str>())?,
+                    EngineSearchPosition::new(
+                        BoardPosition::standard(),
+                        std::iter::empty::<&str>(),
+                    )?,
                     EngineSearchLimit::infinite(),
                     capacity.try_lease(workers.get())?,
                 ))
@@ -104,9 +109,9 @@ fn main() -> EngineBenchResult {
     let workers = std::thread::available_parallelism()?;
     let mut runs = Vec::with_capacity(EngineBenchFixture::RUNS);
     for _run in 0..EngineBenchFixture::RUNS {
-        runs.push(EngineBenchRunner::milliseconds(&runtime.block_on(
-            EngineBenchRunner::run(directory.clone(), workers),
-        )?));
+        runs.push(EngineBenchRunner::milliseconds(
+            &runtime.block_on(EngineBenchRunner::run(directory.clone(), workers))?,
+        ));
     }
     println!("{{\"stop_ms\":[{}]}}", runs.join(","));
     Ok(())

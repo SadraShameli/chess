@@ -53,7 +53,7 @@ pub(in crate::presentation::app) struct PresentationAppBackup {
 }
 
 impl PresentationAppBackup {
-    pub(in crate::presentation::app) const fn new() -> Self {
+    pub(in crate::presentation::app) fn new() -> Self {
         Self {
             status: None,
             preview: None,
@@ -170,7 +170,16 @@ impl PresentationAppBackup {
             DesktopMessagesEnumResult::Failure(failure) => {
                 self.notice = Some(failure.to_string());
             }
-            _ => self.notice = Some("The backup request did not complete".to_owned()),
+            DesktopMessagesEnumResult::LibraryFailure(_)
+            | DesktopMessagesEnumResult::EditorFailure(_)
+            | DesktopMessagesEnumResult::Value { .. }
+            | DesktopMessagesEnumResult::Cancelled
+            | DesktopMessagesEnumResult::Stopped
+            | DesktopMessagesEnumResult::Paused
+            | DesktopMessagesEnumResult::QuitReady
+            | DesktopMessagesEnumResult::ReconciliationRequired => {
+                self.notice = Some("The backup request did not complete".to_owned())
+            }
         }
     }
 

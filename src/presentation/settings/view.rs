@@ -3,25 +3,32 @@ use strum::IntoEnumIterator;
 
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesEnumAid, DesktopPreferencesEnumAudioCategory,
-    DesktopPreferencesEnumMotion, DesktopPreferencesEnumNotation, DesktopPreferencesEnumTheme,
-    DesktopPreferencesEnumPatch, DesktopPreferencesEnumSection,
-    DesktopPreferencesEnumShortcutAction, DesktopPreferencesPercent,
+    DesktopPreferencesEnumMotion, DesktopPreferencesEnumNotation, DesktopPreferencesEnumPatch,
+    DesktopPreferencesEnumSection, DesktopPreferencesEnumShortcutAction,
+    DesktopPreferencesEnumTheme, DesktopPreferencesPercent,
 };
 use crate::desktop::preferences_reset::DesktopPreferencesEnumResetScope;
+use crate::desktop::update_commands::DesktopUpdateOperation;
 use crate::presentation::action::shortcuts::{
     PresentationShortcutEnumPlatform, PresentationShortcuts,
 };
-use crate::desktop::update_commands::DesktopUpdateOperation;
+use crate::presentation::settings::controller::{
+    PresentationSettingsController, PresentationSettingsEnumPrompt, PresentationSettingsOutcome,
+};
 use crate::presentation::settings::update::{
     PresentationSettingsUpdate, PresentationSettingsUpdateEnumAction,
 };
 use crate::presentation::settings::update_install::PresentationSettingsUpdateInstall;
 use crate::update::state::UpdateEnumPhase;
-use crate::presentation::settings::controller::{
-    PresentationSettingsController, PresentationSettingsEnumPrompt, PresentationSettingsOutcome,
-};
 
 pub struct PresentationSettingsView;
+
+struct PresentationSettingsEngineRow<'l> {
+    label: &'l str,
+    current: Option<u32>,
+    minimum: u32,
+    maximum: u32,
+}
 
 impl PresentationSettingsView {
     pub fn show(
@@ -105,10 +112,17 @@ impl PresentationSettingsView {
         outcome
     }
 
-    fn audio(ui: &mut Ui, controller: &mut PresentationSettingsController, pending: DesktopPreferences) {
+    fn audio(
+        ui: &mut Ui,
+        controller: &mut PresentationSettingsController,
+        pending: DesktopPreferences,
+    ) {
         let mut master = pending.master_volume().value();
         if ui
-            .add(egui::Slider::new(&mut master, 0..=DesktopPreferencesPercent::MAX).text("Master volume"))
+            .add(
+                egui::Slider::new(&mut master, 0..=DesktopPreferencesPercent::MAX)
+                    .text("Master volume"),
+            )
             .changed()
             && let Ok(volume) = DesktopPreferencesPercent::new(master)
         {
@@ -118,7 +132,9 @@ impl PresentationSettingsView {
             let entry = pending.category(category);
             let mut enabled = entry.enabled();
             if ui.checkbox(&mut enabled, category.label()).changed() {
-                controller.edit(DesktopPreferencesEnumPatch::CategoryEnabled(category, enabled));
+                controller.edit(DesktopPreferencesEnumPatch::CategoryEnabled(
+                    category, enabled,
+                ));
             }
             let mut level = entry.volume().value();
             if ui
@@ -129,7 +145,9 @@ impl PresentationSettingsView {
                 .changed()
                 && let Ok(volume) = DesktopPreferencesPercent::new(level)
             {
-                controller.edit(DesktopPreferencesEnumPatch::CategoryVolume(category, volume));
+                controller.edit(DesktopPreferencesEnumPatch::CategoryVolume(
+                    category, volume,
+                ));
             }
         }
     }
@@ -160,31 +178,41 @@ impl PresentationSettingsView {
         }
     }
 
-    fn engine(ui: &mut Ui, controller: &mut PresentationSettingsController, pending: DesktopPreferences) {
+    fn engine(
+        ui: &mut Ui,
+        controller: &mut PresentationSettingsController,
+        pending: DesktopPreferences,
+    ) {
         Self::engine_row(
             ui,
-            "Threads",
-            pending.engine_threads(),
-            1,
-            DesktopPreferencesEnumPatch::MAX_ENGINE_THREADS,
+            PresentationSettingsEngineRow {
+                label: "Threads",
+                current: pending.engine_threads(),
+                minimum: 1,
+                maximum: DesktopPreferencesEnumPatch::MAX_ENGINE_THREADS,
+            },
             DesktopPreferencesEnumPatch::engine_threads,
             controller,
         );
         Self::engine_row(
             ui,
-            "Hash (MiB)",
-            pending.engine_hash_mib(),
-            1,
-            DesktopPreferencesEnumPatch::MAX_ENGINE_HASH_MIB,
+            PresentationSettingsEngineRow {
+                label: "Hash (MiB)",
+                current: pending.engine_hash_mib(),
+                minimum: 1,
+                maximum: DesktopPreferencesEnumPatch::MAX_ENGINE_HASH_MIB,
+            },
             DesktopPreferencesEnumPatch::engine_hash,
             controller,
         );
         Self::engine_row(
             ui,
-            "Move overhead (ms)",
-            pending.engine_move_overhead_ms(),
-            0,
-            DesktopPreferencesEnumPatch::MAX_ENGINE_OVERHEAD_MS,
+            PresentationSettingsEngineRow {
+                label: "Move overhead (ms)",
+                current: pending.engine_move_overhead_ms(),
+                minimum: 0,
+                maximum: DesktopPreferencesEnumPatch::MAX_ENGINE_OVERHEAD_MS,
+            },
             DesktopPreferencesEnumPatch::engine_move_overhead,
             controller,
         );
@@ -195,10 +223,7 @@ impl PresentationSettingsView {
 
     fn engine_row(
         ui: &mut Ui,
-        label: &str,
-        current: Option<u32>,
-        minimum: u32,
-        maximum: u32,
+        row: PresentationSettingsEngineRow<'_>,
         patch: impl Fn(
             Option<u32>,
         ) -> Result<
@@ -207,6 +232,12 @@ impl PresentationSettingsView {
         >,
         controller: &mut PresentationSettingsController,
     ) {
+        let PresentationSettingsEngineRow {
+            label,
+            current,
+            minimum,
+            maximum,
+        } = row;
         ui.horizontal(|ui| {
             let mut custom = current.is_some();
             let mut value = current.unwrap_or(minimum.max(1));
@@ -237,14 +268,15 @@ impl PresentationSettingsView {
             return;
         };
         if let Some(reason) = snapshot.disabled_reason() {
-            ui.label(format!("Updates are unavailable: {reason}. Offline chess is unaffected."));
+            ui.label(format!(
+                "Updates are unavailable: {reason}. Offline chess is unaffected."
+            ));
             return;
         }
         if let Some(message) = snapshot.message() {
             ui.label(message.to_owned());
         }
-        let chosen =
-            PresentationSettingsUpdate::show(ui, snapshot.state(), snapshot.credential());
+        let chosen = PresentationSettingsUpdate::show(ui, snapshot.state(), snapshot.credential());
         match chosen {
             Some(PresentationSettingsUpdateEnumAction::Check) => {
                 controller.request_update(DesktopUpdateOperation::Check);

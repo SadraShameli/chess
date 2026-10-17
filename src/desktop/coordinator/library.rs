@@ -83,9 +83,7 @@ where
                 .ok_or(DesktopFileHandleError::Saturated)
                 .and_then(|files| files.registry.consume(handle, owner, purpose, now))
                 .map_err(|error| error.to_string())
-                .and_then(|selection| {
-                    file.fill(selection).map_err(|error| error.to_string())
-                });
+                .and_then(|selection| file.fill(selection).map_err(|error| error.to_string()));
             if let Err(message) = filled {
                 return self
                     .fail(

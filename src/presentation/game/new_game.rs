@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use bevy_egui::egui::{self, Ui};
+use strum::IntoEnumIterator;
 
 use crate::board::enums::BoardEnumColor;
 use crate::board::position::BoardPosition;

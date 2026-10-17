@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use bevy_egui::egui::{self, Ui};
+use strum::IntoEnumIterator;
 
 use crate::presentation::board::enums::PresentationBoardEnumCameraAction;
 use crate::presentation::board::markings::{PresentationBoardMarkColor, PresentationBoardMarkings};

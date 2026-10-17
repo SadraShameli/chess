@@ -140,6 +140,9 @@ fn canceled_quit_restores_each_exact_phase_and_a_second_launch_stays_a_non_write
             DesktopRepeatedLaunchFixture::pid()?,
         )?;
         fixture.assert_busy()?;
+        if resting == DesktopProfileEnumPhase::InstallPending {
+            publisher.transition(DesktopProfileEnumPhase::Ready)?;
+        }
         publisher.transition(resting)?;
         assert_eq!(fixture.phase()?, resting);
         fixture.assert_busy()?;

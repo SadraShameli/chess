@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::error::Error;
+use strum::IntoEnumIterator;
 
 use chess::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
@@ -220,7 +220,10 @@ fn notation_defaults_to_letters_and_round_trips_as_a_stored_appearance_setting()
 -> DesktopPreferencesTestResult {
     use chess::desktop::preferences::DesktopPreferencesEnumNotation;
     let mut preferences = DesktopPreferences::default();
-    assert_eq!(preferences.notation(), DesktopPreferencesEnumNotation::Letters);
+    assert_eq!(
+        preferences.notation(),
+        DesktopPreferencesEnumNotation::Letters
+    );
     assert!(preferences.apply(DesktopPreferencesEnumPatch::Notation(
         DesktopPreferencesEnumNotation::Figurines
     )));

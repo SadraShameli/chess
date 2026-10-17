@@ -1,6 +1,6 @@
 use std::io::Cursor;
-use strum::IntoEnumIterator;
 use std::num::NonZeroUsize;
+use strum::IntoEnumIterator;
 
 use chess::board::position::BoardPosition;
 use chess::capacity::budget::{CapacityBudget, CapacityBudgetError};

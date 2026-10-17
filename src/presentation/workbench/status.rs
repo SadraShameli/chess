@@ -43,8 +43,10 @@ impl PresentationWorkbenchStatusEnumState {
         let response = ui.label(self.text());
         let live = self.live();
         let prefix = self.prefix();
+        let text = self.text().to_owned();
         ui.ctx().accesskit_node_builder(response.id, |node| {
             node.set_role(egui::accesskit::Role::Status);
+            node.set_label(text);
             node.set_live(live);
             node.set_description(prefix);
         });

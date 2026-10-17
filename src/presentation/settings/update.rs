@@ -103,7 +103,9 @@ impl PresentationSettingsUpdate {
                 actions.push(Action::Approve);
                 actions.push(Action::Cancel);
             }
-            UpdateEnumPhase::Checking | UpdateEnumPhase::Downloading => actions.push(Action::Cancel),
+            UpdateEnumPhase::Checking | UpdateEnumPhase::Downloading => {
+                actions.push(Action::Cancel)
+            }
             UpdateEnumPhase::Downloaded => actions.push(Action::Install),
             UpdateEnumPhase::Failed(_) | UpdateEnumPhase::Cancelled => {
                 actions.push(Action::Retry);

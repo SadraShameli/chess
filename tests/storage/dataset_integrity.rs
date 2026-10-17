@@ -22,7 +22,11 @@ impl StorageDatasetIntegrityReader for StorageDatasetIntegrityFixture {
     }
 }
 
-fn requirement(feature: Feature, artifact: &str, content: &[u8]) -> StorageDatasetIntegrityRequirement {
+fn requirement(
+    feature: Feature,
+    artifact: &str,
+    content: &[u8],
+) -> StorageDatasetIntegrityRequirement {
     StorageDatasetIntegrityRequirement {
         feature,
         artifact: artifact.to_owned(),

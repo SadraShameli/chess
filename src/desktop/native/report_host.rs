@@ -23,7 +23,6 @@ use crate::engine::search::session::{
 };
 use crate::engine::search::stop::{EngineSearchStop, EngineSearchStopError};
 use crate::engine::session::EngineSession;
-use crate::desktop::game_snapshot::DesktopGameSnapshot;
 use crate::game::enums::{GameEnumPhase, GameId, GameMoveId, GameRevision};
 use crate::game::tree::GameTree;
 use crate::presentation::opening::controller::PresentationOpeningIntent;
@@ -239,7 +238,10 @@ impl DesktopNativeReportHost {
             }
             if self.stop_requested(tag).await {
                 break session
-                    .stop(EngineSearchStop::received_at(tag, tokio::time::Instant::now())?)
+                    .stop(EngineSearchStop::received_at(
+                        tag,
+                        tokio::time::Instant::now(),
+                    )?)
                     .await?;
             }
             if let EngineSearchSessionEnumEvent::Finished(terminal) =

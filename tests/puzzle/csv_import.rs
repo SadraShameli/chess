@@ -1042,7 +1042,8 @@ async fn capacity_phase_revocation_during_csv_scan_is_typed_and_terminal()
 }
 
 #[test]
-fn csv_header_names_map_to_fields_with_unchanged_spellings() -> Result<(), Box<dyn std::error::Error>> {
+fn csv_header_names_map_to_fields_with_unchanged_spellings()
+-> Result<(), Box<dyn std::error::Error>> {
     use chess::puzzle::csv_import::PuzzleCsvImportEnumField;
     let expected = [
         ("PuzzleId", PuzzleCsvImportEnumField::PuzzleId),

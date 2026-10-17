@@ -26,7 +26,9 @@ pub enum PresentationAnalysisConfigurationError {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter,
+)]
 pub enum PresentationAnalysisConfigurationEnumMode {
     #[strum(serialize = "Infinite")]
     Infinite,

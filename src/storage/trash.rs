@@ -83,6 +83,14 @@ impl StorageTrashPlan {
     pub const fn affected_game_count(&self) -> u64 {
         self.games
     }
+    pub fn is_advanced_by_close(&self, refreshed: &Self, closed: GameStorageRevision) -> bool {
+        refreshed.action == self.action
+            && refreshed.organization == self.organization
+            && refreshed.folders == self.folders
+            && refreshed.games == self.games
+            && refreshed.content == Some(closed)
+            && self.content.is_some_and(|content| content < closed)
+    }
     pub(crate) fn approve(self) -> StorageTrashApprovedPlan {
         StorageTrashApprovedPlan(self)
     }

@@ -3,13 +3,13 @@ use bevy_egui::egui::{self, Ui};
 use crate::clock::time_provider::ClockTimeProvider;
 use crate::desktop::application::{DesktopApplicationPort, DesktopApplicationWakeProvider};
 use crate::desktop::identity::DesktopRequestId;
-use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::analysis::annotations::{
     PresentationAnalysisAnnotationsEnumDestination, PresentationAnalysisAnnotationsEnumGuardChoice,
 };
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumNavigation, PresentationAppLibraryError,
 };
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::library::view::PresentationLibraryEnumEffect;
 
 impl PresentationAppLibrary {

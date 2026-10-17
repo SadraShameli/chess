@@ -10,7 +10,9 @@ use chess::update::download::{
     UpdateDiskSpace, UpdateDownloadError, UpdateDownloadRequest, UpdateDownloader,
 };
 use chess::update::manifest::{UpdateManifest, UpdateManifestAsset, UpdateTarget};
-use chess::update::network_cost::{UpdateNetworkEnumCost, UpdateNetworkMonitor, UpdateNetworkApproval, UpdateNetworkEnumVerdict};
+use chess::update::network_cost::{
+    UpdateNetworkApproval, UpdateNetworkEnumCost, UpdateNetworkEnumVerdict, UpdateNetworkMonitor,
+};
 use chess::update::state::{
     UpdateCacheReceipt, UpdateEnumFailure, UpdateEnumPhase, UpdateReleaseIdentity, UpdateState,
 };
@@ -106,7 +108,8 @@ async fn a_matching_download_is_written_and_then_cached_durably() -> UpdateDownl
 }
 
 #[tokio::test]
-async fn mismatched_bytes_space_shortage_and_status_failures_leave_no_partial() -> UpdateDownloadTestResult {
+async fn mismatched_bytes_space_shortage_and_status_failures_leave_no_partial()
+-> UpdateDownloadTestResult {
     let directory = tempfile::tempdir()?;
     let asset = asset(UpdateTarget::MacosArm64)?;
     let partial = directory.path().join("package.part");
@@ -164,7 +167,10 @@ async fn sixty_seconds_without_bytes_stops_the_download() -> UpdateDownloadTestR
     );
     let (_sender, cancel) = watch::channel(false);
     let outcome = run(&http, &asset, &partial, u64::MAX, cancel).await;
-    assert!(matches!(outcome, Err(UpdateDownloadError::Stalled(_)) | Err(UpdateDownloadError::Mismatch)));
+    assert!(matches!(
+        outcome,
+        Err(UpdateDownloadError::Stalled(_)) | Err(UpdateDownloadError::Mismatch)
+    ));
     assert!(!partial.exists());
     Ok(())
 }
@@ -192,7 +198,13 @@ fn the_cache_keeps_the_old_package_until_a_replacement_validates() -> UpdateDown
         cache.completed()?.map(|(held, _path)| held.release.target),
         Some(UpdateTarget::WindowsX86_64)
     );
-    assert!(!directory.path().join("completed").join(first.name()).exists());
+    assert!(
+        !directory
+            .path()
+            .join("completed")
+            .join(first.name())
+            .exists()
+    );
     Ok(())
 }
 
@@ -231,7 +243,10 @@ fn metered_or_unknown_networks_need_attempt_scoped_approval() -> UpdateDownloadT
     state.approve(UpdateNetworkEnumCost::Metered)?;
     assert_eq!(state.phase(), UpdateEnumPhase::Downloading);
     state.network_observed(UpdateNetworkEnumCost::Unmetered)?;
-    assert_eq!(state.phase(), UpdateEnumPhase::Failed(UpdateEnumFailure::NetworkChanged));
+    assert_eq!(
+        state.phase(),
+        UpdateEnumPhase::Failed(UpdateEnumFailure::NetworkChanged)
+    );
     assert!(state.can_retry());
     let second = state.request_download(UpdateNetworkEnumCost::Unknown)?;
     assert_ne!(first, second);
@@ -259,6 +274,12 @@ fn the_network_monitor_polls_every_five_seconds_and_stops_on_any_cost_change() {
     let mut monitor = UpdateNetworkMonitor::new(approval, 0);
     assert!(!monitor.poll_due(4_999));
     assert!(monitor.poll_due(5_000));
-    assert_eq!(monitor.observe(UpdateNetworkEnumCost::Unmetered, 5_000), UpdateNetworkEnumVerdict::Continue);
-    assert_eq!(monitor.os_change(UpdateNetworkEnumCost::Metered), UpdateNetworkEnumVerdict::Stop);
+    assert_eq!(
+        monitor.observe(UpdateNetworkEnumCost::Unmetered, 5_000),
+        UpdateNetworkEnumVerdict::Continue
+    );
+    assert_eq!(
+        monitor.os_change(UpdateNetworkEnumCost::Metered),
+        UpdateNetworkEnumVerdict::Stop
+    );
 }

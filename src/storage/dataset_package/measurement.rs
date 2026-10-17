@@ -1,6 +1,6 @@
 use serde::ser::SerializeStruct;
-use strum::IntoEnumIterator;
 use serde::{Deserialize, Serialize, Serializer};
+use strum::IntoEnumIterator;
 
 use crate::storage::dataset_package::{StorageDatasetPackageArtifact, StorageDatasetPackageError};
 use crate::storage::dataset_selection::{

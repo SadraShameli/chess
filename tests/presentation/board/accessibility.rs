@@ -115,12 +115,13 @@ impl PresentationBoardAccessibilityBoard {
                         .map(ScenePicking::board_square)
                         .map_err(chess::scene::renderer::SceneRendererError::from)
                 };
-                let _ = view.show_at(
+                let shown = view.show_at(
                     ui,
                     image,
                     PresentationBoardViewInput::new(snapshot, Some(scene), &mut picker)
                         .with_pending_move(pending),
                 );
+                assert!(shown.is_ok(), "the board view failed to render");
             },
         );
         output.textures_delta.clear();
@@ -297,7 +298,7 @@ fn focused_square_draws_a_visible_two_point_ring_and_arrows_stop_at_the_board_ed
 #[test]
 fn semantic_squares_stay_inside_the_board_and_meet_the_minimum_target_at_every_layout_scale()
 -> PresentationBoardAccessibilityResult {
-    assert!(PresentationThemeTokens::MIN_TARGET >= MIN_LOGICAL_TARGET);
+    const { assert!(PresentationThemeTokens::MIN_TARGET >= MIN_LOGICAL_TARGET) };
     for orientation in [BoardEnumColor::White, BoardEnumColor::Black] {
         for screen in SCREENS {
             for scale in SCALES {
@@ -364,7 +365,10 @@ fn reduced_motion_camera_reset_and_selection_apply_their_final_state_in_one_fram
         .tilt_up()
         .zoom_out();
     let clock = Arc::new(PresentationBoardAccessibilityClock::default());
-    let mut animated = PresentationBoardAnimation::new(clock.clone(), false);
+    let mut animated = PresentationBoardAnimation::new(
+        std::sync::Arc::<PresentationBoardAccessibilityClock>::clone(&clock),
+        false,
+    );
     let (_, outcome) = animated.start_camera_reset(moved)?;
     assert_eq!(outcome, PresentationBoardAnimationEnumOutcome::Animating);
     assert!(animated.repaint_delay().is_some());
@@ -432,7 +436,9 @@ impl PresentationBoardAccessibilityApp {
         let clock = Arc::new(PresentationBoardAccessibilityClock::default());
         Self {
             context,
-            presentation: PresentationApp::new(clock.clone()),
+            presentation: PresentationApp::new(
+                std::sync::Arc::<PresentationBoardAccessibilityClock>::clone(&clock),
+            ),
             application: DesktopApplication::new(
                 clock,
                 Arc::new(PresentationBoardAccessibilityWake),

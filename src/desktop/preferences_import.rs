@@ -4,8 +4,9 @@ use strum::IntoEnumIterator;
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
     DesktopPreferencesEnumAid, DesktopPreferencesEnumAudioCategory, DesktopPreferencesEnumMotion,
-    DesktopPreferencesEnumNotation, DesktopPreferencesEnumPatch, DesktopPreferencesEnumShortcutAction, DesktopPreferencesEnumTheme,
-    DesktopPreferencesError, DesktopPreferencesPercent,
+    DesktopPreferencesEnumNotation, DesktopPreferencesEnumPatch,
+    DesktopPreferencesEnumShortcutAction, DesktopPreferencesEnumTheme, DesktopPreferencesError,
+    DesktopPreferencesPercent,
 };
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]

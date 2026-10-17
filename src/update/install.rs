@@ -6,12 +6,12 @@ use semver::Version;
 use thiserror::Error;
 
 use crate::desktop::identity::DesktopRequestId;
+use crate::desktop::profile::DesktopProfileLease;
 use crate::desktop::profile::installation::{
     DesktopProfileInstallationEnumOutcome, DesktopProfileInstallationEnumState,
     DesktopProfileInstallationError, DesktopProfileInstallationIntent,
     DesktopProfileInstallationSpec,
 };
-use crate::desktop::profile::DesktopProfileLease;
 use crate::package::digest::{PackageDigest, PackageDigestError};
 use crate::update::manifest::{UpdateManifest, UpdateManifestAsset, UpdateManifestError};
 
@@ -27,7 +27,9 @@ pub enum UpdateInstallError {
     Digest(#[from] PackageDigestError),
     #[error(transparent)]
     Intent(#[from] DesktopProfileInstallationError),
-    #[error("The helper did not acknowledge readiness for this generation; the prepared intent is retained")]
+    #[error(
+        "The helper did not acknowledge readiness for this generation; the prepared intent is retained"
+    )]
     HelperNotReady,
     #[error("The helper has not been confirmed stopped; the prepared intent is retained")]
     HelperStillRunning,

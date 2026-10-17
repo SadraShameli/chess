@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify, watch};
 use crate::capacity::budget::{CapacityBudget, CapacityBudgetError};
 use crate::capacity::executor::{CapacityExecutor, CapacityExecutorError};
 use crate::capacity::lease::CapacityLease;
+use crate::clock::duration::ClockDuration;
 use crate::desktop::engine_commands::{
     DesktopEngineCommandsEnumWorkload, DesktopEngineCommandsResourceRequest,
 };
@@ -18,7 +19,6 @@ use crate::desktop::native::game_engine::{
     DesktopNativeGameEngineAllocation, DesktopNativeGameEngineAllocationActivity,
     DesktopNativeGameEngineAllocationError, DesktopNativeGameEngineResources,
 };
-use crate::clock::duration::ClockDuration;
 use crate::engine::configuration::{
     EngineConfiguration, EngineConfigurationEnumBoundary, EngineConfigurationOverrides,
 };
@@ -115,7 +115,10 @@ impl DesktopNativeGameResourcesPolicy {
         };
         let requested = EngineResourceConfig::new(
             threads,
-            overrides.hash_mib.unwrap_or(self.hash_mib).min(self.hash_mib),
+            overrides
+                .hash_mib
+                .unwrap_or(self.hash_mib)
+                .min(self.hash_mib),
             move_overhead,
         )?;
         let mut configuration = EngineConfiguration::new(base);

@@ -201,6 +201,7 @@ pub struct DesktopGameSnapshot {
     claimable: GameDrawClaimEnumAvailability,
     takeback_target: Option<GameMoveId>,
     save_required: bool,
+    unsaved: bool,
     notice: Option<DesktopGameSnapshotEnumNotice>,
     analysis: DesktopGameSnapshotEnumAnalysis,
     admission: DesktopGameSnapshotEnumAdmission,
@@ -245,6 +246,7 @@ impl DesktopGameSnapshot {
 
     pub(crate) fn refresh_save_status(&mut self, status: GameSaveEnumStatus) {
         self.save_required = status == GameSaveEnumStatus::Required;
+        self.unsaved = self.save_required;
     }
     pub fn capture(
         session: &GameSession,
@@ -304,6 +306,7 @@ impl DesktopGameSnapshot {
             claimable: session.claimable(),
             takeback_target,
             save_required: session.save_status() == GameSaveEnumStatus::Required,
+            unsaved: session.has_unsaved_changes(),
             notice: None,
             analysis: DesktopGameSnapshotEnumAnalysis::capture(session)?,
             admission: DesktopGameSnapshotEnumAdmission::Admitted,
@@ -367,6 +370,10 @@ impl DesktopGameSnapshot {
 
     pub const fn is_save_required(&self) -> bool {
         self.save_required
+    }
+
+    pub const fn has_unsaved_changes(&self) -> bool {
+        self.unsaved
     }
 
     pub const fn view(&self) -> GameMoveId {

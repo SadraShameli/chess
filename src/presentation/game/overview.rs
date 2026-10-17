@@ -140,7 +140,7 @@ impl PresentationGameOverview {
             turn,
             clock,
             status,
-            unsaved: snapshot.is_save_required(),
+            unsaved: snapshot.has_unsaved_changes(),
             resources,
         })
     }

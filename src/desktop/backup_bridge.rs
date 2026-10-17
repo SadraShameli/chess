@@ -12,6 +12,7 @@ use crate::clock::duration::ClockInstant;
 use crate::desktop::backup_commands::{
     DesktopBackupCommands, DesktopBackupCommandsEntry, DesktopBackupCommandsError,
     DesktopBackupCommandsPrerequisites, DesktopBackupCommandsPreviewHandle,
+    DesktopBackupCommandsRestoreRequest,
 };
 use crate::desktop::error::{DesktopEnumFailureCode, DesktopFailure};
 use crate::desktop::file_handle::{DesktopFileEnumSelection, DesktopFileHandleId};
@@ -175,7 +176,7 @@ impl DesktopBackupService {
                 let due = Self::blocking(Arc::clone(&service.executor), move || {
                     let guard = commands.lock().map_err(|_poisoned| poisoned_error())?;
                     guard.note_user_data_blocking(now_ms)?;
-                    Ok(guard.state_blocking()?)
+                    guard.state_blocking()
                 })
                 .await;
                 if let Ok(state) = due
@@ -286,11 +287,13 @@ impl DesktopBackupBridgeProvider for DesktopBackupService {
                     } => {
                         let outcome = guard.stage_restore_blocking(
                             &lease,
-                            preview,
-                            prerequisites,
-                            Uuid::new_v4(),
-                            Uuid::new_v4(),
-                            now_ms,
+                            DesktopBackupCommandsRestoreRequest {
+                                handle: preview,
+                                prerequisites,
+                                safety_id: Uuid::new_v4(),
+                                restore_id: Uuid::new_v4(),
+                                now_ms,
+                            },
                         )?;
                         Ok(DesktopBackupBridgeEnumResult::RestoreStaged {
                             safety_backup: outcome.safety_backup(),

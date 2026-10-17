@@ -83,17 +83,33 @@ impl UpdateIntentWriter for UpdateFixtureWriter {
     }
 }
 
-fn request_parts() -> Result<(chess::update::manifest::UpdateManifestAsset, tempfile::TempDir), Box<dyn std::error::Error>> {
-    let manifest = UpdateManifest::verify_and_parse(&UpdateVerifier::new(PUBLIC_KEY)?, MANIFEST, SIGNATURE)?;
-    let asset = manifest.asset_for(UpdateTarget::MacosArm64).ok_or("asset")?.clone();
+fn request_parts() -> Result<
+    (
+        chess::update::manifest::UpdateManifestAsset,
+        tempfile::TempDir,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let manifest =
+        UpdateManifest::verify_and_parse(&UpdateVerifier::new(PUBLIC_KEY)?, MANIFEST, SIGNATURE)?;
+    let asset = manifest
+        .asset_for(UpdateTarget::MacosArm64)
+        .ok_or("asset")?
+        .clone();
     Ok((asset, tempfile::tempdir()?))
 }
+
+type UpdateInstallRun = (
+    Result<DesktopProfileInstallationSpec, UpdateInstallError>,
+    Vec<&'static str>,
+    Vec<DesktopProfileInstallationEnumState>,
+);
 
 fn run(
     helper: UpdateFixtureHelper,
     fail_save: bool,
     bytes: &[u8],
-) -> Result<(Result<DesktopProfileInstallationSpec, UpdateInstallError>, Vec<&'static str>, Vec<DesktopProfileInstallationEnumState>), Box<dyn std::error::Error>> {
+) -> Result<UpdateInstallRun, Box<dyn std::error::Error>> {
     let (asset, directory) = request_parts()?;
     let package = directory.path().join("package.zip");
     std::fs::write(&package, bytes)?;
@@ -122,7 +138,8 @@ fn run(
 }
 
 #[test]
-fn prerequisites_run_in_order_and_commit_follows_the_prepared_intent() -> Result<(), Box<dyn std::error::Error>> {
+fn prerequisites_run_in_order_and_commit_follows_the_prepared_intent()
+-> Result<(), Box<dyn std::error::Error>> {
     let (outcome, calls, states) = run(UpdateFixtureHelper::Ready, false, MACOS_PACKAGE)?;
     assert!(outcome.is_ok());
     assert_eq!(calls, ["edits", "save", "backup", "helper"]);
@@ -149,8 +166,12 @@ fn a_failed_save_or_tampered_package_writes_no_intent() -> Result<(), Box<dyn st
 }
 
 #[test]
-fn a_lost_or_mismatched_helper_acknowledgment_never_commits() -> Result<(), Box<dyn std::error::Error>> {
-    for helper in [UpdateFixtureHelper::Lost, UpdateFixtureHelper::WrongGeneration] {
+fn a_lost_or_mismatched_helper_acknowledgment_never_commits()
+-> Result<(), Box<dyn std::error::Error>> {
+    for helper in [
+        UpdateFixtureHelper::Lost,
+        UpdateFixtureHelper::WrongGeneration,
+    ] {
         let (outcome, _calls, states) = run(helper, false, MACOS_PACKAGE)?;
         assert!(matches!(outcome, Err(UpdateInstallError::HelperNotReady)));
         assert_eq!(states, [DesktopProfileInstallationEnumState::Prepared]);

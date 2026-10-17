@@ -264,7 +264,9 @@ impl UpdateState {
         observed: UpdateNetworkEnumCost,
     ) -> Result<(), UpdateStateError> {
         self.require(UpdateEnumPhase::Downloading, "observe the network")?;
-        let attempt = self.attempt.ok_or_else(|| self.refuse("observe the network"))?;
+        let attempt = self
+            .attempt
+            .ok_or_else(|| self.refuse("observe the network"))?;
         let covered = self
             .approval
             .is_some_and(|approval| approval.covers(attempt, observed));
@@ -327,7 +329,10 @@ impl UpdateState {
     }
 
     pub fn begin_handoff(&mut self) -> Result<(), UpdateStateError> {
-        self.require(UpdateEnumPhase::InstallPrerequisites, "hand off to the helper")?;
+        self.require(
+            UpdateEnumPhase::InstallPrerequisites,
+            "hand off to the helper",
+        )?;
         self.phase = UpdateEnumPhase::Handoff;
         Ok(())
     }

@@ -1,6 +1,6 @@
-use strum::IntoEnumIterator;
 use chess::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError};
 use chess::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
+use strum::IntoEnumIterator;
 
 #[test]
 fn dynamic_threads_descriptor_accepts_the_advertised_high_core_bound()

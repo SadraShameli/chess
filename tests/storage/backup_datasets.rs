@@ -42,7 +42,7 @@ async fn backups_carry_dataset_references_with_identity_checksum_and_validation_
     }
     let backups = fixture.backups();
     let archive = BackupCreator::create_blocking(
-        fixture.request(&database, &backups, BackupEnumCategory::Manual, 20, 2_000),
+        StorageBackupFixture::request(&database, &backups, BackupEnumCategory::Manual, 20, 2_000),
         &BackupSpaceNative,
     )?;
     let preview = StorageBackupFixture::inspect(archive.path())?;
@@ -52,7 +52,10 @@ async fn backups_carry_dataset_references_with_identity_checksum_and_validation_
         scratch,
         "SELECT name || '|' || version || '|' || validation || '|' || checksum AS value FROM datasets LIMIT 1",
     )?;
-    assert_eq!(reference, format!("Club games|v1|integrity_verified|{checksum}"));
+    assert_eq!(
+        reference,
+        format!("Club games|v1|integrity_verified|{checksum}")
+    );
     Ok(())
 }
 

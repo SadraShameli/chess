@@ -108,7 +108,11 @@ fn every_linked_fixture_test_and_evidence_path_exists_and_coverage_is_declared()
                 "{} links a non-repository path {path}",
                 entry.id
             );
-            assert!(root.join(path).exists(), "{} links missing {path}", entry.id);
+            assert!(
+                root.join(path).exists(),
+                "{} links missing {path}",
+                entry.id
+            );
         }
     }
     Ok(())

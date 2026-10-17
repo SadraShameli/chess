@@ -6,9 +6,9 @@ use std::sync::Arc;
 use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::library_service::{
-    DesktopLibraryServiceEnumImportAction, DesktopLibraryServiceExport,
-    DesktopLibraryServiceFile,
-    DesktopLibraryServiceEnumAction, DesktopLibraryServiceError, DesktopLibraryServiceOperation,
+    DesktopLibraryServiceEnumAction, DesktopLibraryServiceEnumImportAction,
+    DesktopLibraryServiceError, DesktopLibraryServiceExport, DesktopLibraryServiceFile,
+    DesktopLibraryServiceOperation,
 };
 use crate::desktop::messages::{DesktopMessagesEntityId, DesktopRequest};
 use crate::game::enums::{GameId, GameRevision};
@@ -30,12 +30,12 @@ use crate::storage::library_metadata::{
     StorageLibraryMetadataEnumRequest, StorageLibraryMetadataFolderPage,
     StorageLibraryMetadataFolderRead, StorageLibraryMetadataTagPage,
 };
-use crate::storage::trash::{
-    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
-};
 use crate::storage::library_query::{
     StorageLibraryQuery, StorageLibraryQueryCursor, StorageLibraryQueryOptions,
     StorageLibraryQueryPage,
+};
+use crate::storage::trash::{
+    StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
 };
 
 #[derive(Default)]
@@ -282,7 +282,10 @@ impl PresentationLibraryController {
         input: DesktopRequestId,
         request: StorageTrashPreviewRequest,
     ) -> Result<Option<PresentationLibraryIntent>, PresentationLibraryError> {
-        self.begin(input, DesktopLibraryServiceEnumAction::PreviewTrash(request))
+        self.begin(
+            input,
+            DesktopLibraryServiceEnumAction::PreviewTrash(request),
+        )
     }
 
     pub fn apply_trash(
@@ -450,9 +453,9 @@ impl PresentationLibraryController {
             .ok_or(PresentationLibraryError::MissingConfirmation)?;
         self.begin(
             input,
-            DesktopLibraryServiceEnumAction::Import(
-                DesktopLibraryServiceEnumImportAction::Commit(confirmation),
-            ),
+            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Commit(
+                confirmation,
+            )),
         )
     }
 

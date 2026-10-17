@@ -6,16 +6,16 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::desktop::library_service::file::DesktopLibraryServiceFile;
 use crate::desktop::library_service::DesktopLibraryServiceError;
+use crate::desktop::library_service::file::DesktopLibraryServiceFile;
 use crate::storage::import_session::{
     StorageImportSession, StorageImportSessionConfirmation, StorageImportSessionDetailPage,
     StorageImportSessionDetailRequest, StorageImportSessionEnumCancelOutcome,
     StorageImportSessionEnumChoice, StorageImportSessionEnumCommitOutcome,
     StorageImportSessionError, StorageImportSessionFilesystemProvider,
     StorageImportSessionIdentityProvider, StorageImportSessionPage,
-    StorageImportSessionPageRequest, StorageImportSessionRepository,
-    StorageImportSessionResources, StorageImportSessionSummary,
+    StorageImportSessionPageRequest, StorageImportSessionRepository, StorageImportSessionResources,
+    StorageImportSessionSummary,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -226,9 +226,10 @@ impl DesktopLibraryServiceImports {
                 if slot.is_some() {
                     return Err(DesktopLibraryServiceError::ImportActive);
                 }
-                let source = file.take()?.into_source().map_err(|error| {
-                    DesktopLibraryServiceError::FileSelection(Arc::new(error))
-                })?;
+                let source = file
+                    .take()?
+                    .into_source()
+                    .map_err(|error| DesktopLibraryServiceError::FileSelection(Arc::new(error)))?;
                 let mut session = self
                     .backend
                     .begin(source)
@@ -303,10 +304,10 @@ impl DesktopLibraryServiceImports {
         }
     }
 
-    fn active<'a>(
-        slot: &'a mut Option<Box<dyn DesktopLibraryServiceImportSession>>,
-    ) -> Result<&'a mut Box<dyn DesktopLibraryServiceImportSession>, DesktopLibraryServiceError>
-    {
-        slot.as_mut().ok_or(DesktopLibraryServiceError::ImportNotActive)
+    fn active(
+        slot: &mut Option<Box<dyn DesktopLibraryServiceImportSession>>,
+    ) -> Result<&mut Box<dyn DesktopLibraryServiceImportSession>, DesktopLibraryServiceError> {
+        slot.as_mut()
+            .ok_or(DesktopLibraryServiceError::ImportNotActive)
     }
 }

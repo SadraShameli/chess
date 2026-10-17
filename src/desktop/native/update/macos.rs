@@ -36,7 +36,9 @@ impl DesktopNativeUpdateMacos {
             .ok_or_else(|| DesktopNativeUpdateError::UnsafePath(bundle.to_path_buf()))?;
         if !package.is_absolute()
             || !bundle.is_absolute()
-            || bundle.extension().is_none_or(|extension| extension != "app")
+            || bundle
+                .extension()
+                .is_none_or(|extension| extension != "app")
         {
             return Err(DesktopNativeUpdateError::UnsafePath(bundle.to_path_buf()));
         }

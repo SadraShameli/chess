@@ -1,7 +1,7 @@
-use strum::IntoEnumIterator;
 use std::error::Error;
 use std::num::NonZeroUsize;
 use std::time::Duration;
+use strum::IntoEnumIterator;
 
 use chess::board::position::BoardPosition;
 use chess::capacity::budget::{CapacityBudget, CapacityBudgetError};

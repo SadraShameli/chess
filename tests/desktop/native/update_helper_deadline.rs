@@ -12,7 +12,8 @@ use crate::update::install::{UpdateHelperEnumReadiness, UpdateInstallEnvironment
 
 #[cfg(unix)]
 #[test]
-fn a_helper_that_never_acknowledges_is_killed_and_reaped() -> Result<(), Box<dyn std::error::Error>> {
+fn a_helper_that_never_acknowledges_is_killed_and_reaped() -> Result<(), Box<dyn std::error::Error>>
+{
     let mut command = Command::new("sleep");
     command.arg("30");
     let mut environment = DesktopNativeUpdateEnvironment {

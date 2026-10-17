@@ -19,8 +19,9 @@ use crate::engine::process_provider::{EngineProcess, EngineProcessProvider};
 use crate::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
 use crate::engine::session::{EngineSession, EngineSessionError, EngineSessionStartup};
 use crate::game::engine_provider::{
-    GameEngineAllocationView, GameEngineContext, GameEngineEnumEvent, GameEngineProvider, GameEngineQuiescenceReceipt,
-    GameEngineRequest, GameEngineSearchIdentity, GameEngineStopReceipt,
+    GameEngineAllocationView, GameEngineContext, GameEngineEnumEvent, GameEngineProvider,
+    GameEngineQuiescenceReceipt, GameEngineRequest, GameEngineSearchIdentity,
+    GameEngineStopReceipt,
 };
 use crate::game::enums::GameId;
 
@@ -668,7 +669,8 @@ impl<
     type Error = DesktopNativeGameEngineError<R::Error>;
 
     fn allocation_view(&self) -> Option<GameEngineAllocationView> {
-        self.allocation
+        self.state
+            .allocation
             .as_ref()
             .or(self.state.allocation.as_ref())
             .and_then(|allocation| {

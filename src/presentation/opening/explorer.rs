@@ -1,14 +1,12 @@
 use bevy_egui::egui::{self, Ui};
 
-use crate::desktop::opening_commands::{
-    DesktopOpeningExplorerView, DesktopOpeningRating,
-};
+use crate::desktop::opening_commands::{DesktopOpeningExplorerView, DesktopOpeningRating};
 use crate::presentation::cursor::PresentationStudyCursor;
+use crate::presentation::opening::book::PresentationOpeningBook;
 use crate::presentation::opening::controller::{
     PresentationOpeningController, PresentationOpeningEnumOrigin, PresentationOpeningEnumTab,
     PresentationOpeningIntent,
 };
-use crate::presentation::opening::book::PresentationOpeningBook;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 
 #[cfg(test)]
@@ -56,7 +54,9 @@ impl PresentationOpeningExplorer {
         controller: &PresentationOpeningController,
     ) -> Option<PresentationOpeningIntent> {
         ui.heading("Opening explorer");
-        ui.small("Explorer moves are study navigation only and never play a move in a running game");
+        ui.small(
+            "Explorer moves are study navigation only and never play a move in a running game",
+        );
         let Some(view) = controller.explorer() else {
             ui.label("No opening data is available for this position");
             return None;

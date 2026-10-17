@@ -36,8 +36,7 @@ use bevy::render::{Render, RenderApp, RenderPlugin, RenderStartup, RenderSystems
 use bevy::shader::ShaderCacheError;
 use bevy::window::{
     AppLifecycle, ExitCondition, PrimaryWindow, RawHandleWrapper, Window, WindowCloseRequested,
-    WindowPlugin,
-    WindowResizeConstraints,
+    WindowPlugin, WindowResizeConstraints,
 };
 use bevy::winit::{EventLoopProxyWrapper, UpdateMode, WINIT_WINDOWS, WinitPlugin, WinitSettings};
 use bevy_egui::render::EguiPipeline;
@@ -59,24 +58,18 @@ use crate::capacity::phase::{
 };
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::time_provider::ClockTimeProviderMonotonic;
-use crate::presentation::timing::{PresentationTimingError, PresentationTimingSampler};
-use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryPort};
-use crate::desktop::layout::{DesktopLayout, DesktopLayoutDisplay, DesktopLayoutError};
-use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
-use crate::desktop::renderer_commands::{
-    DesktopRendererCommands, DesktopRendererCommandsEnumCause, DesktopRendererCommandsEnumState,
-    DesktopRendererCommandsError,
-};
-use crate::presentation::board::recovery::PresentationBoardRecoveryEnumIntent;
-use crate::scene::quality::{SceneQuality, SceneQualityEnumSample, SceneQualityError};
 use crate::desktop::application::{DesktopApplicationError, DesktopApplicationPort};
 use crate::desktop::dto::DesktopBoardSnapshot;
+use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryPort};
+use crate::desktop::layout::{DesktopLayout, DesktopLayoutDisplay, DesktopLayoutError};
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult};
+use crate::desktop::native::audio::{DesktopNativeAudio, DesktopNativeAudioBevy};
 use crate::desktop::native::dialogs::{
     DesktopNativeDialogs, DesktopNativeDialogsError, DesktopNativeDialogsPort,
     DesktopNativeDialogsRfd,
 };
 use crate::desktop::native::event_loop::{DesktopNativeEventLoopError, DesktopNativeEventLoopWake};
+use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
 #[cfg(target_os = "macos")]
 use crate::desktop::native::menu::{
     DesktopNativeMenu, DesktopNativeMenuEnumAction, DesktopNativeMenuError,
@@ -92,18 +85,24 @@ use crate::desktop::native::recovery::{
 };
 use crate::desktop::native::resources::DesktopNativeResources;
 use crate::desktop::native::task_pools::{DesktopNativeTaskPools, DesktopNativeTaskPoolsError};
+use crate::desktop::renderer_commands::{
+    DesktopRendererCommands, DesktopRendererCommandsEnumCause, DesktopRendererCommandsEnumState,
+    DesktopRendererCommandsError,
+};
 use crate::presentation::action::registry::PresentationActionEnumId;
 use crate::presentation::app::{PresentationApp, PresentationAppError};
+use crate::presentation::audio::router::{PresentationAudioContext, PresentationAudioRouter};
 use crate::presentation::board::animation::PresentationBoardAnimationFrame;
+use crate::presentation::board::recovery::PresentationBoardRecoveryEnumIntent;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::engine_panels::PresentationEnginePanelsConnection;
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::presentation::theme::font::PresentationThemeFont;
-use crate::desktop::native::audio::{DesktopNativeAudio, DesktopNativeAudioBevy};
-use crate::presentation::audio::router::{PresentationAudioContext, PresentationAudioRouter};
+use crate::presentation::timing::{PresentationTimingError, PresentationTimingSampler};
 use crate::scene::assets::{SceneAssets, SceneAssetsError};
 use crate::scene::camera::{SceneCamera, SceneCameraError};
 use crate::scene::picking::{ScenePickingViewport, ScenePickingViewportError};
+use crate::scene::quality::{SceneQuality, SceneQualityEnumSample, SceneQualityError};
 use crate::scene::renderer::{SceneRenderer, SceneRendererError, SceneRendererGeneration};
 
 #[cfg(test)]
@@ -133,7 +132,8 @@ pub struct DesktopNativeHostServices {
     pub puzzle_panel: Option<PresentationPuzzlePanelConnection>,
     pub library_workspace: Option<crate::desktop::messages::DesktopMessagesEntityId>,
     pub editor: Option<crate::presentation::app::editor::PresentationAppEditorConnection>,
-    pub preferences: Option<crate::presentation::settings::controller::PresentationSettingsConnection>,
+    pub preferences:
+        Option<crate::presentation::settings::controller::PresentationSettingsConnection>,
     pub puzzles: DesktopNativePuzzleServicePort,
     pub port: DesktopApplicationPort<ClockTimeProviderMonotonic, DesktopNativeEventLoopWake>,
     pub clock: Arc<ClockTimeProviderMonotonic>,
@@ -150,6 +150,7 @@ pub struct DesktopNativeHostServices {
     pub budget: CapacityBudget,
     pub dialog_ready:
         watch::Sender<Option<DesktopNativeDialogsPort<Arc<DesktopNativeEventLoopWake>>>>,
+    pub timing_export: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Error)]
@@ -275,6 +276,7 @@ impl DesktopNativeHostAudio {
     }
 }
 
+#[derive(Resource)]
 struct DesktopNativeHostState {
     audio: DesktopNativeHostAudio,
     services: DesktopNativeHostServices,
@@ -705,7 +707,8 @@ impl DesktopNativeHost {
             .world()
             .resource::<AssetServer>()
             .load(DesktopNativeResources::PIECES_ASSET);
-        let mut presentation = PresentationApp::new(services.clock.clone());
+        let clock: Arc<ClockTimeProviderMonotonic> = Arc::clone(&services.clock);
+        let mut presentation = PresentationApp::new(clock);
         presentation.set_layout(services.layout);
         let initial_camera = services
             .layout
@@ -1186,7 +1189,43 @@ impl DesktopNativeHost {
             }
             DesktopNativeHostError::Device(_) => DesktopRendererCommandsEnumCause::ContextLoss,
             DesktopNativeHostError::Pipeline(_) => DesktopRendererCommandsEnumCause::Shader,
-            _ => DesktopRendererCommandsEnumCause::Initialization,
+            DesktopNativeHostError::ResourcePath(_)
+            | DesktopNativeHostError::CapacityBusy
+            | DesktopNativeHostError::CapacityPoisoned
+            | DesktopNativeHostError::PreparationRequired
+            | DesktopNativeHostError::BackendUnavailable
+            | DesktopNativeHostError::Adapter(_)
+            | DesktopNativeHostError::Surface(_)
+            | DesktopNativeHostError::IncompatibleSurface
+            | DesktopNativeHostError::PrimaryWindow
+            | DesktopNativeHostError::MissingState
+            | DesktopNativeHostError::MissingRenderer
+            | DesktopNativeHostError::AssetLoad(_)
+            | DesktopNativeHostError::ReadinessTimeout { .. }
+            | DesktopNativeHostError::Graphics { .. }
+            | DesktopNativeHostError::StartupPaused { .. }
+            | DesktopNativeHostError::QuitRefused(_)
+            | DesktopNativeHostError::EventLoop(_)
+            | DesktopNativeHostError::Wake(_)
+            | DesktopNativeHostError::Application(_)
+            | DesktopNativeHostError::Capacity(_)
+            | DesktopNativeHostError::Recovery(_)
+            | DesktopNativeHostError::TaskPools(_)
+            | DesktopNativeHostError::Scene(_)
+            | DesktopNativeHostError::Clock(_)
+            | DesktopNativeHostError::Timing(_)
+            | DesktopNativeHostError::Quality(_)
+            | DesktopNativeHostError::Renderer(_)
+            | DesktopNativeHostError::Layout(_)
+            | DesktopNativeHostError::GameRegistry(_)
+            | DesktopNativeHostError::Camera(_)
+            | DesktopNativeHostError::Viewport(_)
+            | DesktopNativeHostError::Position(_)
+            | DesktopNativeHostError::Presentation(_)
+            | DesktopNativeHostError::System(_)
+            | DesktopNativeHostError::Dialogs(_)
+            | DesktopNativeHostError::PuzzleWindow(_)
+            | DesktopNativeHostError::Menu(_) => DesktopRendererCommandsEnumCause::Initialization,
         }
     }
 
@@ -1567,8 +1606,6 @@ impl DesktopNativeHost {
         Ok(())
     }
 
-    const TIMING_EXPORT_VARIABLE: &'static str = "CHESS_TIMING_EXPORT";
-
     fn guard_exit(world: &mut World) {
         let Some(mut state) = world.remove_resource::<DesktopNativeHostState>() else {
             return;
@@ -1582,7 +1619,7 @@ impl DesktopNativeHost {
         }
         if state.exit_authorized
             && !state.timing_exported
-            && let Some(path) = std::env::var_os(Self::TIMING_EXPORT_VARIABLE)
+            && let Some(path) = state.services.timing_export.clone()
         {
             state.timing_exported = true;
             if let Err(error) = std::fs::write(&path, state.timing.to_json()) {
@@ -2125,7 +2162,13 @@ impl DesktopNativeHost {
             | DesktopNativeHostError::Position(_)
             | DesktopNativeHostError::PuzzleWindow(_)
             | DesktopNativeHostError::Presentation(_)
-            | DesktopNativeHostError::System(_) => DesktopNativeRecoveryEnumStage::Renderer,
+            | DesktopNativeHostError::System(_)
+            | DesktopNativeHostError::Clock(_)
+            | DesktopNativeHostError::Timing(_)
+            | DesktopNativeHostError::Quality(_)
+            | DesktopNativeHostError::Renderer(_)
+            | DesktopNativeHostError::Layout(_)
+            | DesktopNativeHostError::GameRegistry(_) => DesktopNativeRecoveryEnumStage::Renderer,
             DesktopNativeHostError::Pipeline(_)
             | DesktopNativeHostError::ReadinessTimeout { .. } => {
                 DesktopNativeRecoveryEnumStage::Renderer

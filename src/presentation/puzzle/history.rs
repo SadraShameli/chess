@@ -1,6 +1,7 @@
 use bevy_egui::egui::{self, Ui};
 
 use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
+use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::history::PuzzleHistoryEnumScope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,7 @@ impl PresentationPuzzleHistory {
         let mut cancel = false;
         let modal =
             egui::Modal::new(egui::Id::new("puzzle.history.deletion")).show(ui.ctx(), |ui| {
+                ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
                 PresentationAnalysisEditorModal::label(ui, "Delete puzzle history");
                 ui.heading("Delete puzzle history?");
                 ui.label(Self::warning(scope));

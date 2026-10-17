@@ -111,7 +111,9 @@ fn explorer_shows_available_statistics_and_marks_missing_data_unavailable()
     harness.get_by_label("Average Black rating: unavailable");
     harness.get_by_label("Includes 2 games with partial dates");
     harness.get_by_label("Game 7: Alice vs unknown");
-    harness.get_by_label("e2e4: 9 games, 9 of 9 next moves").click_accesskit();
+    harness
+        .get_by_label("e2e4: 9 games, 9 of 9 next moves")
+        .click_accesskit();
     harness.run_ok().ok_or("Continuation did not settle")?;
     assert!(matches!(
         harness.state().intents.as_slice(),
@@ -124,8 +126,8 @@ fn explorer_shows_available_statistics_and_marks_missing_data_unavailable()
 }
 
 #[test]
-fn book_tab_is_study_only_and_keeps_the_shared_position_when_switching() -> PresentationOpeningTestResult
-{
+fn book_tab_is_study_only_and_keeps_the_shared_position_when_switching()
+-> PresentationOpeningTestResult {
     let mut controller = PresentationOpeningController::new();
     controller.observe_explorer(view()?);
     let mut harness = mount(controller);

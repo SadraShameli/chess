@@ -61,16 +61,11 @@ impl SceneQualityEnumTier {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SceneQualityEnumMode {
+    #[default]
     Automatic,
     Manual(SceneQualityEnumTier),
-}
-
-impl Default for SceneQualityEnumMode {
-    fn default() -> Self {
-        Self::Automatic
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -51,7 +51,7 @@ impl SceneEditorMountFixture {
     async fn close(mut self) -> PresentationAppEditorTestResult<Vec<String>> {
         self.renderer.despawn(&mut self.scene.world)?;
         drop((self.scene, self.textures));
-        self.application.close().await?;
+        Box::pin(self.application.close()).await?;
         Ok(self.failures)
     }
 }
@@ -138,7 +138,7 @@ async fn mounted_raw_scene_accessibility_uses_controller_and_blocks_setup_modal_
         .clone();
     let semantic = harness.query_all_by_label("Editor e1: White queen").count();
     let rendered = harness.state().renderer.piece_root("e1".parse()?).is_some();
-    let failures = harness.into_state().close().await?;
+    let failures = Box::pin(harness.into_state().close()).await?;
     assert!(failures.is_empty(), "{failures:?}");
     assert!(blocked);
     assert_eq!(before.draft(), after_blocked.draft());
@@ -214,7 +214,7 @@ async fn actual_scene_renders_raw_invalid_draft_and_invalidates_generation_on_fi
     let stale = renderer.mark_ready(binding.generation()).is_err();
     renderer.despawn(&mut fixture.world)?;
     drop(fixture);
-    application.close().await?;
+    Box::pin(application.close()).await?;
     assert!(raw.draft().validate().is_err());
     assert!(changed && field_changed);
     assert!(absent_king && retained_rook);

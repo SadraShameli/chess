@@ -642,6 +642,7 @@ pub struct GameSession {
     premove: GamePremove,
     takeback: GameTakeback,
     save_status: GameSaveEnumStatus,
+    saved_revision: GameRevision,
     engine_search_config: GameEngineSearchConfig,
     is_auto_flip_enabled: bool,
 }
@@ -675,6 +676,7 @@ impl GameSession {
             metadata: options.metadata,
             state: GameSessionEnumState::Setup,
             save_status: GameSaveEnumStatus::Current,
+            saved_revision: GameRevision::ZERO,
             premove: GamePremove::default(),
             takeback: GameTakeback::default(),
             engine_search_config: GameEngineSearchConfig::initial_default(),
@@ -729,6 +731,10 @@ impl GameSession {
         self.save_status
     }
 
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.save_status == GameSaveEnumStatus::Required || self.revision > self.saved_revision
+    }
+
     pub fn acknowledge_save(
         &mut self,
         receipt: GameStorageReceipt,
@@ -752,6 +758,7 @@ impl GameSession {
         }
         self.validate_no_pending_result()?;
         self.save_status = GameSaveEnumStatus::Current;
+        self.saved_revision = receipt.game_revision();
         Ok(GameSaveEnumAcknowledgment::Current)
     }
 
@@ -947,6 +954,7 @@ impl GameSession {
         };
         session.clock = ClockState::recover(&options.clock, options.warnings_used)?;
         session.revision = options.revision;
+        session.saved_revision = options.revision;
         session.takeback.configure(options.takeback_consent);
         session.premove.set_enabled(options.premoves_enabled);
         session.premove.clear(GamePremoveEnumClearReason::Relaunch);

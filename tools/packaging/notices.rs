@@ -50,9 +50,8 @@ impl ToolsPackagingNotices {
         let mut warnings = Vec::new();
         Self::check_manifest(&manifest, &document, root)?;
         if !manifest.engine.network_terms_reviewed {
-            warnings.push(
-                "network terms are unreviewed: external conveyance stays blocked".to_owned(),
-            );
+            warnings
+                .push("network terms are unreviewed: external conveyance stays blocked".to_owned());
         }
         let output = Command::new("cargo")
             .current_dir(root)
@@ -132,7 +131,8 @@ mod tests {
     use super::ToolsPackagingNotices;
 
     #[test]
-    fn crates_without_a_license_expression_are_reported() -> Result<(), Box<dyn std::error::Error>> {
+    fn crates_without_a_license_expression_are_reported() -> Result<(), Box<dyn std::error::Error>>
+    {
         let metadata = br#"{"packages":[{"name":"a","license":"MIT"},{"name":"b","license":null},{"name":"c","license":""}]}"#;
         assert_eq!(
             ToolsPackagingNotices::unlicensed(metadata)?,

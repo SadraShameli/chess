@@ -133,6 +133,7 @@ impl PresentationPuzzleView {
             let mut cancel = false;
             let mut confirm = false;
             let modal = egui::Modal::new(egui::Id::new("puzzle.end.confirmation")).show(ui.ctx(), |ui| {
+                ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
                 crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "End this run");
                 ui.heading("End this run?");
                 ui.label("An unfinished puzzle is recorded as skipped. Earlier failures remain failed.");
@@ -293,7 +294,10 @@ impl PresentationPuzzleView {
         let mut chosen = None;
         let mut cancel = false;
         let modal = egui::Modal::new(egui::Id::new("puzzle.promotion")).show(ui.ctx(), |ui| {
-            crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "Choose promotion");
+            crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(
+                ui,
+                "Choose promotion",
+            );
             ui.heading("Choose promotion");
             for movement in controller.promotion_choices() {
                 if let Some(kind) = movement.promotion()

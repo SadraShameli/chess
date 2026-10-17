@@ -23,6 +23,12 @@ pub(crate) struct ToolsBenchmarkRunMeasurements {
     idle_cpu_percent: Vec<f64>,
 }
 
+#[derive(Default)]
+struct ToolsBenchmarkRunOutcome {
+    report: String,
+    failures: String,
+}
+
 pub(crate) struct ToolsBenchmarkRun;
 
 impl ToolsBenchmarkRun {
@@ -43,52 +49,46 @@ impl ToolsBenchmarkRun {
     pub(crate) fn check(
         measurements: &ToolsBenchmarkRunMeasurements,
     ) -> Result<String, ToolsBenchmarkRunError> {
-        let mut report = String::new();
-        let mut failures = String::new();
+        let mut outcome = ToolsBenchmarkRunOutcome::default();
         Self::series(
             "input",
             &measurements.input_ms,
             Self::MINIMUM_SAMPLES,
             Self::INPUT_LIMIT_MS,
-            &mut report,
-            &mut failures,
+            &mut outcome,
         );
         Self::series(
             "active frame",
             &measurements.frame_ms,
             1,
             Self::FRAME_LIMIT_MS,
-            &mut report,
-            &mut failures,
+            &mut outcome,
         );
         Self::series(
             "stop",
             &measurements.stop_ms,
             Self::MINIMUM_SAMPLES,
             Self::STOP_LIMIT_MS,
-            &mut report,
-            &mut failures,
+            &mut outcome,
         );
         Self::scalars(
             "startup",
             &measurements.startup_ms,
             Self::STARTUP_LIMIT_MS,
             true,
-            &mut report,
-            &mut failures,
+            &mut outcome,
         );
         Self::scalars(
             "idle CPU",
             &measurements.idle_cpu_percent,
             Self::IDLE_LIMIT_PERCENT,
             false,
-            &mut report,
-            &mut failures,
+            &mut outcome,
         );
-        if failures.is_empty() {
-            Ok(report)
+        if outcome.failures.is_empty() {
+            Ok(outcome.report)
         } else {
-            Err(ToolsBenchmarkRunError::Failed(failures))
+            Err(ToolsBenchmarkRunError::Failed(outcome.failures))
         }
     }
 
@@ -104,25 +104,35 @@ impl ToolsBenchmarkRun {
         runs: &[Vec<f64>],
         minimum: usize,
         limit: f64,
-        report: &mut String,
-        failures: &mut String,
+        outcome: &mut ToolsBenchmarkRunOutcome,
     ) {
+        let ToolsBenchmarkRunOutcome { report, failures } = outcome;
         if runs.len() != Self::RUNS {
-            failures.push_str(&format!("{name}: {} runs supplied, {} required\n", runs.len(), Self::RUNS));
+            failures.push_str(&format!(
+                "{name}: {} runs supplied, {} required\n",
+                runs.len(),
+                Self::RUNS
+            ));
         }
         for (index, samples) in runs.iter().enumerate() {
             let run = index + 1;
             if samples.len() < minimum {
-                failures.push_str(&format!("{name} run {run}: {} samples, at least {minimum} required\n",
-                    samples.len()));
+                failures.push_str(&format!(
+                    "{name} run {run}: {} samples, at least {minimum} required\n",
+                    samples.len()
+                ));
                 continue;
             }
             match Self::nearest_rank(samples, 95) {
                 Some(p95) if p95 <= limit => {
-                    report.push_str(&format!("{name} run {run}: p95 {p95:.3} ms <= {limit} ms\n"));
+                    report.push_str(&format!(
+                        "{name} run {run}: p95 {p95:.3} ms <= {limit} ms\n"
+                    ));
                 }
                 Some(p95) => {
-                    failures.push_str(&format!("{name} run {run}: p95 {p95:.3} ms exceeds {limit} ms\n"));
+                    failures.push_str(&format!(
+                        "{name} run {run}: p95 {p95:.3} ms exceeds {limit} ms\n"
+                    ));
                 }
                 None => {
                     failures.push_str(&format!("{name} run {run}: no samples\n"));
@@ -136,15 +146,23 @@ impl ToolsBenchmarkRun {
         values: &[f64],
         limit: f64,
         inclusive: bool,
-        report: &mut String,
-        failures: &mut String,
+        outcome: &mut ToolsBenchmarkRunOutcome,
     ) {
+        let ToolsBenchmarkRunOutcome { report, failures } = outcome;
         if values.len() != Self::RUNS {
-            failures.push_str(&format!("{name}: {} values supplied, {} required\n", values.len(), Self::RUNS));
+            failures.push_str(&format!(
+                "{name}: {} values supplied, {} required\n",
+                values.len(),
+                Self::RUNS
+            ));
         }
         for (index, value) in values.iter().enumerate() {
             let run = index + 1;
-            let passed = if inclusive { *value <= limit } else { *value < limit };
+            let passed = if inclusive {
+                *value <= limit
+            } else {
+                *value < limit
+            };
             let line = format!("{name} run {run}: {value:.3} against {limit}");
             let target = if passed { &mut *report } else { &mut *failures };
             target.push_str(&format!("{line}\n"));

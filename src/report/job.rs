@@ -1,6 +1,6 @@
-use strum::IntoEnumIterator;
 use std::mem::size_of;
 use std::sync::Arc;
+use strum::IntoEnumIterator;
 
 use thiserror::Error;
 use uuid::Uuid;
@@ -230,7 +230,8 @@ impl ReportJob {
         memory_charge_bytes = limits.charge(memory_charge_bytes, tablebase_bytes)?;
         memory_charge_bytes = limits.charge(
             memory_charge_bytes,
-            EngineEnumOption::iter().len()
+            EngineEnumOption::iter()
+                .len()
                 .checked_mul(Self::CAPABILITY_ENTRY_MEMORY_BYTES)
                 .ok_or(ReportJobSourceError::MemoryLimit)?,
         )?;

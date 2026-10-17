@@ -3,8 +3,8 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
-use std::time::Duration;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 use std::time::Instant;
 
 use semver::Version;
@@ -16,21 +16,21 @@ use crate::desktop::backup_bridge::DesktopBackupService;
 use crate::desktop::backup_commands::DesktopBackupCommandsPrerequisites;
 use crate::desktop::identity::DesktopRequestId;
 use crate::desktop::native::credentials::DesktopNativeCredentials;
+use crate::desktop::native::update::space::DesktopNativeUpdateSpace;
 use crate::desktop::profile::DesktopProfileLease;
 use crate::desktop::profile::installation::DesktopProfileInstallationSpec;
-use crate::update::install::{
-    UpdateHelperEnumReadiness, UpdateInstall, UpdateInstallConfirmation, UpdateInstallEnvironment,
-    UpdateInstallRequest, UpdateIntentLeaseWriter,
-};
-use crate::desktop::native::update::space::DesktopNativeUpdateSpace;
 use crate::desktop::update_commands::{
-    DesktopUpdateCommands, DesktopUpdateError, DesktopUpdateInstallInputs, DesktopUpdateOperation, DesktopUpdateOptions, DesktopUpdateProvider,
-    DesktopUpdateSnapshot,
+    DesktopUpdateCommands, DesktopUpdateError, DesktopUpdateInstallInputs, DesktopUpdateOperation,
+    DesktopUpdateOptions, DesktopUpdateProvider, DesktopUpdateSnapshot,
 };
 use crate::update::cache::UpdateCache;
 use crate::update::credentials::UpdateCredentials;
 use crate::update::discovery::{UpdateOrigins, UpdateRepository};
 use crate::update::http::UpdateReqwest;
+use crate::update::install::{
+    UpdateHelperEnumReadiness, UpdateInstall, UpdateInstallConfirmation, UpdateInstallEnvironment,
+    UpdateInstallRequest, UpdateIntentLeaseWriter,
+};
 use crate::update::manifest::UpdateTarget;
 use crate::update::network_cost::UpdateNetworkCostUnsupported;
 use crate::update::state::UpdateEnumPhase;
@@ -141,17 +141,28 @@ impl UpdateInstallEnvironment for DesktopNativeUpdateEnvironment {
     }
 }
 
+struct DesktopNativeUpdateBuild {
+    http: UpdateReqwest,
+    verifier: UpdateVerifier,
+    repository: UpdateRepository,
+    target: UpdateTarget,
+    cache_directory: PathBuf,
+    installed: Version,
+}
+
 pub struct DesktopNativeUpdateService {
     shared: Arc<Mutex<DesktopUpdateSnapshot>>,
     commands: Option<mpsc::UnboundedSender<DesktopUpdateOperation>>,
 }
 
 impl DesktopNativeUpdateService {
-    pub const REPOSITORY: Option<&'static str> = option_env!("CHESS_UPDATE_REPOSITORY");
+    pub const REPOSITORY: Option<&'static str> = None;
 
     pub fn disabled(reason: &str) -> Self {
         Self {
-            shared: Arc::new(Mutex::new(DesktopUpdateSnapshot::disabled(reason.to_owned()))),
+            shared: Arc::new(Mutex::new(DesktopUpdateSnapshot::disabled(
+                reason.to_owned(),
+            ))),
             commands: None,
         }
     }
@@ -189,7 +200,14 @@ impl DesktopNativeUpdateService {
             install,
         } = options;
         runtime.spawn(Self::run(
-            Self::build(http, verifier, repository, target, cache_directory, installed),
+            Self::build(DesktopNativeUpdateBuild {
+                http,
+                verifier,
+                repository,
+                target,
+                cache_directory,
+                installed,
+            }),
             task_shared,
             receiver,
             install,
@@ -203,14 +221,15 @@ impl DesktopNativeUpdateService {
         }
     }
 
-    async fn build(
-        http: UpdateReqwest,
-        verifier: UpdateVerifier,
-        repository: UpdateRepository,
-        target: UpdateTarget,
-        cache_directory: PathBuf,
-        installed: Version,
-    ) -> Option<DesktopNativeUpdateCommands> {
+    async fn build(build: DesktopNativeUpdateBuild) -> Option<DesktopNativeUpdateCommands> {
+        let DesktopNativeUpdateBuild {
+            http,
+            verifier,
+            repository,
+            target,
+            cache_directory,
+            installed,
+        } = build;
         tokio::task::spawn_blocking(move || {
             DesktopUpdateCommands::new(DesktopUpdateOptions {
                 http,
@@ -257,9 +276,10 @@ impl DesktopNativeUpdateService {
                 DesktopUpdateOperation::RequestDownload => commands.request_download(),
                 DesktopUpdateOperation::Approve => commands.approve(),
                 DesktopUpdateOperation::Cancel => commands.cancel(),
-                DesktopUpdateOperation::EnterCredential { credential, persist } => {
-                    commands.enter_credential(credential, persist)
-                }
+                DesktopUpdateOperation::EnterCredential {
+                    credential,
+                    persist,
+                } => commands.enter_credential(credential, persist),
                 DesktopUpdateOperation::Install { prerequisites } => {
                     let outcome = match &install {
                         Some(context) => Self::install(&mut commands, context, prerequisites).await,
@@ -288,7 +308,7 @@ impl DesktopNativeUpdateService {
         match target {
             UpdateTarget::MacosArm64 => executable.ancestors().nth(3).map(Path::to_path_buf),
             UpdateTarget::WindowsX86_64 => executable.parent().map(Path::to_path_buf),
-            UpdateTarget::LinuxAppImage => std::env::var_os("APPIMAGE").map(PathBuf::from),
+            UpdateTarget::LinuxAppImage => UpdateTarget::appimage_path(),
             UpdateTarget::LinuxDeb => Some(executable.to_path_buf()),
         }
     }
@@ -298,24 +318,26 @@ impl DesktopNativeUpdateService {
         inputs: &DesktopUpdateInstallInputs,
     ) -> Result<Command, DesktopUpdateError> {
         let failure = |what: &str| DesktopUpdateError::Install(what.to_owned());
-        let executable =
-            std::env::current_exe().map_err(|error| DesktopUpdateError::Install(error.to_string()))?;
+        let executable = std::env::current_exe()
+            .map_err(|error| DesktopUpdateError::Install(error.to_string()))?;
         let helper = executable
             .parent()
-            .map(|directory| directory.join(if cfg!(windows) {
-                "chess-update-helper.exe"
-            } else {
-                "chess-update-helper"
-            }))
+            .map(|directory| {
+                directory.join(if cfg!(windows) {
+                    "chess-update-helper.exe"
+                } else {
+                    "chess-update-helper"
+                })
+            })
             .filter(|path| path.is_file())
             .ok_or_else(|| failure("The update helper is missing from this installation"))?;
         let destination = Self::destination(inputs.target, &executable)
             .ok_or_else(|| failure("The installation location cannot be determined"))?;
         let relaunch = match inputs.target {
             UpdateTarget::LinuxAppImage => destination.clone(),
-            UpdateTarget::MacosArm64
-            | UpdateTarget::WindowsX86_64
-            | UpdateTarget::LinuxDeb => executable,
+            UpdateTarget::MacosArm64 | UpdateTarget::WindowsX86_64 | UpdateTarget::LinuxDeb => {
+                executable
+            }
         };
         let mut command = Command::new(helper);
         command

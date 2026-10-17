@@ -1,6 +1,6 @@
 use chess::desktop::native::lifecycle::{
-    DesktopNativeLifecycle, DesktopNativeLifecycleEnumSignal, DesktopNativeLifecycleEnumWindowEvent,
-    DesktopNativeLifecyclePuzzleWindowId,
+    DesktopNativeLifecycle, DesktopNativeLifecycleEnumSignal,
+    DesktopNativeLifecycleEnumWindowEvent, DesktopNativeLifecyclePuzzleWindowId,
 };
 use chess::game::enums::{GameId, GameRevision};
 use chess::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
@@ -32,7 +32,10 @@ fn focus_changes_never_pause_a_live_game_but_sleep_tab_close_quit_and_faults_do(
         GameRecoveryEnumTrigger::FocusGained,
         GameRecoveryEnumTrigger::WakeFromSleep,
     ] {
-        assert_eq!(GameRecovery::decide(trigger), GameRecoveryEnumAction::KeepRunning);
+        assert_eq!(
+            GameRecovery::decide(trigger),
+            GameRecoveryEnumAction::KeepRunning
+        );
     }
     assert_eq!(
         GameRecovery::pause_cause(GameRecoveryEnumTrigger::ComputerSleep),
@@ -148,16 +151,16 @@ fn unsaved_moves_block_close_quit_and_trash_until_the_newest_revision_is_durable
 }
 
 #[test]
-fn a_failed_save_keeps_memory_state_and_retry_targets_the_newest_revision()
--> DesktopRecoveryResult {
+fn a_failed_save_keeps_memory_state_and_retry_targets_the_newest_revision() -> DesktopRecoveryResult
+{
     let mut coordinator = GameSaveCoordinator::new(game()?, revision(1)?);
     coordinator.acknowledge(game()?, revision(1)?)?;
     coordinator.observe_memory(revision(4)?);
     coordinator.record_failure("disk full".to_owned());
     assert_eq!(coordinator.newest_to_save(), revision(4)?);
     assert_eq!(coordinator.memory_revision(), revision(4)?);
-    let headline = PresentationGameRecovery::save_headline(&coordinator)
-        .ok_or("a failure has a headline")?;
+    let headline =
+        PresentationGameRecovery::save_headline(&coordinator).ok_or("a failure has a headline")?;
     assert!(headline.contains("disk full") && headline.contains("Retry Save"));
     coordinator.acknowledge(game()?, revision(4)?)?;
     assert!(coordinator.failure().is_none());
@@ -185,8 +188,14 @@ fn save_barrier_labels_are_unchanged_and_enumerated() -> DesktopRecoveryResult {
     use strum::IntoEnumIterator;
     let expected = [
         (GameSaveCoordinatorEnumBarrier::CloseGame, "close this game"),
-        (GameSaveCoordinatorEnumBarrier::QuitApplication, "quit the application"),
-        (GameSaveCoordinatorEnumBarrier::MoveToTrash, "move this game to Trash"),
+        (
+            GameSaveCoordinatorEnumBarrier::QuitApplication,
+            "quit the application",
+        ),
+        (
+            GameSaveCoordinatorEnumBarrier::MoveToTrash,
+            "move this game to Trash",
+        ),
     ];
     assert_eq!(
         GameSaveCoordinatorEnumBarrier::iter().collect::<Vec<_>>(),

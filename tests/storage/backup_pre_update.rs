@@ -58,7 +58,10 @@ async fn a_pre_update_backup_is_created_verified_and_found_again_by_its_identity
     assert!(path.is_file());
     let entries = BackupRetention::scan_blocking(&fixture.backups())?;
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].manifest.category(), BackupEnumCategory::PreUpdate);
+    assert_eq!(
+        entries[0].manifest.category(),
+        BackupEnumCategory::PreUpdate
+    );
     let preview = StorageBackupFixture::inspect(&path)?;
     assert_eq!(preview.id(), id);
     assert!(matches!(

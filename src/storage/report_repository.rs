@@ -118,19 +118,30 @@ pub struct StorageReportJobRecord {
     source: String,
 }
 
+pub struct StorageReportJobRecordOptions {
+    pub job: Uuid,
+    pub game: Uuid,
+    pub revision: u64,
+    pub line_digest: [u8; 32],
+    pub position_count: u32,
+    pub configuration: String,
+    pub source: String,
+}
+
 impl StorageReportJobRecord {
     pub const MAX_POSITIONS: u32 = 100_000;
     pub const MAX_BODY_BYTES: usize = 1 << 20;
 
-    pub fn new(
-        job: Uuid,
-        game: Uuid,
-        revision: u64,
-        line_digest: [u8; 32],
-        position_count: u32,
-        configuration: String,
-        source: String,
-    ) -> Result<Self, StorageReportError> {
+    pub fn new(options: StorageReportJobRecordOptions) -> Result<Self, StorageReportError> {
+        let StorageReportJobRecordOptions {
+            job,
+            game,
+            revision,
+            line_digest,
+            position_count,
+            configuration,
+            source,
+        } = options;
         if position_count == 0 || position_count > Self::MAX_POSITIONS {
             return Err(StorageReportError::PositionCount(Self::MAX_POSITIONS));
         }
@@ -330,36 +341,43 @@ impl StorageReportTransaction {
             StorageReportEnumRequest::List { after } => connection.transaction(|connection| {
                 Self::list(connection, after).map(StorageReportEnumResponse::Page)
             }),
-            write => connection.immediate_transaction(|connection| match write {
-                StorageReportEnumRequest::Insert(record) => {
-                    Self::insert(connection, &record).map(StorageReportEnumResponse::Inserted)
-                }
-                StorageReportEnumRequest::SaveResult { job, result } => {
-                    Self::save_result(connection, job, &result)
-                        .map(|()| StorageReportEnumResponse::Saved)
-                }
-                StorageReportEnumRequest::SetState { job, state } => {
-                    Self::set_state(connection, job, state)
-                        .map(|()| StorageReportEnumResponse::StateChanged)
-                }
-                StorageReportEnumRequest::MarkOutdated {
-                    game,
-                    current_digest,
-                } => Self::mark_outdated(connection, game, current_digest)
-                    .map(StorageReportEnumResponse::Outdated),
-                StorageReportEnumRequest::Recover => {
-                    Self::recover(connection).map(StorageReportEnumResponse::Recovered)
-                }
-                StorageReportEnumRequest::Delete(job) => diesel::delete(
-                    report_jobs::table.filter(report_jobs::job_id.eq(job.to_string())),
-                )
-                .execute(connection)
-                .map(|count| StorageReportEnumResponse::Deleted(count == 1))
-                .map_err(StorageReportError::from),
-                StorageReportEnumRequest::Load(_) | StorageReportEnumRequest::List { .. } => {
-                    Err(StorageReportError::Corrupt)
-                }
-            }),
+            write @ StorageReportEnumRequest::Insert(_)
+            | write @ StorageReportEnumRequest::SaveResult { .. }
+            | write @ StorageReportEnumRequest::SetState { .. }
+            | write @ StorageReportEnumRequest::MarkOutdated { .. }
+            | write @ StorageReportEnumRequest::Recover
+            | write @ StorageReportEnumRequest::Delete(_) => {
+                connection.immediate_transaction(|connection| match write {
+                    StorageReportEnumRequest::Insert(record) => {
+                        Self::insert(connection, &record).map(StorageReportEnumResponse::Inserted)
+                    }
+                    StorageReportEnumRequest::SaveResult { job, result } => {
+                        Self::save_result(connection, job, &result)
+                            .map(|()| StorageReportEnumResponse::Saved)
+                    }
+                    StorageReportEnumRequest::SetState { job, state } => {
+                        Self::set_state(connection, job, state)
+                            .map(|()| StorageReportEnumResponse::StateChanged)
+                    }
+                    StorageReportEnumRequest::MarkOutdated {
+                        game,
+                        current_digest,
+                    } => Self::mark_outdated(connection, game, current_digest)
+                        .map(StorageReportEnumResponse::Outdated),
+                    StorageReportEnumRequest::Recover => {
+                        Self::recover(connection).map(StorageReportEnumResponse::Recovered)
+                    }
+                    StorageReportEnumRequest::Delete(job) => diesel::delete(
+                        report_jobs::table.filter(report_jobs::job_id.eq(job.to_string())),
+                    )
+                    .execute(connection)
+                    .map(|count| StorageReportEnumResponse::Deleted(count == 1))
+                    .map_err(StorageReportError::from),
+                    StorageReportEnumRequest::Load(_) | StorageReportEnumRequest::List { .. } => {
+                        Err(StorageReportError::Corrupt)
+                    }
+                })
+            }
         }
     }
 
@@ -537,15 +555,15 @@ impl StorageReportTransaction {
             .as_slice()
             .try_into()
             .map_err(|_error| StorageReportError::Corrupt)?;
-        StorageReportJobRecord::new(
-            row.job_id.parse()?,
-            row.game_id.parse()?,
-            row.source_revision.parse()?,
+        StorageReportJobRecord::new(StorageReportJobRecordOptions {
+            job: row.job_id.parse()?,
+            game: row.game_id.parse()?,
+            revision: row.source_revision.parse()?,
             line_digest,
-            u32::try_from(row.position_count)?,
-            row.configuration.clone(),
-            row.source.clone(),
-        )
+            position_count: u32::try_from(row.position_count)?,
+            configuration: row.configuration.clone(),
+            source: row.source.clone(),
+        })
     }
 
     fn load(
@@ -625,7 +643,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Inserted(ordinal) => Ok(ordinal),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Page(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -640,7 +664,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Saved => Ok(()),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Page(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -655,7 +685,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::StateChanged => Ok(()),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Page(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -673,7 +709,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Outdated(count) => Ok(count),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Page(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -684,7 +726,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Recovered(count) => Ok(count),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Page(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -698,7 +746,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Job(snapshot) => Ok(snapshot.map(|boxed| *boxed)),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Page(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -712,7 +766,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Page(page) => Ok(page),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Deleted(_) => Err(StorageReportError::Corrupt),
         }
     }
 
@@ -723,7 +783,13 @@ impl StorageReportRepository {
             .await?
         {
             StorageReportEnumResponse::Deleted(deleted) => Ok(deleted),
-            _ => Err(StorageReportError::Corrupt),
+            StorageReportEnumResponse::Inserted(_)
+            | StorageReportEnumResponse::Saved
+            | StorageReportEnumResponse::StateChanged
+            | StorageReportEnumResponse::Outdated(_)
+            | StorageReportEnumResponse::Recovered(_)
+            | StorageReportEnumResponse::Job(_)
+            | StorageReportEnumResponse::Page(_) => Err(StorageReportError::Corrupt),
         }
     }
 }

@@ -1,9 +1,9 @@
-use strum::IntoEnumIterator;
 use bevy_egui::egui;
 use egui_kittest::{
     Harness,
     kittest::{NodeT, Queryable},
 };
+use strum::IntoEnumIterator;
 
 use chess::board::enums::BoardEnumColor;
 use chess::clock::stage::{ClockStageEnumBonus, ClockStageEnumQuota};

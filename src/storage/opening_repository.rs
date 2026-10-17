@@ -524,11 +524,15 @@ impl StorageOpeningTransaction {
         diesel::insert_into(opening_occurrences::table)
             .values(&rows)
             .execute(connection)
-            .map_err(|error| match error {
-                diesel::result::Error::DatabaseError(DatabaseErrorKind::UniqueViolation, _) => {
+            .map_err(|error| {
+                if matches!(
+                    error,
+                    diesel::result::Error::DatabaseError(DatabaseErrorKind::UniqueViolation, _)
+                ) {
                     StorageOpeningError::DuplicateOccurrence
+                } else {
+                    StorageOpeningError::from(error)
                 }
-                other => StorageOpeningError::from(other),
             })?;
         Ok(())
     }
@@ -601,7 +605,10 @@ impl StorageOpeningRepository {
             .await?
         {
             StorageOpeningEnumResponse::Indexed(count) => Ok(count),
-            _ => Err(StorageOpeningError::Corrupt),
+            StorageOpeningEnumResponse::Depth(_)
+            | StorageOpeningEnumResponse::Hits(_)
+            | StorageOpeningEnumResponse::Continuations(_)
+            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -616,7 +623,10 @@ impl StorageOpeningRepository {
             .await?
         {
             StorageOpeningEnumResponse::Depth(depth) => Ok(depth),
-            _ => Err(StorageOpeningError::Corrupt),
+            StorageOpeningEnumResponse::Indexed(_)
+            | StorageOpeningEnumResponse::Hits(_)
+            | StorageOpeningEnumResponse::Continuations(_)
+            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -631,7 +641,10 @@ impl StorageOpeningRepository {
             .await?
         {
             StorageOpeningEnumResponse::Hits(hits) => Ok(hits),
-            _ => Err(StorageOpeningError::Corrupt),
+            StorageOpeningEnumResponse::Indexed(_)
+            | StorageOpeningEnumResponse::Depth(_)
+            | StorageOpeningEnumResponse::Continuations(_)
+            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -645,7 +658,10 @@ impl StorageOpeningRepository {
             .await?
         {
             StorageOpeningEnumResponse::Continuations(continuations) => Ok(continuations),
-            _ => Err(StorageOpeningError::Corrupt),
+            StorageOpeningEnumResponse::Indexed(_)
+            | StorageOpeningEnumResponse::Depth(_)
+            | StorageOpeningEnumResponse::Hits(_)
+            | StorageOpeningEnumResponse::Removed(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 
@@ -659,7 +675,10 @@ impl StorageOpeningRepository {
             .await?
         {
             StorageOpeningEnumResponse::Removed(count) => Ok(count),
-            _ => Err(StorageOpeningError::Corrupt),
+            StorageOpeningEnumResponse::Indexed(_)
+            | StorageOpeningEnumResponse::Depth(_)
+            | StorageOpeningEnumResponse::Hits(_)
+            | StorageOpeningEnumResponse::Continuations(_) => Err(StorageOpeningError::Corrupt),
         }
     }
 }

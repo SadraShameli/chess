@@ -8,8 +8,8 @@ impl UpdateDiskSpace for DesktopNativeUpdateSpace {
     #[cfg(unix)]
     fn available(&self, path: &Path) -> Result<u64, std::io::Error> {
         let volume = rustix::fs::statvfs(path).map_err(std::io::Error::from)?;
-        let blocks = u64::try_from(volume.f_bavail).map_err(std::io::Error::other)?;
-        let size = u64::try_from(volume.f_frsize).map_err(std::io::Error::other)?;
+        let blocks = volume.f_bavail;
+        let size = volume.f_frsize;
         blocks
             .checked_mul(size)
             .ok_or_else(|| std::io::Error::other("the free space overflows"))

@@ -1,13 +1,13 @@
 use std::fmt::{Debug, Formatter};
 
 use crate::desktop::annotation_commands::DesktopAnnotationCommandsEnumAction;
+use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::game_editor::{DesktopGameEditorContext, DesktopGameEditorEnumSource};
 use crate::desktop::identity::DesktopRevision;
+use crate::desktop::library_service::DesktopLibraryServiceError;
 use crate::desktop::library_service::export::DesktopLibraryServiceExport;
 use crate::desktop::library_service::file::DesktopLibraryServiceFile;
 use crate::desktop::library_service::import::DesktopLibraryServiceEnumImportAction;
-use crate::desktop::library_service::DesktopLibraryServiceError;
-use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::messages::DesktopMessagesEntityId;
 use crate::game::enums::{GameId, GameRevision};
 use crate::game::library_organization::{
@@ -17,10 +17,10 @@ use crate::game::library_organization::{
 use crate::game::storage_repository::GameStorageRevision;
 use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::library_metadata::StorageLibraryMetadataEnumRequest;
+use crate::storage::library_query::{StorageLibraryQueryCursor, StorageLibraryQueryOptions};
 use crate::storage::trash::{
     StorageTrashConfirmedRequest, StorageTrashPlan, StorageTrashPreviewRequest,
 };
-use crate::storage::library_query::{StorageLibraryQueryCursor, StorageLibraryQueryOptions};
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum DesktopLibraryServiceEnumAction {
@@ -70,9 +70,10 @@ impl Debug for DesktopLibraryServiceEnumAction {
                 .debug_tuple("Organize")
                 .field(&std::mem::discriminant(request))
                 .finish(),
-            Self::PreviewTrash(request) => {
-                formatter.debug_tuple("PreviewTrash").field(request).finish()
-            }
+            Self::PreviewTrash(request) => formatter
+                .debug_tuple("PreviewTrash")
+                .field(request)
+                .finish(),
             Self::ApplyTrash(request) => formatter
                 .debug_tuple("ApplyTrash")
                 .field(&request.plan().action())
@@ -267,9 +268,9 @@ impl DesktopLibraryServiceOperation {
 
     pub fn file_selection(&self) -> Option<(&DesktopLibraryServiceFile, DesktopFileEnumPurpose)> {
         match &self.action {
-            DesktopLibraryServiceEnumAction::Import(DesktopLibraryServiceEnumImportAction::Prepare(
-                file,
-            )) => Some((file, DesktopFileEnumPurpose::ReadFile)),
+            DesktopLibraryServiceEnumAction::Import(
+                DesktopLibraryServiceEnumImportAction::Prepare(file),
+            ) => Some((file, DesktopFileEnumPurpose::ReadFile)),
             DesktopLibraryServiceEnumAction::Export(request) => {
                 Some((request.destination(), DesktopFileEnumPurpose::WriteFile))
             }

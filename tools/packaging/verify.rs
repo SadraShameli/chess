@@ -157,7 +157,9 @@ impl ToolsPackagingVerify {
         if report.failures.is_empty() {
             Ok(report)
         } else {
-            Err(ToolsPackagingError::Verification(report.failures.join("\n")))
+            Err(ToolsPackagingError::Verification(
+                report.failures.join("\n"),
+            ))
         }
     }
 
@@ -167,14 +169,18 @@ impl ToolsPackagingVerify {
         file: &Path,
         report: &mut ToolsPackagingVerifyReport,
     ) -> Result<(), ToolsPackagingError> {
-        let name = file.strip_prefix(root).unwrap_or(file).display().to_string();
+        let name = file
+            .strip_prefix(root)
+            .unwrap_or(file)
+            .display()
+            .to_string();
         let size = file.metadata()?.len();
         let bytes = std::fs::read(file)?;
         if let Some(architecture) = Self::architecture(&bytes) {
             if !architecture.is_wanted(platform) {
-                report
-                    .failures
-                    .push(format!("{name} targets an unwanted architecture {architecture:?}"));
+                report.failures.push(format!(
+                    "{name} targets an unwanted architecture {architecture:?}"
+                ));
             }
             if platform == ToolsPackagingEnumPlatform::Linux
                 && let Some(glibc) = Self::max_glibc(&bytes)

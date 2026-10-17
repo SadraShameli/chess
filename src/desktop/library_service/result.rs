@@ -6,15 +6,15 @@ use crate::desktop::annotation_commands::{
 };
 use crate::desktop::game_editor::{DesktopGameEditorContext, DesktopGameEditorPublication};
 use crate::desktop::identity::{DesktopRequestId, DesktopRevision};
-use crate::desktop::library_service::import::DesktopLibraryServiceEnumImportResult;
 use crate::desktop::library_service::DesktopLibraryServiceOperation;
+use crate::desktop::library_service::import::DesktopLibraryServiceEnumImportResult;
 use crate::game::enums::GameRevision;
 use crate::game::library_organization::GameLibraryOrganizationReceipt;
 use crate::game::storage_repository::GameStorageReceipt;
 use crate::storage::library_metadata::StorageLibraryMetadataEnumResponse;
 use crate::storage::library_query::StorageLibraryQueryPage;
-use crate::storage::trash::{StorageTrashPlan, StorageTrashReceipt};
 use crate::storage::library_repository::StorageLibraryContentReceipt;
+use crate::storage::trash::{StorageTrashPlan, StorageTrashReceipt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopLibraryServiceEnumDisposition {
@@ -93,7 +93,9 @@ impl DesktopLibraryServiceEnumResult {
             return Some(DesktopLibraryServiceOperation::editor_revision(context));
         }
         if let Self::Organized(receipt) = self {
-            return Some(DesktopRevision::for_library_organization(receipt.revision()));
+            return Some(DesktopRevision::for_library_organization(
+                receipt.revision(),
+            ));
         }
         let catalog = match self {
             Self::Query(page) => page.catalog_revision(),
@@ -151,10 +153,7 @@ impl Debug for DesktopLibraryServiceEnumResult {
             Self::TrashPlan(plan) => formatter.debug_tuple("TrashPlan").field(plan).finish(),
             Self::Trashed(receipt) => formatter.debug_tuple("Trashed").field(receipt).finish(),
             Self::Restored(receipt) => formatter.debug_tuple("Restored").field(receipt).finish(),
-            Self::Organized(receipt) => formatter
-                .debug_tuple("Organized")
-                .field(receipt)
-                .finish(),
+            Self::Organized(receipt) => formatter.debug_tuple("Organized").field(receipt).finish(),
             Self::Editor(result) => formatter
                 .debug_struct("Editor")
                 .field("context", &Self::result_context(result))

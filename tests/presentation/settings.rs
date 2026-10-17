@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use chess::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
     DesktopPreferencesEnumAudioCategory, DesktopPreferencesEnumShortcutAction,
@@ -16,6 +15,7 @@ use chess::presentation::settings::audio::PresentationSettingsAudio;
 use chess::presentation::settings::shortcuts::{
     PresentationSettingsShortcutError, PresentationSettingsShortcuts,
 };
+use strum::IntoEnumIterator;
 
 fn draft() -> DesktopPreferencesDraft {
     DesktopPreferencesDraft::new(
@@ -310,7 +310,8 @@ fn saved_pending_and_effective_options_stay_distinct_until_a_newer_revision_is_c
         DesktopPreferencesEnumTheme::Light
     );
     assert_eq!(controller.draft().saved().theme(), saved_theme);
-    assert!(controller.can_save());
+    assert!(controller.draft().status().has_pending_changes());
+    assert!(!controller.can_save());
     Ok(())
 }
 

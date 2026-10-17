@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use std::num::NonZeroU32;
+use strum::IntoEnumIterator;
 
 use chess::clock::duration::ClockDuration;
 use chess::engine::capabilities::EngineIdentity;

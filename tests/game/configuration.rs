@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use rand::{SeedableRng, rngs::StdRng};
+use strum::IntoEnumIterator;
 
 use chess::board::enums::BoardEnumColor;
 use chess::board::position::BoardPosition;

@@ -78,7 +78,12 @@ fn truncated_and_corrupted_fen_never_panic_and_accepted_text_is_canonical() -> B
     for fixture in DomainBoundaries::positions()? {
         for prefix in DomainBoundaries::prefixes(&fixture.fen) {
             if let Ok(position) = BoardPosition::from_fen(prefix, BoardEnumVariant::Standard) {
-                assert!(position.fen().chars().all(|character| !character.is_control()));
+                assert!(
+                    position
+                        .fen()
+                        .chars()
+                        .all(|character| !character.is_control())
+                );
                 let again = BoardPosition::from_fen(&position.fen(), BoardEnumVariant::Standard)?;
                 assert_eq!(position.identity(), again.identity());
             }
@@ -90,7 +95,12 @@ fn truncated_and_corrupted_fen_never_panic_and_accepted_text_is_canonical() -> B
                 if let Ok(position) =
                     BoardPosition::from_fen(&corrupted, BoardEnumVariant::Standard)
                 {
-                    assert!(position.fen().chars().all(|character| !character.is_control()));
+                    assert!(
+                        position
+                            .fen()
+                            .chars()
+                            .all(|character| !character.is_control())
+                    );
                 }
             }
         }
@@ -242,7 +252,12 @@ impl TreeBoundaries {
 
 #[test]
 fn random_trees_keep_parent_child_path_and_uniqueness_invariants() -> BoundaryResult {
-    for seed in [0x1234_5678_9abc_def1, 0xdead_beef_cafe_f00d, 7, 0x0123_4567_89ab_cdef] {
+    for seed in [
+        0x1234_5678_9abc_def1,
+        0xdead_beef_cafe_f00d,
+        7,
+        0x0123_4567_89ab_cdef,
+    ] {
         let tree = TreeBoundaries::grow(seed)?;
         assert!(tree.len() > 1, "seed {seed} grew no branch");
         TreeBoundaries::check(&tree)?;

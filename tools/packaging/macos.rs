@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 
-use crate::packaging::plan::{
-    ToolsPackagingEnumPlatform, ToolsPackagingPlan, ToolsPackagingStep,
-};
+use crate::packaging::plan::{ToolsPackagingEnumPlatform, ToolsPackagingPlan, ToolsPackagingStep};
 
 pub(crate) struct ToolsPackagingMacos;
 
@@ -60,7 +58,11 @@ impl ToolsPackagingMacos {
                 ToolsPackagingStep::new(
                     "Require an arm64-only application binary",
                     "lipo",
-                    &["-verify_arch", "arm64", "target/packager/Chess.app/Contents/MacOS/chess"],
+                    &[
+                        "-verify_arch",
+                        "arm64",
+                        "target/packager/Chess.app/Contents/MacOS/chess",
+                    ],
                 ),
                 ToolsPackagingStep::new(
                     "Create the DMG from the signed app",
@@ -97,15 +99,15 @@ mod tests {
                 .position(|step| step.command_line().contains(needle))
         };
         let engine = position(ToolsPackagingMacos::ENGINE);
-        let app = plan
-            .steps
-            .iter()
-            .position(|step| step.program == "codesign" && step.command_line().ends_with("Chess.app"));
+        let app = plan.steps.iter().position(|step| {
+            step.program == "codesign" && step.command_line().ends_with("Chess.app")
+        });
         let dmg = position("hdiutil");
         assert!(engine < app && app < dmg);
-        assert!(plan
-            .steps
-            .iter()
-            .all(|step| !step.command_line().contains("notarytool")));
+        assert!(
+            plan.steps
+                .iter()
+                .all(|step| !step.command_line().contains("notarytool"))
+        );
     }
 }

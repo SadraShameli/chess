@@ -51,7 +51,11 @@ impl DesktopNativeLayoutStore {
         let mut object = match body {
             Some(body) => match serde_json::from_str::<Value>(body)? {
                 Value::Object(object) => object,
-                _ => return Err(DesktopNativeLayoutStoreError::Shape),
+                Value::Null
+                | Value::Bool(_)
+                | Value::Number(_)
+                | Value::String(_)
+                | Value::Array(_) => return Err(DesktopNativeLayoutStoreError::Shape),
             },
             None => Map::new(),
         };

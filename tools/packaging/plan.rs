@@ -5,7 +5,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub(crate) enum ToolsPackagingError {
-    #[error("Usage: package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check")]
+    #[error(
+        "Usage: package-plan|package-run <windows|macos|linux> | package-verify <windows|macos|linux> <directory> | notices-check"
+    )]
     Usage,
     #[error("The {0} package can only be assembled on its own operating system")]
     WrongHost(&'static str),
@@ -30,7 +32,9 @@ pub(crate) enum ToolsPackagingError {
     Digest(#[from] chess::package::digest::PackageDigestError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumString)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumString,
+)]
 pub(crate) enum ToolsPackagingEnumPlatform {
     #[strum(serialize = "windows")]
     Windows,
@@ -74,7 +78,10 @@ impl ToolsPackagingStep {
         Self {
             description,
             program: program.to_owned(),
-            arguments: arguments.iter().map(|argument| (*argument).to_owned()).collect(),
+            arguments: arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
         }
     }
 
@@ -118,9 +125,7 @@ impl ToolsPackagingPlan {
             return Err(ToolsPackagingError::WrongHost(self.platform.name()));
         }
         for step in &self.steps {
-            let status = Command::new(&step.program)
-                .args(&step.arguments)
-                .status()?;
+            let status = Command::new(&step.program).args(&step.arguments).status()?;
             if !status.success() {
                 return Err(ToolsPackagingError::Step {
                     description: step.description,

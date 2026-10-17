@@ -30,6 +30,8 @@ use crate::desktop::application::{
     DesktopApplication, DesktopApplicationError, DesktopApplicationPort,
     DesktopApplicationWakeProvider,
 };
+use crate::desktop::backup_bridge::DesktopBackupService;
+use crate::desktop::backup_commands::DesktopBackupCommands;
 use crate::desktop::coordinator::{
     DesktopCoordinator, DesktopCoordinatorError, DesktopCoordinatorLifecycleProvider,
     DesktopCoordinatorServices,
@@ -44,6 +46,7 @@ use crate::desktop::editor_commands::{
 use crate::desktop::game_bridge::DesktopGameBridgeProvider;
 use crate::desktop::game_registry::{DesktopGameRegistryError, DesktopGameRegistryReceipt};
 use crate::desktop::identity::DesktopRequestId;
+use crate::desktop::layout::DesktopLayout;
 use crate::desktop::library_service::DesktopLibraryServiceOptions;
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEntityId};
 use crate::desktop::native::bootstrap::cleanup::{
@@ -69,16 +72,11 @@ use crate::desktop::native::game_service::{
 use crate::desktop::native::host::{
     DesktopNativeHost, DesktopNativeHostError, DesktopNativeHostEvent, DesktopNativeHostServices,
 };
+use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
 use crate::desktop::native::library_service::{
     DesktopNativeLibraryService, DesktopNativeLibraryServiceError,
 };
 use crate::desktop::native::puzzle_runtime::DesktopNativePuzzleRuntimeSchedulerTokio;
-use crate::desktop::native::report_host::DesktopNativeReportHost;
-use crate::desktop::native::report_worker::DesktopNativeReportWorker;
-use crate::desktop::native::study_driver::DesktopNativeStudyDriver;
-use crate::report::job::ReportJobId;
-use crate::engine::resource_config::EngineResourceConfig;
-use crate::engine::search::session::EngineSearchSession;
 use crate::desktop::native::puzzle_service::{
     DesktopNativePuzzleService, DesktopNativePuzzleServiceOptions,
 };
@@ -86,11 +84,19 @@ use crate::desktop::native::recovery::{
     DesktopNativeRecoveryEnumAction, DesktopNativeRecoveryError, DesktopNativeRecoveryFailure,
     DesktopNativeRecoveryProvider,
 };
+use crate::desktop::native::report_host::DesktopNativeReportHost;
+use crate::desktop::native::report_worker::{
+    DesktopNativeReportWorker, DesktopNativeReportWorkerOptions,
+};
 use crate::desktop::native::resources::{DesktopNativeResources, DesktopNativeResourcesError};
 use crate::desktop::native::startup::{
     DesktopNativeStartup, DesktopNativeStartupEnumAdmission, DesktopNativeStartupError,
     DesktopNativeStartupOwner,
 };
+use crate::desktop::native::study_driver::{
+    DesktopNativeStudyDriver, DesktopNativeStudyDriverOptions,
+};
+use crate::desktop::preferences_store::DesktopPreferencesStore;
 use crate::desktop::profile::activation::server::{
     DesktopProfileActivationServer, DesktopProfileActivationServerError,
 };
@@ -108,29 +114,27 @@ use crate::desktop::profile::{
     DesktopProfileOsLock, DesktopProfileSecurity,
 };
 use crate::desktop::puzzle_service::{DesktopPuzzleServiceError, DesktopPuzzleServiceProvider};
+use crate::engine::configuration::EngineConfigurationOverrides;
 use crate::engine::package::host::{EnginePackageHost, EnginePackageHostError};
 use crate::engine::package::selector::{
     EnginePackageSelected, EnginePackageSelector, EnginePackageSelectorError,
 };
 use crate::engine::process_provider::{EngineNativeProcess, EngineNativeProcessProvider};
+use crate::engine::resource_config::EngineResourceConfig;
+use crate::engine::search::session::EngineSearchSession;
 use crate::engine::session::{EngineSession, EngineSessionError, EngineSessionStartup};
 use crate::presentation::app::editor::{
     PresentationAppEditorConnection, PresentationAppEditorDraftIdProvider,
 };
 use crate::presentation::puzzle::panel::PresentationPuzzlePanelConnection;
 use crate::presentation::settings::controller::PresentationSettingsConnection;
-use crate::desktop::preferences_store::DesktopPreferencesStore;
-use crate::engine::configuration::EngineConfigurationOverrides;
-use crate::storage::preferences_repository::StoragePreferencesRepository;
-use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
-use crate::desktop::layout::DesktopLayout;
-use crate::desktop::native::layout_store::DesktopNativeLayoutStore;
-use crate::desktop::backup_bridge::DesktopBackupService;
-use crate::desktop::backup_commands::DesktopBackupCommands;
+use crate::report::job::ReportJobId;
 use crate::storage::backup::create::BackupSpaceNative;
 use crate::storage::backup::error::BackupError;
 use crate::storage::backup::recovery::BackupRecovery;
+use crate::storage::document_store::{StorageDocumentError, StorageDocumentStore};
 use crate::storage::editor_repository::StorageEditorRepository;
+use crate::storage::preferences_repository::StoragePreferencesRepository;
 use crate::storage::puzzle_repository::StoragePuzzleRepository;
 
 struct DesktopNativeBootstrapEditorDraftIds;
@@ -272,18 +276,23 @@ impl DesktopNativeBootstrapError {
 #[derive(Debug)]
 enum DesktopNativeBootstrapEnumArguments {
     Help,
-    Run { profile: Option<PathBuf> },
+    Run {
+        profile: Option<PathBuf>,
+        timing_export: Option<PathBuf>,
+    },
 }
 
 impl DesktopNativeBootstrapEnumArguments {
     const PROFILE_DIRECTORY: &str = "--profile-directory";
     const HELP: &str = "--help";
+    const TIMING_EXPORT: &str = "--timing-export";
 
     fn parse(
         arguments: impl IntoIterator<Item = OsString>,
     ) -> Result<Self, DesktopNativeBootstrapError> {
         let mut arguments = arguments.into_iter();
         let mut profile = None;
+        let mut timing_export = None;
         let mut help = false;
         while let Some(argument) = arguments.next() {
             if argument == Self::HELP || argument == "-h" {
@@ -299,6 +308,15 @@ impl DesktopNativeBootstrapEnumArguments {
                     })
                     .ok_or(DesktopNativeBootstrapError::ProfileArgument)?;
                 profile = Some(PathBuf::from(path));
+            } else if argument == Self::TIMING_EXPORT {
+                if timing_export.is_some() {
+                    return Err(DesktopNativeBootstrapError::Argument(argument));
+                }
+                let path = arguments
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or(DesktopNativeBootstrapError::Argument(argument))?;
+                timing_export = Some(PathBuf::from(path));
             } else {
                 return Err(DesktopNativeBootstrapError::Argument(argument));
             }
@@ -306,7 +324,10 @@ impl DesktopNativeBootstrapEnumArguments {
         if help {
             Ok(Self::Help)
         } else {
-            Ok(Self::Run { profile })
+            Ok(Self::Run {
+                profile,
+                timing_export,
+            })
         }
     }
 }
@@ -345,8 +366,14 @@ impl DesktopNativeBootstrapServices {
                 .backup
                 .as_ref()
                 .is_none_or(|backup| backup.is_scheduler_stopped())
-            && self.reports.as_ref().is_none_or(|host| Arc::strong_count(host) == 1)
-            && self.report_worker.as_ref().is_none_or(JoinHandle::is_finished)
+            && self
+                .reports
+                .as_ref()
+                .is_none_or(|host| Arc::strong_count(host) == 1)
+            && self
+                .report_worker
+                .as_ref()
+                .is_none_or(JoinHandle::is_finished)
             && self.library_cleanup.is_none()
             && self
                 .library
@@ -434,6 +461,12 @@ impl DesktopNativeBootstrapLifecycle {
         }
         if let Some(backup) = services.backup.take() {
             backup.shutdown().await;
+        }
+        if let Some(worker) = services.report_worker.as_mut() {
+            if timeout_at(deadline, worker).await.is_err() {
+                return Err(DesktopNativeBootstrapError::CleanupDeadline);
+            }
+            services.report_worker = None;
         }
         let DesktopNativeBootstrapServices {
             engine,
@@ -894,9 +927,9 @@ impl DesktopNativeBootstrapSupervisor {
                 .start()?
         };
         let puzzle_owner = DesktopMessagesEntityId::new();
-        self.lifecycle.services.lock().await.reports = Some(Arc::new(DesktopNativeReportHost::new(
-            storage_client.clone(),
-        )));
+        self.lifecycle.services.lock().await.reports = Some(Arc::new(
+            DesktopNativeReportHost::new(storage_client.clone()),
+        ));
         let games = DesktopNativeGameService::new(DesktopNativeGameServiceOptions {
             factory_provider: DesktopNativeGameFactories::new(
                 package.clone(),
@@ -930,12 +963,13 @@ impl DesktopNativeBootstrapSupervisor {
                     wall_time: Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
                     identities: Arc::new(DesktopEditorCommandsStudyUuidIdentities),
                 });
-        let library_imports = crate::desktop::native::library_import::DesktopNativeLibraryImport::imports(
-            storage_client.clone(),
-            Arc::clone(&executor),
-            Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
-            self.lease.identity().data_directory(),
-        )?;
+        let library_imports =
+            crate::desktop::native::library_import::DesktopNativeLibraryImport::imports(
+                storage_client.clone(),
+                Arc::clone(&executor),
+                Arc::new(crate::desktop::native::wall_time::DesktopNativeWallTime),
+                self.lease.identity().data_directory(),
+            )?;
         let library = DesktopNativeLibraryService::new(
             DesktopLibraryServiceOptions {
                 workspace: library_workspace,
@@ -1017,7 +1051,10 @@ impl DesktopNativeBootstrapSupervisor {
                 .with_puzzles(puzzle_owner, Arc::new(puzzle_port.clone()))
                 .with_library(library_workspace, Arc::new(library_port))
                 .with_editor(editor_owner, editor_commands)
-                .with_backup(Arc::clone(&backup) as Arc<dyn crate::desktop::backup_bridge::DesktopBackupBridgeProvider>);
+                .with_backup(Arc::clone(&backup)
+                    as Arc<
+                        dyn crate::desktop::backup_bridge::DesktopBackupBridgeProvider,
+                    >);
         if let Some(engine_port) = &engine_port {
             coordinator = coordinator.with_engine(Arc::new(engine_port.clone()));
         }
@@ -1061,6 +1098,13 @@ impl DesktopNativeBootstrapSupervisor {
             ),
         };
         coordinator = coordinator.with_updates(Arc::new(updates));
+        let layout_store = Arc::new(DesktopNativeLayoutStore::new(
+            StoragePreferencesRepository::new(layout_client),
+        ));
+        let layout = layout_store.load().await.unwrap_or_else(|error| {
+            eprintln!("Saved window layout could not be loaded; using defaults: {error}");
+            DesktopLayout::default()
+        });
         let mut phase = CapacityPhase::new(self.budget.clone())?;
         let generation = phase.request_preparation()?;
         let capacity = Arc::new(Mutex::new(phase));
@@ -1082,26 +1126,22 @@ impl DesktopNativeBootstrapSupervisor {
             .clone()
             .map(|host| {
                 Arc::new(DesktopNativeStudyDriver::new(
-                    host,
-                    tokio::runtime::Handle::current(),
-                    Arc::clone(&self.wake),
-                    Arc::new(DesktopNativeDialogsProxy::new(dialogs.clone())),
-                    reanalysis_sender,
-                    self.lease
-                        .identity()
-                        .data_directory()
-                        .join("library.sqlite3"),
-                    Vec::new(),
+                    DesktopNativeStudyDriverOptions {
+                        host,
+                        runtime: tokio::runtime::Handle::current(),
+                        wake: Arc::clone(&self.wake),
+                        dialogs: Arc::new(DesktopNativeDialogsProxy::new(dialogs.clone())),
+                        reanalysis: reanalysis_sender,
+                        database: self
+                            .lease
+                            .identity()
+                            .data_directory()
+                            .join("library.sqlite3"),
+                        starters: Vec::new(),
+                    },
                 ))
             });
         let (events, receiver) = DesktopNativeHost::event_channel();
-        let layout_store = Arc::new(DesktopNativeLayoutStore::new(
-            StoragePreferencesRepository::new(layout_client),
-        ));
-        let layout = layout_store.load().await.unwrap_or_else(|error| {
-            eprintln!("Saved window layout could not be loaded; using defaults: {error}");
-            DesktopLayout::default()
-        });
         let host = DesktopNativeHostServices {
             games: Some(game_port.registry_port().clone()),
             layout,
@@ -1132,6 +1172,7 @@ impl DesktopNativeBootstrapSupervisor {
             events,
             budget: self.budget,
             dialog_ready,
+            timing_export: None,
         };
         self.ready
             .send(host)
@@ -1161,30 +1202,33 @@ impl DesktopNativeBootstrapSupervisor {
     ) -> Option<JoinHandle<()>> {
         let host = self.lifecycle.services.lock().await.reports.clone()?;
         let package = package?;
-        match Self::report_session(&self.budget, package).await {
-            Ok(session) => Some(tokio::spawn(DesktopNativeReportWorker::run(
-                host,
-                session,
-                games.snapshots(),
-                Arc::clone(capacity),
-                self.host_done.clone(),
-                reanalysis,
-            ))),
-            Err(message) => {
-                host.record_failure(message);
-                None
+        let budget = self.budget.clone();
+        let snapshots = games.snapshots();
+        let capacity = Arc::clone(capacity);
+        let host_done = self.host_done.clone();
+        Some(tokio::spawn(async move {
+            match Self::report_session(&budget, package).await {
+                Ok(session) => {
+                    DesktopNativeReportWorker::run(DesktopNativeReportWorkerOptions {
+                        host,
+                        session,
+                        games: snapshots,
+                        capacity,
+                        done: host_done,
+                        reanalysis,
+                    })
+                    .await;
+                }
+                Err(message) => host.record_failure(message),
             }
-        }
+        }))
     }
 
     async fn report_session(
         budget: &CapacityBudget,
         package: EnginePackageSelected,
     ) -> Result<EngineSearchSession<EngineNativeProcess>, String> {
-        let initialization = budget
-            .lease(1)
-            .await
-            .map_err(|error| error.to_string())?;
+        let initialization = budget.lease(1).await.map_err(|error| error.to_string())?;
         let mut engine = EngineSession::start(&EngineNativeProcessProvider, package)
             .await
             .map_err(|error| error.to_string())?;
@@ -1576,7 +1620,7 @@ impl DesktopNativeBootstrapSupervisor {
 pub struct DesktopNativeBootstrap;
 
 impl DesktopNativeBootstrap {
-    const HELP: &str = "Chess\n\nUsage: chess [--profile-directory PATH]\n\nOptions:\n  -h, --help                 Show this help and exit\n  --profile-directory PATH   Use a specific local profile directory";
+    const HELP: &str = "Chess\n\nUsage: chess [--profile-directory PATH] [--timing-export PATH]\n\nOptions:\n  -h, --help                 Show this help and exit\n  --profile-directory PATH   Use a specific local profile directory\n  --timing-export PATH       Write presentation timing samples on exit";
     const RESOURCE_DIRECTORY: &str = "resources";
 
     pub fn run() -> Result<(), DesktopNativeBootstrapError> {
@@ -1593,15 +1637,26 @@ impl DesktopNativeBootstrap {
         arguments: impl IntoIterator<Item = OsString>,
         host: impl FnOnce(DesktopNativeHostServices) -> Result<(), DesktopNativeHostError>,
     ) -> Result<(), DesktopNativeBootstrapError> {
-        let profile = match DesktopNativeBootstrapEnumArguments::parse(arguments)? {
+        let (profile, timing_export) = match DesktopNativeBootstrapEnumArguments::parse(arguments)?
+        {
             DesktopNativeBootstrapEnumArguments::Help => {
                 println!("{}", Self::HELP);
                 return Ok(());
             }
-            DesktopNativeBootstrapEnumArguments::Run { profile } => match profile {
-                Some(path) => path,
-                None => DesktopProfileIdentity::discover_data_directory()?,
-            },
+            DesktopNativeBootstrapEnumArguments::Run {
+                profile,
+                timing_export,
+            } => (
+                match profile {
+                    Some(path) => path,
+                    None => DesktopProfileIdentity::discover_data_directory()?,
+                },
+                timing_export,
+            ),
+        };
+        let host = move |mut services: DesktopNativeHostServices| {
+            services.timing_export = timing_export;
+            host(services)
         };
         let started = StandardInstant::now();
         let security = DesktopProfileSecurity::current()?;

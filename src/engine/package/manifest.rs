@@ -81,25 +81,22 @@ impl EnginePackageEnumTarget {
                     Self::WindowsX64 => ".exe",
                     Self::MacosArm | Self::LinuxX64 => "",
                 };
-                PathBuf::from("bin").join(format!(
-                    "reckless-{}-{suffix}{extension}",
-                    self.triple()
-                ))
+                PathBuf::from("bin").join(format!("reckless-{}-{suffix}{extension}", self.triple()))
             }
         }
     }
 
     pub const fn supports_profile(self, profile: EnginePackageEnumProfile) -> bool {
-        match (self, profile) {
-            (_, EnginePackageEnumProfile::Portable) => true,
-            (
-                Self::WindowsX64 | Self::LinuxX64,
-                EnginePackageEnumProfile::X8664V3 | EnginePackageEnumProfile::X8664V4,
-            ) => true,
-            (Self::LinuxX64, EnginePackageEnumProfile::Numa) => true,
-            (Self::MacosArm, EnginePackageEnumProfile::AppleNeon) => true,
-            _ => false,
-        }
+        matches!(
+            (self, profile),
+            (_, EnginePackageEnumProfile::Portable)
+                | (
+                    Self::WindowsX64 | Self::LinuxX64,
+                    EnginePackageEnumProfile::X8664V3 | EnginePackageEnumProfile::X8664V4,
+                )
+                | (Self::LinuxX64, EnginePackageEnumProfile::Numa)
+                | (Self::MacosArm, EnginePackageEnumProfile::AppleNeon)
+        )
     }
 
     pub const fn portable_flags(self) -> &'static str {

@@ -79,8 +79,18 @@ fn settings_show_sources_counts_truthful_refusals_and_confirm_before_deleting()
         settings: PresentationSettingsDatasets::new(),
         starters: vec![starter],
         rows: vec![
-            row(1, "Masters", StorageDatasetRegistryEnumOrigin::Starter, true),
-            row(2, "Club games", StorageDatasetRegistryEnumOrigin::Personal, false),
+            row(
+                1,
+                "Masters",
+                StorageDatasetRegistryEnumOrigin::Starter,
+                true,
+            ),
+            row(
+                2,
+                "Club games",
+                StorageDatasetRegistryEnumOrigin::Personal,
+                false,
+            ),
         ],
         intents: Vec::new(),
     };
@@ -113,11 +123,27 @@ fn settings_show_sources_counts_truthful_refusals_and_confirm_before_deleting()
 }
 
 #[test]
-fn picker_lists_only_usable_sources_and_discloses_combination() -> Result<(), Box<dyn std::error::Error>> {
+fn picker_lists_only_usable_sources_and_discloses_combination()
+-> Result<(), Box<dyn std::error::Error>> {
     let rows = vec![
-        row(1, "Masters", StorageDatasetRegistryEnumOrigin::Starter, true),
-        row(2, "Club games", StorageDatasetRegistryEnumOrigin::Personal, false),
-        row(3, "Online games", StorageDatasetRegistryEnumOrigin::Personal, false),
+        row(
+            1,
+            "Masters",
+            StorageDatasetRegistryEnumOrigin::Starter,
+            true,
+        ),
+        row(
+            2,
+            "Club games",
+            StorageDatasetRegistryEnumOrigin::Personal,
+            false,
+        ),
+        row(
+            3,
+            "Online games",
+            StorageDatasetRegistryEnumOrigin::Personal,
+            false,
+        ),
     ];
     assert_eq!(PresentationOpeningDatasetPicker::usable(&rows).len(), 2);
     let mut selected = BTreeSet::from([StorageDatasetId::new(2), StorageDatasetId::new(3)]);

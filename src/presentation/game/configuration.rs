@@ -35,7 +35,9 @@ pub enum PresentationGameConfigurationError {
     StartIndex(#[from] BoardStartIndexError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter,
+)]
 pub enum PresentationGameConfigurationEnumClockFormat {
     #[strum(serialize = "Sudden death")]
     SuddenDeath,
@@ -70,7 +72,9 @@ impl PresentationGameConfigurationEnumClockFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::Display, strum::EnumIter,
+)]
 pub enum PresentationGameConfigurationEnumBonus {
     #[strum(serialize = "No increment or delay")]
     None,

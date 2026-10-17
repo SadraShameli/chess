@@ -108,7 +108,7 @@ async fn fen_transfer_resolves_real_prompt_and_saves_prior_invalid_draft_separat
             .iter()
             .any(|entry| entry.id() == prior.context().draft())
     });
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert_eq!(prompted.draft(), prior.draft());
     assert!(prompted.prompt().is_some());
     assert_eq!(imported.context().session(), ticket);
@@ -153,7 +153,7 @@ async fn generic_owner_refusal_stays_distinct_and_failed_refresh_does_not_spin()
     );
     let pending = fixture.app.has_pending_work();
     let snapshot = fixture.app.editor_snapshot().cloned();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert!(generic);
     assert!(!pending);
     assert!(snapshot.is_none());
@@ -218,7 +218,7 @@ async fn new_draft_copies_selected_played_position_without_changing_history_cloc
         .game_snapshot()
         .ok_or("source game disappeared")?
         .clone();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert_eq!(copied.draft().validate()?.fen(), played.board().fen());
     assert_eq!(retained.id(), played.id());
     assert_eq!(retained.revision(), played.revision());
@@ -280,7 +280,7 @@ async fn typed_stale_failure_refreshes_actual_snapshot_before_further_edits()
         .editor_controller()
         .ok_or("missing controller")?
         .is_pending();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert!(typed);
     assert!(!pending);
     assert_eq!(authoritative.context(), changed.context());
@@ -348,7 +348,7 @@ async fn busy_retry_reuses_actual_opening_request_and_its_session()
         .editor_snapshot()
         .ok_or("retry did not open draft")?
         .clone();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert!(unadmitted);
     assert_eq!(admitted, pending);
     assert_eq!(next.context().session(), pending);
@@ -401,7 +401,7 @@ async fn real_headless_workspace_mounts_setup_confirmation_and_preserves_invalid
         .clone();
     let validation = harness.query_all_by_label("Invalid draft").count();
     let (fixture, failures) = harness.into_state();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert!(failures.is_empty(), "{failures:?}");
     assert_eq!(confirming, 1);
     assert_eq!(validation, 1);
@@ -466,7 +466,7 @@ async fn mounted_opening_uses_actual_ticket_and_invalid_draft_survives_save_reop
         .editor_snapshot()
         .ok_or("draft was not reopened")?
         .clone();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert_eq!(initial.context().session(), ticket);
     assert!(invalid.draft().validate().is_err());
     assert_eq!(stored.draft().fields(), invalid.draft().fields());
@@ -534,7 +534,7 @@ async fn mounted_navigation_stay_retains_draft_and_discard_releases_exact_destin
     fixture.settle().await?;
     let left = fixture.app.workspace();
     let closed = fixture.app.editor_snapshot().is_none();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert!(prompted.prompt().is_some());
     assert_eq!(stayed, PresentationAppEnumWorkspace::Editor);
     assert_eq!(retained.draft(), initial.draft());
@@ -575,7 +575,7 @@ async fn play_prefills_new_game_without_creating_or_replacing_the_retained_draft
         .ok_or("Play lost draft")?
         .clone();
     let game = fixture.app.game_snapshot().cloned();
-    fixture.close().await?;
+    Box::pin(fixture.close()).await?;
     assert_eq!(
         prefill,
         chess::game::configuration::GameConfigurationEnumStart::Custom(initial.draft().validate()?)

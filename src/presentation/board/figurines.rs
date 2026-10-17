@@ -32,7 +32,9 @@ impl PresentationBoardFigurines {
             DesktopPreferencesEnumNotation::Figurines => line
                 .split(' ')
                 .map(|token| {
-                    if token.ends_with('.') || token.starts_with(|first: char| first.is_ascii_digit()) {
+                    if token.ends_with('.')
+                        || token.starts_with(|first: char| first.is_ascii_digit())
+                    {
                         token.to_owned()
                     } else {
                         Self::display_san(

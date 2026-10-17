@@ -48,7 +48,7 @@ async fn only_played_completion_and_explicit_analysis_create_reports() -> Report
     .into_iter()
     .enumerate()
     {
-        let moves: &[&str] = &[&["e2e4"][..], &["d2d4"][..], &["c2c4"][..]][index];
+        let moves: &[&str] = [&["e2e4"][..], &["d2d4"][..], &["c2c4"][..]][index];
         let job = fixture.job_with_id(moves, 200 + u128::try_from(index)?)?;
         assert!(matches!(
             service.request(trigger, job)?,
@@ -69,7 +69,10 @@ async fn the_same_current_line_is_never_queued_twice() -> ReportFixtureResult {
         fixture.job_with_id(&["e2e4", "e7e5"], 300)?,
     )? {
         ReportServiceEnumOutcome::Created(id) => id,
-        other => return Err(format!("unexpected {other:?}").into()),
+        other @ ReportServiceEnumOutcome::Existing(_)
+        | other @ ReportServiceEnumOutcome::Declined(_) => {
+            return Err(format!("unexpected {other:?}").into());
+        }
     };
     let again = service.request(
         ReportServiceEnumTrigger::ExplicitImported,
@@ -93,7 +96,10 @@ async fn changed_lines_outdate_old_reports_but_metadata_only_edits_do_not() -> R
         fixture.job_with_source(source, 400)?,
     )? {
         ReportServiceEnumOutcome::Created(id) => id,
-        other => return Err(format!("unexpected {other:?}").into()),
+        other @ ReportServiceEnumOutcome::Existing(_)
+        | other @ ReportServiceEnumOutcome::Declined(_) => {
+            return Err(format!("unexpected {other:?}").into());
+        }
     };
     let tip = tree.nodes().last().ok_or("missing tip")?.id();
     let limits = ReportJobSourceLimits::new(128, 8 * 1024 * 1024)?;

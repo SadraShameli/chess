@@ -32,7 +32,9 @@ impl PresentationLibraryPanel {
         };
         let folders = plan.affected_folder_count();
         let games = plan.affected_game_count();
-        let busy = self.controller.is_pending(PresentationLibraryEnumLane::Trash);
+        let busy = self
+            .controller
+            .is_pending(PresentationLibraryEnumLane::Trash);
         ui.group(|ui| {
             ui.label(format!(
                 "Remove folder {folder}? {folders} folders are removed and {games} games move to Unfiled. No game is deleted."

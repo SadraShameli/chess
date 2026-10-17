@@ -416,6 +416,7 @@ impl PresentationAppPuzzleFixture {
         &self,
         app: &mut PresentationApp,
     ) -> PresentationAppPuzzleTestResult {
+        self.frame(app, None, Vec::new())?;
         let (output, _) = self.frame(app, None, Vec::new())?;
         assert!(
             output.shapes.iter().any(|shape| matches!(

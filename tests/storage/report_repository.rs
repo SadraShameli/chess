@@ -4,7 +4,7 @@ use chess::capacity::budget::CapacityBudget;
 use chess::storage::document_store::StorageDocumentStore;
 use chess::storage::report_repository::{
     StorageReportEnumFreshness, StorageReportEnumState, StorageReportError, StorageReportJobRecord,
-    StorageReportRepository, StorageReportResultRecord,
+    StorageReportJobRecordOptions, StorageReportRepository, StorageReportResultRecord,
 };
 use uuid::Uuid;
 
@@ -40,13 +40,15 @@ impl StorageReportFixture {
         count: u32,
     ) -> StorageReportTestResult<StorageReportJobRecord> {
         Ok(StorageReportJobRecord::new(
-            Uuid::from_u128(job),
-            Uuid::from_u128(game),
-            1,
-            [digest; 32],
-            count,
-            "{\"engine\":\"fixture\"}".to_owned(),
-            "{\"line\":[]}".to_owned(),
+            StorageReportJobRecordOptions {
+                job: Uuid::from_u128(job),
+                game: Uuid::from_u128(game),
+                revision: 1,
+                line_digest: [digest; 32],
+                position_count: count,
+                configuration: "{\"engine\":\"fixture\"}".to_owned(),
+                source: "{\"line\":[]}".to_owned(),
+            },
         )?)
     }
 
@@ -89,15 +91,15 @@ async fn jobs_queue_in_insertion_order_and_reject_duplicates() -> StorageReportT
     );
     assert_eq!(fixture.repository.list(Some(0)).await?.len(), 1);
     assert!(
-        StorageReportJobRecord::new(
-            Uuid::nil(),
-            Uuid::nil(),
-            1,
-            [0; 32],
-            0,
-            "{}".to_owned(),
-            "{}".to_owned()
-        )
+        StorageReportJobRecord::new(StorageReportJobRecordOptions {
+            job: Uuid::nil(),
+            game: Uuid::nil(),
+            revision: 1,
+            line_digest: [0; 32],
+            position_count: 0,
+            configuration: "{}".to_owned(),
+            source: "{}".to_owned()
+        })
         .is_err()
     );
     fixture.store.close().await?;

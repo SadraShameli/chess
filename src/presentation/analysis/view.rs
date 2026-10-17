@@ -1,12 +1,11 @@
-use strum::IntoEnumIterator;
 use bevy_egui::egui::{self, Ui};
+use strum::IntoEnumIterator;
 use thiserror::Error;
 
 use crate::board::r#move::BoardMoveError;
 use crate::desktop::identity::DesktopRequestId;
 use crate::engine::analysis::{EngineAnalysisHashOccupancy, EngineAnalysisLine};
 use crate::engine::search::session::EngineSearchSessionEnumCompletion;
-use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::analysis::configuration::{
     PresentationAnalysisConfiguration, PresentationAnalysisConfigurationEnumMode,
 };
@@ -15,6 +14,7 @@ use crate::presentation::analysis::controller::{
     PresentationAnalysisControllerError, PresentationAnalysisControllerIntent,
 };
 use crate::presentation::analysis::line::PresentationAnalysisLineScore;
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::presentation::workbench::status::PresentationWorkbenchStatusEnumState;
 

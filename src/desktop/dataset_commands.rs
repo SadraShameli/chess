@@ -16,8 +16,7 @@ use crate::storage::dataset_package::{
 };
 use crate::storage::dataset_registry::{
     StorageDatasetId, StorageDatasetRegistry, StorageDatasetRegistryEntry,
-    StorageDatasetRegistryEnumKind,
-    StorageDatasetRegistryEnumOrigin, StorageDatasetRegistryError,
+    StorageDatasetRegistryEnumKind, StorageDatasetRegistryEnumOrigin, StorageDatasetRegistryError,
 };
 
 #[derive(Debug, Error)]
@@ -74,7 +73,9 @@ impl DesktopDatasetCommands {
             .collect()
     }
 
-    pub const fn feature(kind: StorageDatasetRegistryEnumKind) -> StorageDatasetIntegrityEnumFeature {
+    pub const fn feature(
+        kind: StorageDatasetRegistryEnumKind,
+    ) -> StorageDatasetIntegrityEnumFeature {
         match kind {
             StorageDatasetRegistryEnumKind::Corpus => StorageDatasetIntegrityEnumFeature::Explorer,
             StorageDatasetRegistryEnumKind::Book => StorageDatasetIntegrityEnumFeature::Book,
@@ -146,7 +147,11 @@ impl DesktopDatasetCommands {
         preview: &StorageDatasetImportPreview,
         confirmation: StorageDatasetImportEnumConfirmation,
     ) -> Result<StorageDatasetId, DesktopDatasetCommandsError> {
-        Ok(StorageDatasetImport::apply(connection, preview, confirmation)?)
+        Ok(StorageDatasetImport::apply(
+            connection,
+            preview,
+            confirmation,
+        )?)
     }
 
     pub fn cancel_import(preview: StorageDatasetImportPreview) {
@@ -158,6 +163,10 @@ impl DesktopDatasetCommands {
         dataset: StorageDatasetId,
         confirmation: StorageDatasetImportEnumConfirmation,
     ) -> Result<(), DesktopDatasetCommandsError> {
-        Ok(StorageDatasetImport::delete(connection, dataset, confirmation)?)
+        Ok(StorageDatasetImport::delete(
+            connection,
+            dataset,
+            confirmation,
+        )?)
     }
 }

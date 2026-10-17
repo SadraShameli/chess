@@ -12,7 +12,11 @@ fn intent(state: DesktopProfileInstallationEnumState) -> UpdateRecoveryIntent {
     UpdateRecoveryIntent::new(state, Version::new(1, 2, 0))
 }
 
-fn observation(installed: Version, quiescent: bool, migration: Option<bool>) -> UpdateRecoveryObservation {
+fn observation(
+    installed: Version,
+    quiescent: bool,
+    migration: Option<bool>,
+) -> UpdateRecoveryObservation {
     UpdateRecoveryObservation {
         installed_version: installed,
         helper_quiescent: quiescent,
@@ -49,23 +53,38 @@ fn prepared_never_authorizes_anything_and_a_running_helper_blocks_retry() {
 fn committed_clears_only_after_identity_and_migration_validate() {
     let committed = intent(DesktopProfileInstallationEnumState::Committed);
     assert_eq!(
-        UpdateRecovery::decide(Some(&committed), &observation(Version::new(1, 2, 0), true, Some(true))),
+        UpdateRecovery::decide(
+            Some(&committed),
+            &observation(Version::new(1, 2, 0), true, Some(true))
+        ),
         UpdateRecoveryEnumDecision::ClearSuccess
     );
     assert_eq!(
-        UpdateRecovery::decide(Some(&committed), &observation(Version::new(1, 2, 0), true, Some(false))),
+        UpdateRecovery::decide(
+            Some(&committed),
+            &observation(Version::new(1, 2, 0), true, Some(false))
+        ),
         UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::MigrationFailed)
     );
     assert_eq!(
-        UpdateRecovery::decide(Some(&committed), &observation(Version::new(1, 2, 0), true, None)),
+        UpdateRecovery::decide(
+            Some(&committed),
+            &observation(Version::new(1, 2, 0), true, None)
+        ),
         UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::CommittedPending)
     );
     assert_eq!(
-        UpdateRecovery::decide(Some(&committed), &observation(Version::new(1, 1, 0), false, None)),
+        UpdateRecovery::decide(
+            Some(&committed),
+            &observation(Version::new(1, 1, 0), false, None)
+        ),
         UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::HelperRunning)
     );
     assert_eq!(
-        UpdateRecovery::decide(Some(&committed), &observation(Version::new(1, 1, 0), true, None)),
+        UpdateRecovery::decide(
+            Some(&committed),
+            &observation(Version::new(1, 1, 0), true, None)
+        ),
         UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::CommittedPending)
     );
 }
@@ -76,21 +95,30 @@ fn ambiguous_and_failed_outcomes_keep_the_barrier() {
         result: DesktopProfileInstallationEnumOutcome::Unknown,
     });
     assert_eq!(
-        UpdateRecovery::decide(Some(&unknown), &observation(Version::new(1, 2, 0), true, Some(true))),
+        UpdateRecovery::decide(
+            Some(&unknown),
+            &observation(Version::new(1, 2, 0), true, Some(true))
+        ),
         UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::UnknownOutcome)
     );
     let failed = intent(DesktopProfileInstallationEnumState::Outcome {
         result: DesktopProfileInstallationEnumOutcome::Failed,
     });
     assert_eq!(
-        UpdateRecovery::decide(Some(&failed), &observation(Version::new(1, 1, 0), true, None)),
+        UpdateRecovery::decide(
+            Some(&failed),
+            &observation(Version::new(1, 1, 0), true, None)
+        ),
         UpdateRecoveryEnumDecision::Blocked(UpdateRecoveryEnumBlock::FailedOutcome)
     );
     let succeeded = intent(DesktopProfileInstallationEnumState::Outcome {
         result: DesktopProfileInstallationEnumOutcome::Succeeded,
     });
     assert_eq!(
-        UpdateRecovery::decide(Some(&succeeded), &observation(Version::new(1, 2, 0), true, Some(true))),
+        UpdateRecovery::decide(
+            Some(&succeeded),
+            &observation(Version::new(1, 2, 0), true, Some(true))
+        ),
         UpdateRecoveryEnumDecision::ClearSuccess
     );
 }
@@ -100,8 +128,12 @@ fn installer_adapters_refuse_unsafe_destinations() -> Result<(), Box<dyn std::er
     use chess::desktop::native::update::linux::DesktopNativeUpdateLinux;
     use chess::desktop::native::update::windows::DesktopNativeUpdateWindows;
 
-    assert!(DesktopNativeUpdateWindows::validate_destination(std::path::Path::new("relative")).is_err());
-    assert!(DesktopNativeUpdateWindows::validate_destination(std::path::Path::new("/a/../b")).is_err());
+    assert!(
+        DesktopNativeUpdateWindows::validate_destination(std::path::Path::new("relative")).is_err()
+    );
+    assert!(
+        DesktopNativeUpdateWindows::validate_destination(std::path::Path::new("/a/../b")).is_err()
+    );
     let directory = tempfile::tempdir()?;
     let root = directory.path().canonicalize()?;
     let real = root.join("Chess.AppImage");

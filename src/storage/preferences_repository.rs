@@ -72,7 +72,7 @@ impl StoragePreferencesTransaction {
     ) -> Result<StoragePreferencesEnumResponse, StoragePreferencesError> {
         match request {
             StoragePreferencesEnumRequest::Load => connection
-                .transaction(|connection| Self::load(connection))
+                .transaction(Self::load)
                 .map(StoragePreferencesEnumResponse::Loaded),
             StoragePreferencesEnumRequest::Save {
                 expected,

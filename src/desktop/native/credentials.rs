@@ -21,11 +21,13 @@ impl DesktopNativeCredentials {
     }
 
     fn classify(error: keyring::Error) -> UpdateCredentialError {
-        match error {
-            keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_) => {
-                UpdateCredentialError::SecureStorageUnavailable
-            }
-            other => UpdateCredentialError::Storage(other.to_string()),
+        if matches!(
+            error,
+            keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_)
+        ) {
+            UpdateCredentialError::SecureStorageUnavailable
+        } else {
+            UpdateCredentialError::Storage(error.to_string())
         }
     }
 }

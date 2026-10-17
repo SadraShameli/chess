@@ -35,7 +35,9 @@ impl ToolsPackagingLinux {
         Ok(())
     }
 
-    pub(crate) fn plan(toolchain_tag: Option<&str>) -> Result<ToolsPackagingPlan, ToolsPackagingError> {
+    pub(crate) fn plan(
+        toolchain_tag: Option<&str>,
+    ) -> Result<ToolsPackagingPlan, ToolsPackagingError> {
         let tag = toolchain_tag.ok_or_else(|| {
             ToolsPackagingError::AppImageToolchain(format!(
                 "set {} to a maintained stable release tag before packaging",
@@ -85,10 +87,16 @@ mod tests {
     #[test]
     fn only_stable_numeric_appimage_toolchain_tags_are_accepted() {
         for tag in ["13", "v1.2.3", "2.0"] {
-            assert!(ToolsPackagingLinux::validate_toolchain_tag(tag).is_ok(), "{tag}");
+            assert!(
+                ToolsPackagingLinux::validate_toolchain_tag(tag).is_ok(),
+                "{tag}"
+            );
         }
         for tag in ["continuous", "latest", "v1.0-rc1", "1.0.0-beta", "", "abc"] {
-            assert!(ToolsPackagingLinux::validate_toolchain_tag(tag).is_err(), "{tag}");
+            assert!(
+                ToolsPackagingLinux::validate_toolchain_tag(tag).is_err(),
+                "{tag}"
+            );
         }
         assert!(ToolsPackagingLinux::plan(None).is_err());
         assert!(ToolsPackagingLinux::plan(Some("13")).is_ok());

@@ -66,14 +66,12 @@ impl StorageBackupFixture {
     }
 
     pub(crate) fn request<'a>(
-        &'a self,
         database: &'a Path,
         directory: &'a Path,
         category: BackupEnumCategory,
         id: u128,
         created_ms: u64,
     ) -> BackupRequest<'a> {
-        let _ = self;
         BackupRequest {
             database,
             directory,
@@ -129,7 +127,7 @@ async fn snapshot_contains_committed_documents_settings_tables_and_a_consistent_
     StorageBackupFixture::write(&database, 1, r#"{"kind":"committed"}"#).await?;
     let backups = fixture.backups();
     let archive = BackupCreator::create_blocking(
-        fixture.request(&database, &backups, BackupEnumCategory::Manual, 10, 1_000),
+        StorageBackupFixture::request(&database, &backups, BackupEnumCategory::Manual, 10, 1_000),
         &BackupSpaceNative,
     )?;
     let preview = StorageBackupFixture::inspect(archive.path())?;
@@ -180,7 +178,7 @@ async fn a_backup_that_cannot_fit_is_refused_without_leaving_partial_files()
     StorageBackupFixture::write(&database, 1, "{}").await?;
     let backups = fixture.backups();
     let outcome = BackupCreator::create_blocking(
-        fixture.request(&database, &backups, BackupEnumCategory::Manual, 10, 1_000),
+        StorageBackupFixture::request(&database, &backups, BackupEnumCategory::Manual, 10, 1_000),
         &StorageBackupLowSpace,
     );
     assert!(matches!(
@@ -286,19 +284,20 @@ async fn retention_keeps_thirty_automatic_all_manual_five_per_safety_category_an
     StorageBackupFixture::write(&database, 1, "{}").await?;
     let backups = fixture.backups();
     let mut next = 100_u128;
-    let mut make =
-        |category: BackupEnumCategory, count: u64| -> StorageBackupTestResult<Vec<Uuid>> {
-            let mut ids = Vec::new();
-            for index in 0..count {
-                next += 1;
-                let archive = BackupCreator::create_blocking(
-                    fixture.request(&database, &backups, category, next, 1_000 + index),
-                    &BackupSpaceNative,
-                )?;
-                ids.push(archive.manifest().id());
-            }
-            Ok(ids)
-        };
+    let mut make = |category: BackupEnumCategory,
+                    count: u64|
+     -> StorageBackupTestResult<Vec<Uuid>> {
+        let mut ids = Vec::new();
+        for index in 0..count {
+            next += 1;
+            let archive = BackupCreator::create_blocking(
+                StorageBackupFixture::request(&database, &backups, category, next, 1_000 + index),
+                &BackupSpaceNative,
+            )?;
+            ids.push(archive.manifest().id());
+        }
+        Ok(ids)
+    };
     let automatic = make(BackupEnumCategory::Automatic, 33)?;
     let manual = make(BackupEnumCategory::Manual, 35)?;
     let restore = make(BackupEnumCategory::PreRestore, 8)?;

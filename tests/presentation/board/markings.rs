@@ -1,5 +1,5 @@
-use strum::IntoEnumIterator;
 use bevy_egui::egui::Modifiers;
+use strum::IntoEnumIterator;
 
 use chess::board::enums::{BoardEnumColor, BoardEnumPieceKind, BoardEnumVariant};
 use chess::board::position::BoardPosition;

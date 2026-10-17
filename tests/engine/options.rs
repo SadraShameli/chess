@@ -1,7 +1,7 @@
-use strum::IntoEnumIterator;
 use std::future::{Future, poll_fn};
 use std::num::NonZeroU32;
 use std::task::Poll;
+use strum::IntoEnumIterator;
 
 use chess::board::enums::{BoardEnumColor, BoardEnumVariant};
 use chess::board::position::BoardPosition;

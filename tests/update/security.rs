@@ -29,8 +29,8 @@ fn a_request_never_prints_its_bearer_token() -> UpdateSecurityResult {
 }
 
 #[tokio::test]
-async fn the_bearer_is_dropped_on_a_cross_origin_redirect_and_never_restored() -> UpdateSecurityResult
-{
+async fn the_bearer_is_dropped_on_a_cross_origin_redirect_and_never_restored()
+-> UpdateSecurityResult {
     let http = UpdateFixtureHttp::default();
     let returned = format!("{API}?again=1");
     http.route(API, UpdateFixtureResponse::redirect(OBJECT));
@@ -160,12 +160,8 @@ fn installers_refuse_relative_packages_before_running_anything() {
 
     let digest = PackageDigest::hash_slice(b"package");
     assert!(
-        DesktopNativeUpdateWindows::install(
-            Path::new("setup.exe"),
-            Path::new("C:\\Chess"),
-            digest
-        )
-        .is_err()
+        DesktopNativeUpdateWindows::install(Path::new("setup.exe"), Path::new("C:\\Chess"), digest)
+            .is_err()
     );
     assert!(
         DesktopNativeUpdateMacos::install(
@@ -198,10 +194,18 @@ fn the_appimage_swap_writes_an_exclusive_staging_file_and_leaves_no_residue() ->
     )?;
     assert_eq!(outcome, DesktopNativeUpdateEnumOutcome::Installed);
     assert_eq!(std::fs::read(&destination)?, b"new image");
-    assert_eq!(std::fs::metadata(&destination)?.permissions().mode() & 0o777, 0o755);
+    assert_eq!(
+        std::fs::metadata(&destination)?.permissions().mode() & 0o777,
+        0o755
+    );
     let residue = std::fs::read_dir(&root)?
         .filter_map(Result::ok)
-        .any(|entry| entry.file_name().to_string_lossy().starts_with(".chess-update-"));
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".chess-update-")
+        });
     assert!(!residue);
     Ok(())
 }
@@ -224,7 +228,10 @@ fn a_verified_copy_hashes_the_bytes_it_writes_and_removes_a_mismatched_copy() ->
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&good)?.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&good)?.permissions().mode() & 0o777,
+            0o600
+        );
     }
     let bad = directory.path().join("bad.bin");
     let mismatch = DesktopNativeUpdateStaging::copy_verified(
@@ -232,7 +239,10 @@ fn a_verified_copy_hashes_the_bytes_it_writes_and_removes_a_mismatched_copy() ->
         PackageDigest::hash_slice(b"other bytes"),
         &bad,
     );
-    assert!(matches!(mismatch, Err(DesktopNativeUpdateError::DigestMismatch)));
+    assert!(matches!(
+        mismatch,
+        Err(DesktopNativeUpdateError::DigestMismatch)
+    ));
     assert!(!bad.exists());
     let occupied = DesktopNativeUpdateStaging::copy_verified(
         &source,
@@ -301,11 +311,8 @@ fn only_a_root_owned_helper_in_root_owned_directories_may_run_privileged() -> Up
     std::fs::write(&helper, b"#!/bin/sh\n")?;
     assert!(DesktopNativeUpdateLinux::validate_privileged_helper(&helper).is_err());
     assert!(
-        DesktopNativeUpdateLinux::validate_privileged_helper(Path::new("relative-helper"))
-            .is_err()
+        DesktopNativeUpdateLinux::validate_privileged_helper(Path::new("relative-helper")).is_err()
     );
-    assert!(
-        DesktopNativeUpdateLinux::validate_privileged_helper(directory.path()).is_err()
-    );
+    assert!(DesktopNativeUpdateLinux::validate_privileged_helper(directory.path()).is_err());
     Ok(())
 }

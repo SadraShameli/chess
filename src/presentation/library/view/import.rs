@@ -154,17 +154,13 @@ impl PresentationLibraryPanel {
                         if has_match {
                             let skip = ui.add_enabled(!busy, egui::Button::new("Skip"));
                             if self.frame.clicked(ui, &skip) {
-                                choose = Some((
-                                    row.ordinal(),
-                                    StorageImportSessionEnumChoice::Skip,
-                                ));
+                                choose =
+                                    Some((row.ordinal(), StorageImportSessionEnumChoice::Skip));
                             }
                             let keep = ui.add_enabled(!busy, egui::Button::new("Keep copy"));
                             if self.frame.clicked(ui, &keep) {
-                                choose = Some((
-                                    row.ordinal(),
-                                    StorageImportSessionEnumChoice::KeepCopy,
-                                ));
+                                choose =
+                                    Some((row.ordinal(), StorageImportSessionEnumChoice::KeepCopy));
                             }
                             let differences =
                                 ui.add_enabled(!busy, egui::Button::new("Show differences"));

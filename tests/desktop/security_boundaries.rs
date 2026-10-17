@@ -13,7 +13,14 @@ impl SecurityBoundaries {
         "src/update/download.rs",
         "src/desktop/native/credentials.rs",
     ];
-    const LOGGING: [&str; 6] = ["println!", "eprintln!", "dbg!", "tracing::", "log::", "info!("];
+    const LOGGING: [&str; 6] = [
+        "println!",
+        "eprintln!",
+        "dbg!",
+        "tracing::",
+        "log::",
+        "info!(",
+    ];
     const FORBIDDEN: [&str; 7] = [
         "TcpListener",
         "UdpSocket",
@@ -58,12 +65,18 @@ fn shipped_sources_open_no_network_listener_and_read_no_environment_or_test_swit
 -> SecurityResult {
     for (name, text) in SecurityBoundaries::library()? {
         for marker in SecurityBoundaries::FORBIDDEN {
-            assert!(!text.contains(marker), "{name} contains forbidden '{marker}'");
+            assert!(
+                !text.contains(marker),
+                "{name} contains forbidden '{marker}'"
+            );
         }
         let reads = text.matches("env::var").count();
         let (owner, call) = SecurityBoundaries::ENVIRONMENT_READ;
         if name == owner {
-            assert_eq!(reads, 1, "{name} must read exactly one environment variable");
+            assert_eq!(
+                reads, 1,
+                "{name} must read exactly one environment variable"
+            );
             assert!(text.contains(call));
         } else {
             assert_eq!(reads, 0, "{name} reads the environment");
@@ -81,7 +94,10 @@ fn update_and_credential_code_never_logs_and_exposes_the_token_only_to_its_trans
             || name == "src/desktop/native/credentials.rs";
         if secret_code {
             for marker in SecurityBoundaries::LOGGING {
-                assert!(!text.contains(marker), "{name} writes output with '{marker}'");
+                assert!(
+                    !text.contains(marker),
+                    "{name} writes output with '{marker}'"
+                );
             }
         }
         if text.contains(".expose()") {
@@ -113,9 +129,8 @@ fn credentials_never_reach_storage_backups_exports_or_the_installer_helper() -> 
             }
         }
     }
-    let helper = fs::read_to_string(
-        SecurityBoundaries::root().join("tools/packaging/update_helper.rs"),
-    )?;
+    let helper =
+        fs::read_to_string(SecurityBoundaries::root().join("tools/packaging/update_helper.rs"))?;
     for marker in ["credential", "bearer", "token", "keyring"] {
         assert!(
             !helper.to_ascii_lowercase().contains(marker),

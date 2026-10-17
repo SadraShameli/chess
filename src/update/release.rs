@@ -44,11 +44,15 @@ impl UpdateReleaseCheck {
         manifest: &str,
     ) -> Result<(), UpdateReleaseCheckError> {
         let expected = Self::tag_version(tag)?.to_string();
-        for (what, found) in [("Cargo", cargo), ("package", package), ("manifest", manifest)] {
+        for (what, found) in [
+            ("Cargo", cargo),
+            ("package", package),
+            ("manifest", manifest),
+        ] {
             if found != expected {
                 return Err(UpdateReleaseCheckError::Mismatch {
                     what,
-                    expected: expected.clone(),
+                    expected,
                     found: found.to_owned(),
                 });
             }
@@ -56,9 +60,7 @@ impl UpdateReleaseCheck {
         Ok(())
     }
 
-    pub fn publication_allowed(
-        state: UpdateReleaseState,
-    ) -> Result<(), UpdateReleaseCheckError> {
+    pub fn publication_allowed(state: UpdateReleaseState) -> Result<(), UpdateReleaseCheckError> {
         if !state.draft {
             return Err(UpdateReleaseCheckError::Publication(
                 "the release must stay a draft until complete",

@@ -17,7 +17,10 @@ impl PresentationLibraryPanel {
         let mut chosen = None;
         for (label, selection) in [
             ("Export full PGN", NotationPgnExportEnumSelection::Full),
-            ("Export mainline PGN", NotationPgnExportEnumSelection::Mainline),
+            (
+                "Export mainline PGN",
+                NotationPgnExportEnumSelection::Mainline,
+            ),
         ] {
             let button = ui.add_enabled(enabled, egui::Button::new(label));
             if frame.clicked(ui, &button) {

@@ -72,7 +72,10 @@ impl StorageDatasetSources {
                 return Err(StorageDatasetSourcesError::Duplicate(source.id.clone()));
             }
             if !kinds.insert(source.kind) {
-                return Err(StorageDatasetSourcesError::Duplicate(format!("{:?}", source.kind)));
+                return Err(StorageDatasetSourcesError::Duplicate(format!(
+                    "{:?}",
+                    source.kind
+                )));
             }
             if source.license != Self::LICENSE {
                 return Err(StorageDatasetSourcesError::License(source.id.clone()));

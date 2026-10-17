@@ -1,8 +1,8 @@
 use std::num::NonZeroUsize;
 use strum::IntoEnumIterator;
 
-use chess::board::position::BoardPosition;
 use chess::board::r#move::BoardMove;
+use chess::board::position::BoardPosition;
 use chess::game::session::{GameMetadata, GameMetadataKnownTags, GameMetadataText};
 use chess::notation::game_identity::NotationGameIdentity;
 use chess::opening::book::{OpeningBook, OpeningBookGenerator, OpeningBookLimits};
@@ -24,7 +24,9 @@ type StarterDataTestResult = Result<(), Box<dyn std::error::Error>>;
 struct StarterDataFixture;
 
 impl StarterDataFixture {
-    fn identity(white: &str) -> Result<StorageDatasetSelectionIdentity, Box<dyn std::error::Error>> {
+    fn identity(
+        white: &str,
+    ) -> Result<StorageDatasetSelectionIdentity, Box<dyn std::error::Error>> {
         let tags = GameMetadataKnownTags {
             white: Some(GameMetadataText::new(white.to_owned())?),
             ..GameMetadataKnownTags::default()
@@ -70,19 +72,29 @@ impl StarterDataFixture {
 }
 
 #[test]
-fn duplicates_keep_the_smallest_record_and_retain_every_copy_for_provenance() -> StarterDataTestResult {
+fn duplicates_keep_the_smallest_record_and_retain_every_copy_for_provenance()
+-> StarterDataTestResult {
     let mut games = StorageDatasetPreparationGames::new();
     let standard = StorageDatasetSelectionEnumSource::Standard;
     assert_eq!(
-        games.admit("b", StarterDataFixture::game("Same", "[Event \"b\"]", standard, Some("GM"))?)?,
+        games.admit(
+            "b",
+            StarterDataFixture::game("Same", "[Event \"b\"]", standard, Some("GM"))?
+        )?,
         StorageDatasetPreparationEnumAdmission::New
     );
     assert_eq!(
-        games.admit("a", StarterDataFixture::game("Same", "[Event \"a\"]", standard, Some("GM"))?)?,
+        games.admit(
+            "a",
+            StarterDataFixture::game("Same", "[Event \"a\"]", standard, Some("GM"))?
+        )?,
         StorageDatasetPreparationEnumAdmission::Replaced
     );
     assert_eq!(
-        games.admit("c", StarterDataFixture::game("Same", "[Event \"c\"]", standard, Some("GM"))?)?,
+        games.admit(
+            "c",
+            StarterDataFixture::game("Same", "[Event \"c\"]", standard, Some("GM"))?
+        )?,
         StorageDatasetPreparationEnumAdmission::Duplicate
     );
     assert_eq!(games.len(), 1);
@@ -101,15 +113,30 @@ fn master_sequence_requires_both_titles_and_excludes_broadcasts_while_broad_keep
     let mut games = StorageDatasetPreparationGames::new();
     games.admit(
         1,
-        StarterDataFixture::game("Titled", "1", StorageDatasetSelectionEnumSource::Standard, Some("GM"))?,
+        StarterDataFixture::game(
+            "Titled",
+            "1",
+            StorageDatasetSelectionEnumSource::Standard,
+            Some("GM"),
+        )?,
     )?;
     games.admit(
         2,
-        StarterDataFixture::game("Untitled", "2", StorageDatasetSelectionEnumSource::Standard, None)?,
+        StarterDataFixture::game(
+            "Untitled",
+            "2",
+            StorageDatasetSelectionEnumSource::Standard,
+            None,
+        )?,
     )?;
     games.admit(
         3,
-        StarterDataFixture::game("Broadcast", "3", StorageDatasetSelectionEnumSource::Broadcast, Some("GM"))?,
+        StarterDataFixture::game(
+            "Broadcast",
+            "3",
+            StorageDatasetSelectionEnumSource::Broadcast,
+            Some("GM"),
+        )?,
     )?;
     let sequences = games.finish()?;
     let master: Vec<_> = sequences

@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use chess::engine::package::host::EnginePackageHost;
 use chess::engine::package::manifest::{
     EnginePackageEntry, EnginePackageEnumProfile, EnginePackageEnumTarget, EnginePackageManifest,
@@ -9,6 +8,7 @@ use chess::engine::package::platform::{
 };
 use chess::engine::package::selector::{EnginePackageEnumPreference, EnginePackageSelector};
 use chess::package::digest::PackageDigest;
+use strum::IntoEnumIterator;
 
 type EnginePackageResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -56,7 +56,10 @@ fn package(
                 PackageDigest::hash_slice(&bytes),
                 "fixture compiler".to_owned(),
             )?,
-            _ => EnginePackageEntry::profiled(
+            EnginePackageEnumProfile::X8664V3
+            | EnginePackageEnumProfile::X8664V4
+            | EnginePackageEnumProfile::Numa
+            | EnginePackageEnumProfile::AppleNeon => EnginePackageEntry::profiled(
                 TARGET,
                 *profile,
                 u64::try_from(bytes.len())?,
@@ -81,8 +84,10 @@ fn select(
     chess::engine::package::selector::EnginePackageSelected,
     chess::engine::package::selector::EnginePackageSelectorError,
 > {
-    let host = EnginePackageHost::from_observation(TARGET, "22.04", "ubuntu", true)
-        .map_err(|_error| chess::engine::package::selector::EnginePackageSelectorError::MissingPackage)?;
+    let host =
+        EnginePackageHost::from_observation(TARGET, "22.04", "ubuntu", true).map_err(|_error| {
+            chess::engine::package::selector::EnginePackageSelectorError::MissingPackage
+        })?;
     EnginePackageSelector::select_with(directory.path(), manifest, host, platform, preference)
 }
 
@@ -134,7 +139,9 @@ fn the_best_fully_compatible_profile_wins() -> EnginePackageResult {
 
 #[test]
 fn a_missing_cpu_feature_or_os_register_state_excludes_the_profile() -> EnginePackageResult {
-    let v3_features = EnginePackageEnumProfile::X8664V3.required_features().to_vec();
+    let v3_features = EnginePackageEnumProfile::X8664V3
+        .required_features()
+        .to_vec();
     let without_bmi2: Vec<_> = v3_features
         .iter()
         .copied()
@@ -146,8 +153,10 @@ fn a_missing_cpu_feature_or_os_register_state_excludes_the_profile() -> EnginePa
         1,
         false,
     );
-    let reasons =
-        EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::X8664V3, &lacking_feature);
+    let reasons = EnginePackageSelector::incompatibilities(
+        EnginePackageEnumProfile::X8664V3,
+        &lacking_feature,
+    );
     assert_eq!(reasons, vec!["the processor lacks BMI2".to_owned()]);
     let lacking_state = EnginePackagePlatform::from_observation(v3_features, [], 1, false);
     let reasons =
@@ -155,7 +164,10 @@ fn a_missing_cpu_feature_or_os_register_state_excludes_the_profile() -> EnginePa
     assert_eq!(reasons.len(), 1);
     assert!(reasons[0].contains("register state"));
     let avx512_without_zmm = EnginePackagePlatform::from_observation(
-        EnginePackageEnumProfile::X8664V4.required_features().iter().copied(),
+        EnginePackageEnumProfile::X8664V4
+            .required_features()
+            .iter()
+            .copied(),
         [EnginePackagePlatformEnumOsState::YmmEnabled],
         1,
         false,
@@ -194,7 +206,9 @@ fn an_incompatible_override_falls_back_with_explicit_reasons() -> EnginePackageR
     )?;
     assert_eq!(unpackaged.profile(), EnginePackageEnumProfile::X8664V4);
     assert_eq!(
-        unpackaged.fallback().map(|fallback| fallback.reasons().to_vec()),
+        unpackaged
+            .fallback()
+            .map(|fallback| fallback.reasons().to_vec()),
         Some(vec!["the profile is not packaged for this host".to_owned()])
     );
     Ok(())
@@ -234,7 +248,11 @@ fn the_numa_profile_needs_two_nodes_and_libnuma() -> EnginePackageResult {
             &platform(None, nodes, libnuma),
             EnginePackageEnumPreference::Automatic,
         )?;
-        assert_eq!(selected.profile(), expected, "{nodes} nodes, libnuma {libnuma}");
+        assert_eq!(
+            selected.profile(),
+            expected,
+            "{nodes} nodes, libnuma {libnuma}"
+        );
     }
     Ok(())
 }
@@ -243,11 +261,26 @@ fn the_numa_profile_needs_two_nodes_and_libnuma() -> EnginePackageResult {
 fn builds_outside_a_targets_supported_profiles_are_rejected() -> EnginePackageResult {
     let digest = PackageDigest::hash_slice(b"engine");
     for (target, profile) in [
-        (EnginePackageEnumTarget::MacosArm, EnginePackageEnumProfile::X8664V3),
-        (EnginePackageEnumTarget::MacosArm, EnginePackageEnumProfile::Numa),
-        (EnginePackageEnumTarget::WindowsX64, EnginePackageEnumProfile::Numa),
-        (EnginePackageEnumTarget::WindowsX64, EnginePackageEnumProfile::AppleNeon),
-        (EnginePackageEnumTarget::LinuxX64, EnginePackageEnumProfile::AppleNeon),
+        (
+            EnginePackageEnumTarget::MacosArm,
+            EnginePackageEnumProfile::X8664V3,
+        ),
+        (
+            EnginePackageEnumTarget::MacosArm,
+            EnginePackageEnumProfile::Numa,
+        ),
+        (
+            EnginePackageEnumTarget::WindowsX64,
+            EnginePackageEnumProfile::Numa,
+        ),
+        (
+            EnginePackageEnumTarget::WindowsX64,
+            EnginePackageEnumProfile::AppleNeon,
+        ),
+        (
+            EnginePackageEnumTarget::LinuxX64,
+            EnginePackageEnumProfile::AppleNeon,
+        ),
     ] {
         assert!(
             EnginePackageEntry::profiled(target, profile, 6, digest, "compiler".to_owned())
@@ -269,11 +302,16 @@ fn builds_outside_a_targets_supported_profiles_are_rejected() -> EnginePackageRe
 }
 
 #[test]
-fn the_apple_neon_profile_needs_neon_and_ranks_above_the_portable_baseline() -> EnginePackageResult {
+fn the_apple_neon_profile_needs_neon_and_ranks_above_the_portable_baseline() -> EnginePackageResult
+{
     let profile = EnginePackageEnumProfile::AppleNeon;
     assert!(EnginePackageEnumTarget::MacosArm.supports_profile(profile));
     assert!(profile.rank() > EnginePackageEnumProfile::Portable.rank());
-    assert!(profile.rustflags().is_some_and(|flags| flags.contains("+neon")));
+    assert!(
+        profile
+            .rustflags()
+            .is_some_and(|flags| flags.contains("+neon"))
+    );
     let without_neon = EnginePackagePlatform::from_observation([], [], 1, false);
     assert_eq!(
         EnginePackageSelector::incompatibilities(profile, &without_neon),
@@ -348,7 +386,8 @@ fn every_profile_has_a_distinct_path_and_serialization() -> EnginePackageResult 
 }
 
 #[test]
-fn glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason() -> EnginePackageResult {
+fn glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason() -> EnginePackageResult
+{
     assert_eq!(
         EnginePackagePlatformGlibc::parse("glibc 2.35\n"),
         Some(EnginePackagePlatformGlibc::new(2, 35))
@@ -356,13 +395,13 @@ fn glibc_older_than_the_package_baseline_blocks_every_profile_with_a_reason() ->
     assert_eq!(EnginePackagePlatformGlibc::parse("getconf: unknown"), None);
     assert!(EnginePackagePlatformGlibc::new(2, 34) < EnginePackagePlatformGlibc::REQUIRED);
     let old = platform(None, 1, false).with_glibc(Some(EnginePackagePlatformGlibc::new(2, 34)));
-    let reasons = EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::Portable, &old);
+    let reasons =
+        EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::Portable, &old);
     assert_eq!(
         reasons,
         vec!["glibc 2.34 is older than the required 2.35".to_owned()]
     );
-    let current =
-        platform(None, 1, false).with_glibc(Some(EnginePackagePlatformGlibc::new(2, 39)));
+    let current = platform(None, 1, false).with_glibc(Some(EnginePackagePlatformGlibc::new(2, 39)));
     assert!(
         EnginePackageSelector::incompatibilities(EnginePackageEnumProfile::Portable, &current)
             .is_empty()
@@ -403,14 +442,28 @@ fn profile_and_target_spellings_are_unchanged_and_the_iterator_matches_the_regis
     }
     for target in EnginePackageEnumTarget::iter() {
         assert_eq!(target.triple().parse::<EnginePackageEnumTarget>()?, target);
-        assert_eq!(serde_json::to_string(&target)?, format!("\"{}\"", target.triple()));
+        assert_eq!(
+            serde_json::to_string(&target)?,
+            format!("\"{}\"", target.triple())
+        );
     }
     for feature in EnginePackagePlatformEnumFeature::iter() {
-        assert_eq!(feature.label().parse::<EnginePackagePlatformEnumFeature>()?, feature);
+        assert_eq!(
+            feature
+                .label()
+                .parse::<EnginePackagePlatformEnumFeature>()?,
+            feature
+        );
     }
     for state in EnginePackagePlatformEnumOsState::iter() {
-        assert_eq!(state.label().parse::<EnginePackagePlatformEnumOsState>()?, state);
+        assert_eq!(
+            state.label().parse::<EnginePackagePlatformEnumOsState>()?,
+            state
+        );
     }
-    assert_eq!(EnginePackagePlatformEnumFeature::Avx512bw.label(), "AVX-512BW");
+    assert_eq!(
+        EnginePackagePlatformEnumFeature::Avx512bw.label(),
+        "AVX-512BW"
+    );
     Ok(())
 }

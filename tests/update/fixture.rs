@@ -6,24 +6,24 @@ use chess::update::http::{
     UpdateHttpStream,
 };
 
-pub const MANIFEST: &[u8] = include_bytes!("fixtures/manifest.json");
-pub const SIGNATURE: &[u8] = include_bytes!("fixtures/manifest.json.minisig");
-pub const PUBLIC_KEY: &str = include_str!("fixtures/public.key");
-pub const MACOS_PACKAGE: &[u8] = b"hello world";
+pub(crate) const MANIFEST: &[u8] = include_bytes!("fixtures/manifest.json");
+pub(crate) const SIGNATURE: &[u8] = include_bytes!("fixtures/manifest.json.minisig");
+pub(crate) const PUBLIC_KEY: &str = include_str!("fixtures/public.key");
+pub(crate) const MACOS_PACKAGE: &[u8] = b"hello world";
 
 #[derive(Clone)]
-pub struct UpdateFixtureResponse {
-    pub status: u16,
-    pub location: Option<String>,
-    pub retry_after: Option<u64>,
-    pub body: Vec<u8>,
-    pub chunk: usize,
-    pub stall_open: bool,
-    pub stall_body: bool,
+pub(crate) struct UpdateFixtureResponse {
+    pub(crate) status: u16,
+    pub(crate) location: Option<String>,
+    pub(crate) retry_after: Option<u64>,
+    pub(crate) body: Vec<u8>,
+    pub(crate) chunk: usize,
+    pub(crate) stall_open: bool,
+    pub(crate) stall_body: bool,
 }
 
 impl UpdateFixtureResponse {
-    pub fn ok(body: &[u8]) -> Self {
+    pub(crate) fn ok(body: &[u8]) -> Self {
         Self {
             status: 200,
             location: None,
@@ -35,7 +35,7 @@ impl UpdateFixtureResponse {
         }
     }
 
-    pub fn redirect(location: &str) -> Self {
+    pub(crate) fn redirect(location: &str) -> Self {
         Self {
             status: 302,
             location: Some(location.to_owned()),
@@ -43,7 +43,7 @@ impl UpdateFixtureResponse {
         }
     }
 
-    pub fn status(status: u16) -> Self {
+    pub(crate) fn status(status: u16) -> Self {
         Self {
             status,
             ..Self::ok(b"")
@@ -51,25 +51,27 @@ impl UpdateFixtureResponse {
     }
 }
 
+type UpdateFixtureHttpLog = Arc<Mutex<Vec<(String, Option<String>)>>>;
+
 #[derive(Clone, Default)]
-pub struct UpdateFixtureHttp {
+pub(crate) struct UpdateFixtureHttp {
     routes: Arc<Mutex<HashMap<String, UpdateFixtureResponse>>>,
-    log: Arc<Mutex<Vec<(String, Option<String>)>>>,
+    log: UpdateFixtureHttpLog,
 }
 
 impl UpdateFixtureHttp {
-    pub fn route(&self, url: &str, response: UpdateFixtureResponse) {
+    pub(crate) fn route(&self, url: &str, response: UpdateFixtureResponse) {
         if let Ok(mut routes) = self.routes.lock() {
             routes.insert(url.to_owned(), response);
         }
     }
 
-    pub fn log(&self) -> Vec<(String, Option<String>)> {
+    pub(crate) fn log(&self) -> Vec<(String, Option<String>)> {
         self.log.lock().map(|log| log.clone()).unwrap_or_default()
     }
 }
 
-pub struct UpdateFixtureStream {
+pub(crate) struct UpdateFixtureStream {
     chunks: VecDeque<Vec<u8>>,
     stall: bool,
 }

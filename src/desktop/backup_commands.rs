@@ -41,6 +41,20 @@ pub struct DesktopBackupCommandsPrerequisites {
     pub editors_have_no_unsaved_edits: bool,
 }
 
+pub struct DesktopBackupCommandsRestoreRequest {
+    pub handle: DesktopBackupCommandsPreviewHandle,
+    pub prerequisites: DesktopBackupCommandsPrerequisites,
+    pub safety_id: Uuid,
+    pub restore_id: Uuid,
+    pub now_ms: u64,
+}
+
+struct DesktopBackupCommandsDatasetMetadata {
+    dependencies: Vec<BackupDependency>,
+    paths: Vec<String>,
+    locations: Vec<BackupDestinationLocation>,
+}
+
 impl DesktopBackupCommandsPrerequisites {
     pub const fn first_unmet(self) -> Option<DesktopBackupCommandsEnumPrerequisite> {
         if !self.games_paused_and_saved {
@@ -129,7 +143,11 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
         id: Uuid,
         created_ms: u64,
     ) -> Result<BackupArchive, DesktopBackupCommandsError> {
-        let (dependencies, portable_paths, _locations) = self.dataset_metadata_blocking()?;
+        let DesktopBackupCommandsDatasetMetadata {
+            dependencies,
+            paths: portable_paths,
+            ..
+        } = self.dataset_metadata_blocking()?;
         Ok(BackupCreator::create_blocking(
             BackupRequest {
                 database: &self.database,
@@ -146,14 +164,7 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
 
     fn dataset_metadata_blocking(
         &self,
-    ) -> Result<
-        (
-            Vec<BackupDependency>,
-            Vec<String>,
-            Vec<BackupDestinationLocation>,
-        ),
-        DesktopBackupCommandsError,
-    > {
+    ) -> Result<DesktopBackupCommandsDatasetMetadata, DesktopBackupCommandsError> {
         let mut dependencies = self.available_dependencies.clone();
         let mut paths = self.portable_paths.clone();
         let mut locations = Vec::new();
@@ -179,7 +190,11 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
                     == StorageDatasetPackageEnumValidation::IntegrityVerified,
             });
         }
-        Ok((dependencies, paths, locations))
+        Ok(DesktopBackupCommandsDatasetMetadata {
+            dependencies,
+            paths,
+            locations,
+        })
     }
 
     pub fn import_blocking(
@@ -233,9 +248,10 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
 
     fn inspect(&self, path: &Path) -> Result<BackupPreview, BackupError> {
         let known = StorageMigrationRunner::embedded_versions()?;
-        let (available, _paths, _locations) = self
+        let available = self
             .dataset_metadata_blocking()
-            .map_err(|_error| BackupError::InvalidArchive("destination registry"))?;
+            .map_err(|_error| BackupError::InvalidArchive("destination registry"))?
+            .dependencies;
         BackupPreview::inspect_blocking(
             path,
             &BackupPreviewContext {
@@ -281,12 +297,15 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
     pub fn restore_blocking(
         &mut self,
         lease: &DesktopProfileLease,
-        handle: DesktopBackupCommandsPreviewHandle,
-        prerequisites: DesktopBackupCommandsPrerequisites,
-        safety_id: Uuid,
-        restore_id: Uuid,
-        now_ms: u64,
+        request: DesktopBackupCommandsRestoreRequest,
     ) -> Result<BackupRestoreOutcome, DesktopBackupCommandsError> {
+        let DesktopBackupCommandsRestoreRequest {
+            handle,
+            prerequisites,
+            safety_id,
+            restore_id,
+            now_ms,
+        } = request;
         if let Some(unmet) = prerequisites.first_unmet() {
             return Err(DesktopBackupCommandsError::Prerequisite(unmet));
         }
@@ -298,7 +317,7 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
             return Err(BackupError::PreviewMismatch.into());
         }
         let safety = self.create_blocking(BackupEnumCategory::PreRestore, safety_id, now_ms)?;
-        let (_dependencies, _paths, locations) = self.dataset_metadata_blocking()?;
+        let locations = self.dataset_metadata_blocking()?.locations;
         let outcome = BackupRestorer::restore_blocking(BackupRestoreRequest {
             locations: &locations,
             lease,
@@ -421,12 +440,15 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
     pub fn stage_restore_blocking(
         &mut self,
         lease: &DesktopProfileLease,
-        handle: DesktopBackupCommandsPreviewHandle,
-        prerequisites: DesktopBackupCommandsPrerequisites,
-        safety_id: Uuid,
-        restore_id: Uuid,
-        now_ms: u64,
+        request: DesktopBackupCommandsRestoreRequest,
     ) -> Result<BackupRestoreOutcome, DesktopBackupCommandsError> {
+        let DesktopBackupCommandsRestoreRequest {
+            handle,
+            prerequisites,
+            safety_id,
+            restore_id,
+            now_ms,
+        } = request;
         if let Some(unmet) = prerequisites.first_unmet() {
             return Err(DesktopBackupCommandsError::Prerequisite(unmet));
         }
@@ -438,7 +460,7 @@ impl<S: BackupSpaceProvider> DesktopBackupCommands<S> {
             return Err(BackupError::PreviewMismatch.into());
         }
         let safety = self.create_blocking(BackupEnumCategory::PreRestore, safety_id, now_ms)?;
-        let (_dependencies, _paths, locations) = self.dataset_metadata_blocking()?;
+        let locations = self.dataset_metadata_blocking()?.locations;
         let outcome = BackupRestorer::stage_for_restart_blocking(BackupRestoreRequest {
             locations: &locations,
             lease,

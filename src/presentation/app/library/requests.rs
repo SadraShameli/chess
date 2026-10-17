@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::clock::time_provider::ClockTimeProvider;
+use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::application::{
     DesktopApplicationError, DesktopApplicationPort, DesktopApplicationWakeProvider,
 };
-use crate::desktop::application::DesktopApplicationReceipt;
 use crate::desktop::dto::DesktopEnumValue;
 use crate::desktop::file_handle::DesktopFileEnumPurpose;
 use crate::desktop::game_editor::DesktopGameEditorEnumSource;
@@ -15,10 +15,13 @@ use crate::desktop::library_service::{
 use crate::desktop::messages::{DesktopCommand, DesktopEnumCommand, DesktopMessagesEnumResult};
 use crate::presentation::app::library::{
     PresentationAppLibrary, PresentationAppLibraryEnumEditor, PresentationAppLibraryEnumOwner,
-    PresentationAppLibraryError, PresentationAppLibraryPending,
+    PresentationAppLibraryError, PresentationAppLibraryFileSelection,
+    PresentationAppLibraryPending,
 };
 use crate::presentation::library::intent::PresentationLibraryIntent;
-use crate::presentation::library::view::PresentationLibraryEnumEffect;
+use crate::presentation::library::view::{
+    PresentationLibraryEnumEffect, PresentationLibraryEnumFileRequest,
+};
 
 impl PresentationAppLibrary {
     pub(in crate::presentation::app) fn dispatch_panel<

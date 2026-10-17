@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::future::{Future, poll_fn};
@@ -6,6 +5,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
 use std::task::Poll;
+use strum::IntoEnumIterator;
 
 use tokio::sync::oneshot;
 use tokio::time::Instant;

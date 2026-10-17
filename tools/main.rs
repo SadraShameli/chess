@@ -1,10 +1,10 @@
-use strum::IntoEnumIterator;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use strum::IntoEnumIterator;
 
 use chess::capacity::budget::CapacityBudget;
 use chess::capacity::executor::CapacityExecutor;
@@ -153,11 +153,27 @@ impl ToolsEnumEngineWorkflow {
 }
 
 enum ToolsEnumCommand {
-    VerifyData { sources: PathBuf, cache: PathBuf },
-    SelectGames { pgn: PathBuf, output: PathBuf },
-    SelectPuzzles { csv: PathBuf, output: PathBuf, source: String, version: String },
-    BuildData { input: PathBuf, output: PathBuf },
-    EvaluateBenchmark { measurements: PathBuf },
+    VerifyData {
+        sources: PathBuf,
+        cache: PathBuf,
+    },
+    SelectGames {
+        pgn: PathBuf,
+        output: PathBuf,
+    },
+    SelectPuzzles {
+        csv: PathBuf,
+        output: PathBuf,
+        source: String,
+        version: String,
+    },
+    BuildData {
+        input: PathBuf,
+        output: PathBuf,
+    },
+    EvaluateBenchmark {
+        measurements: PathBuf,
+    },
     BuildEngine(chess::engine::package::manifest::EnginePackageEnumProfile),
     Packaging(packaging::ToolsPackagingEnumCommand),
     CheckEngine,
@@ -301,7 +317,9 @@ impl ToolsEnumCommand {
         let mut args = supplied.into_iter();
         match (args.next().as_deref(), args.next()) {
             (Some(command), None) if command == OsStr::new("engine-build") => {
-                Ok(Self::BuildEngine(chess::engine::package::manifest::EnginePackageEnumProfile::Portable))
+                Ok(Self::BuildEngine(
+                    chess::engine::package::manifest::EnginePackageEnumProfile::Portable,
+                ))
             }
             (Some(command), None) if command == OsStr::new("engine-check") => Ok(Self::CheckEngine),
             _ => Err(ToolsCommandError::Usage),
@@ -356,9 +374,10 @@ impl ToolsEnumCommand {
                 );
             }
             Self::BuildData { input, output } => {
-                let initial = chess::storage::dataset_selection::StorageDatasetSelectionPrefixes::new(
-                    100_000, 250_000, 200_000,
-                )?;
+                let initial =
+                    chess::storage::dataset_selection::StorageDatasetSelectionPrefixes::new(
+                        100_000, 250_000, 200_000,
+                    )?;
                 let summary = data::ToolsDataBuild::run(&input, &output, initial)?;
                 println!(
                     "Final prefixes: master {}, broad {}, puzzles {}; {} installed bytes; {} reductions",

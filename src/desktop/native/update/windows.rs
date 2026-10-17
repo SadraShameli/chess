@@ -19,7 +19,9 @@ impl DesktopNativeUpdateWindows {
             || text.chars().any(char::is_control)
             || text.split(['\\', '/']).any(|part| part == "..")
         {
-            return Err(DesktopNativeUpdateError::UnsafePath(destination.to_path_buf()));
+            return Err(DesktopNativeUpdateError::UnsafePath(
+                destination.to_path_buf(),
+            ));
         }
         Ok(text.to_owned())
     }

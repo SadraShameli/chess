@@ -29,12 +29,16 @@ fn available() -> Result<UpdateState, Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn missing_credentials_offer_entry_or_session_use_without_blocking_the_app() -> Result<(), Box<dyn std::error::Error>> {
+fn missing_credentials_offer_entry_or_session_use_without_blocking_the_app()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut state = UpdateState::default();
     state.begin_check()?;
     state.credentials_missing()?;
     let actions = PresentationSettingsUpdate::actions(&state, UpdateCredentialEnumStatus::Missing);
-    assert_eq!(actions, [Action::EnterCredential, Action::UseSessionCredential]);
+    assert_eq!(
+        actions,
+        [Action::EnterCredential, Action::UseSessionCredential]
+    );
     assert!(
         PresentationSettingsUpdate::status(&state, UpdateCredentialEnumStatus::Missing)
             .contains("Offline chess is unaffected")
@@ -43,13 +47,16 @@ fn missing_credentials_offer_entry_or_session_use_without_blocking_the_app() -> 
 }
 
 #[test]
-fn no_action_ever_removes_a_download_or_retries_in_the_background() -> Result<(), Box<dyn std::error::Error>> {
+fn no_action_ever_removes_a_download_or_retries_in_the_background()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut state = available()?;
     state.request_download(UpdateNetworkEnumCost::Metered)?;
-    let waiting = PresentationSettingsUpdate::actions(&state, UpdateCredentialEnumStatus::Persistent);
+    let waiting =
+        PresentationSettingsUpdate::actions(&state, UpdateCredentialEnumStatus::Persistent);
     assert_eq!(waiting, [Action::Approve, Action::Cancel]);
     state.cancel()?;
-    let cancelled = PresentationSettingsUpdate::actions(&state, UpdateCredentialEnumStatus::Persistent);
+    let cancelled =
+        PresentationSettingsUpdate::actions(&state, UpdateCredentialEnumStatus::Persistent);
     assert_eq!(cancelled, [Action::Retry]);
     for action in waiting.into_iter().chain(cancelled) {
         assert!(!action.label().to_lowercase().contains("remove"));
@@ -58,7 +65,8 @@ fn no_action_ever_removes_a_download_or_retries_in_the_background() -> Result<()
 }
 
 #[test]
-fn install_requires_a_downloaded_package_and_explains_recovery() -> Result<(), Box<dyn std::error::Error>> {
+fn install_requires_a_downloaded_package_and_explains_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
     let state = available()?;
     assert_eq!(
         PresentationSettingsUpdate::actions(&state, UpdateCredentialEnumStatus::Persistent),
@@ -66,8 +74,10 @@ fn install_requires_a_downloaded_package_and_explains_recovery() -> Result<(), B
     );
     assert!(PresentationSettingsUpdateInstall::CONFIRMATION.contains("paused"));
     assert!(
-        PresentationSettingsUpdateInstall::recovery_guidance(UpdateRecoveryEnumBlock::MigrationFailed)
-            .contains("safety backup")
+        PresentationSettingsUpdateInstall::recovery_guidance(
+            UpdateRecoveryEnumBlock::MigrationFailed
+        )
+        .contains("safety backup")
     );
     Ok(())
 }

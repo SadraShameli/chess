@@ -107,11 +107,26 @@ impl CapacityConcurrentGamesFixture {
         })
         .await;
         drop(blocker);
-        let mut allocations = Vec::new();
-        for future in pending {
-            allocations.push(future.await?);
-        }
-        Ok(allocations)
+        let mut ready: Vec<_> = pending.iter().map(|_future| None).collect();
+        poll_fn(|cx| {
+            for (future, slot) in pending.iter_mut().zip(ready.iter_mut()) {
+                if slot.is_none()
+                    && let Poll::Ready(result) = future.as_mut().poll(cx)
+                {
+                    *slot = Some(result);
+                }
+            }
+            if ready.iter().all(Option::is_some) {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+        ready
+            .into_iter()
+            .map(|slot| Ok(slot.ok_or("missing simultaneous allocation")??))
+            .collect()
     }
 }
 

@@ -122,7 +122,8 @@ impl StorageDatasetImportCounts {
     fn reject(&mut self, record: u64, message: String) {
         self.rejected = self.rejected.saturating_add(1);
         if self.issues.len() < Self::MAX_ISSUES {
-            self.issues.push(StorageDatasetImportIssue { record, message });
+            self.issues
+                .push(StorageDatasetImportIssue { record, message });
         }
     }
 }
@@ -139,11 +140,10 @@ impl StorageDatasetImport {
         replaces: Option<StorageDatasetId>,
         cancelled: impl Fn() -> bool,
     ) -> Result<StorageDatasetImportPreview, StorageDatasetImportError> {
-        let length = u64::try_from(bytes.len()).map_err(|_error| {
-            StorageDatasetImportError::TooLarge {
+        let length =
+            u64::try_from(bytes.len()).map_err(|_error| StorageDatasetImportError::TooLarge {
                 limit: Self::MAX_BYTES,
-            }
-        })?;
+            })?;
         if length == 0 {
             return Err(StorageDatasetImportError::Empty);
         }

@@ -58,7 +58,10 @@ impl PresentationBoardAnimationFixture {
     fn new(reduced_motion: bool) -> Self {
         let clock = Arc::new(PresentationBoardAnimationClock::default());
         clock.advance_millis(1_000);
-        let animation = PresentationBoardAnimation::new(clock.clone(), reduced_motion);
+        let animation = PresentationBoardAnimation::new(
+            std::sync::Arc::<PresentationBoardAnimationClock>::clone(&clock),
+            reduced_motion,
+        );
         Self { clock, animation }
     }
 
@@ -428,7 +431,10 @@ fn view_starts_a_piece_animation_when_the_displayed_position_changes()
 -> PresentationBoardAnimationResult {
     let clock = Arc::new(PresentationBoardAnimationClock::default());
     clock.advance_millis(1_000);
-    let mut harness = PresentationBoardAnimationHarness::new(clock.clone(), false);
+    let mut harness = PresentationBoardAnimationHarness::new(
+        std::sync::Arc::<PresentationBoardAnimationClock>::clone(&clock),
+        false,
+    );
     let (before, after) = snapshot_after(
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         "e2e4",
@@ -484,7 +490,10 @@ fn camera_actions_start_flip_and_reset_motion_while_keeping_offsets_apart_from_o
 -> PresentationBoardAnimationResult {
     let clock = Arc::new(PresentationBoardAnimationClock::default());
     clock.advance_millis(1_000);
-    let mut harness = PresentationBoardAnimationHarness::new(clock.clone(), false);
+    let mut harness = PresentationBoardAnimationHarness::new(
+        std::sync::Arc::<PresentationBoardAnimationClock>::clone(&clock),
+        false,
+    );
     let snapshot = DesktopBoardSnapshot::from_position(&BoardPosition::standard());
     let moved =
         PresentationBoardAnimationFixture::moved_camera().with_orientation(BoardEnumColor::White);

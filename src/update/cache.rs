@@ -6,7 +6,9 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::update::manifest::{UpdateManifest, UpdateManifestAsset, UpdateManifestError, UpdateTarget};
+use crate::update::manifest::{
+    UpdateManifest, UpdateManifestAsset, UpdateManifestError, UpdateTarget,
+};
 use crate::update::state::{UpdateAttemptId, UpdateCacheReceipt, UpdateReleaseIdentity};
 
 #[derive(Debug, Error)]
@@ -112,16 +114,17 @@ impl UpdateCache {
         let temporary = completed.join("receipt.json.tmp");
         let mut file = File::create(&temporary)?;
         file.write_all(
-            &serde_json::to_vec(&wire).map_err(|error| UpdateCacheError::Receipt(error.to_string()))?,
+            &serde_json::to_vec(&wire)
+                .map_err(|error| UpdateCacheError::Receipt(error.to_string()))?,
         )?;
         file.sync_all()?;
         fs::rename(&temporary, completed.join(Self::RECEIPT))?;
         Self::sync_directory(&completed)?;
         for entry in fs::read_dir(&completed)? {
             let path = entry?.path();
-            let keep = path.file_name().is_some_and(|name| {
-                name == Self::RECEIPT || name == asset.name()
-            });
+            let keep = path
+                .file_name()
+                .is_some_and(|name| name == Self::RECEIPT || name == asset.name());
             if !keep {
                 fs::remove_file(path)?;
             }
@@ -137,15 +140,22 @@ impl UpdateCache {
             Err(error) => return Err(error.into()),
         };
         if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > Self::MAX_RECEIPT_BYTES {
-            return Err(UpdateCacheError::Receipt("the receipt is too large".to_owned()));
+            return Err(UpdateCacheError::Receipt(
+                "the receipt is too large".to_owned(),
+            ));
         }
         let wire: UpdateCacheWireReceipt = serde_json::from_slice(&bytes)
             .map_err(|error| UpdateCacheError::Receipt(error.to_string()))?;
         let invalid = |what: &str| UpdateCacheError::Receipt(what.to_owned());
         let version = Version::parse(&wire.version).map_err(|_error| invalid("version"))?;
-        let target = wire.target.parse::<UpdateTarget>().map_err(|_error| invalid("target"))?;
-        let manifest_digest = UpdateManifest::hex32(&wire.manifest_sha256).ok_or_else(|| invalid("manifest digest"))?;
-        let package_sha256 = UpdateManifest::hex32(&wire.package_sha256).ok_or_else(|| invalid("package digest"))?;
+        let target = wire
+            .target
+            .parse::<UpdateTarget>()
+            .map_err(|_error| invalid("target"))?;
+        let manifest_digest = UpdateManifest::hex32(&wire.manifest_sha256)
+            .ok_or_else(|| invalid("manifest digest"))?;
+        let package_sha256 =
+            UpdateManifest::hex32(&wire.package_sha256).ok_or_else(|| invalid("package digest"))?;
         if !UpdateManifest::is_safe_asset_name(&wire.asset_name) {
             return Err(invalid("asset name"));
         }

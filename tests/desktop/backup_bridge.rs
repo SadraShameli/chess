@@ -26,7 +26,7 @@ type DesktopBackupBridgeTestResult<T = ()> = Result<T, Box<dyn std::error::Error
 struct DesktopBackupBridgeFixture {
     _directory: TempDir,
     lease: Arc<DesktopProfileLease>,
-    executor: Arc<CapacityExecutor>,
+    _executor: Arc<CapacityExecutor>,
     service: DesktopBackupService,
 }
 
@@ -66,7 +66,7 @@ impl DesktopBackupBridgeFixture {
         Ok(Self {
             _directory: directory,
             lease,
-            executor,
+            _executor: executor,
             service,
         })
     }

@@ -55,7 +55,9 @@ impl GameRecovery {
         }
     }
 
-    pub const fn requires_retry_before_resume(cause: GamePauseEnumCause) -> Option<GamePauseEnumFault> {
+    pub const fn requires_retry_before_resume(
+        cause: GamePauseEnumCause,
+    ) -> Option<GamePauseEnumFault> {
         match cause {
             GamePauseEnumCause::Fault(fault) => Some(fault),
             GamePauseEnumCause::AutosaveFailure => Some(GamePauseEnumFault::Save),
