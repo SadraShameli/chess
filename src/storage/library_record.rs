@@ -56,6 +56,13 @@ impl StorageLibraryRecord {
         &self.content
     }
 
+    pub fn notation_mut(&mut self) -> Option<&mut NotationGame> {
+        match &mut self.content {
+            StorageLibraryEnumContent::Notation(game) => Some(game),
+            StorageLibraryEnumContent::Played(_) => None,
+        }
+    }
+
     pub fn into_content(self) -> StorageLibraryEnumContent {
         self.content
     }

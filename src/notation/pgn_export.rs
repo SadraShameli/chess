@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::io::{self, Write};
 
@@ -6,12 +5,14 @@ use thiserror::Error;
 
 use crate::board::enums::{BoardEnumColor, BoardEnumVariant};
 use crate::board::position::BoardPosition;
+use crate::board::start::BoardStart;
 use crate::clock::duration::ClockDuration;
 use crate::game::enums::{GameEnumMarkingColor, GameMoveId};
 use crate::game::move_node::GameMoveNode;
-use crate::game::session::GameMetadataText;
-use crate::game::tree::GameTreeError;
+use crate::game::session::{GameMetadata, GameMetadataText, GameSession};
+use crate::game::tree::{GameTree, GameTreeError};
 use crate::notation::game::{NotationGame, NotationGameEnumWarning};
+use crate::notation::game_identity::NotationGameIdentityEnumResult;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum NotationPgnExportEnumSelection {
@@ -256,14 +257,90 @@ enum NotationPgnExportEnumFrame {
     CloseVariation,
 }
 
-pub struct NotationPgnExport<'a> {
-    game: &'a NotationGame,
-    selection: NotationPgnExportEnumSelection,
+enum NotationPgnExportEnumSource<'a> {
+    Notation(&'a NotationGame),
+    Played(&'a GameSession),
 }
 
-struct NotationPgnExportTraversal<'a> {
-    path: &'a [GameMoveId],
-    clocks: &'a HashMap<GameMoveId, ClockDuration>,
+impl NotationPgnExportEnumSource<'_> {
+    fn tree(&self) -> &GameTree {
+        match self {
+            Self::Notation(game) => game.tree(),
+            Self::Played(session) => session.tree(),
+        }
+    }
+
+    fn mainline_tip(&self) -> GameMoveId {
+        match self {
+            Self::Notation(game) => game.mainline_tip(),
+            Self::Played(session) => session.study_mainline_tip(),
+        }
+    }
+
+    fn start(&self) -> &BoardStart {
+        match self {
+            Self::Notation(game) => game.start(),
+            Self::Played(session) => session.start_position(),
+        }
+    }
+
+    fn metadata(&self) -> &GameMetadata {
+        match self {
+            Self::Notation(game) => game.metadata(),
+            Self::Played(session) => session.metadata(),
+        }
+    }
+
+    fn result(&self) -> NotationGameIdentityEnumResult {
+        match self {
+            Self::Notation(game) => game.result(),
+            Self::Played(session) => match session.outcome() {
+                Some(outcome) => NotationGameIdentityEnumResult::Completed(outcome.result()),
+                None => NotationGameIdentityEnumResult::Unfinished,
+            },
+        }
+    }
+
+    fn result_header(&self) -> Option<NotationGameIdentityEnumResult> {
+        match self {
+            Self::Notation(game) => game.result_header(),
+            Self::Played(_) => Some(self.result()),
+        }
+    }
+
+    fn time_control(&self) -> Option<&GameMetadataText> {
+        match self {
+            Self::Notation(game) => game.time_control(),
+            Self::Played(_) => None,
+        }
+    }
+
+    fn warnings(&self) -> &[NotationGameEnumWarning] {
+        match self {
+            Self::Notation(game) => game.warnings(),
+            Self::Played(_) => &[],
+        }
+    }
+
+    fn clock(&self, node: &GameMoveNode) -> Option<ClockDuration> {
+        match self {
+            Self::Notation(game) => game.clock(node.id()),
+            Self::Played(_) => {
+                node.parent()?;
+                node.before_clock()?;
+                let snapshot = node.clock()?;
+                if !snapshot.control().is_timed() {
+                    return None;
+                }
+                Some(snapshot.side(node.position().turn().opposite()).remaining)
+            }
+        }
+    }
+}
+
+pub struct NotationPgnExport<'a> {
+    source: NotationPgnExportEnumSource<'a>,
+    selection: NotationPgnExportEnumSelection,
 }
 
 impl<'a> NotationPgnExport<'a> {
@@ -274,7 +351,14 @@ impl<'a> NotationPgnExport<'a> {
 
     pub const fn new(game: &'a NotationGame) -> Self {
         Self {
-            game,
+            source: NotationPgnExportEnumSource::Notation(game),
+            selection: NotationPgnExportEnumSelection::Full,
+        }
+    }
+
+    pub const fn from_played(session: &'a GameSession) -> Self {
+        Self {
+            source: NotationPgnExportEnumSource::Played(session),
             selection: NotationPgnExportEnumSelection::Full,
         }
     }
@@ -291,27 +375,18 @@ impl<'a> NotationPgnExport<'a> {
     ) -> Result<(), NotationPgnExportError> {
         let mut writer = NotationPgnExportWriter::new(destination, cancellation);
         writer.check_cancellation()?;
-        let tree = self.game.tree();
-        let path = tree.path_to(self.game.mainline_tip())?;
+        let tree = self.source.tree();
+        let path = tree.path_to(self.source.mainline_tip())?;
         if self.selection == NotationPgnExportEnumSelection::Full
-            && !tree.node(self.game.mainline_tip())?.children().is_empty()
+            && !tree.node(self.source.mainline_tip())?.children().is_empty()
         {
             return Err(NotationPgnExportError::MainlineHasContinuations {
-                node: self.game.mainline_tip(),
+                node: self.source.mainline_tip(),
             });
-        }
-        let mut clocks = HashMap::with_capacity(self.game.clocks().len());
-        for clock in self.game.clocks() {
-            writer.check_cancellation()?;
-            clocks.insert(clock.node(), clock.remaining());
         }
         self.headers(&mut writer)?;
         writer.raw("\n")?;
-        self.annotations(tree.node(tree.root())?, &clocks, &mut writer)?;
-        let traversal = NotationPgnExportTraversal {
-            path: &path,
-            clocks: &clocks,
-        };
+        self.annotations(tree.node(tree.root())?, &mut writer)?;
         let mut pending = Vec::new();
         if let Some(node) = path.get(1) {
             pending.push(NotationPgnExportEnumFrame::Line(NotationPgnExportLine {
@@ -325,7 +400,7 @@ impl<'a> NotationPgnExport<'a> {
             writer.check_cancellation()?;
             match frame {
                 NotationPgnExportEnumFrame::Line(line) => {
-                    self.line(line, &traversal, &mut pending, &mut writer)?
+                    self.line(line, &path, &mut pending, &mut writer)?
                 }
                 NotationPgnExportEnumFrame::Siblings {
                     parent,
@@ -357,7 +432,7 @@ impl<'a> NotationPgnExport<'a> {
                 NotationPgnExportEnumFrame::CloseVariation => writer.close_variation()?,
             }
         }
-        writer.token(self.game.result().pgn_token())?;
+        writer.token(self.source.result().pgn_token())?;
         writer.raw("\n")
     }
 
@@ -365,7 +440,7 @@ impl<'a> NotationPgnExport<'a> {
         &self,
         writer: &mut NotationPgnExportWriter<'_, W, C>,
     ) -> Result<(), NotationPgnExportError> {
-        let known = self.game.metadata().known();
+        let known = self.source.metadata().known();
         writer.optional_tag(NotationPgnExportEnumTag::Event, known.event.as_ref())?;
         writer.optional_tag(NotationPgnExportEnumTag::Site, known.site.as_ref())?;
         if let Some(date) = known.date {
@@ -382,7 +457,7 @@ impl<'a> NotationPgnExport<'a> {
         writer.optional_tag(NotationPgnExportEnumTag::Round, known.round.as_ref())?;
         writer.optional_tag(NotationPgnExportEnumTag::White, known.white.as_ref())?;
         writer.optional_tag(NotationPgnExportEnumTag::Black, known.black.as_ref())?;
-        if let Some(result) = self.game.result_header() {
+        if let Some(result) = self.source.result_header() {
             writer.known_tag(NotationPgnExportEnumTag::Result, result.pgn_token())?;
         }
         self.rating(BoardEnumColor::White, writer)?;
@@ -401,9 +476,9 @@ impl<'a> NotationPgnExport<'a> {
         )?;
         writer.optional_tag(
             NotationPgnExportEnumTag::TimeControl,
-            self.game.time_control(),
+            self.source.time_control(),
         )?;
-        let position = self.game.start().position();
+        let position = self.source.start().position();
         let variant = match position.variant() {
             BoardEnumVariant::Standard => "Standard",
             BoardEnumVariant::Chess960 => "Chess960",
@@ -415,10 +490,10 @@ impl<'a> NotationPgnExport<'a> {
             writer.known_tag(NotationPgnExportEnumTag::SetUp, "1")?;
             writer.known_tag(
                 NotationPgnExportEnumTag::Fen,
-                self.game.start().initial_fen(),
+                self.source.start().initial_fen(),
             )?;
         }
-        for extension in self.game.metadata().extensions() {
+        for extension in self.source.metadata().extensions() {
             writer.tag(extension.name(), extension.value().as_str())?;
         }
         Ok(())
@@ -429,7 +504,7 @@ impl<'a> NotationPgnExport<'a> {
         color: BoardEnumColor,
         writer: &mut NotationPgnExportWriter<'_, W, C>,
     ) -> Result<(), NotationPgnExportError> {
-        let known = self.game.metadata().known();
+        let known = self.source.metadata().known();
         let (tag, rating) = match color {
             BoardEnumColor::White => (NotationPgnExportEnumTag::WhiteElo, known.white_elo),
             BoardEnumColor::Black => (NotationPgnExportEnumTag::BlackElo, known.black_elo),
@@ -437,7 +512,7 @@ impl<'a> NotationPgnExport<'a> {
         if let Some(rating) = rating {
             return writer.known_tag(tag, &rating.to_string());
         }
-        for warning in self.game.warnings() {
+        for warning in self.source.warnings() {
             match warning {
                 NotationGameEnumWarning::UnknownDirective { .. } => {}
                 NotationGameEnumWarning::UnavailableRating {
@@ -463,11 +538,11 @@ impl<'a> NotationPgnExport<'a> {
     fn line<W: Write, C: FnMut() -> bool>(
         &self,
         line: NotationPgnExportLine,
-        traversal: &NotationPgnExportTraversal<'_>,
+        path: &[GameMoveId],
         pending: &mut Vec<NotationPgnExportEnumFrame>,
         writer: &mut NotationPgnExportWriter<'_, W, C>,
     ) -> Result<(), NotationPgnExportError> {
-        let tree = self.game.tree();
+        let tree = self.source.tree();
         let node = tree.node(line.node)?;
         let parent = tree.node(node.parent().ok_or(GameTreeError::BrokenRelationship)?)?;
         match parent.position().turn() {
@@ -481,13 +556,12 @@ impl<'a> NotationPgnExport<'a> {
             }
         }
         writer.token(node.san().ok_or(GameTreeError::BrokenRelationship)?)?;
-        let annotated = self.annotations(node, traversal.clocks, writer)?;
+        let annotated = self.annotations(node, writer)?;
         let includes_siblings = self.selection == NotationPgnExportEnumSelection::Full
             && line.includes_siblings
             && parent.children().len() > 1;
         let next = match line.mainline_index {
-            Some(index) => traversal
-                .path
+            Some(index) => path
                 .get(index + 1)
                 .copied()
                 .map(|node| (node, Some(index + 1))),
@@ -514,7 +588,6 @@ impl<'a> NotationPgnExport<'a> {
     fn annotations<W: Write, C: FnMut() -> bool>(
         &self,
         node: &GameMoveNode,
-        clocks: &HashMap<GameMoveId, ClockDuration>,
         writer: &mut NotationPgnExportWriter<'_, W, C>,
     ) -> Result<bool, NotationPgnExportError> {
         let annotations = node.annotations();
@@ -538,7 +611,7 @@ impl<'a> NotationPgnExport<'a> {
         for nag in annotations.nags() {
             writer.token(&format!("${}", nag.value()))?;
         }
-        let clock = clocks.get(&node.id()).copied();
+        let clock = self.source.clock(node);
         let has_comment =
             !notes.is_empty() || !annotations.markings().is_empty() || clock.is_some();
         if has_comment {

@@ -4,12 +4,21 @@ use std::io::{self, Cursor, Write};
 use chess::board::enums::{BoardEnumColor, BoardEnumVariant};
 use chess::board::position::BoardPosition;
 use chess::board::start::{BoardStart, BoardStartIndex};
-use chess::clock::duration::ClockDuration;
-use chess::game::enums::{GameEnumMarkingColor, GameEnumResult, GameMoveId};
+use chess::clock::duration::{ClockDuration, ClockInstant};
+use chess::clock::state::ClockState;
+use chess::clock::time_control::ClockTimeControl;
+use chess::game::annotations::GameAnnotationsEnumVariationRequest;
+use chess::game::enums::{
+    GameEnumEngineReadiness, GameEnumMarkingColor, GameEnumMode, GameEnumResult, GameEnumSeat,
+    GameMoveId,
+};
 use chess::game::move_node::{GameMoveNodeAnnotations, GameMoveNodeMarking, GameMoveNodeNag};
+use chess::game::pause::GamePauseEnumEngineBarrier;
+use chess::game::result::GameResultResignRequest;
 use chess::game::session::{
     GameMetadata, GameMetadataDate, GameMetadataExtension, GameMetadataKnownTags,
-    GameMetadataOpeningCode, GameMetadataText,
+    GameMetadataOpeningCode, GameMetadataText, GameSeats, GameSession, GameSessionMoveRequest,
+    GameSessionOptions,
 };
 use chess::game::tree::GameTree;
 use chess::notation::game::{
@@ -21,6 +30,8 @@ use chess::notation::pgn_export::{
     NotationPgnExportError,
 };
 use chess::notation::pgn_import::NotationPgnImport;
+
+use crate::game_transition_fixture::GameTransitionFixtureProof;
 
 struct NotationPgnExportFixture {
     parts: NotationGameParts,
@@ -1068,5 +1079,433 @@ fn unknown_directive_names_that_extend_known_names_remain_plaintext()
         notes
     );
     assert_eq!(restored.warnings().len(), 3);
+    Ok(())
+}
+
+struct NotationPgnExportPlayedFixture;
+
+impl NotationPgnExportPlayedFixture {
+    fn session(
+        start: BoardStart,
+        control: ClockTimeControl,
+        metadata: GameMetadata,
+    ) -> Result<GameSession, Box<dyn std::error::Error>> {
+        let mut session = GameSession::new(GameSessionOptions {
+            id: "123e4567-e89b-42d3-a456-426614174000".parse()?,
+            root: NotationPgnExportFixture::id(1)?,
+            clock: ClockState::new(control, start.position().turn()),
+            start,
+            seats: GameSeats::new(
+                GameEnumMode::LocalTwoPlayer,
+                GameEnumSeat::Human,
+                GameEnumSeat::Human,
+            )?,
+            metadata,
+        })?;
+        session.start(
+            session.revision(),
+            ClockInstant::from_nanos(0),
+            GameEnumEngineReadiness::Ready,
+            &GameTransitionFixtureProof,
+        )?;
+        Ok(session)
+    }
+
+    fn standard() -> Result<GameSession, Box<dyn std::error::Error>> {
+        Self::session(
+            BoardStart::standard(),
+            ClockTimeControl::fischer(
+                ClockDuration::from_nanos(60_000_000_000),
+                ClockDuration::from_nanos(2_000_000_000),
+            )?,
+            GameMetadata::default(),
+        )
+    }
+
+    fn play(
+        session: &mut GameSession,
+        id: u128,
+        uci: &str,
+        nanos: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let position = session.tree().node(session.live())?.position();
+        session.accept_move(
+            GameSessionMoveRequest {
+                expected_revision: session.revision(),
+                seat: session.seats().seat(position.turn()),
+                color: position.turn(),
+                node: NotationPgnExportFixture::id(id)?,
+                movement: position.parse_uci(uci)?,
+                received_at: ClockInstant::from_nanos(nanos),
+            },
+            &GameTransitionFixtureProof,
+        )?;
+        Ok(())
+    }
+
+    fn completed() -> Result<GameSession, Box<dyn std::error::Error>> {
+        let mut session = Self::standard()?;
+        Self::play(&mut session, 2, "e2e4", 1_234_567_891)?;
+        Self::play(&mut session, 3, "e7e5", 4_734_567_891)?;
+        session.resign(
+            GameResultResignRequest {
+                expected_revision: session.revision(),
+                resigning: BoardEnumColor::Black,
+                received_at: ClockInstant::from_nanos(5_000_000_000),
+                engine: GamePauseEnumEngineBarrier::NoEngine,
+            },
+            &GameTransitionFixtureProof,
+        )?;
+        Ok(session)
+    }
+
+    fn branch(
+        session: &mut GameSession,
+        parent: GameMoveId,
+        id: u128,
+        uci: &str,
+    ) -> Result<GameMoveId, Box<dyn std::error::Error>> {
+        session.select_view(parent)?;
+        let movement = session.tree().node(parent)?.position().parse_uci(uci)?;
+        Ok(session.append_study_variation(
+            session.revision(),
+            NotationPgnExportFixture::id(id)?,
+            movement,
+        )?)
+    }
+
+    fn output(
+        session: &GameSession,
+        selection: NotationPgnExportEnumSelection,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut output = Vec::new();
+        NotationPgnExport::from_played(session)
+            .with_selection(selection)
+            .write(&mut output, || false)?;
+        Ok(String::from_utf8(output)?)
+    }
+
+    fn snapshot(session: &GameSession) -> Result<String, Box<dyn std::error::Error>> {
+        Ok(format!(
+            "{:?}",
+            session.restoration(ClockInstant::from_nanos(6_000_000_000))?
+        ))
+    }
+}
+
+#[test]
+fn played_export_borrows_live_session_and_uses_each_movers_true_post_clock()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = NotationPgnExportPlayedFixture::standard()?;
+    NotationPgnExportPlayedFixture::play(&mut session, 2, "e2e4", 1_234_567_891)?;
+    NotationPgnExportPlayedFixture::play(&mut session, 3, "e7e5", 4_734_567_891)?;
+    let before = NotationPgnExportPlayedFixture::snapshot(&session)?;
+    let mut output = Vec::new();
+    NotationPgnExport::from_played(&session).write(&mut output, || false)?;
+    assert_eq!(
+        String::from_utf8(output)?,
+        "[Result \"*\"]\n[Variant \"Standard\"]\n\n1. e4 {[%clk 0:01:00.765432109]} 1... e5 {[%clk 0:00:58.5]} *\n"
+    );
+    assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
+    Ok(())
+}
+
+#[test]
+fn played_custom_black_and_randomized_starts_round_trip_actual_initial_positions()
+-> Result<(), Box<dyn std::error::Error>> {
+    for start in [
+        BoardStart::standard(),
+        BoardStart::custom(BoardPosition::from_fen(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 12",
+            BoardEnumVariant::Standard,
+        )?),
+        BoardStart::chess960(BoardStartIndex::try_from(0)?)?,
+        BoardStart::dfrc(
+            BoardStartIndex::try_from(23)?,
+            BoardStartIndex::try_from(741)?,
+        )?,
+    ] {
+        let mut session = NotationPgnExportPlayedFixture::session(
+            start.clone(),
+            ClockTimeControl::untimed(),
+            GameMetadata::default(),
+        )?;
+        let movement = start.position().legal_moves()[0];
+        let expected_number = match start.position().turn() {
+            BoardEnumColor::White => "1.",
+            BoardEnumColor::Black => "12...",
+        };
+        NotationPgnExportPlayedFixture::play(
+            &mut session,
+            2,
+            &movement.uci(start.position().variant()),
+            1,
+        )?;
+        let pgn =
+            NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Full)?;
+        assert!(pgn.contains(expected_number));
+        assert!(!pgn.contains("[%clk"));
+        let imported = NotationPgnExportFixture::import(&pgn)?;
+        assert_eq!(imported.start().position(), start.position());
+        assert_eq!(imported.start().initial_fen(), start.initial_fen());
+        assert_eq!(imported.tree().len(), 2);
+        assert_eq!(
+            imported.tree().node(imported.mainline_tip())?.position(),
+            session.tree().node(session.live())?.position()
+        );
+        assert_eq!(
+            NotationPgnExportFixture::output(&imported, NotationPgnExportEnumSelection::Full)?,
+            pgn
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn played_full_and_mainline_export_follow_promoted_study_tip_instead_of_live_cursor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = NotationPgnExportPlayedFixture::completed()?;
+    let root = session.tree().root();
+    let played = session.live();
+    let d4 = NotationPgnExportPlayedFixture::branch(&mut session, root, 4, "d2d4")?;
+    let d5 = NotationPgnExportPlayedFixture::branch(&mut session, d4, 5, "d7d5")?;
+    let c4 = NotationPgnExportPlayedFixture::branch(&mut session, root, 6, "c2c4")?;
+    let confirmation = session
+        .preview_variation(
+            session.revision(),
+            GameAnnotationsEnumVariationRequest::Promote { tip: d5 },
+        )?
+        .confirm();
+    session.apply_variation(confirmation)?;
+    session.select_view(c4)?;
+    assert_eq!(session.study_mainline_tip(), d5);
+    assert_eq!(session.live(), played);
+    let before = NotationPgnExportPlayedFixture::snapshot(&session)?;
+    let full =
+        NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Full)?;
+    assert_eq!(
+        full,
+        "[Result \"1-0\"]\n[Variant \"Standard\"]\n\n1. d4 (1. e4 {[%clk 0:01:00.765432109]} 1... e5 {[%clk 0:00:58.5]}) (1. c4) 1... d5 1-0\n"
+    );
+    let mainline =
+        NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Mainline)?;
+    assert_eq!(
+        mainline,
+        "[Result \"1-0\"]\n[Variant \"Standard\"]\n\n1. d4 d5 1-0\n"
+    );
+    let imported = NotationPgnExportFixture::import(&full)?;
+    assert_eq!(
+        imported.result(),
+        NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(BoardEnumColor::White))
+    );
+    assert_eq!(imported.clocks().len(), 2);
+    assert_eq!(
+        NotationPgnExportFixture::output(&imported, NotationPgnExportEnumSelection::Full)?,
+        full
+    );
+    assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
+    Ok(())
+}
+
+#[test]
+fn played_reused_nodes_keep_real_clocks_and_new_analysis_nodes_remain_clockless()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = NotationPgnExportPlayedFixture::completed()?;
+    let root = session.tree().root();
+    let e4 = NotationPgnExportFixture::id(2)?;
+    let before_clock = session.tree().node(e4)?.before_clock().cloned();
+    let after_clock = session.tree().node(e4)?.clock().cloned();
+    assert_eq!(
+        NotationPgnExportPlayedFixture::branch(&mut session, root, 99, "e2e4")?,
+        e4
+    );
+    let c5 = NotationPgnExportPlayedFixture::branch(&mut session, e4, 4, "c7c5")?;
+    assert_eq!(
+        session.tree().node(e4)?.before_clock(),
+        before_clock.as_ref()
+    );
+    assert_eq!(session.tree().node(e4)?.clock(), after_clock.as_ref());
+    assert!(session.tree().node(c5)?.clock().is_none());
+    assert!(session.tree().node(c5)?.before_clock().is_none());
+    let pgn =
+        NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Full)?;
+    assert_eq!(pgn.matches("[%clk").count(), 2);
+    assert!(pgn.contains("(1... c5)"));
+    let imported = NotationPgnExportFixture::import(&pgn)?;
+    assert_eq!(imported.clocks().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn played_metadata_annotations_and_line_comment_protocol_round_trip_canonically()
+-> Result<(), Box<dyn std::error::Error>> {
+    let metadata = GameMetadata::new(
+        GameMetadataKnownTags {
+            event: Some(GameMetadataText::new("Played \\\"event\\\"".to_owned())?),
+            date: Some(GameMetadataDate::new(Some(2026), None, Some(17))?),
+            white: Some(GameMetadataText::new("  Alice  ".to_owned())?),
+            black: Some(GameMetadataText::new("Bob".to_owned())?),
+            white_elo: Some(2400),
+            black_elo: None,
+            ..GameMetadataKnownTags::default()
+        },
+        vec![
+            GameMetadataExtension::new(
+                "Source_Z".to_owned(),
+                GameMetadataText::new("First".to_owned())?,
+            )?,
+            GameMetadataExtension::new(
+                "Source_A".to_owned(),
+                GameMetadataText::new("Second".to_owned())?,
+            )?,
+        ],
+    )?;
+    let mut session = NotationPgnExportPlayedFixture::session(
+        BoardStart::standard(),
+        ClockTimeControl::untimed(),
+        metadata.clone(),
+    )?;
+    NotationPgnExportPlayedFixture::play(&mut session, 2, "e2e4", 1)?;
+    session.resign(
+        GameResultResignRequest {
+            expected_revision: session.revision(),
+            resigning: BoardEnumColor::White,
+            received_at: ClockInstant::from_nanos(2),
+            engine: GamePauseEnumEngineBarrier::NoEngine,
+        },
+        &GameTransitionFixtureProof,
+    )?;
+    let node = session.live();
+    session.save_notes_and_nags(
+        session.revision(),
+        session.tree().root(),
+        "Before".to_owned(),
+        vec![],
+    )?;
+    session.save_notes_and_nags(
+        session.revision(),
+        node,
+        "{literal}\n[%mystery keep]\n".to_owned(),
+        vec![GameMoveNodeNag::new(1), GameMoveNodeNag::new(146)],
+    )?;
+    session.save_markings(
+        session.revision(),
+        node,
+        vec![
+            GameMoveNodeMarking::circle(GameEnumMarkingColor::Blue, "e4".parse()?),
+            GameMoveNodeMarking::arrow(GameEnumMarkingColor::Red, "d1".parse()?, "h5".parse()?)?,
+        ],
+    )?;
+    let before = NotationPgnExportPlayedFixture::snapshot(&session)?;
+    let pgn =
+        NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Full)?;
+    assert!(!pgn.contains("[BlackElo"));
+    assert!(!pgn.contains("[%clk"));
+    assert!(pgn.contains("[WhiteElo \"2400\"]"));
+    assert!(pgn.contains("[Source_Z \"First\"]\n[Source_A \"Second\"]"));
+    assert!(pgn.contains(";{literal}\n;[%mystery keep]\n;[%csl Be4][%cal Rd1h5]\n"));
+    let imported = NotationPgnExportFixture::import(&pgn)?;
+    assert_eq!(imported.metadata(), &metadata);
+    assert_eq!(
+        imported.tree().node(imported.mainline_tip())?.annotations(),
+        session.tree().node(node)?.annotations()
+    );
+    assert_eq!(
+        imported.result(),
+        NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(BoardEnumColor::Black))
+    );
+    assert_eq!(
+        NotationPgnExportFixture::output(&imported, NotationPgnExportEnumSelection::Full)?,
+        pgn
+    );
+    assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
+    Ok(())
+}
+
+#[test]
+fn played_export_cancellation_and_writer_failure_leave_complete_session_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let session = NotationPgnExportPlayedFixture::completed()?;
+    let before = NotationPgnExportPlayedFixture::snapshot(&session)?;
+    for cancel_after in [0, 14] {
+        let calls = Cell::new(0);
+        let mut writer = NotationPgnExportWriter::new(1);
+        assert!(matches!(
+            NotationPgnExport::from_played(&session).write(&mut writer, || {
+                let count = calls.get();
+                calls.set(count + 1);
+                count >= cancel_after
+            }),
+            Err(NotationPgnExportError::Cancelled)
+        ));
+        if cancel_after == 0 {
+            assert!(writer.bytes.is_empty());
+        } else {
+            assert!(!writer.bytes.is_empty());
+        }
+        assert_eq!(writer.flushes, 0);
+        assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
+    }
+    let mut writer = NotationPgnExportWriter::new(3);
+    writer.fail_after = Some(12);
+    assert!(matches!(
+        NotationPgnExport::from_played(&session).write(&mut writer, || false),
+        Err(NotationPgnExportError::Io(_))
+    ));
+    assert_eq!(writer.bytes.len(), 12);
+    assert_eq!(writer.flushes, 0);
+    assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
+    Ok(())
+}
+
+#[test]
+fn played_source_retains_typed_comment_refusals_without_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (notes, reason) in [
+        (
+            "literal [%clk 0:00:01]",
+            NotationPgnExportEnumCommentIssue::RecognizedDirective,
+        ),
+        (
+            "{literal}\r",
+            NotationPgnExportEnumCommentIssue::CarriageReturnInLineComment,
+        ),
+    ] {
+        let mut session = NotationPgnExportPlayedFixture::completed()?;
+        let node = session.live();
+        session.save_notes_and_nags(session.revision(), node, notes.to_owned(), vec![])?;
+        let before = NotationPgnExportPlayedFixture::snapshot(&session)?;
+        assert!(
+            matches!(NotationPgnExport::from_played(&session).write(&mut Vec::new(), || false), Err(NotationPgnExportError::UnsupportedComment { node: actual, reason: actual_reason }) if actual == node && actual_reason == reason)
+        );
+        assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn played_export_uses_restored_study_tip_even_when_its_path_is_not_first_ordered()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut session = NotationPgnExportPlayedFixture::completed()?;
+    let root = session.tree().root();
+    let e4 = NotationPgnExportFixture::id(2)?;
+    let d4 = NotationPgnExportPlayedFixture::branch(&mut session, root, 4, "d2d4")?;
+    let d5 = NotationPgnExportPlayedFixture::branch(&mut session, d4, 5, "d7d5")?;
+    let mut restoration = session.restoration(ClockInstant::from_nanos(6_000_000_000))?;
+    restoration.study_mainline_tip = d5;
+    let session = GameSession::restore(restoration)?;
+    assert_eq!(session.tree().node(root)?.children(), &[e4, d4]);
+    assert_eq!(session.study_mainline_tip(), d5);
+    assert_ne!(session.live(), d5);
+    let before = NotationPgnExportPlayedFixture::snapshot(&session)?;
+    assert_eq!(
+        NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Full)?,
+        "[Result \"1-0\"]\n[Variant \"Standard\"]\n\n1. d4 (1. e4 {[%clk 0:01:00.765432109]} 1... e5 {[%clk 0:00:58.5]}) 1... d5 1-0\n"
+    );
+    assert_eq!(
+        NotationPgnExportPlayedFixture::output(&session, NotationPgnExportEnumSelection::Mainline)?,
+        "[Result \"1-0\"]\n[Variant \"Standard\"]\n\n1. d4 d5 1-0\n"
+    );
+    assert_eq!(NotationPgnExportPlayedFixture::snapshot(&session)?, before);
     Ok(())
 }

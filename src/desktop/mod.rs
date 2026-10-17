@@ -10,6 +10,7 @@ pub mod error;
 pub mod file_handle;
 pub mod game_bridge;
 pub mod game_commands;
+pub mod game_editor;
 pub mod game_registry;
 pub mod game_snapshot;
 pub mod game_supervisor;

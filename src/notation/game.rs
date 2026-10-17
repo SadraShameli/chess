@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::board::enums::BoardEnumColor;
+use crate::board::r#move::BoardMove;
 use crate::board::start::BoardStart;
 use crate::clock::duration::ClockDuration;
 use crate::game::annotations::{
@@ -157,6 +158,30 @@ impl NotationGame {
 
     pub fn tree(&self) -> &GameTree {
         &self.tree
+    }
+
+    pub fn append_study_variation(
+        &mut self,
+        parent: GameMoveId,
+        node: GameMoveId,
+        movement: BoardMove,
+    ) -> Result<GameAnnotationsVariationApplied, NotationGameError> {
+        let previous_length = self.tree.len();
+        let selected = self
+            .tree
+            .prepare_study(parent, node, movement)?
+            .commit()
+            .id();
+        let change = if self.tree.len() == previous_length {
+            GameAnnotationsEnumChange::Unchanged
+        } else {
+            GameAnnotationsEnumChange::Changed
+        };
+        Ok(GameAnnotationsVariationApplied::new(
+            change,
+            self.mainline_tip,
+            selected,
+        ))
     }
 
     pub fn save_notes_and_nags(

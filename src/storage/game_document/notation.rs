@@ -10,11 +10,11 @@ use crate::notation::game::{
     NotationGame, NotationGameClock, NotationGameEnumWarning, NotationGameParts,
 };
 use crate::notation::game_identity::NotationGameIdentityEnumResult;
-use crate::storage::game_document::StorageGameDocumentError;
 use crate::storage::game_document::records::{
     StorageGameDocumentAnnotations, StorageGameDocumentDuration, StorageGameDocumentMetadata,
     StorageGameDocumentMoves, StorageGameDocumentText,
 };
+use crate::storage::game_document::{StorageGameDocumentError, StorageGameDocumentMemory};
 use crate::storage::library_record::{StorageLibraryEnumContent, StorageLibraryRecord};
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -131,6 +131,41 @@ pub(super) struct StorageGameDocumentNotation {
 }
 
 impl StorageGameDocumentNotation {
+    pub(super) fn memory_bytes(
+        game: &NotationGame,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<usize, StorageGameDocumentError> {
+        StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+        let mut memory = StorageGameDocumentMemory {
+            bytes: std::mem::size_of::<Self>(),
+        };
+        memory.start(game.start())?;
+        memory.moves(game.tree().len().saturating_sub(1))?;
+        for node in game.tree().nodes() {
+            StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+            memory.annotations(node.annotations())?;
+        }
+        memory.metadata(game.metadata(), cancellation)?;
+        if let Some(time_control) = game.time_control() {
+            memory.text(time_control.as_str())?;
+        }
+        memory.add_items::<StorageGameDocumentNotationClock>(game.clocks().len())?;
+        memory.add_items::<StorageGameDocumentEnumNotationWarning>(game.warnings().len())?;
+        for warning in game.warnings() {
+            StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+            match warning {
+                NotationGameEnumWarning::UnknownDirective { directive, .. } => {
+                    memory.text(directive)?;
+                }
+                NotationGameEnumWarning::UnavailableRating { value, .. } => {
+                    memory.text(value.as_str())?;
+                }
+            }
+        }
+        StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+        Ok(memory.bytes)
+    }
+
     pub(super) fn capture(
         id: GameId,
         game: &NotationGame,

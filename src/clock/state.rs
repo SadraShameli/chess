@@ -263,6 +263,17 @@ impl ClockStateSideOptions {
     }
 }
 
+impl From<ClockStateSide> for ClockStateSideOptions {
+    fn from(side: ClockStateSide) -> Self {
+        Self {
+            remaining: side.remaining,
+            completed_moves: side.completed_moves,
+            stage_index: side.stage_index,
+            stage_moves: side.stage_moves,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockStateSnapshotOptions {
     pub control: ClockTimeControl,
@@ -308,12 +319,7 @@ impl ClockStateSnapshot {
     pub fn persisted(&self) -> ClockStateSnapshotOptions {
         ClockStateSnapshotOptions {
             control: self.control.as_ref().clone(),
-            sides: self.sides.map(|side| ClockStateSideOptions {
-                remaining: side.remaining,
-                completed_moves: side.completed_moves,
-                stage_index: side.stage_index,
-                stage_moves: side.stage_moves,
-            }),
+            sides: self.sides(),
             active: self.active,
             elapsed: self.elapsed,
             status: self.status,
@@ -322,6 +328,14 @@ impl ClockStateSnapshot {
 
     pub fn control(&self) -> &ClockTimeControl {
         &self.control
+    }
+
+    pub fn side(&self, side: BoardEnumColor) -> ClockStateSideOptions {
+        self.sides[ClockStateSide::index(side)].into()
+    }
+
+    pub fn sides(&self) -> [ClockStateSideOptions; 2] {
+        self.sides.map(ClockStateSideOptions::from)
     }
 
     pub const fn active(&self) -> BoardEnumColor {

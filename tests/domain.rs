@@ -39,6 +39,8 @@ mod game_tree;
 
 #[path = "notation/fen.rs"]
 mod notation_fen;
+#[path = "notation/game.rs"]
+mod notation_game;
 #[path = "notation/game_annotations.rs"]
 mod notation_game_annotations;
 #[path = "notation/game_identity.rs"]

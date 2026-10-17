@@ -370,7 +370,7 @@ impl GameTree {
         .map(|prepared| prepared.commit().id())
     }
 
-    pub(super) fn prepare_study(
+    pub(crate) fn prepare_study(
         &mut self,
         parent: GameMoveId,
         id: GameMoveId,

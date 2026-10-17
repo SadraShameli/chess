@@ -33,8 +33,9 @@ use crate::game::move_node::{GameMoveNodeAnnotationError, GameMoveNodeAnnotation
 use crate::game::outcome::{GameOutcome, GameOutcomeError};
 use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::{
-    GameMetadataError, GameSeats, GameSession, GameSessionEnumInterruption, GameSessionEnumState,
-    GameSessionError, GameSessionOptions, GameSessionRestoreOptions, GameSessionRestoredMove,
+    GameMetadata, GameMetadataError, GameSeats, GameSession, GameSessionEnumInterruption,
+    GameSessionEnumState, GameSessionError, GameSessionOptions, GameSessionRestoreOptions,
+    GameSessionRestoredMove,
 };
 use crate::game::storage_repository::{
     GameStorageReceipt, GameStorageRecovered, GameStorageRepository, GameStorageRevision,
@@ -233,7 +234,14 @@ impl StorageGameDocument {
         snapshot: &GameSessionRestoreOptions,
         cancellation: &CapacityExecutorCancellation,
     ) -> Result<usize, StorageGameDocumentError> {
-        StorageGameDocumentSnapshotMemory::measure(snapshot, cancellation)
+        StorageGameDocumentMemory::played(snapshot, cancellation)
+    }
+
+    pub(crate) fn notation_memory_bytes(
+        game: &NotationGame,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<usize, StorageGameDocumentError> {
+        StorageGameDocumentNotation::memory_bytes(game, cancellation)
     }
 
     pub fn capture_notation(
@@ -411,29 +419,24 @@ impl StorageGameDocument {
     }
 }
 
-struct StorageGameDocumentSnapshotMemory {
+struct StorageGameDocumentMemory {
     bytes: usize,
 }
 
-impl StorageGameDocumentSnapshotMemory {
+impl StorageGameDocumentMemory {
     const UCI_CAPACITY: usize = 8;
     const MIN_EXTENSION_CAPACITY: usize = 4;
 
-    fn measure(
+    fn played(
         snapshot: &GameSessionRestoreOptions,
         cancellation: &CapacityExecutorCancellation,
     ) -> Result<usize, StorageGameDocumentError> {
         StorageGameDocumentError::check_cancellation(Some(cancellation))?;
-        if snapshot.moves.len() > StorageGameDocument::MAX_MOVES {
-            return Err(StorageGameDocumentError::TooManyMoves);
-        }
         let mut memory = Self {
             bytes: std::mem::size_of::<StorageGameDocumentPlayed>(),
         };
-        memory.add_items::<u8>(uuid::fmt::Hyphenated::LENGTH)?;
-        memory.add_items::<[u8; 2]>(snapshot.session.start.initial_fen().len())?;
-        memory.add_items::<StorageGameDocumentMove>(snapshot.moves.len())?;
-        memory.add_items::<[u8; Self::UCI_CAPACITY]>(snapshot.moves.len())?;
+        memory.start(&snapshot.session.start)?;
+        memory.moves(snapshot.moves.len())?;
         memory.add_items::<StorageGameDocumentStage>(snapshot.clock.control().stages().len())?;
         memory.add_items::<ClockStage>(snapshot.clock.control().stages().len())?;
         memory.annotations(&snapshot.root_annotations)?;
@@ -441,7 +444,29 @@ impl StorageGameDocumentSnapshotMemory {
             StorageGameDocumentError::check_cancellation(Some(cancellation))?;
             memory.annotations(&movement.annotations)?;
         }
-        let metadata = &snapshot.session.metadata;
+        memory.metadata(&snapshot.session.metadata, cancellation)?;
+        StorageGameDocumentError::check_cancellation(Some(cancellation))?;
+        Ok(memory.bytes)
+    }
+
+    fn start(&mut self, start: &BoardStart) -> Result<(), StorageGameDocumentError> {
+        self.add_items::<u8>(uuid::fmt::Hyphenated::LENGTH)?;
+        self.add_items::<[u8; 2]>(start.initial_fen().len())
+    }
+
+    fn moves(&mut self, count: usize) -> Result<(), StorageGameDocumentError> {
+        if count > StorageGameDocument::MAX_MOVES {
+            return Err(StorageGameDocumentError::TooManyMoves);
+        }
+        self.add_items::<StorageGameDocumentMove>(count)?;
+        self.add_items::<[u8; Self::UCI_CAPACITY]>(count)
+    }
+
+    fn metadata(
+        &mut self,
+        metadata: &GameMetadata,
+        cancellation: &CapacityExecutorCancellation,
+    ) -> Result<(), StorageGameDocumentError> {
         let known = metadata.known();
         for text in [
             &known.event,
@@ -456,10 +481,10 @@ impl StorageGameDocumentSnapshotMemory {
         .into_iter()
         .flatten()
         {
-            memory.text(text.as_str())?;
+            self.text(text.as_str())?;
         }
         if let Some(code) = &known.eco {
-            memory.text(code.as_str())?;
+            self.text(code.as_str())?;
         }
         let extensions = metadata.extensions();
         if !extensions.is_empty() {
@@ -471,15 +496,15 @@ impl StorageGameDocumentSnapshotMemory {
             let peak = capacity
                 .checked_add(capacity / 2)
                 .ok_or(StorageGameDocumentError::TooLarge)?;
-            memory.add_items::<(String, String)>(peak)?;
+            self.add_items::<(String, String)>(peak)?;
         }
         for extension in extensions {
             StorageGameDocumentError::check_cancellation(Some(cancellation))?;
-            memory.text(extension.name())?;
-            memory.text(extension.value().as_str())?;
+            self.text(extension.name())?;
+            self.text(extension.value().as_str())?;
         }
         StorageGameDocumentError::check_cancellation(Some(cancellation))?;
-        Ok(memory.bytes)
+        Ok(())
     }
 
     fn add_items<T>(&mut self, count: usize) -> Result<(), StorageGameDocumentError> {
@@ -785,12 +810,11 @@ impl StorageGameDocumentClock {
         if clock.control() != control {
             return Err(ClockStateError::DifferentControl.into());
         }
-        let clock = clock.persisted();
         Ok(Self {
-            sides: clock.sides.map(StorageGameDocumentClockSide::from),
-            active: clock.active,
-            elapsed_nanos: clock.elapsed.into(),
-            status: clock.status,
+            sides: clock.sides().map(StorageGameDocumentClockSide::from),
+            active: clock.active(),
+            elapsed_nanos: clock.elapsed().into(),
+            status: clock.status(),
         })
     }
 
