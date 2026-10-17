@@ -213,3 +213,27 @@ fn engine_overrides_validate_bounds_round_trip_and_reset() -> DesktopPreferences
     assert_eq!(reset.changes().len(), 2);
     Ok(())
 }
+
+#[test]
+fn notation_defaults_to_letters_and_round_trips_as_a_stored_appearance_setting()
+-> DesktopPreferencesTestResult {
+    use chess::desktop::preferences::DesktopPreferencesEnumNotation;
+    let mut preferences = DesktopPreferences::default();
+    assert_eq!(preferences.notation(), DesktopPreferencesEnumNotation::Letters);
+    assert!(preferences.apply(DesktopPreferencesEnumPatch::Notation(
+        DesktopPreferencesEnumNotation::Figurines
+    )));
+    let text = DesktopPreferencesCodec::encode(preferences)?;
+    assert_eq!(
+        DesktopPreferencesCodec::load(text.as_bytes())?.notation(),
+        DesktopPreferencesEnumNotation::Figurines
+    );
+    assert!(
+        preferences
+            .section_patches(DesktopPreferencesEnumSection::Appearance)
+            .contains(&DesktopPreferencesEnumPatch::Notation(
+                DesktopPreferencesEnumNotation::Figurines
+            ))
+    );
+    Ok(())
+}

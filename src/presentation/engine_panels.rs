@@ -34,6 +34,7 @@ use crate::engine::search::identity::{
 };
 use crate::engine::search::session::{EngineSearchSessionEnumEvent, EngineSearchSessionSnapshot};
 use crate::game::enums::{GameEnumPhase, GameId};
+use crate::game::session::GameSessionEnumInterruption;
 use crate::presentation::analysis::controller::{
     PresentationAnalysisController, PresentationAnalysisControllerEnumAction,
     PresentationAnalysisControllerEnumWorkspace, PresentationAnalysisControllerError,
@@ -240,6 +241,13 @@ impl PresentationEnginePanels {
                 true
             }
         });
+        self.workbench_view
+            .set_recovered_paused(selected.is_some_and(|snapshot| {
+                matches!(
+                    snapshot.interruption(),
+                    Some(GameSessionEnumInterruption::Recovered(_))
+                )
+            }));
         let selection = selected.map(Self::selection_from).transpose()?.flatten();
         if selected.is_some_and(|snapshot| {
             matches!(
@@ -337,6 +345,20 @@ impl PresentationEnginePanels {
             self.snapshot.configuration(),
             selection,
         )
+    }
+
+    fn retry_engine_information(&mut self) -> Result<(), PresentationEnginePanelsError> {
+        if let Some(analysis) = &self.analysis {
+            let context = self.workbench_context(analysis.selection().context());
+            let position = analysis.selection().position().clone();
+            self.workbench = Some(PresentationWorkbenchController::new(
+                context,
+                Some(position),
+            ));
+            self.workbench_request = None;
+            self.capture_engine()?;
+        }
+        Ok(())
     }
 
     fn capture_engine(&mut self) -> Result<(), PresentationEnginePanelsError> {
@@ -1295,6 +1317,9 @@ impl PresentationEnginePanels {
                     if let Some(intent) = intent {
                         self.submit_workbench(intent, port)?;
                     }
+                }
+                if self.workbench_view.take_engine_retry() {
+                    self.retry_engine_information()?;
                 }
             }
         }

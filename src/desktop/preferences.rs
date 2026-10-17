@@ -42,6 +42,23 @@ impl DesktopPreferencesEnumTheme {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopPreferencesEnumNotation {
+    #[default]
+    Letters,
+    Figurines,
+}
+
+impl DesktopPreferencesEnumNotation {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Letters => "Letters",
+            Self::Figurines => "Figurines",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopPreferencesEnumMotion {
@@ -344,6 +361,7 @@ impl DesktopPreferencesAudioCategory {
 pub enum DesktopPreferencesEnumPatch {
     Theme(DesktopPreferencesEnumTheme),
     Motion(DesktopPreferencesEnumMotion),
+    Notation(DesktopPreferencesEnumNotation),
     Aid(DesktopPreferencesEnumAid, bool),
     MasterVolume(DesktopPreferencesPercent),
     CategoryEnabled(DesktopPreferencesEnumAudioCategory, bool),
@@ -399,7 +417,9 @@ impl DesktopPreferencesEnumPatch {
 
     pub const fn section(self) -> DesktopPreferencesEnumSection {
         match self {
-            Self::Theme(_) | Self::Motion(_) => DesktopPreferencesEnumSection::Appearance,
+            Self::Theme(_) | Self::Motion(_) | Self::Notation(_) => {
+                DesktopPreferencesEnumSection::Appearance
+            }
             Self::Aid(..) => DesktopPreferencesEnumSection::BoardAids,
             Self::MasterVolume(_) | Self::CategoryEnabled(..) | Self::CategoryVolume(..) => {
                 DesktopPreferencesEnumSection::Audio
@@ -416,6 +436,7 @@ impl DesktopPreferencesEnumPatch {
 pub struct DesktopPreferences {
     theme: DesktopPreferencesEnumTheme,
     motion: DesktopPreferencesEnumMotion,
+    notation: DesktopPreferencesEnumNotation,
     aids: [bool; 4],
     master: DesktopPreferencesPercent,
     categories: [DesktopPreferencesAudioCategory; 4],
@@ -434,6 +455,7 @@ impl DesktopPreferences {
         Self {
             theme: DesktopPreferencesEnumTheme::Dark,
             motion: DesktopPreferencesEnumMotion::Full,
+            notation: DesktopPreferencesEnumNotation::Letters,
             aids: [true; 4],
             master: DesktopPreferencesPercent::DEFAULT_MASTER,
             categories: [DesktopPreferencesAudioCategory::DEFAULT; 4],
@@ -474,6 +496,17 @@ impl DesktopPreferences {
 
     pub const fn motion(self) -> DesktopPreferencesEnumMotion {
         self.motion
+    }
+
+    pub const fn notation(self) -> DesktopPreferencesEnumNotation {
+        self.notation
+    }
+
+    pub fn notations() -> &'static [DesktopPreferencesEnumNotation] {
+        &[
+            DesktopPreferencesEnumNotation::Letters,
+            DesktopPreferencesEnumNotation::Figurines,
+        ]
     }
 
     pub fn set_motion(&mut self, motion: DesktopPreferencesEnumMotion) -> bool {
@@ -536,6 +569,7 @@ impl DesktopPreferences {
         match patch {
             DesktopPreferencesEnumPatch::Theme(theme) => self.theme = theme,
             DesktopPreferencesEnumPatch::Motion(motion) => self.motion = motion,
+            DesktopPreferencesEnumPatch::Notation(notation) => self.notation = notation,
             DesktopPreferencesEnumPatch::Aid(aid, enabled) => self.aids[aid.index()] = enabled,
             DesktopPreferencesEnumPatch::MasterVolume(volume) => self.master = volume,
             DesktopPreferencesEnumPatch::CategoryEnabled(category, enabled) => {
@@ -558,6 +592,7 @@ impl DesktopPreferences {
         let mut patches = vec![
             DesktopPreferencesEnumPatch::Theme(self.theme),
             DesktopPreferencesEnumPatch::Motion(self.motion),
+            DesktopPreferencesEnumPatch::Notation(self.notation),
         ];
         patches.extend(
             DesktopPreferencesEnumAid::ALL

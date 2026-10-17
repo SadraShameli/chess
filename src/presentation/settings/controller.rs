@@ -119,6 +119,7 @@ impl PresentationSettingsController {
         let mut effective = self.draft.saved();
         effective.apply(DesktopPreferencesEnumPatch::Theme(pending.theme()));
         effective.apply(DesktopPreferencesEnumPatch::Motion(pending.motion()));
+        effective.apply(DesktopPreferencesEnumPatch::Notation(pending.notation()));
         let changed = effective != self.effective;
         self.effective = effective;
         changed

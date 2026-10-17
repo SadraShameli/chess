@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use bevy_egui::egui::{Event, RawInput, accesskit::ActionRequest};
+use bevy_egui::egui::{
+    Event, RawInput,
+    accesskit::{Action, ActionRequest},
+};
 use thiserror::Error;
 
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
@@ -12,6 +15,8 @@ pub enum PresentationAccessibilityError {
     Busy,
     #[error("A board accessibility action requires its displayed scene generation")]
     MissingGeneration,
+    #[error("A board square accepts only Click and Focus requests, not {0:?}")]
+    UnsupportedSquareAction(Action),
 }
 
 struct PresentationAccessibilityPending {
@@ -61,6 +66,11 @@ impl PresentationAccessibilityInput {
     ) -> Result<(), PresentationAccessibilityError> {
         let board_square =
             PresentationBoardSemanticGrid::square_for_accessibility_target(request.target_node);
+        if board_square.is_some() && !matches!(request.action, Action::Click | Action::Focus) {
+            return Err(PresentationAccessibilityError::UnsupportedSquareAction(
+                request.action,
+            ));
+        }
         if board_square.is_some() && generation.is_none() {
             return Err(PresentationAccessibilityError::MissingGeneration);
         }

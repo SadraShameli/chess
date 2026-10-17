@@ -252,3 +252,28 @@ fn the_layout_merges_into_existing_preferences_without_dropping_sibling_keys()
     assert!(DesktopNativeLayoutStore::extract("not json").is_err());
     Ok(())
 }
+
+#[test]
+fn board_squares_accept_only_click_and_focus_action_requests() -> PresentationBoardLayoutResult {
+    use chess::presentation::accessibility::{
+        PresentationAccessibilityError, PresentationAccessibilityInput,
+    };
+    use chess::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+    use chess::scene::renderer::SceneRendererGeneration;
+    let square = "e4".parse()?;
+    let request = |action| ActionRequest {
+        action,
+        target_tree: TreeId::ROOT,
+        target_node: PresentationBoardSemanticGrid::square_id(square).accesskit_id(),
+        data: None,
+    };
+    let generation = Some(SceneRendererGeneration::initial());
+    let mut input = PresentationAccessibilityInput::new();
+    input.try_forward(request(Action::Click), generation)?;
+    input.try_forward(request(Action::Focus), generation)?;
+    assert!(matches!(
+        input.try_forward(request(Action::Increment), generation),
+        Err(PresentationAccessibilityError::UnsupportedSquareAction(Action::Increment))
+    ));
+    Ok(())
+}

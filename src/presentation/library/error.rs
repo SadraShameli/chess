@@ -9,6 +9,8 @@ use crate::storage::library_repository::StorageLibraryError;
 pub enum PresentationLibraryError {
     #[error("Wait for the current library action")]
     Busy,
+    #[error("This game has unsaved moves. Retry Save on the live game before removing it")]
+    UnsavedGame(crate::game::enums::GameId),
     #[error("This input belongs to another library action")]
     UnexpectedReply,
     #[error("This application request belongs to another library action")]

@@ -27,6 +27,69 @@ pub enum DesktopNativeResourcesError {
     Digest(#[from] PackageDigestError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopNativeResourcesEnumDependency {
+    Graphics,
+    Fonts,
+    Shaders,
+    Pieces,
+    Engine,
+    Credentials,
+    Portal,
+    Audio,
+    Tablebases,
+    StarterDataset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopNativeResourcesEnumFailure {
+    Interruption,
+    FeatureLocal,
+    DatasetLocal,
+}
+
+impl DesktopNativeResourcesEnumDependency {
+    pub const ALL: [Self; 10] = [
+        Self::Graphics,
+        Self::Fonts,
+        Self::Shaders,
+        Self::Pieces,
+        Self::Engine,
+        Self::Credentials,
+        Self::Portal,
+        Self::Audio,
+        Self::Tablebases,
+        Self::StarterDataset,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Graphics => "graphics",
+            Self::Fonts => "fonts",
+            Self::Shaders => "shaders",
+            Self::Pieces => "pieces",
+            Self::Engine => "engine",
+            Self::Credentials => "credentials",
+            Self::Portal => "portal",
+            Self::Audio => "audio",
+            Self::Tablebases => "tablebases",
+            Self::StarterDataset => "starter-dataset",
+        }
+    }
+
+    pub const fn failure(self) -> DesktopNativeResourcesEnumFailure {
+        match self {
+            Self::Graphics | Self::Fonts | Self::Shaders | Self::Pieces | Self::Engine => {
+                DesktopNativeResourcesEnumFailure::Interruption
+            }
+            Self::Credentials | Self::Portal | Self::Audio | Self::Tablebases => {
+                DesktopNativeResourcesEnumFailure::FeatureLocal
+            }
+            Self::StarterDataset => DesktopNativeResourcesEnumFailure::DatasetLocal,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopNativeResourcesReport {
     missing_optional: Vec<&'static str>,

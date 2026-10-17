@@ -765,6 +765,19 @@ impl PresentationApp {
                 self.selected_game = Some(id);
             }
         }
+        let unsaved: Vec<GameId> = self
+            .games
+            .iter()
+            .filter(|game| {
+                game.save
+                    .require_saved(GameSaveCoordinatorEnumBarrier::MoveToTrash)
+                    .is_err()
+            })
+            .map(|game| game.snapshot.id())
+            .collect();
+        if let Some(library) = &mut self.library {
+            library.observe_unsaved_games(unsaved);
+        }
         self.status = "The native game state is ready".to_owned();
         true
     }

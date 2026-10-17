@@ -175,6 +175,10 @@ impl PresentationAppLibrary {
         self.pending.iter().any(|pending| matches!(&pending.owner, PresentationAppLibraryEnumOwner::Panel(intent) if intent.is_open_action()))
     }
 
+    pub(super) fn observe_unsaved_games(&mut self, games: Vec<GameId>) {
+        self.panel.controller_mut().observe_unsaved_games(games);
+    }
+
     pub(super) fn observe_live_source(
         &mut self,
         snapshot: &crate::desktop::game_snapshot::DesktopGameSnapshot,

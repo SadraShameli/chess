@@ -36,6 +36,8 @@ pub struct PresentationWorkbenchView {
     submitted_frame: Option<u64>,
     error: Option<PresentationWorkbenchControllerError>,
     tablebase_selection_failure: Option<DesktopFailure>,
+    engine_retry: bool,
+    recovered_paused: bool,
 }
 
 impl Default for PresentationWorkbenchView {
@@ -49,6 +51,8 @@ impl Default for PresentationWorkbenchView {
             submitted_frame: None,
             error: None,
             tablebase_selection_failure: None,
+            engine_retry: false,
+            recovered_paused: false,
         }
     }
 }
@@ -57,6 +61,14 @@ impl PresentationWorkbenchView {
     pub fn new() -> Self {
         Self::default()
     }
+    pub fn set_recovered_paused(&mut self, recovered_paused: bool) {
+        self.recovered_paused = recovered_paused;
+    }
+
+    pub fn take_engine_retry(&mut self) -> bool {
+        std::mem::take(&mut self.engine_retry)
+    }
+
     pub fn set_tablebase_selection_failure(&mut self, failure: Option<DesktopFailure>) {
         self.tablebase_selection_failure = failure;
     }
@@ -96,7 +108,7 @@ impl PresentationWorkbenchView {
             .id_salt("workbench.panel")
             .show(ui, |ui| {
                 ui.heading("Engine Workbench");
-                Self::show_admission(ui, controller);
+                self.show_admission(ui, controller);
                 if let Some(error) = &self.error {
                     ui.colored_label(ui.visuals().error_fg_color, error.to_string());
                 }
@@ -137,7 +149,7 @@ impl PresentationWorkbenchView {
         self.context = Some(context);
     }
 
-    fn show_admission(ui: &mut Ui, controller: &PresentationWorkbenchController) {
+    fn show_admission(&mut self, ui: &mut Ui, controller: &PresentationWorkbenchController) {
         if let Some(failure) = controller.failure() {
             ui.colored_label(ui.visuals().error_fg_color, failure.message());
         }
@@ -149,7 +161,7 @@ impl PresentationWorkbenchView {
                 None => {
                     ui.label("Loading engine identity and capabilities...");
                 }
-                Some(failure) => Self::show_information(
+                Some(failure) => self.show_information(
                     ui,
                     &PresentationWorkbenchEngineInformation::unavailable(
                         PresentationWorkbenchEngineInformationEnumState::Diagnostic(
@@ -185,7 +197,7 @@ impl PresentationWorkbenchView {
     ) -> Option<PresentationWorkbenchControllerIntent> {
         let engine = controller.engine()?;
         ui.strong("Advanced engine configuration");
-        Self::show_package(ui, engine);
+        self.show_package(ui, engine);
         ui.small("Save each edited option explicitly. CPU and memory admission is rechecked by the backend at an idle configuration barrier.");
         let mut intent = None;
         for option in EngineEnumOption::ALL {
@@ -203,25 +215,25 @@ impl PresentationWorkbenchView {
         intent
     }
 
-    fn show_package(ui: &mut Ui, engine: &PresentationWorkbenchSnapshot) {
-        Self::show_information(
-            ui,
-            &PresentationWorkbenchEngineInformation::from_package(
-                engine.package(),
-                PresentationWorkbenchEngineInformationEnumState::Ready,
-            ),
-        );
+    fn show_package(&mut self, ui: &mut Ui, engine: &PresentationWorkbenchSnapshot) {
+        let state = if self.recovered_paused {
+            PresentationWorkbenchEngineInformationEnumState::RecoveredPaused
+        } else {
+            PresentationWorkbenchEngineInformationEnumState::Ready
+        };
+        let information =
+            PresentationWorkbenchEngineInformation::from_package(engine.package(), state);
+        self.show_information(ui, &information);
     }
 
-    fn show_information(ui: &mut Ui, information: &PresentationWorkbenchEngineInformation) {
-        egui::CollapsingHeader::new("Engine Information")
-            .id_salt("workbench.engine_information")
-            .default_open(true)
-            .show(ui, |ui| {
-                for line in information.lines() {
-                    ui.label(line);
-                }
-            });
+    fn show_information(
+        &mut self,
+        ui: &mut Ui,
+        information: &PresentationWorkbenchEngineInformation,
+    ) {
+        if information.show(ui).is_some() {
+            self.engine_retry = true;
+        }
     }
 
     fn show_option(

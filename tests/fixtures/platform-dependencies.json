@@ -11,5 +11,17 @@
     { "name": "audio-device", "path": null, "failure": "feature-local" },
     { "name": "tablebases", "path": null, "failure": "feature-local" }
   ],
-  "dataset_local": ["starter-openings", "starter-puzzles"]
+  "dataset_local": ["starter-openings", "starter-puzzles"],
+  "dependencies": [
+    { "name": "graphics", "class": "interruption" },
+    { "name": "fonts", "class": "interruption" },
+    { "name": "shaders", "class": "interruption" },
+    { "name": "pieces", "class": "interruption" },
+    { "name": "engine", "class": "interruption" },
+    { "name": "credentials", "class": "feature-local" },
+    { "name": "portal", "class": "feature-local" },
+    { "name": "audio", "class": "feature-local" },
+    { "name": "tablebases", "class": "feature-local" },
+    { "name": "starter-dataset", "class": "dataset-local" }
+  ]
 }

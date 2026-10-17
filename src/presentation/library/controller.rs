@@ -84,6 +84,7 @@ pub struct PresentationLibraryController {
     import: PresentationLibraryImport,
     export_bytes: Option<u64>,
     open_game: Option<(GameId, GameRevision)>,
+    unsaved_games: Vec<GameId>,
 }
 
 impl PresentationLibraryController {
@@ -107,6 +108,7 @@ impl PresentationLibraryController {
             import: PresentationLibraryImport::default(),
             export_bytes: None,
             open_game: None,
+            unsaved_games: Vec::new(),
         }
     }
 
@@ -332,6 +334,12 @@ impl PresentationLibraryController {
                 )
             })
             .ok_or(PresentationLibraryError::MissingPlan)?;
+        if let StorageTrashPreviewRequest::MoveToTrash(game)
+        | StorageTrashPreviewRequest::PermanentlyDelete(game) = plan.action()
+            && self.unsaved_games.contains(&game)
+        {
+            return Err(PresentationLibraryError::UnsavedGame(game));
+        }
         let open_revision = match plan.action() {
             StorageTrashPreviewRequest::MoveToTrash(game)
             | StorageTrashPreviewRequest::PermanentlyDelete(game) => self
@@ -351,6 +359,10 @@ impl PresentationLibraryController {
 
     pub fn observe_open_game(&mut self, open: Option<(GameId, GameRevision)>) {
         self.open_game = open;
+    }
+
+    pub fn observe_unsaved_games(&mut self, games: Vec<GameId>) {
+        self.unsaved_games = games;
     }
 
     pub const fn trash_plan(&self) -> Option<&StorageTrashPlan> {

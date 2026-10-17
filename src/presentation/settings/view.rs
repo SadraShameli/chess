@@ -70,6 +70,15 @@ impl PresentationSettingsView {
                     let step = controller.edit(DesktopPreferencesEnumPatch::Motion(motion));
                     outcome.appearance_changed |= step.appearance_changed;
                 }
+                ui.label("Move notation");
+                let mut notation = pending.notation();
+                for &choice in DesktopPreferences::notations() {
+                    ui.radio_value(&mut notation, choice, choice.label());
+                }
+                if notation != pending.notation() {
+                    let step = controller.edit(DesktopPreferencesEnumPatch::Notation(notation));
+                    outcome.appearance_changed |= step.appearance_changed;
+                }
             }
             DesktopPreferencesEnumSection::BoardAids => {
                 for aid in DesktopPreferencesEnumAid::ALL {

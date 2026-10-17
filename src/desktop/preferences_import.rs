@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::desktop::preferences::{
     DesktopPreferences, DesktopPreferencesChord, DesktopPreferencesDraft,
     DesktopPreferencesEnumAid, DesktopPreferencesEnumAudioCategory, DesktopPreferencesEnumMotion,
-    DesktopPreferencesEnumPatch, DesktopPreferencesEnumShortcutAction, DesktopPreferencesEnumTheme,
+    DesktopPreferencesEnumNotation, DesktopPreferencesEnumPatch, DesktopPreferencesEnumShortcutAction, DesktopPreferencesEnumTheme,
     DesktopPreferencesError, DesktopPreferencesPercent,
 };
 
@@ -14,6 +14,8 @@ struct DesktopPreferencesAppearanceWire {
     theme: Option<DesktopPreferencesEnumTheme>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     motion: Option<DesktopPreferencesEnumMotion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    notation: Option<DesktopPreferencesEnumNotation>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +95,7 @@ impl DesktopPreferencesCodec {
             appearance: Some(DesktopPreferencesAppearanceWire {
                 theme: Some(preferences.theme()),
                 motion: Some(preferences.motion()),
+                notation: Some(preferences.notation()),
             }),
             board_aids: Some(
                 DesktopPreferencesEnumAid::ALL
@@ -170,6 +173,11 @@ impl DesktopPreferencesCodec {
         if let Some(appearance) = document.appearance {
             patches.extend(appearance.theme.map(DesktopPreferencesEnumPatch::Theme));
             patches.extend(appearance.motion.map(DesktopPreferencesEnumPatch::Motion));
+            patches.extend(
+                appearance
+                    .notation
+                    .map(DesktopPreferencesEnumPatch::Notation),
+            );
         }
         if let Some(aids) = document.board_aids {
             let mut seen = Vec::new();
