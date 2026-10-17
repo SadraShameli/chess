@@ -178,3 +178,7 @@ harness = false
 [[bench]]
 name = "opening"
 harness = false
+
+[[bench]]
+name = "engine"
+harness = false

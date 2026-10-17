@@ -15,7 +15,8 @@ use crate::storage::dataset_package::{
     StorageDatasetPackageEnumValidation, StorageDatasetPackageManifest,
 };
 use crate::storage::dataset_registry::{
-    StorageDatasetId, StorageDatasetRegistry, StorageDatasetRegistryEnumKind,
+    StorageDatasetId, StorageDatasetRegistry, StorageDatasetRegistryEntry,
+    StorageDatasetRegistryEnumKind,
     StorageDatasetRegistryEnumOrigin, StorageDatasetRegistryError,
 };
 
@@ -85,7 +86,17 @@ impl DesktopDatasetCommands {
         connection: &mut SqliteConnection,
         integrity: &StorageDatasetIntegrityReport,
     ) -> Result<Vec<DesktopDatasetRow>, DesktopDatasetCommandsError> {
-        Ok(StorageDatasetRegistry::list(connection)?
+        Ok(Self::rows_from_entries(
+            StorageDatasetRegistry::list(connection)?,
+            integrity,
+        ))
+    }
+
+    pub fn rows_from_entries(
+        entries: Vec<StorageDatasetRegistryEntry>,
+        integrity: &StorageDatasetIntegrityReport,
+    ) -> Vec<DesktopDatasetRow> {
+        entries
             .into_iter()
             .map(|entry| {
                 let feature = Self::feature(entry.kind);
@@ -111,7 +122,7 @@ impl DesktopDatasetCommands {
                     refusal,
                 }
             })
-            .collect())
+            .collect()
     }
 
     pub fn preview_import(

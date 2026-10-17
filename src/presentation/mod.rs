@@ -14,5 +14,6 @@ pub mod puzzle;
 pub mod settings;
 pub mod report;
 pub mod study;
+pub mod timing;
 pub mod theme;
 pub mod workbench;

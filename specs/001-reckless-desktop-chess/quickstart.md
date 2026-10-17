@@ -2,8 +2,9 @@
 
 **Status**: Bevy + egui architecture selected under owner delegation. Native
 migration tasks are reconciled in [tasks.md](tasks.md); execution is in progress.
-This guide distinguishes
-existing implementation from future native acceptance.
+This guide distinguishes existing implementation from future native acceptance.
+The [implemented study features](#implemented-study-features) section describes
+what the source provides today; none of it has native acceptance evidence yet.
 
 ## Current checkout
 
@@ -166,6 +167,45 @@ the manual Open Anyway approval. Ubuntu needs the documented graphics, portal an
 desktop packages prepared offline. Record every result, including failures, in
 [evidence/us5.md](evidence/us5.md). Staged packages are checked with
 `chess-tools package-verify` and the notices with `chess-tools notices-check`.
+
+## Implemented study features
+
+These behaviors exist in source with automated tests written against them. They
+are not native acceptance results.
+
+- **Reports**: a finished game can be turned into a report job using the
+  captured engine configuration and a three-second default budget. Reports are
+  created only for completed played games and explicit analysis requests, never
+  on reopen, import or metadata edits. Reanalysis shows a replacement preview and
+  keeps the existing report until you confirm. Outdated and partial reports are
+  labelled, and accuracy is unavailable until a side has scored moves.
+- **Opening explorer**: continuation counts come from the opening index. The
+  index records no results or ratings, so those are shown as unavailable rather
+  than zero. The reference book panel is study-only and never plays a move for an
+  opponent. The explorer and the report share one selected position.
+- **Puzzles**: saved runs list under Puzzles. Delete Run and Delete All History
+  ask for confirmation, a run in progress cannot be deleted, and the puzzle
+  datasets are kept. Deleted attempts are excluded from recomputed summaries.
+- **Data settings**: Settings, Data lists packaged starter sources and installed
+  datasets with license and record counts. Imports show a preview and need
+  confirmation. Replacement keeps the previous version until active runs and
+  queries release it. An integrity failure disables only the affected feature.
+- **No automatic downloads**: nothing fetches or updates datasets.
+
+Developer commands for data preparation and measurement:
+
+```sh
+cargo run --locked --bin chess-tools -- data-verify resources/datasets/sources.json <cache>
+cargo run --locked --bin chess-tools -- data-select-games <pgn> <output>
+cargo run --locked --bin chess-tools -- data-select-puzzles <csv> <output> <source> <version>
+cargo run --locked --bin chess-tools -- data-build <selection-directory> <output>
+cargo run --locked --bin chess-tools -- benchmark-evaluate <measurements.json>
+cargo bench --bench opening
+CHESS_BENCH_ENGINE_DIRECTORY=<engine package> cargo bench --bench engine
+```
+
+The selection tools read uncompressed input; decompress `.zst` downloads first.
+`data-verify` refuses until every source's SHA-256 is recorded.
 
 ## Starter preparation validation
 

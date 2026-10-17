@@ -36,6 +36,8 @@ mod storage_dataset_sources;
 mod storage_datasets;
 #[path = "storage/backup.rs"]
 mod storage_backup;
+#[path = "storage/backup_datasets.rs"]
+mod storage_backup_datasets;
 #[path = "storage/editor_repository.rs"]
 mod storage_editor_repository;
 #[path = "storage/game_document.rs"]
