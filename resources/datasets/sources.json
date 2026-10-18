@@ -13,11 +13,11 @@
     {
       "id": "lichess-puzzles",
       "kind": "puzzles",
-      "version": "2026-10-05",
+      "version": "2026-10-02",
       "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst",
       "file": "lichess_db_puzzle.csv.zst",
       "license": "CC0-1.0",
-      "sha256": null
+      "sha256": "76335bfa7d7c4a7f93c1366d81549e53951ebb79dd43d34904cab8f22d962f8d"
     },
     {
       "id": "lichess-chess-openings",
@@ -26,7 +26,7 @@
       "url": "https://github.com/lichess-org/chess-openings/archive/a6189a30dc273ccb21fc2536a9a2fefd5592a67a.tar.gz",
       "file": "chess-openings-a6189a30dc273ccb21fc2536a9a2fefd5592a67a.tar.gz",
       "license": "CC0-1.0",
-      "sha256": null
+      "sha256": "3dfab80e9bea7aed6ecdd9969945bf943e18c1a75cdd27a53eff5e4f689d9b0d"
     }
   ]
 }
