@@ -124,7 +124,11 @@ impl PresentationThemeComponents {
         enabled: bool,
     ) -> Response {
         let colors = PresentationThemeColors::of(ui.ctx());
-        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
         let (rect, response) = ui.allocate_exact_size(Vec2::new(60.0, 56.0), sense);
         let (fill, text) = if selected {
             (colors.accent_soft, colors.accent)
@@ -140,10 +144,8 @@ impl PresentationThemeComponents {
         };
         let painter = ui.painter();
         painter.rect_filled(rect, PresentationThemeTokens::RADIUS_LG, fill);
-        let icon_rect = egui::Rect::from_center_size(
-            rect.center() - Vec2::new(0.0, 8.0),
-            Vec2::splat(20.0),
-        );
+        let icon_rect =
+            egui::Rect::from_center_size(rect.center() - Vec2::new(0.0, 8.0), Vec2::splat(20.0));
         PresentationThemeIcon::paint(painter, icon_rect, icon, text);
         painter.text(
             rect.center() + Vec2::new(0.0, 13.0),
@@ -369,12 +371,7 @@ impl PresentationThemeComponents {
         changed
     }
 
-    pub fn list_row(
-        ui: &mut Ui,
-        label: &str,
-        meta: Option<&str>,
-        selected: bool,
-    ) -> Response {
+    pub fn list_row(ui: &mut Ui, label: &str, meta: Option<&str>, selected: bool) -> Response {
         let colors = PresentationThemeColors::of(ui.ctx());
         let width = ui.available_width();
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 36.0), Sense::click());

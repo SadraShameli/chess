@@ -78,7 +78,13 @@ impl PresentationThemeIcon {
             PresentationThemeEnumIcon::Library => {
                 rect_at(5.0, 4.0, 4.0, 16.0, 0.0);
                 rect_at(10.0, 4.0, 4.0, 16.0, 0.0);
-                line(&[(15.5, 4.5), (19.3, 3.5), (22.5, 19.0), (18.7, 20.0), (15.5, 4.5)]);
+                line(&[
+                    (15.5, 4.5),
+                    (19.3, 3.5),
+                    (22.5, 19.0),
+                    (18.7, 20.0),
+                    (15.5, 4.5),
+                ]);
             }
             PresentationThemeEnumIcon::Study => {
                 circle(6.0, 5.0, 2.0);
@@ -132,7 +138,15 @@ impl PresentationThemeIcon {
                 line(&[(4.0, 4.0), (4.0, 8.0), (8.0, 8.0)]);
             }
             PresentationThemeEnumIcon::Sound => {
-                line(&[(4.0, 9.0), (4.0, 15.0), (8.0, 15.0), (13.0, 19.0), (13.0, 5.0), (8.0, 9.0), (4.0, 9.0)]);
+                line(&[
+                    (4.0, 9.0),
+                    (4.0, 15.0),
+                    (8.0, 15.0),
+                    (13.0, 19.0),
+                    (13.0, 5.0),
+                    (8.0, 9.0),
+                    (4.0, 9.0),
+                ]);
                 line(&[(17.0, 9.0), (18.5, 12.0), (17.0, 15.0)]);
             }
             PresentationThemeEnumIcon::Pause => {
@@ -144,11 +158,25 @@ impl PresentationThemeIcon {
             }
             PresentationThemeEnumIcon::Takeback => {
                 line(&[(9.0, 14.0), (4.0, 9.0), (9.0, 4.0)]);
-                line(&[(4.0, 9.0), (14.0, 9.0), (18.0, 11.0), (20.0, 15.0), (18.0, 19.0), (14.0, 21.0), (11.0, 21.0)]);
+                line(&[
+                    (4.0, 9.0),
+                    (14.0, 9.0),
+                    (18.0, 11.0),
+                    (20.0, 15.0),
+                    (18.0, 19.0),
+                    (14.0, 21.0),
+                    (11.0, 21.0),
+                ]);
             }
             PresentationThemeEnumIcon::Resign => {
                 line(&[(5.0, 21.0), (5.0, 4.0)]);
-                line(&[(5.0, 4.0), (16.0, 4.0), (14.0, 8.0), (16.0, 12.0), (5.0, 12.0)]);
+                line(&[
+                    (5.0, 4.0),
+                    (16.0, 4.0),
+                    (14.0, 8.0),
+                    (16.0, 12.0),
+                    (5.0, 12.0),
+                ]);
             }
             PresentationThemeEnumIcon::First => {
                 line(&[(6.0, 5.0), (6.0, 19.0)]);
@@ -171,14 +199,23 @@ impl PresentationThemeIcon {
                 line(&[(15.0, 12.0), (15.0, 14.0)]);
             }
             PresentationThemeEnumIcon::Folder => {
-                line(&[(3.0, 7.0), (3.0, 19.0), (21.0, 19.0), (21.0, 8.0), (11.0, 8.0), (9.0, 5.0), (3.0, 5.0), (3.0, 7.0)]);
+                line(&[
+                    (3.0, 7.0),
+                    (3.0, 19.0),
+                    (21.0, 19.0),
+                    (21.0, 8.0),
+                    (11.0, 8.0),
+                    (9.0, 5.0),
+                    (3.0, 5.0),
+                    (3.0, 7.0),
+                ]);
             }
             PresentationThemeEnumIcon::Star => {
                 let points: Vec<(f32, f32)> = (0..=10)
                     .map(|step| {
                         let radius = if step % 2 == 0 { 9.0 } else { 4.0 };
-                        let angle = -std::f32::consts::FRAC_PI_2
-                            + std::f32::consts::PI * step as f32 / 5.0;
+                        let angle =
+                            -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * step as f32 / 5.0;
                         (12.0 + radius * angle.cos(), 12.5 + radius * angle.sin())
                     })
                     .collect();
@@ -207,7 +244,12 @@ impl PresentationThemeIcon {
         }
     }
 
-    pub fn show(ui: &mut Ui, icon: PresentationThemeEnumIcon, size: f32, color: Color32) -> Response {
+    pub fn show(
+        ui: &mut Ui,
+        icon: PresentationThemeEnumIcon,
+        size: f32,
+        color: Color32,
+    ) -> Response {
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
         Self::paint(ui.painter(), rect, icon, color);
         response
@@ -227,7 +269,8 @@ impl PresentationThemeIcon {
         } else {
             colors.text_2
         };
-        ui.painter().rect_filled(rect, PresentationThemeTokens::RADIUS_MD, fill);
+        ui.painter()
+            .rect_filled(rect, PresentationThemeTokens::RADIUS_MD, fill);
         Self::paint(ui.painter(), rect.shrink(6.0), icon, color);
         let label = label.to_owned();
         response.widget_info(|| {
