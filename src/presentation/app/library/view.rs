@@ -123,7 +123,9 @@ impl PresentationAppLibrary {
             }
         }
         if self.annotations.is_conflicted() && !self.editor_busy() {
-            let discard = ui.button("Discard Draft and Use Current Position");
+            let discard =
+                crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                    .show(ui, "Discard Draft and Use Current Position");
             if self.clicked(ui, &discard) {
                 self.annotations.discard_draft()?;
                 self.notes.clear();
@@ -237,34 +239,45 @@ impl PresentationAppLibrary {
         }
         self.modal.capture_invoker(ui.ctx());
         let mut choice = None;
-        let modal =
-            egui::Modal::new(egui::Id::new("chess.library.unsaved_notes")).show(ui.ctx(), |ui| {
-                crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "Unsaved Notes");
-                ui.heading("Save your notes before leaving?");
-                ui.label("Save these notes, discard your edits, or stay here.");
-                let stay = ui.button("Stay");
-                if self.clicked(ui, &stay) {
-                    choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Stay);
+        let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+            ui.ctx(),
+            egui::Id::new("chess.library.unsaved_notes"),
+        )
+        .show(ui.ctx(), |ui| {
+            crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(
+                ui,
+                "Unsaved Notes",
+            );
+            ui.heading("Save your notes before leaving?");
+            ui.label("Save these notes, discard your edits, or stay here.");
+            let stay = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Stay");
+            if self.clicked(ui, &stay) {
+                choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Stay);
+            }
+            let enabled =
+                !self.editor_busy() && !self.source_changed && !self.annotations.is_conflicted();
+            let discard = ui.add_enabled(!self.editor_busy(), egui::Button::new("Discard"));
+            if self.clicked(ui, &discard) {
+                choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Discard);
+            }
+            let save = ui.add_enabled(enabled, egui::Button::new("Save"));
+            if self.clicked(ui, &save) {
+                choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Save);
+            }
+            if self.editor_busy() {
+                ui.label("Waiting for the durable save. Your draft is still here.");
+            }
+            let mut focusable = [stay.id; 3];
+            let mut count = 0;
+            for response in [&stay, &discard, &save] {
+                if response.enabled() {
+                    focusable[count] = response.id;
+                    count += 1;
                 }
-                let enabled = !self.editor_busy()
-                    && !self.source_changed
-                    && !self.annotations.is_conflicted();
-                let discard = ui.add_enabled(!self.editor_busy(), egui::Button::new("Discard"));
-                if self.clicked(ui, &discard) {
-                    choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Discard);
-                }
-                let save = ui.add_enabled(enabled, egui::Button::new("Save"));
-                if self.clicked(ui, &save) {
-                    choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Save);
-                }
-                if self.editor_busy() {
-                    ui.label("Waiting for the durable save. Your draft is still here.");
-                }
-                let mut focusable = [stay.id; 3];
-                let mut count = 0;
-                for response in [&stay, &discard, &save] { if response.enabled() { focusable[count] = response.id; count += 1; } }
-                self.modal.contain(ui, &focusable[..count]);
-            });
+            }
+            self.modal.contain(ui, &focusable[..count]);
+        });
         if modal.should_close() && !ui.is_sizing_pass() {
             choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Stay);
         }

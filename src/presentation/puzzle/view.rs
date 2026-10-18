@@ -132,12 +132,12 @@ impl PresentationPuzzleView {
         if controller.is_confirming_end() {
             let mut cancel = false;
             let mut confirm = false;
-            let modal = egui::Modal::new(egui::Id::new("puzzle.end.confirmation")).show(ui.ctx(), |ui| {
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("puzzle.end.confirmation")).show(ui.ctx(), |ui| {
                 ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
                 crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "End this run");
                 ui.heading("End this run?");
                 ui.label("An unfinished puzzle is recorded as skipped. Earlier failures remain failed.");
-                cancel = ui.button("Keep Playing").clicked();
+                cancel = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost.show(ui, "Keep Playing").clicked();
                 confirm = Self::button(ui, controller, "Confirm End Run", PresentationPuzzleControllerEnumAction::End(PuzzleRunEnumConfirmation::Confirmed));
             });
             if cancel || modal.should_close() {
@@ -293,7 +293,11 @@ impl PresentationPuzzleView {
         }
         let mut chosen = None;
         let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::new("puzzle.promotion")).show(ui.ctx(), |ui| {
+        let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+            ui.ctx(),
+            egui::Id::new("puzzle.promotion"),
+        )
+        .show(ui.ctx(), |ui| {
             crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(
                 ui,
                 "Choose promotion",
@@ -315,7 +319,9 @@ impl PresentationPuzzleView {
                     chosen = Some(PresentationPuzzleControllerEnumAction::Move(*movement));
                 }
             }
-            cancel = ui.button("Cancel Promotion").clicked();
+            cancel = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Cancel Promotion")
+                .clicked();
         });
         if cancel || modal.should_close() {
             controller.cancel_selection();

@@ -230,7 +230,9 @@ impl PresentationLibraryPanel {
                 } else {
                     ui.label(format!("Selected tag name not loaded: {id}"));
                 }
-                let deselect = ui.button("Remove tag filter");
+                let deselect =
+                    crate::presentation::theme::components::PresentationThemeEnumButton::Danger
+                        .show(ui, "Remove tag filter");
                 if self.frame.clicked(ui, &deselect) {
                     remove = Some(*id);
                 }

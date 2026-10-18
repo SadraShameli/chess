@@ -34,16 +34,24 @@ impl PresentationPuzzleHistory {
     ) -> PresentationPuzzleHistoryEnumChoice {
         let mut confirm = false;
         let mut cancel = false;
-        let modal =
-            egui::Modal::new(egui::Id::new("puzzle.history.deletion")).show(ui.ctx(), |ui| {
-                ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
-                PresentationAnalysisEditorModal::label(ui, "Delete puzzle history");
-                ui.heading("Delete puzzle history?");
-                ui.label(Self::warning(scope));
-                ui.label("A run in progress cannot be deleted.");
-                cancel = ui.button("Keep History").clicked();
-                confirm = ui.button("Confirm Delete").clicked();
-            });
+        let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+            ui.ctx(),
+            egui::Id::new("puzzle.history.deletion"),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
+            PresentationAnalysisEditorModal::label(ui, "Delete puzzle history");
+            ui.heading("Delete puzzle history?");
+            ui.label(Self::warning(scope));
+            ui.label("A run in progress cannot be deleted.");
+            cancel = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Keep History")
+                .clicked();
+            confirm =
+                crate::presentation::theme::components::PresentationThemeEnumButton::DangerSolid
+                    .show(ui, "Confirm Delete")
+                    .clicked();
+        });
         if cancel || modal.should_close() {
             PresentationPuzzleHistoryEnumChoice::Cancel
         } else if confirm {

@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reckless Chess design system</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>
+body{margin:0}
+a{color:var(--acc)}a:hover{color:var(--acc-hover)}
+</style>
+</helmet>
+<div class="app" data-theme="{{theme}}" style="width: 100%; min-height: 2600px; background: var(--bg); padding: 64px 32px 96px">
+<div style="max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 72px">
+
+<header style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 12px; max-width: 720px">
+<div style="display: flex; align-items: center; gap: 12px">
+<div style="width: 36px; height: 36px; border-radius: 8px; background: var(--tx); color: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 24px; line-height: 1" class="fig" aria-hidden="true">♞</div>
+<span class="eyebrow">Reckless Chess · UI system 0.1</span>
+</div>
+<h1 style="margin: 0; font-size: 40px; line-height: 48px; font-weight: 600; letter-spacing: -0.02em">A quiet frame for a loud engine.</h1>
+<p style="margin: 0; font-size: 16px; line-height: 24px; color: var(--tx2)">Warm neutral surfaces, one cool accent, tabular numbers everywhere a number moves. The board is the only thing allowed to look expensive. Status colors appear only when they mean something.</p>
+</div>
+<div style="display: flex; gap: 8px; align-items: center">
+<span class="pill pill-acc">Dark first</span>
+<span class="pill">WCAG AA</span>
+<span class="pill">28 px min target</span>
+</div>
+</header>
+
+<section style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span class="eyebrow">01 · Color</span>
+<h2 style="margin: 0; font-size: 24px; line-height: 32px; font-weight: 600">Tokens, dark and light</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px">
+<div data-theme="dark" class="app" style="border-radius: 12px; border: 1px solid var(--line); background: var(--bg); padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; justify-content: space-between; align-items: center"><strong style="font-size: 14px">Dark</strong><span class="mono" style="font-size: 11px; color: var(--tx3)">data-theme="dark"</span></div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<sc-for list="{{darkTokens}}" as="t" hint-placeholder-count="16">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="height: 56px; border-radius: 8px; border: 1px solid var(--line); background: var({{t.v}})"></div>
+<div style="font-size: 12px; font-weight: 600">{{t.n}}</div>
+<div class="mono" style="font-size: 11px; color: var(--tx3)">{{t.hex}}</div>
+</div>
+</sc-for>
+</div>
+</div>
+<div data-theme="light" class="app" style="border-radius: 12px; border: 1px solid var(--line); background: var(--bg); padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; justify-content: space-between; align-items: center"><strong style="font-size: 14px">Light</strong><span class="mono" style="font-size: 11px; color: var(--tx3)">data-theme="light"</span></div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<sc-for list="{{lightTokens}}" as="t" hint-placeholder-count="16">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="height: 56px; border-radius: 8px; border: 1px solid var(--line); background: var({{t.v}})"></div>
+<div style="font-size: 12px; font-weight: 600">{{t.n}}</div>
+<div class="mono" style="font-size: 11px; color: var(--tx3)">{{t.hex}}</div>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px"><span class="pill pill-run" style="align-self: flex-start"><span class="dot"></span>Running</span><span style="font-size: 12px; color: var(--tx2)">The side to move's clock and a thinking engine. Never decoration.</span></div>
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px"><span class="pill pill-low" style="align-self: flex-start"><span class="dot"></span>Low time</span><span style="font-size: 12px; color: var(--tx2)">Clock under 20 s, or 10% of base time, whichever is larger.</span></div>
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px"><span class="pill pill-err" style="align-self: flex-start"><span class="dot"></span>Engine error</span><span style="font-size: 12px; color: var(--tx2)">Engine crash, graphics fallback, failed import. Also destructive actions.</span></div>
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px"><span class="pill pill-unsaved" style="align-self: flex-start"><span class="dot"></span>Unsaved</span><span style="font-size: 12px; color: var(--tx2)">A tab, draft or study with changes not yet in the library.</span></div>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span class="eyebrow">02 · Type</span>
+<h2 style="margin: 0; font-size: 24px; line-height: 32px; font-weight: 600">Inter, with tabular figures where numbers move</h2>
+</div>
+<div class="card" style="padding: 8px 24px">
+<sc-for list="{{typeScale}}" as="ty" hint-placeholder-count="8">
+<div style="display: flex; align-items: baseline; gap: 24px; padding: 14px 0; border-bottom: 1px solid var(--line)">
+<span class="mono" style="width: 150px; flex: none; font-size: 11px; color: var(--tx3)">{{ty.spec}}</span>
+<span style="{{ty.style}}">{{ty.sample}}</span>
+</div>
+</sc-for>
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 40px; padding: 18px 0">
+<div style="display: flex; flex-direction: column; gap: 6px"><span class="mono" style="font-size: 11px; color: var(--tx3)">Clock · 600 32/1 tnum</span><span class="tnum" style="font-size: 32px; font-weight: 600; letter-spacing: -0.01em">03:41.7</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><span class="mono" style="font-size: 11px; color: var(--tx3)">Eval · JetBrains Mono 500 14</span><span class="mono" style="font-size: 14px; font-weight: 500">+0.34  d 28/41</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><span class="mono" style="font-size: 11px; color: var(--tx3)">Move list · figurine 14 tnum</span><span class="tnum" style="font-size: 14px"><span style="color: var(--tx3)">12.</span> <span class="fig">♘</span>bd2  <span class="fig">♗</span>d7  <span style="color: var(--tx3)">13.</span> <span class="fig">♘</span>f1</span></div>
+</div>
+</div>
+</section>
+
+<section style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="eyebrow">03 · Spacing</span>
+<div class="card" style="padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<sc-for list="{{spacing}}" as="sp" hint-placeholder-count="8">
+<div style="display: flex; align-items: center; gap: 12px"><span class="mono" style="width: 28px; font-size: 11px; color: var(--tx3)">{{sp.n}}</span><div style="height: 10px; border-radius: 2px; background: var(--acc); width: {{sp.w}}"></div></div>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="eyebrow">04 · Radius</span>
+<div class="card" style="padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 4px; background: var(--s3)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">4 · kbd, chips</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 6px; background: var(--s3)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">6 · controls</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 10px; background: var(--s3)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">10 · cards</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 14px; background: var(--s3)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">14 · dialogs</span></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 16px">
+<span class="eyebrow">05 · Elevation</span>
+<div class="card" style="padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; background: var(--bg)">
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 8px; background: var(--s1); border: 1px solid var(--line)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">0 · flat panel</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 8px; background: var(--s2); box-shadow: var(--shadow-1)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">1 · control</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 8px; background: var(--s2); box-shadow: var(--shadow-2)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">2 · menu, toast</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 56px; border-radius: 8px; background: var(--s2); box-shadow: var(--shadow-3)"></div><span class="mono" style="font-size: 11px; color: var(--tx3)">3 · dialog</span></div>
+</div>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span class="eyebrow">06 · Components</span>
+<h2 style="margin: 0; font-size: 24px; line-height: 32px; font-weight: 600">Controls</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px">
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Buttons · 32 default, 28 small, 40 large</span>
+<div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+<button class="btn btn-primary" type="button">Start game</button>
+<button class="btn" type="button">Takeback</button>
+<button class="btn btn-ghost" type="button">Cancel</button>
+<button class="btn btn-danger" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>Resign</button>
+<button class="btn btn-icon" type="button" aria-label="Pause"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg></button>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+<button class="btn btn-primary btn-lg" type="button">New game</button>
+<button class="btn btn-sm" type="button">Hint</button>
+<button class="btn focus-ring" type="button">Focused</button>
+<button class="btn" type="button" disabled="">Disabled</button>
+<button class="btn btn-danger-solid" type="button">Delete 3 games</button>
+</div>
+</div>
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Inputs</span>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div class="field"><label class="label" for="ds-name">Player name</label><input class="input" id="ds-name" value="Sadra"></div>
+<div class="field"><label class="label" for="ds-search">Search</label>
+<div style="position: relative"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="position: absolute; left: 10px; top: 8px; color: var(--tx3)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input class="input" id="ds-search" placeholder="Players, openings, events" style="padding-left: 32px; padding-right: 40px"><span class="kbd" style="position: absolute; right: 6px; top: 6px">/</span></div></div>
+<div class="field"><label class="label" for="ds-sel">Engine strength</label>
+<div style="position: relative"><select class="input" id="ds-sel" style="appearance: none; padding-right: 28px"><option>Level 7 · about 2100</option></select><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="position: absolute; right: 8px; top: 8px; color: var(--tx3); pointer-events: none"><path d="m6 9 6 6 6-6"/></svg></div></div>
+<div class="field"><label class="label" for="ds-err">Hash (MB)</label><input class="input" id="ds-err" value="99999" style="border-color: var(--err)"><span style="font-size: 12px; color: var(--err)">Up to 4096 MB on this machine.</span></div>
+</div>
+</div>
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Game tabs</span>
+<div style="display: flex; gap: 4px; align-items: center; padding: 4px; background: var(--bg); border-radius: 8px; border: 1px solid var(--line); overflow-x: auto">
+<div class="tab on"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--run)"></span>vs Reckless<span class="tnum" style="color: var(--tx3)">5+3</span><button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Close tab" style="width: 20px; height: 20px"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="width: 12px; height: 12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+<div class="tab">Local<span class="tnum" style="color: var(--tx3)">10+0</span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--unsaved)" aria-label="Unsaved"></span></div>
+<div class="tab"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="width: 12px; height: 12px"><path d="M9 5v14M15 5v14"/></svg>Chess960<span class="tnum" style="color: var(--tx3)">15+10</span></div>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="New game tab"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+</div>
+<span class="label">Segmented control</span>
+<div style="display: flex; flex-wrap: wrap; gap: 12px">
+<div class="seg" role="group" aria-label="Side"><button type="button">White</button><button type="button" class="on">Random</button><button type="button">Black</button></div>
+<div class="seg" role="group" aria-label="Theme"><button type="button" class="on">Dark</button><button type="button">Light</button><button type="button">System</button></div>
+</div>
+</div>
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Status pills</span>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<span class="pill pill-run"><span class="dot"></span>Your move</span>
+<span class="pill pill-low"><span class="dot"></span>0:14</span>
+<span class="pill pill-err"><span class="dot"></span>Engine stopped</span>
+<span class="pill pill-unsaved"><span class="dot"></span>Unsaved</span>
+<span class="pill">Paused</span>
+<span class="pill pill-acc">Chess960</span>
+</div>
+<span class="label">List rows</span>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<div class="row sel"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--acc)"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span style="flex: 1">Ruy Lopez prep</span><span class="meta tnum">48</span></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span style="flex: 1">Endgames</span><span class="meta tnum">112</span></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span style="flex: 1">Trash</span><span class="meta tnum">3</span></div>
+</div>
+</div>
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Clock · idle, running, low time, paused</span>
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center">
+<div class="clock">04:12</div>
+<div class="clock run" style="--left: 74%">03:41</div>
+<div class="clock low">0:14.6</div>
+<div class="clock" style="color: var(--tx3)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>02:58</div>
+</div>
+<span class="label">Eval bar · vertical beside the board, horizontal in compact lists</span>
+<div style="display: flex; gap: 24px; align-items: center">
+<div style="width: 14px; height: 160px; border-radius: 4px; background: #2A2622; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; box-shadow: inset 0 0 0 1px var(--line)" role="img" aria-label="Evaluation plus 0.34"><div style="height: 56%; background: #EEE8DC"></div></div>
+<div style="display: flex; flex-direction: column; gap: 10px; flex: 1">
+<div style="display: flex; align-items: center; gap: 10px"><span class="mono" style="width: 48px; font-size: 13px; font-weight: 600">+0.34</span><div style="flex: 1; height: 8px; border-radius: 4px; background: #2A2622; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line)"><div style="width: 56%; height: 100%; background: #EEE8DC"></div></div></div>
+<div style="display: flex; align-items: center; gap: 10px"><span class="mono" style="width: 48px; font-size: 13px; font-weight: 600">−2.10</span><div style="flex: 1; height: 8px; border-radius: 4px; background: #2A2622; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line)"><div style="width: 22%; height: 100%; background: #EEE8DC"></div></div></div>
+<div style="display: flex; align-items: center; gap: 10px"><span class="mono" style="width: 48px; font-size: 13px; font-weight: 600">#4</span><div style="flex: 1; height: 8px; border-radius: 4px; background: #2A2622; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line)"><div style="width: 100%; height: 100%; background: #EEE8DC"></div></div></div>
+</div>
+</div>
+</div>
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Toast · bottom center, 2 lines max, one action</span>
+<div style="display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; border-radius: 10px; background: var(--s3); box-shadow: var(--shadow-2); border: 1px solid var(--line)">
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--run)"><path d="m5 12 5 5 9-10"/></svg>
+<span style="flex: 1">Imported 214 games. 6 duplicates skipped.</span>
+<button class="btn btn-ghost btn-sm" type="button">Undo</button>
+</div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; border-radius: 10px; background: var(--s3); box-shadow: var(--shadow-2); border: 1px solid var(--line)">
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--err)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.01"/></svg>
+<span style="flex: 1">Reckless stopped responding. Restarted at depth 0.</span>
+<button class="btn btn-ghost btn-sm" type="button">Details</button>
+</div>
+</div>
+
+<div class="card" style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+<span class="label">Modal · 440 wide, title, one sentence, two buttons</span>
+<div style="border-radius: 14px; background: var(--s2); box-shadow: var(--shadow-3); border: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<strong style="font-size: 16px; line-height: 24px">Resign this game?</strong>
+<span style="color: var(--tx2)">It will be saved to your library as a loss.</span>
+<div style="display: flex; justify-content: flex-end; gap: 8px"><button class="btn btn-ghost" type="button">Keep playing <span class="kbd">Esc</span></button><button class="btn btn-danger-solid" type="button">Resign</button></div>
+</div>
+<span class="label">Promotion picker</span>
+<div style="display: inline-flex; gap: 4px; padding: 4px; border-radius: 10px; background: var(--s2); box-shadow: var(--shadow-2); border: 1px solid var(--line); align-self: flex-start">
+<button class="btn btn-ghost fig" type="button" aria-label="Queen" style="width: 48px; height: 48px; font-size: 32px; color: var(--tx); background: var(--acc-soft)">♛</button>
+<button class="btn btn-ghost fig" type="button" aria-label="Rook" style="width: 48px; height: 48px; font-size: 32px; color: var(--tx)">♜</button>
+<button class="btn btn-ghost fig" type="button" aria-label="Bishop" style="width: 48px; height: 48px; font-size: 32px; color: var(--tx)">♝</button>
+<button class="btn btn-ghost fig" type="button" aria-label="Knight" style="width: 48px; height: 48px; font-size: 32px; color: var(--tx)">♞</button>
+</div>
+</div>
+
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<span class="eyebrow">07 · Rules</span>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<div class="card" style="padding: 20px; display: flex; flex-direction: column; gap: 8px"><strong>Board first</strong><span style="color: var(--tx2)">Center stage, as large as the window allows. Clocks and names sit on its edges. Inspector is 360 px, resizable 300–520, collapsible with <span class="kbd">I</span>.</span></div>
+<div class="card" style="padding: 20px; display: flex; flex-direction: column; gap: 8px"><strong>Every action has a key</strong><span style="color: var(--tx2)">Shortcuts shown in tooltips and the command palette <span class="kbd">⌘</span><span class="kbd">K</span>. Focus ring is 2 px accent with 2 px offset, never removed.</span></div>
+<div class="card" style="padding: 20px; display: flex; flex-direction: column; gap: 8px"><strong>Calm motion</strong><span style="color: var(--tx2)">120 ms fades, 180 ms piece moves, camera eases only on explicit rotate. Reduced motion: instant moves, no camera drift.</span></div>
+</div>
+</section>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":2600}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const tokens = [
+      ['Ground', '--bg', '#12110F', '#F3F0E9'],
+      ['Surface 1', '--s1', '#1A1916', '#FBFAF6'],
+      ['Surface 2', '--s2', '#22201C', '#EEEAE2'],
+      ['Surface 3', '--s3', '#2C2A25', '#E4DFD5'],
+      ['Line', '--line', '#34312B', '#DCD6CA'],
+      ['Text', '--tx', '#EEEAE2', '#1C1A17'],
+      ['Text 2', '--tx2', '#BAB3A7', '#4F4A43'],
+      ['Text 3', '--tx3', '#938C80', '#6B645A'],
+      ['Accent', '--acc', '#A9BCF2', '#3651B0'],
+      ['Running', '--run', '#7FCB98', '#2F8650'],
+      ['Low time', '--low', '#F2925F', '#B8541E'],
+      ['Error', '--err', '#F07B7B', '#B83A3A'],
+      ['Unsaved', '--unsaved', '#E3BC5B', '#8A6510'],
+      ['Board light', '--board-light', '#DDCFB3', '#E6DAC2'],
+      ['Board dark', '--board-dark', '#937658', '#A3845F'],
+      ['Board rim', '--rim', '#2A2621', '#CFC6B5'],
+    ];
+    const typeScale = [
+      ['Display · 600 32/40', 'font-size: 32px; line-height: 40px; font-weight: 600; letter-spacing: -0.02em', 'Analysis complete'],
+      ['Title · 600 24/32', 'font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.01em', 'Queen’s Gambit Declined'],
+      ['Heading · 600 18/24', 'font-size: 18px; line-height: 24px; font-weight: 600', 'Engine analysis'],
+      ['Subhead · 600 14/20', 'font-size: 14px; line-height: 20px; font-weight: 600', 'Opening explorer'],
+      ['Body · 400 14/20', 'font-size: 14px; line-height: 20px', 'White keeps a small edge after the minority attack.'],
+      ['UI · 500 13/18', 'font-size: 13px; line-height: 18px; font-weight: 500', 'Offer draw'],
+      ['Caption · 400 12/16', 'font-size: 12px; line-height: 16px; color: var(--tx2)', 'Saved 2 minutes ago'],
+      ['Micro · 600 11/14 caps', 'font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tx3)', 'Move list'],
+    ].map(([spec, style, sample]) => ({ spec, style, sample }));
+    const spacing = [4, 8, 12, 16, 20, 24, 32, 48].map((n) => ({ n: String(n), w: n * 4 + 'px' }));
+    return {
+      theme: this.props.theme ?? 'dark',
+      darkTokens: tokens.map(([n, v, d]) => ({ n, v, hex: d })),
+      lightTokens: tokens.map(([n, v, , l]) => ({ n, v, hex: l })),
+      typeScale,
+      spacing,
+    };
+  }
+}
+</script>
+</body>
+</html>

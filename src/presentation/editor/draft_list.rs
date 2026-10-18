@@ -69,7 +69,10 @@ impl PresentationEditorDraftList {
         if let Some(entry) = self.delete_confirmation {
             ui.group(|ui| {
                 ui.label(format!("Delete saved draft {}?", entry.id()));
-                if ui.button("Confirm Delete Draft").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::DangerSolid
+                    .show(ui, "Confirm Delete Draft")
+                    .clicked()
+                {
                     action = Some(PresentationEditorDraftListEnumAction::Delete {
                         id: entry.id(),
                         storage_revision: entry.storage_revision(),
@@ -77,17 +80,25 @@ impl PresentationEditorDraftList {
                     });
                     self.delete_confirmation = None;
                 }
-                if ui.button("Keep Saved Draft").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                    .show(ui, "Keep Saved Draft")
+                    .clicked()
+                {
                     self.delete_confirmation = None;
                 }
             });
         }
         ui.horizontal(|ui| {
-            if ui.button("Refresh Position Drafts").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Refresh Position Drafts")
+                .clicked()
+            {
                 action = Some(PresentationEditorDraftListEnumAction::List { after: None });
             }
             if let Some(after) = page.next_cursor()
-                && ui.button("Next Position Drafts").clicked()
+                && crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                    .show(ui, "Next Position Drafts")
+                    .clicked()
             {
                 action = Some(PresentationEditorDraftListEnumAction::List { after: Some(after) });
             }

@@ -1174,7 +1174,9 @@ impl PresentationEnginePanels {
                 .control
                 .as_ref()
                 .is_some_and(|pending| pending.receipt.is_none()))
-            && ui.button("Retry Engine Action").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Engine Action")
+                .clicked()
             && self.refresh_frame != Some(frame)
         {
             self.refresh_frame = Some(frame);
@@ -1197,7 +1199,9 @@ impl PresentationEnginePanels {
                 }
             });
             if let Some((native, context, admitted)) = setup
-                && ui.button("Cancel Diagnostic Setup").clicked()
+                && crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                    .show(ui, "Cancel Diagnostic Setup")
+                    .clicked()
             {
                 if admitted {
                     let job = WorkbenchJobId::try_from(native.as_uuid())?;
@@ -1216,7 +1220,9 @@ impl PresentationEnginePanels {
             }
             if let Some(controller) = &mut self.analysis
                 && controller.can_stop()
-                && ui.button("Stop Active Analysis").clicked()
+                && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Stop Active Analysis")
+                    .clicked()
                 && let Some(intent) = controller.stop(DesktopRequestId::new())?
             {
                 self.submit_analysis(intent, port)?;
@@ -1225,7 +1231,9 @@ impl PresentationEnginePanels {
                 && let Some(controller) = &mut self.workbench
                 && controller.can_cancel()
                 && let Some(job) = controller.job().map(|job| job.id())
-                && ui.button("Cancel Active Diagnostic").clicked()
+                && crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                    .show(ui, "Cancel Active Diagnostic")
+                    .clicked()
                 && let Some(intent) = controller.cancel(job, DesktopRequestId::new())?
             {
                 self.submit_workbench(intent, port)?;
@@ -1260,7 +1268,11 @@ impl PresentationEnginePanels {
                 .show(ui, |ui| {
                     ui.monospace(String::from_utf8_lossy(preview.bytes()));
                 });
-            if ui.button("Save Diagnostic Export").clicked() && self.pending.is_none() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                .show(ui, "Save Diagnostic Export")
+                .clicked()
+                && self.pending.is_none()
+            {
                 self.pending = Some(self.prepare_file(
                     port,
                     DesktopFileEnumPurpose::WriteFile,
@@ -1268,7 +1280,11 @@ impl PresentationEnginePanels {
                 )?);
                 Self::admit(&mut self.pending, port)?;
             }
-            if ui.button("Cancel Diagnostic Export").clicked() && self.pending.is_none() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Cancel Diagnostic Export")
+                .clicked()
+                && self.pending.is_none()
+            {
                 self.reject(
                     PresentationEnginePanelsEnumPending::ExportPreview(request, context, job),
                     Self::cancelled(),

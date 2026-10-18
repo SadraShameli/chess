@@ -309,7 +309,7 @@ impl PresentationGameNewGame {
                     if self.draft.clock_format
                         == PresentationGameConfigurationEnumClockFormat::Staged
                         && count > 1
-                        && ui.button("Remove stage").clicked()
+                        && crate::presentation::theme::components::PresentationThemeEnumButton::Danger.show(ui, "Remove stage").clicked()
                     {
                         remove = Some(index);
                     }
@@ -321,7 +321,9 @@ impl PresentationGameNewGame {
         }
         if (self.draft.clock_format == PresentationGameConfigurationEnumClockFormat::Staged
             || self.draft.stages.is_empty())
-            && ui.button("Add stage").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Add stage")
+                .clicked()
         {
             self.draft.add_stage();
         }

@@ -148,7 +148,10 @@ impl PresentationEditorView {
         let editable = controller.can_edit() && self.confirmation.is_none();
         ui.add_enabled_ui(editable, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("New Draft").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "New Draft")
+                    .clicked()
+                {
                     action = Some(PresentationEditorViewEnumAction::Create);
                 }
                 if ui
@@ -162,7 +165,10 @@ impl PresentationEditorView {
                         DesktopEditorCommandsEnumOperation::Save { expected: context },
                     ));
                 }
-                if ui.button("Leave Editor").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Leave Editor")
+                    .clicked()
+                {
                     action = Some(PresentationEditorViewEnumAction::Command(
                         DesktopEditorCommandsEnumOperation::Leave { expected: context },
                     ));
@@ -211,7 +217,10 @@ impl PresentationEditorView {
                     ));
                     self.confirmation = None;
                 }
-                if ui.button("Cancel Setup Replacement").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                    .show(ui, "Cancel Setup Replacement")
+                    .clicked()
+                {
                     self.confirmation = None;
                 }
             });
@@ -233,7 +242,10 @@ impl PresentationEditorView {
                             BoardEditorSessionEnumOperation::PlaceSelected(square),
                         ));
                     }
-                    if ui.button("Remove Focused Piece").clicked() {
+                    if crate::presentation::theme::components::PresentationThemeEnumButton::Danger
+                        .show(ui, "Remove Focused Piece")
+                        .clicked()
+                    {
                         action = Some(Self::edit(
                             context,
                             BoardEditorSessionEnumOperation::Edit(
@@ -247,7 +259,10 @@ impl PresentationEditorView {
             });
             self.show_fields(ui, snapshot, &mut action);
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Validate Draft").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Validate Draft")
+                    .clicked()
+                {
                     action = Some(PresentationEditorViewEnumAction::Command(
                         DesktopEditorCommandsEnumOperation::Validate { expected: context },
                     ));

@@ -79,10 +79,16 @@ impl PresentationBoardToolbar {
                 "Marking destination square for arrows",
             )
         });
-        if ui.button("Mark Circle").clicked() {
+        if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            .show(ui, "Mark Circle")
+            .clicked()
+        {
             markings.toggle_entry(false);
         }
-        if ui.button("Mark Arrow").clicked() {
+        if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            .show(ui, "Mark Arrow")
+            .clicked()
+        {
             markings.toggle_entry(true);
         }
         if markings.is_entry_invalid() {

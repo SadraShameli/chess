@@ -55,12 +55,12 @@ impl PresentationReportView {
         if controller.has_replacement_preview() {
             let mut confirm = false;
             let mut discard = false;
-            let modal = egui::Modal::new(egui::Id::new("report.replacement")).show(ui.ctx(), |ui| {
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("report.replacement")).show(ui.ctx(), |ui| {
                 crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "Replace this report");
                 ui.heading("Replace this report?");
                 ui.label("The new analysis starts from scratch. The existing report is kept until you confirm.");
-                discard = ui.button("Keep Existing Report").clicked();
-                confirm = ui.button("Confirm Replacement").clicked();
+                discard = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost.show(ui, "Keep Existing Report").clicked();
+                confirm = crate::presentation::theme::components::PresentationThemeEnumButton::Primary.show(ui, "Confirm Replacement").clicked();
             });
             if discard || modal.should_close() {
                 intent = Some(PresentationReportIntent::DiscardReplacement(view.id));

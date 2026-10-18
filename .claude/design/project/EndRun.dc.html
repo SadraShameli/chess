@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>End run confirmation</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div class="app" data-theme="{{theme}}" style="width: 100%; height: 100vh; min-height: 720px; position: relative; overflow: hidden; background: var(--bg)">
+<dc-import name="Puzzles" theme="{{theme}}" hint-size="100%,100%"></dc-import>
+<div style="position: absolute; inset: 0; background: var(--scrim); display: flex; justify-content: center; align-items: center; padding: 16px">
+<div role="alertdialog" aria-modal="true" aria-labelledby="er-title" aria-describedby="er-desc" style="width: 440px; max-width: 100%; border-radius: 14px; background: var(--s2); border: 1px solid var(--line); box-shadow: var(--shadow-3); padding: 20px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h2 id="er-title" style="margin: 0; font-size: 18px; line-height: 24px; font-weight: 600">End this run?</h2>
+<p id="er-desc" style="margin: 0; color: var(--tx2); font-size: 14px; line-height: 20px">The timer stops and the run is saved to your history with the puzzles you finished.</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="padding: 10px 12px; border-radius: 8px; background: var(--s1); display: flex; flex-direction: column; gap: 2px"><span style="font-size: 12px; color: var(--tx3)">Solved</span><span class="tnum" style="font-size: 18px; font-weight: 600">6</span></div>
+<div style="padding: 10px 12px; border-radius: 8px; background: var(--s1); display: flex; flex-direction: column; gap: 2px"><span style="font-size: 12px; color: var(--tx3)">Missed</span><span class="tnum" style="font-size: 18px; font-weight: 600">1</span></div>
+<div style="padding: 10px 12px; border-radius: 8px; background: var(--s1); display: flex; flex-direction: column; gap: 2px"><span style="font-size: 12px; color: var(--tx3)">Time left</span><span class="tnum" style="font-size: 18px; font-weight: 600">07:42</span></div>
+</div>
+<div style="display: flex; justify-content: flex-end; gap: 8px">
+<a href="Puzzles.dc.html" class="btn btn-ghost" style="text-decoration: none">Keep solving <span class="kbd">Esc</span></a>
+<button class="btn btn-danger-solid" type="button">End run</button>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.theme ?? 'dark' };
+  }
+}
+</script>
+</body>
+</html>

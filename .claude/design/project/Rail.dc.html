@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workspace rail</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<nav aria-label="Workspaces" style="width: 76px; height: 100%; min-height: 900px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; background: var(--s1); border-right: 1px solid var(--line); font-family: 'Inter', sans-serif; color: var(--tx)">
+<div class="fig" aria-hidden="true" style="width: 36px; height: 36px; margin-bottom: 14px; border-radius: 9px; background: var(--tx); color: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 24px; line-height: 1">♞</div>
+<a href="GamesLive.dc.html" aria-current="{{games.cur}}" style="width: 60px; height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; background: {{games.bg}}; color: {{games.fg}}; font-size: 11px; font-weight: 500">
+<svg class="icon icon-20" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>Games</a>
+<a href="Puzzles.dc.html" aria-current="{{puzzles.cur}}" style="width: 60px; height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; background: {{puzzles.bg}}; color: {{puzzles.fg}}; font-size: 11px; font-weight: 500">
+<svg class="icon icon-20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>Puzzles</a>
+<a href="Library.dc.html" aria-current="{{library.cur}}" style="width: 60px; height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; background: {{library.bg}}; color: {{library.fg}}; font-size: 11px; font-weight: 500">
+<svg class="icon icon-20" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15.5 4.5l3.8-1 3.2 15.5-3.8 1z"/></svg>Library</a>
+<a href="Study.dc.html" aria-current="{{study.cur}}" style="width: 60px; height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; background: {{study.bg}}; color: {{study.fg}}; font-size: 11px; font-weight: 500">
+<svg class="icon icon-20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 7v10M18 11c0 4-4 4-10 7"/></svg>Study</a>
+<div style="flex: 1"></div>
+<a href="CommandPalette.dc.html" aria-label="Command palette" style="width: 60px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 2px; text-decoration: none; color: var(--tx3)"><span class="kbd">⌘</span><span class="kbd">K</span></a>
+<a href="Settings.dc.html" aria-current="{{settings.cur}}" style="width: 60px; height: 56px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; background: {{settings.bg}}; color: {{settings.fg}}; font-size: 11px; font-weight: 500">
+<svg class="icon icon-20" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Settings</a>
+</nav>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"active":{"editor":"enum","options":["games","puzzles","library","study","settings"],"default":"games"},"$preview":{"width":76,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const active = this.props.active ?? 'games';
+    const item = (key) => key === active
+      ? { bg: 'var(--acc-soft)', fg: 'var(--acc)', cur: 'page' }
+      : { bg: 'transparent', fg: 'var(--tx3)', cur: 'false' };
+    return {
+      games: item('games'),
+      puzzles: item('puzzles'),
+      library: item('library'),
+      study: item('study'),
+      settings: item('settings'),
+    };
+  }
+}
+</script>
+</body>
+</html>

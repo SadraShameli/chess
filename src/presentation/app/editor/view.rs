@@ -37,7 +37,11 @@ impl PresentationApp {
         }
         if editor.controller.pending_request().is_some() && editor.controller.receipt().is_none() {
             ui.label("Editor action is waiting for capacity");
-            if ui.button("Retry Editor Action").clicked() && !ui.is_sizing_pass() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Editor Action")
+                .clicked()
+                && !ui.is_sizing_pass()
+            {
                 let port =
                     PresentationEditorApplicationPort::new(editor.connection.owner, application);
                 match editor.controller.retry(&port) {
@@ -46,7 +50,9 @@ impl PresentationApp {
                 }
             }
         }
-        if ui.button("Refresh Editor Snapshot").clicked()
+        if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            .show(ui, "Refresh Editor Snapshot")
+            .clicked()
             && !editor.controller.is_pending()
             && !ui.is_sizing_pass()
         {

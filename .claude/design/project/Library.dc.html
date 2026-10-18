@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Library</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>
+body{margin:0}
+a{color:var(--acc)}a:hover{color:var(--acc-hover)}
+</style>
+</helmet>
+<div class="app" data-theme="{{theme}}" style="width: 100%; height: 100vh; min-height: 720px; display: flex; overflow: hidden; background: var(--bg)">
+<dc-import name="Rail" active="library" hint-size="76px,100%"></dc-import>
+
+<nav aria-label="Collections" style="width: 232px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; border-right: 1px solid var(--line); background: var(--s1)">
+<div style="display: flex; align-items: center; padding: 0 6px 10px"><strong style="flex: 1; font-size: 16px">Library</strong><button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="New folder"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
+<div class="row sel"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--acc)"><path d="M5 4h4v16H5zM10 4h4v16h-4zM15.5 4.5l3.8-1 3.2 15.5-3.8 1z"/></svg><span style="flex: 1">All games</span><span class="meta tnum">1,284</span></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/></svg><span style="flex: 1">Favorites</span><span class="meta tnum">37</span></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span style="flex: 1">My games</span><span class="meta tnum">206</span></div>
+<span class="eyebrow" style="padding: 16px 10px 6px">Folders</span>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span style="flex: 1">Ruy Lopez prep</span><span class="meta tnum">48</span></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span style="flex: 1">Classics</span><span class="meta tnum">312</span></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span style="flex: 1">Endgames</span><span class="meta tnum">112</span></div>
+<span class="eyebrow" style="padding: 16px 10px 6px">Tags</span>
+<div style="display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px">
+<span class="pill">sacrifice</span><span class="pill">opposite castling</span><span class="pill">blunder check</span><span class="pill">model game</span>
+</div>
+<div style="flex: 1"></div>
+<div class="row"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--tx3)"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span style="flex: 1">Trash</span><span class="meta tnum">3</span></div>
+</nav>
+
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<header style="flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line)">
+<div style="position: relative; flex: 1; min-width: 240px; max-width: 420px">
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="position: absolute; left: 10px; top: 8px; color: var(--tx3)"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+<label for="lib-q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Search library</label>
+<input class="input" id="lib-q" placeholder="Search players, events, openings, ECO" style="padding-left: 32px; padding-right: 36px">
+<span class="kbd" style="position: absolute; right: 6px; top: 6px">/</span>
+</div>
+<button class="btn btn-sm" type="button">Result<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+<button class="btn btn-sm" type="button">Opening<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+<button class="btn btn-sm" type="button">Date<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+<button class="btn btn-sm" type="button" style="background: var(--acc-soft); color: var(--acc); border-color: transparent">Tag: model game<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="width: 12px; height: 12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+<div style="flex: 1"></div>
+<button class="btn btn-sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>Import PGN</button>
+<button class="btn btn-sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V8M7 13l5-5 5 5M5 4h14"/></svg>Export</button>
+</header>
+
+<div style="flex: 1; min-height: 0; overflow: auto">
+<table class="tnum" style="width: 100%; border-collapse: collapse; font-size: 13px">
+<thead>
+<tr style="height: 36px; text-align: left; color: var(--tx3); font-size: 12px">
+<th scope="col" style="width: 40px; padding: 0 0 0 16px; font-weight: 500"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Favorite</span></th>
+<th scope="col" style="padding: 0 12px; font-weight: 500">White</th>
+<th scope="col" style="padding: 0 12px; font-weight: 500">Black</th>
+<th scope="col" style="padding: 0 12px; font-weight: 500; width: 64px">Result</th>
+<th scope="col" style="padding: 0 12px; font-weight: 500">Opening</th>
+<th scope="col" style="padding: 0 12px; font-weight: 500; width: 110px">Date</th>
+<th scope="col" style="padding: 0 16px 0 12px; font-weight: 500; width: 64px; text-align: right">Moves</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{games}}" as="g" hint-placeholder-count="10">
+<tr style="height: 40px; border-top: 1px solid var(--line); background: {{g.bg}}">
+<td style="padding: 0 0 0 16px; color: {{g.starColor}}"><svg class="icon" viewBox="0 0 24 24" aria-label="{{g.starLabel}}" role="img" style="fill: {{g.starFill}}"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/></svg></td>
+<td style="padding: 0 12px; font-weight: 500">{{g.white}}</td>
+<td style="padding: 0 12px; font-weight: 500">{{g.black}}</td>
+<td style="padding: 0 12px; color: var(--tx2)">{{g.result}}</td>
+<td style="padding: 0 12px; color: var(--tx2)"><span class="mono" style="color: var(--tx3); font-size: 12px; margin-right: 8px">{{g.eco}}</span>{{g.opening}}</td>
+<td style="padding: 0 12px; color: var(--tx3)">{{g.date}}</td>
+<td style="padding: 0 16px 0 12px; color: var(--tx3); text-align: right">{{g.moves}}</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+<footer style="flex: none; height: 36px; display: flex; align-items: center; padding: 0 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--tx3)">
+<span class="tnum">10 of 37 games tagged “model game”</span>
+</footer>
+</div>
+
+<aside class="panel" aria-label="Game preview" style="width: 360px; flex: none; display: flex; flex-direction: column">
+<div style="padding: 16px; display: flex; justify-content: center; background: var(--stage); border-bottom: 1px solid var(--line)">
+<dc-import name="Board" fen="1n1Rkb1r/p4ppp/4q3/4p1B1/4P3/8/PPP2PPP/2K5 b k - 1 17" size="300" tilt="0" last="d1,d8" check="e8" coords="false" hint-size="300px,300px"></dc-import>
+</div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow-y: auto">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<strong style="font-size: 16px; line-height: 24px">Morphy – Duke Karl / Count Isouard</strong>
+<span style="color: var(--tx2)">Paris Opera, 1858 · 1–0 in 17</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px"><span class="pill">model game</span><span class="pill">development</span><button class="btn btn-ghost btn-sm" type="button" style="height: 20px; padding: 0 6px; font-size: 11px">+ Tag</button></div>
+<hr class="divider">
+<div style="display: grid; grid-template-columns: 96px minmax(0, 1fr); row-gap: 8px; font-size: 13px">
+<span style="color: var(--tx3)">Opening</span><span>Philidor Defense <span class="mono" style="color: var(--tx3)">C41</span></span>
+<span style="color: var(--tx3)">Folder</span><span>Classics</span>
+<span style="color: var(--tx3)">Notes</span><span style="color: var(--tx2)">Rapid development beats material. Queen sacrifice on b8 then mate on d8.</span>
+<span style="color: var(--tx3)">Added</span><span class="tnum" style="color: var(--tx2)">12 Oct 2026, from PGN import</span>
+</div>
+</div>
+<div style="padding: 12px 16px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px">
+<a href="Study.dc.html" class="btn btn-primary" style="flex: 1; text-decoration: none">Open for study <span class="kbd" style="background: transparent; color: inherit; border-color: currentColor; opacity: 0.6">↵</span></a>
+<button class="btn btn-icon" type="button" aria-label="Move to folder"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+<button class="btn btn-icon btn-danger" type="button" aria-label="Move to Trash"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+</div>
+</aside>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const rows = [
+      ['Morphy', 'Duke Karl / Count Isouard', '1–0', 'C41', 'Philidor Defense', '1858', '17', true],
+      ['Anderssen', 'Kieseritzky', '1–0', 'C33', 'King’s Gambit Accepted', '1851', '23', true],
+      ['D. Byrne', 'Fischer', '0–1', 'D92', 'Grünfeld Defense', '1956', '41', true],
+      ['Kasparov', 'Topalov', '1–0', 'B07', 'Pirc Defense', '1999', '44', true],
+      ['Rotlewi', 'Rubinstein', '0–1', 'D40', 'Queen’s Gambit Declined, Semi-Tarrasch', '1907', '25', false],
+      ['Capablanca', 'Marshall', '1–0', 'C89', 'Ruy Lopez, Marshall Attack', '1918', '36', false],
+      ['Réti', 'Tartakower', '1–0', 'B15', 'Caro-Kann Defense', '1910', '11', false],
+      ['Botvinnik', 'Capablanca', '1–0', 'E49', 'Nimzo-Indian Defense', '1938', '41', false],
+      ['Sadra', 'Reckless · Level 7', '½–½', 'C97', 'Ruy Lopez, Chigorin', '2026', '58', false],
+      ['Karpov', 'Kasparov', '0–1', 'B44', 'Sicilian, Taimanov', '1985', '40', false],
+    ];
+    const games = rows.map(([white, black, result, eco, opening, date, moves, fav], i) => ({
+      white, black, result, eco, opening, date, moves,
+      bg: i === 0 ? 'var(--acc-soft)' : 'transparent',
+      starColor: fav ? 'var(--acc)' : 'var(--tx3)',
+      starFill: fav ? 'currentColor' : 'none',
+      starLabel: fav ? 'Favorite' : 'Not a favorite',
+    }));
+    return { theme: this.props.theme ?? 'dark', games };
+  }
+}
+</script>
+</body>
+</html>

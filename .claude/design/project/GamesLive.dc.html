@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Games, live game</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>
+body{margin:0}
+a{color:var(--acc)}a:hover{color:var(--acc-hover)}
+</style>
+</helmet>
+<div class="app" data-theme="{{theme}}" style="width: 100%; height: 100vh; min-height: 720px; display: flex; overflow: hidden; background: var(--bg)">
+<dc-import name="Rail" active="games" hint-size="76px,100%"></dc-import>
+
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<header style="height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--s1)">
+<div role="tablist" aria-label="Open games" style="display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto">
+<a href="GamesOverview.dc.html" class="tab" style="text-decoration: none"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>All games<span class="pill" style="height: 18px; padding: 0 6px">3</span></a>
+<div class="tab on" role="tab" aria-selected="true"><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--run)" aria-hidden="true"></span>vs Reckless<span class="tnum" style="color: var(--tx3)">5+3</span><button class="btn btn-ghost btn-icon" type="button" aria-label="Close tab" style="width: 20px; height: 20px"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="width: 12px; height: 12px"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+<div class="tab" role="tab" aria-selected="false">Local<span class="tnum" style="color: var(--tx3)">10+0</span><span style="width: 6px; height: 6px; border-radius: 50%; background: var(--unsaved)" aria-label="Unsaved"></span></div>
+<div class="tab" role="tab" aria-selected="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="width: 12px; height: 12px"><path d="M9 5v14M15 5v14"/></svg>Chess960<span class="tnum" style="color: var(--tx3)">15+10</span></div>
+<a href="NewGame.dc.html" class="btn btn-ghost btn-sm btn-icon" aria-label="New game"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>
+</div>
+<div style="flex: 1"></div>
+<a href="CommandPalette.dc.html" class="btn btn-sm" style="width: 240px; justify-content: flex-start; color: var(--tx3); background: var(--bg); text-decoration: none"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span style="flex: 1">Search or run a command</span><span class="kbd">⌘K</span></a>
+</header>
+
+<div style="flex: 1; min-height: 0; display: flex">
+<main style="flex: 1; min-width: 0; position: relative; display: flex; align-items: center; justify-content: center; background: var(--stage)">
+<sc-if value="{{browsing}}" hint-placeholder-val="{{ false }}">
+<div style="position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 14px; border-radius: 10px; background: var(--s2); border: 1px solid var(--line); box-shadow: var(--shadow-2); z-index: 2">
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--acc)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+<span>Viewing <span class="tnum fig">9…♘a5</span>. The game continues live.</span>
+<button class="btn btn-primary btn-sm" type="button">Return to live <span class="kbd" style="background: transparent; color: inherit; border-color: currentColor; opacity: 0.7">End</span></button>
+</div>
+</sc-if>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 12px">
+<div style="width: 36px; height: 36px; border-radius: 8px; background: var(--s3); display: flex; align-items: center; justify-content: center; color: var(--tx2)" aria-hidden="true"><svg class="icon icon-20" viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="12" rx="2"/><path d="M12 3v4M9 12v2M15 12v2"/></svg></div>
+<div style="flex: 1; display: flex; flex-direction: column">
+<span style="font-weight: 600; font-size: 14px">Reckless <span style="font-weight: 400; color: var(--tx3)">Level 7 · about 2100</span></span>
+<span style="font-size: 12px; color: var(--tx3)"><span class="fig" style="letter-spacing: -2px">♙♙</span> <span class="tnum">+0</span></span>
+</div>
+<div class="clock" role="timer" aria-label="Reckless, 4 minutes 12 seconds">04:12</div>
+</div>
+<div style="display: flex; align-items: center; gap: 14px">
+<dc-import name="Board" fen="r1b2rk1/2q1bppp/p2p1n2/npp1p3/3PP3/2P2N1P/PPB2PPP/RNBQR1K1 w - - 1 12" size="{{boardSize}}" tilt="14" last="d8,c7" selected="b1" dots="d2,a3" hint-size="620px,620px"></dc-import>
+</div>
+<div style="display: flex; align-items: center; gap: 12px">
+<div style="width: 36px; height: 36px; border-radius: 8px; background: var(--acc-soft); color: var(--acc); display: flex; align-items: center; justify-content: center; font-weight: 600" aria-hidden="true">S</div>
+<div style="flex: 1; display: flex; flex-direction: column">
+<span style="font-weight: 600; font-size: 14px">Sadra <span style="font-weight: 400; color: var(--tx3)">White</span></span>
+<span style="font-size: 12px; color: var(--tx3)">Premove ready: <span class="fig tnum" style="color: var(--tx2)">♘</span><span class="tnum" style="color: var(--tx2)">bd2</span></span>
+</div>
+<div class="clock run" role="timer" aria-label="Sadra, 3 minutes 41 seconds, running" style="--left: 74%">03:41</div>
+</div>
+</div>
+<div style="position: absolute; right: 16px; bottom: 16px; display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: var(--s1); border: 1px solid var(--line)">
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Flip board (F)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></svg></button>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Reset camera (C)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg></button>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Sound on"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9zM17 9a4 4 0 0 1 0 6"/></svg></button>
+</div>
+</main>
+
+<aside class="panel" aria-label="Game inspector" style="width: 360px; flex: none; display: flex; flex-direction: column; position: relative">
+<div style="position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize" aria-hidden="true"></div>
+<div style="padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid var(--line)">
+<div style="display: flex; align-items: center; gap: 8px">
+<strong style="flex: 1; font-size: 16px; line-height: 24px">vs Reckless</strong>
+<span class="pill pill-run"><span class="dot"></span>Your move</span>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Collapse inspector (I)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+</div>
+<span style="font-size: 12px; color: var(--tx2)">Ruy Lopez, Closed, Chigorin Defense <span class="mono" style="color: var(--tx3)">C97</span></span>
+<div class="seg wide" role="tablist" aria-label="Inspector"><button type="button" class="on">Moves</button><button type="button">Info</button><button type="button">Notes</button></div>
+</div>
+<div style="flex: 1; min-height: 0; overflow-y: auto; padding: 8px">
+<div role="grid" aria-label="Move list" class="tnum fig" style="display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr); row-gap: 2px; font-size: 14px">
+<sc-for list="{{moves}}" as="m" hint-placeholder-count="11">
+<span style="height: 30px; display: flex; align-items: center; padding-left: 8px; color: var(--tx3); font-size: 12px">{{m.n}}.</span>
+<span style="height: 30px; display: flex; align-items: center; padding: 0 8px; border-radius: 6px">{{m.w}}</span>
+<span style="height: 30px; display: flex; align-items: center; padding: 0 8px; border-radius: 6px; background: {{m.bbg}}; color: {{m.bfg}}; font-weight: {{m.bw}}">{{m.b}}</span>
+</sc-for>
+<span style="height: 30px; display: flex; align-items: center; padding-left: 8px; color: var(--tx3); font-size: 12px">12.</span>
+<span style="height: 30px; display: flex; align-items: center; padding: 0 8px; border-radius: 6px; color: var(--tx3); box-shadow: inset 0 0 0 1px var(--line)">…</span>
+<span></span>
+</div>
+</div>
+<div style="padding: 8px 16px; display: flex; align-items: center; gap: 4px; border-top: 1px solid var(--line)">
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="First move (Home)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 6l-7 6 7 6"/></svg></button>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Previous move (Left)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Next move (Right)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+<button class="btn btn-ghost btn-sm btn-icon" type="button" aria-label="Last move (End)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 6l7 6-7 6"/></svg></button>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: var(--tx3)">Saved to library</span>
+</div>
+<div style="padding: 12px 16px 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; border-top: 1px solid var(--line)">
+<button class="btn" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>Takeback</button>
+<button class="btn" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>Pause</button>
+<button class="btn" type="button"><span style="font-weight: 600">½</span>Offer draw</button>
+<button class="btn btn-danger" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>Resign</button>
+</div>
+</aside>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"browsing":{"editor":"boolean","default":false},"boardSize":{"editor":"int","default":620,"min":400,"max":900},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const N = '♘', B = '♗', R = '♖', Q = '♕';
+    const raw = [
+      ['e4', 'e5'], [N + 'f3', N + 'c6'], [B + 'b5', 'a6'], [B + 'a4', N + 'f6'],
+      ['O-O', B + 'e7'], [R + 'e1', 'b5'], [B + 'b3', 'd6'], ['c3', 'O-O'],
+      ['h3', N + 'a5'], [B + 'c2', 'c5'], ['d4', Q + 'c7'],
+    ];
+    const moves = raw.map(([w, b], i) => {
+      const cur = i === raw.length - 1;
+      return {
+        n: String(i + 1), w, b,
+        bbg: cur ? 'var(--acc-soft)' : 'transparent',
+        bfg: cur ? 'var(--acc)' : 'var(--tx)',
+        bw: cur ? '600' : '400',
+      };
+    });
+    return {
+      theme: this.props.theme ?? 'dark',
+      browsing: this.props.browsing ?? false,
+      boardSize: Number(this.props.boardSize ?? 620),
+      moves,
+    };
+  }
+}
+</script>
+</body>
+</html>

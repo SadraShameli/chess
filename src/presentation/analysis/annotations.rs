@@ -890,7 +890,9 @@ impl PresentationAnalysisAnnotations {
             .save
             .as_ref()
             .is_some_and(|save| save.request.has_failure())
-            && ui.button("Retry Save").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Save")
+                .clicked()
             && !ui.is_sizing_pass()
             && effect.is_none()
         {
@@ -901,44 +903,45 @@ impl PresentationAnalysisAnnotations {
         if self.guard.is_some() {
             self.modal.capture_invoker(ui.ctx());
             let mut choice = None;
-            let modal = egui::Modal::new(egui::Id::new("chess.analysis.unsaved_notes")).show(
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
                 ui.ctx(),
-                |ui| {
-                    PresentationAnalysisEditorModal::label(ui, "Unsaved Notes");
-                    ui.heading("Save your notes before leaving?");
-                    ui.label("Save these notes, discard your edits, or stay here.");
-                    if self.save.is_some() {
-                        ui.label("Saving your changes. Stay here to cancel leaving.");
+                egui::Id::new("chess.analysis.unsaved_notes"),
+            )
+            .show(ui.ctx(), |ui| {
+                PresentationAnalysisEditorModal::label(ui, "Unsaved Notes");
+                ui.heading("Save your notes before leaving?");
+                ui.label("Save these notes, discard your edits, or stay here.");
+                if self.save.is_some() {
+                    ui.label("Saving your changes. Stay here to cancel leaving.");
+                }
+                let mut focusable = Vec::new();
+                for (label, candidate, enabled) in [
+                    (
+                        "Stay",
+                        PresentationAnalysisAnnotationsEnumGuardChoice::Stay,
+                        true,
+                    ),
+                    (
+                        "Discard",
+                        PresentationAnalysisAnnotationsEnumGuardChoice::Discard,
+                        self.source_pending.is_none() && self.save.is_none(),
+                    ),
+                    (
+                        "Save",
+                        PresentationAnalysisAnnotationsEnumGuardChoice::Save,
+                        can_save && self.save.is_none(),
+                    ),
+                ] {
+                    let response = ui.add_enabled(enabled, egui::Button::new(label));
+                    if response.enabled() {
+                        focusable.push(response.id);
                     }
-                    let mut focusable = Vec::new();
-                    for (label, candidate, enabled) in [
-                        (
-                            "Stay",
-                            PresentationAnalysisAnnotationsEnumGuardChoice::Stay,
-                            true,
-                        ),
-                        (
-                            "Discard",
-                            PresentationAnalysisAnnotationsEnumGuardChoice::Discard,
-                            self.source_pending.is_none() && self.save.is_none(),
-                        ),
-                        (
-                            "Save",
-                            PresentationAnalysisAnnotationsEnumGuardChoice::Save,
-                            can_save && self.save.is_none(),
-                        ),
-                    ] {
-                        let response = ui.add_enabled(enabled, egui::Button::new(label));
-                        if response.enabled() {
-                            focusable.push(response.id);
-                        }
-                        if response.clicked() && !ui.is_sizing_pass() {
-                            choice = Some(candidate);
-                        }
+                    if response.clicked() && !ui.is_sizing_pass() {
+                        choice = Some(candidate);
                     }
-                    self.modal.contain(ui, &focusable);
-                },
-            );
+                }
+                self.modal.contain(ui, &focusable);
+            });
             if modal.should_close() {
                 choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Stay);
             }
@@ -1102,13 +1105,20 @@ impl PresentationAnalysisAnnotations {
         let mut clear_temporary = false;
         let mut clear_saved = false;
         ui.horizontal_wrapped(|ui| {
-            let circle = ui.button("Toggle Circle");
+            let circle =
+                crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Toggle Circle");
             is_circle = self.frame.clicked(ui, &circle);
-            let arrow = ui.button("Toggle Arrow");
+            let arrow =
+                crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Toggle Arrow");
             is_arrow = self.frame.clicked(ui, &arrow);
-            let temporary = ui.button("Clear Temporary Markings");
+            let temporary =
+                crate::presentation::theme::components::PresentationThemeEnumButton::Danger
+                    .show(ui, "Clear Temporary Markings");
             clear_temporary = self.frame.clicked(ui, &temporary);
-            let saved = ui.button("Remove Saved Markings");
+            let saved = crate::presentation::theme::components::PresentationThemeEnumButton::Danger
+                .show(ui, "Remove Saved Markings");
             clear_saved = self.frame.clicked(ui, &saved);
         });
         if ui.is_sizing_pass() {

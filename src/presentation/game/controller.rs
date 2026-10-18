@@ -364,49 +364,52 @@ impl PresentationGameController {
         let mut selected = None;
         let mut is_cancelled = false;
         if let Some(promotion) = &mut self.promotion {
-            let modal = egui::Modal::new(egui::Id::new(("chess.game.promotion", snapshot.id())))
-                .show(ui.ctx(), |ui| {
-                    let can_focus = ui.memory(|memory| memory.is_above_modal_layer(ui.layer_id()));
-                    ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
-                        node.set_role(egui::accesskit::Role::Dialog);
-                        node.set_label("Choose Promotion");
-                        node.set_modal();
-                    });
-                    let mut focusable = Vec::with_capacity(promotion.choices.len() + 1);
-                    if can_focus && ui.input(|input| input.key_pressed(egui::Key::Tab)) {
-                        ui.ctx()
-                            .memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
-                    }
-                    ui.heading("Choose Promotion");
-                    ui.horizontal_wrapped(|ui| {
-                        for kind in &promotion.choices {
-                            let button = ui.add_enabled(
-                                !is_busy,
-                                egui::Button::new(Self::promotion_label(*kind)),
-                            );
-                            if button.enabled() {
-                                focusable.push(button.id);
-                            }
-                            if promotion.is_focus_pending
-                                && can_focus
-                                && button.enabled()
-                                && !ui.is_sizing_pass()
-                            {
-                                button.request_focus();
-                                promotion.is_focus_pending = false;
-                            }
-                            if button.clicked() {
-                                selected = Some(*kind);
-                            }
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+                ui.ctx(),
+                egui::Id::new(("chess.game.promotion", snapshot.id())),
+            )
+            .show(ui.ctx(), |ui| {
+                let can_focus = ui.memory(|memory| memory.is_above_modal_layer(ui.layer_id()));
+                ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
+                    node.set_role(egui::accesskit::Role::Dialog);
+                    node.set_label("Choose Promotion");
+                    node.set_modal();
+                });
+                let mut focusable = Vec::with_capacity(promotion.choices.len() + 1);
+                if can_focus && ui.input(|input| input.key_pressed(egui::Key::Tab)) {
+                    ui.ctx()
+                        .memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
+                }
+                ui.heading("Choose Promotion");
+                ui.horizontal_wrapped(|ui| {
+                    for kind in &promotion.choices {
+                        let button = ui
+                            .add_enabled(!is_busy, egui::Button::new(Self::promotion_label(*kind)));
+                        if button.enabled() {
+                            focusable.push(button.id);
                         }
-                    });
-                    let cancel = ui.button("Cancel Promotion");
-                    focusable.push(cancel.id);
-                    is_cancelled = cancel.clicked();
-                    if can_focus && !ui.is_sizing_pass() {
-                        Self::contain_promotion_focus(ui.ctx(), &focusable);
+                        if promotion.is_focus_pending
+                            && can_focus
+                            && button.enabled()
+                            && !ui.is_sizing_pass()
+                        {
+                            button.request_focus();
+                            promotion.is_focus_pending = false;
+                        }
+                        if button.clicked() {
+                            selected = Some(*kind);
+                        }
                     }
                 });
+                let cancel =
+                    crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                        .show(ui, "Cancel Promotion");
+                focusable.push(cancel.id);
+                is_cancelled = cancel.clicked();
+                if can_focus && !ui.is_sizing_pass() {
+                    Self::contain_promotion_focus(ui.ctx(), &focusable);
+                }
+            });
             if modal.is_top_modal && !is_busy {
                 for kind in &promotion.choices {
                     if let Some(key) = Self::promotion_key(*kind)

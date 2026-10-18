@@ -115,7 +115,7 @@ impl PresentationWorkbenchEngineInformation {
                     PresentationWorkbenchEngineInformationEnumState::Diagnostic(_)
                         | PresentationWorkbenchEngineInformationEnumState::SetupRequired(_)
                 );
-                if can_retry && ui.button("Retry Engine").clicked() {
+                if can_retry && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary.show(ui, "Retry Engine").clicked() {
                     intent = Some(PresentationWorkbenchEngineInformationEnumIntent::Retry);
                 }
             });

@@ -628,7 +628,10 @@ impl PresentationGamePlay {
                     *operation = Some(intent.operation());
                     self.resignation = None;
                 }
-                if ui.button("Keep Playing").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                    .show(ui, "Keep Playing")
+                    .clicked()
+                {
                     self.resignation = None;
                 }
             });

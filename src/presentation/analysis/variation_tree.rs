@@ -559,7 +559,9 @@ impl PresentationAnalysisVariationTree {
             .pending
             .as_ref()
             .is_some_and(PresentationAnalysisEditorPending::has_failure)
-            && ui.button("Retry Action").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Action")
+                .clicked()
             && !ui.is_sizing_pass()
         {
             return self
@@ -570,7 +572,9 @@ impl PresentationAnalysisVariationTree {
             .pending
             .as_ref()
             .is_some_and(|pending| pending.failure().is_some())
-            && ui.button("Dismiss Error").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Dismiss Error")
+                .clicked()
             && !ui.is_sizing_pass()
         {
             self.dismiss_failure()?;
@@ -579,7 +583,7 @@ impl PresentationAnalysisVariationTree {
         let mut modal_focus = std::mem::take(&mut self.modal);
         if let Some(preview) = &self.preview {
             modal_focus.capture_invoker(ui.ctx());
-            let modal = egui::Modal::new(egui::Id::new("chess.analysis.variation_confirmation"))
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("chess.analysis.variation_confirmation"))
                 .show(ui.ctx(), |ui| {
                     PresentationAnalysisEditorModal::label(ui, "Variation Review");
                     ui.heading(match preview.request() {

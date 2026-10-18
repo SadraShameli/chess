@@ -63,7 +63,11 @@ impl PresentationGameRecovery {
                     egui::accesskit::Live::Polite
                 });
             });
-            if failed && ui.button("Retry Save").clicked() {
+            if failed
+                && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Retry Save")
+                    .clicked()
+            {
                 intent = Some(PresentationGameRecoveryEnumIntent::RetrySave);
             }
         });

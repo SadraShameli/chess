@@ -45,7 +45,10 @@ impl PresentationSettingsView {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.heading(section.label());
-                if ui.button("Reset section").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Reset section")
+                    .clicked()
+                {
                     controller.begin_reset(DesktopPreferencesEnumResetScope::Section(section));
                 }
             });
@@ -168,10 +171,16 @@ impl PresentationSettingsView {
                 let edit = controller.shortcut_edit_mut(action);
                 ui.checkbox(&mut edit.command, "Command");
                 ui.add(egui::TextEdit::singleline(&mut edit.key).desired_width(24.0));
-                if ui.button("Apply").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                    .show(ui, "Apply")
+                    .clicked()
+                {
                     controller.apply_shortcut(action);
                 }
-                if ui.button("Default").clicked() {
+                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                    .show(ui, "Default")
+                    .clicked()
+                {
                     controller.reset_shortcut(action);
                 }
             });
@@ -315,7 +324,10 @@ impl PresentationSettingsView {
         ) {
             ui.add(egui::TextEdit::singleline(controller.update_credential_mut()).password(true));
             ui.checkbox(controller.update_persist_mut(), "Keep in secure storage");
-            if ui.button("Save credential").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                .show(ui, "Save credential")
+                .clicked()
+            {
                 let persist = *controller.update_persist_mut();
                 controller.submit_update_credential(persist);
             }
@@ -338,10 +350,16 @@ impl PresentationSettingsView {
         ui.label("Export or import settings (no machine paths are included).");
         ui.text_edit_multiline(controller.exchange_mut());
         ui.horizontal(|ui| {
-            if ui.button("Export").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Export")
+                .clicked()
+            {
                 controller.export();
             }
-            if ui.button("Preview import").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Preview import")
+                .clicked()
+            {
                 controller.begin_import();
             }
         });
@@ -369,7 +387,10 @@ impl PresentationSettingsView {
                 let step = controller.discard();
                 outcome.appearance_changed |= step.appearance_changed;
             }
-            if ui.button("Reset all").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Reset all")
+                .clicked()
+            {
                 controller.begin_reset(DesktopPreferencesEnumResetScope::All);
             }
         });
@@ -390,15 +411,24 @@ impl PresentationSettingsView {
                 ui.separator();
                 ui.label("Settings have unsaved changes.");
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                        .show(ui, "Save")
+                        .clicked()
+                    {
                         controller.leave_saving();
                     }
-                    if ui.button("Discard").clicked() {
+                    if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                        .show(ui, "Discard")
+                        .clicked()
+                    {
                         let step = controller.leave_discarding();
                         outcome.appearance_changed |= step.appearance_changed;
                         outcome.close = true;
                     }
-                    if ui.button("Stay").clicked() {
+                    if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                        .show(ui, "Stay")
+                        .clicked()
+                    {
                         controller.stay();
                     }
                 });
@@ -426,10 +456,16 @@ impl PresentationSettingsView {
     fn confirm_buttons(ui: &mut Ui, controller: &mut PresentationSettingsController) -> bool {
         let mut appearance = false;
         ui.horizontal(|ui| {
-            if ui.button("Confirm").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                .show(ui, "Confirm")
+                .clicked()
+            {
                 appearance = controller.confirm_prompt().appearance_changed;
             }
-            if ui.button("Cancel").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Cancel")
+                .clicked()
+            {
                 controller.stay();
             }
         });

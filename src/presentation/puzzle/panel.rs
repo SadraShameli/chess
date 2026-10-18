@@ -440,7 +440,9 @@ impl PresentationPuzzlePanel {
                 .urgent
                 .as_ref()
                 .is_some_and(|pending| !pending.is_pending()))
-            && ui.button("Retry Puzzle Request").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Puzzle Request")
+                .clicked()
         {
             self.retry(port)?;
         }

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Study with engine analysis and explorer</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>
+body{margin:0}
+a{color:var(--acc)}a:hover{color:var(--acc-hover)}
+</style>
+</helmet>
+<div class="app" data-theme="{{theme}}" style="width: 100%; height: 100vh; min-height: 720px; display: flex; overflow: hidden; background: var(--bg)">
+<dc-import name="Rail" active="study" hint-size="76px,100%"></dc-import>
+
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<header style="height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--s1)">
+<strong style="font-size: 14px">QGD Orthodox · prep</strong>
+<span class="pill pill-unsaved"><span class="dot"></span>Unsaved</span>
+<div style="flex: 1"></div>
+<div class="seg" role="group" aria-label="Mode"><button type="button" class="on">Study</button><button type="button">Edit position</button></div>
+<button class="btn btn-sm" type="button">Save <span class="kbd">⌘S</span></button>
+<a href="CommandPalette.dc.html" class="btn btn-sm" style="width: 200px; justify-content: flex-start; color: var(--tx3); background: var(--bg); text-decoration: none"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span style="flex: 1">Search or run</span><span class="kbd">⌘K</span></a>
+</header>
+
+<div style="flex: 1; min-height: 0; display: flex">
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<main style="flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 14px; background: var(--stage)">
+<div style="height: 540px; display: flex; flex-direction: column; align-items: center; gap: 6px">
+<span class="mono" style="font-size: 11px; color: var(--tx3)">−</span>
+<div style="flex: 1; width: 14px; border-radius: 4px; background: #2A2622; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; box-shadow: inset 0 0 0 1px var(--line)" role="img" aria-label="Evaluation plus 0.24 for White"><div style="height: 54%; background: #EEE8DC"></div></div>
+<span class="mono" style="font-size: 11px; font-weight: 600">+0.2</span>
+</div>
+<dc-import name="Board" fen="rnbqkb1r/ppp2ppp/4pn2/3p2B1/2PP4/2N5/PP2PPPP/R2QKBNR b KQkq - 3 4" size="{{boardSize}}" tilt="10" last="c1,g5" hint-size="560px,560px"></dc-import>
+</main>
+<section aria-label="Variation tree" style="height: 196px; flex: none; border-top: 1px solid var(--line); background: var(--s1); display: flex; flex-direction: column">
+<div style="height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line)">
+<span class="eyebrow" style="flex: 1">Moves and variations</span>
+<button class="btn btn-ghost btn-sm" type="button">!</button>
+<button class="btn btn-ghost btn-sm" type="button">?</button>
+<button class="btn btn-ghost btn-sm" type="button">!?</button>
+<button class="btn btn-ghost btn-sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Comment</button>
+<button class="btn btn-ghost btn-sm" type="button">Promote</button>
+</div>
+<div class="fig tnum" style="flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 14px; line-height: 28px">
+<span style="color: var(--tx3)">1.</span> d4 <span>♘f6</span> <span style="color: var(--tx3)">2.</span> c4 e6 <span style="color: var(--tx3)">3.</span> ♘c3 d5 <span style="color: var(--tx3)">4.</span> <span style="padding: 2px 6px; border-radius: 4px; background: var(--acc-soft); color: var(--acc); font-weight: 600">♗g5</span>
+<span style="color: var(--tx3)">4…</span> ♗e7 <span style="color: var(--tx3)">5.</span> e3 O-O <span style="color: var(--tx3)">6.</span> ♘f3 h6 <span style="color: var(--tx3)">7.</span> ♗h4 b6<span style="color: var(--acc)">!</span>
+<div style="margin: 4px 0 4px 16px; padding-left: 12px; border-left: 1px solid var(--line-strong); color: var(--tx2)">
+<span style="font-family: 'Inter', sans-serif; font-style: italic; color: var(--tx3)">Tartakower. Fianchetto first, then …c5 when the d-file opens.</span><br>
+(<span style="color: var(--tx3)">7…</span> ♘bd7 <span style="color: var(--tx3)">8.</span> ♖c1 c6 <span style="color: var(--tx3)">9.</span> ♗d3 dxc4 <span style="color: var(--tx3)">10.</span> ♗xc4 ♘d5)
+</div>
+<span style="color: var(--tx3)">8.</span> cxd5 ♘xd5 <span style="color: var(--tx3)">9.</span> ♗xe7 ♕xe7 <span style="color: var(--tx3)">10.</span> ♘xd5 exd5 <span style="color: var(--tx3)">11.</span> ♖c1 ♗e6
+</div>
+</section>
+</div>
+
+<aside class="panel" aria-label="Study inspector" style="width: 400px; flex: none; display: flex; flex-direction: column">
+<div style="padding: 12px 16px; border-bottom: 1px solid var(--line)">
+<div class="seg wide" role="tablist" aria-label="Inspector"><button type="button" class="on">Analysis</button><button type="button">Explorer</button><button type="button">Report</button><button type="button">Notes</button></div>
+</div>
+
+<section aria-label="Engine analysis" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; border-bottom: 1px solid var(--line)">
+<div style="display: flex; align-items: center; gap: 10px">
+<span class="mono" style="font-size: 24px; line-height: 28px; font-weight: 600">+0.24</span>
+<div style="flex: 1; display: flex; flex-direction: column">
+<span style="font-weight: 600">Reckless</span>
+<span class="mono" style="font-size: 11px; color: var(--tx3)">depth 31/44 · 18.4 Mn/s · 8 threads · 1 GB</span>
+</div>
+<span class="pill pill-run"><span class="dot"></span>Running</span>
+<button class="btn btn-sm" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Stop <span class="kbd">Space</span></button>
+</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<sc-for list="{{lines}}" as="l" hint-placeholder-count="3">
+<div class="row" style="align-items: flex-start; padding-top: 7px; padding-bottom: 7px; min-height: 0">
+<span class="mono" style="width: 48px; flex: none; font-size: 12px; font-weight: 600; padding: 1px 0; border-radius: 4px; text-align: center; background: #EEE8DC; color: #1C1916">{{l.eval}}</span>
+<span class="fig tnum" style="flex: 1; font-size: 13px; line-height: 20px; color: var(--tx2)"><strong style="color: var(--tx); font-weight: 600">{{l.first}}</strong> {{l.rest}}</span>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section aria-label="Opening explorer" style="flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 8px">
+<span class="eyebrow" style="flex: 1">Opening explorer</span>
+<span style="font-size: 12px; color: var(--tx3)">D51 · Bundled games</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<sc-for list="{{explorer}}" as="e" hint-placeholder-count="5">
+<div class="row" style="gap: 12px">
+<span class="fig tnum" style="width: 56px; font-weight: 600">{{e.move}}</span>
+<span class="tnum" style="width: 56px; text-align: right; font-size: 12px; color: var(--tx3)">{{e.games}}</span>
+<div role="img" aria-label="{{e.label}}" style="flex: 1; height: 14px; border-radius: 3px; overflow: hidden; display: flex; box-shadow: inset 0 0 0 1px var(--line)">
+<div style="width: {{e.w}}; background: #EEE8DC"></div>
+<div style="width: {{e.d}}; background: #8F887D"></div>
+<div style="width: {{e.b}}; background: #2A2622"></div>
+</div>
+<span class="tnum" style="width: 32px; text-align: right; font-size: 12px; color: var(--tx2)">{{e.share}}</span>
+</div>
+</sc-for>
+</div>
+<div style="display: flex; align-items: center; gap: 8px; padding-top: 6px">
+<span class="eyebrow" style="flex: 1">Sample games after 4…♗e7</span>
+<button class="btn btn-ghost btn-sm" type="button">Next samples<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+</div>
+<div class="row"><span style="flex: 1">Capablanca – Alekhine</span><span class="meta tnum">1927 · ½–½</span></div>
+<div class="row"><span style="flex: 1">Karpov – Kasparov</span><span class="meta tnum">1984 · ½–½</span></div>
+<div class="row"><span style="flex: 1">Spassky – Fischer</span><span class="meta tnum">1972 · 1–0</span></div>
+<div style="display: flex; align-items: center; gap: 8px; padding-top: 6px; font-size: 12px; color: var(--tx3)">
+<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4v16H5zM10 4h4v16h-4z"/></svg>
+<span>Opening book: <span style="color: var(--tx2)">in book</span> · 4…♗e7 is the main line</span>
+</div>
+</section>
+</aside>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"boardSize":{"editor":"int","default":540,"min":360,"max":800},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const N = '♘', B = '♗', R = '♖', Q = '♕';
+    const lines = [
+      { eval: '+0.24', first: '4…' + B + 'e7', rest: '5.e3 O-O 6.' + N + 'f3 h6 7.' + B + 'h4 b6 8.' + B + 'e2 ' + B + 'b7' },
+      { eval: '+0.29', first: '4…' + N + 'bd7', rest: '5.e3 ' + B + 'e7 6.' + N + 'f3 O-O 7.' + R + 'c1 c6 8.' + B + 'd3' },
+      { eval: '+0.33', first: '4…h6', rest: '5.' + B + 'xf6 ' + Q + 'xf6 6.e3 O-O 7.' + N + 'f3 c6 8.' + B + 'd3' },
+    ];
+    const rows = [
+      [B + 'e7', 18342, 31, 52, 17, '58%'],
+      [N + 'bd7', 6120, 33, 47, 20, '19%'],
+      ['h6', 3911, 30, 48, 22, '12%'],
+      ['c6', 2214, 34, 45, 21, '7%'],
+      [B + 'b4', 1290, 32, 44, 24, '4%'],
+    ];
+    const explorer = rows.map(([move, games, w, d, b, share]) => ({
+      move: '4…' + move,
+      games: games.toLocaleString('en-US'),
+      w: w + '%', d: d + '%', b: b + '%',
+      share,
+      label: 'White wins ' + w + '%, draws ' + d + '%, Black wins ' + b + '%',
+    }));
+    return {
+      theme: this.props.theme ?? 'dark',
+      boardSize: Number(this.props.boardSize ?? 540),
+      lines,
+      explorer,
+    };
+  }
+}
+</script>
+</body>
+</html>

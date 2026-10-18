@@ -49,12 +49,12 @@ impl PresentationBoardRecovery {
             match commands.state() {
                 DesktopRendererCommandsEnumState::Interrupted(_)
                 | DesktopRendererCommandsEnumState::Unrecoverable(_) => {
-                    if ui.button("Retry").clicked() {
+                    if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary.show(ui, "Retry").clicked() {
                         intent = Some(PresentationBoardRecoveryEnumIntent::Retry);
                     }
                 }
                 DesktopRendererCommandsEnumState::Ready => {
-                    if ui.button("Resume games").clicked() {
+                    if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary.show(ui, "Resume games").clicked() {
                         intent = Some(PresentationBoardRecoveryEnumIntent::ResumeGames);
                     }
                 }

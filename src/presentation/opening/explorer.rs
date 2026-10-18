@@ -109,7 +109,9 @@ impl PresentationOpeningExplorer {
             });
         }
         if let Some(offset) = view.next_sample_offset
-            && ui.button("Next Samples").clicked()
+            && crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                .show(ui, "Next Samples")
+                .clicked()
         {
             intent = Some(PresentationOpeningIntent::SamplePage(offset));
         }

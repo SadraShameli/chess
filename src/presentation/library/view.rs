@@ -129,7 +129,9 @@ impl PresentationLibraryPanel {
             self.game_trash_confirmation(ui, &mut effects);
             self.errors(ui);
             if self.controller.can_retry_open() {
-                let retry = ui.button("Retry opening");
+                let retry =
+                    crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                        .show(ui, "Retry opening");
                 if self.frame.clicked(ui, &retry) {
                     let result = self.controller.retry_open(DesktopRequestId::new());
                     self.collect(result, &mut effects);
