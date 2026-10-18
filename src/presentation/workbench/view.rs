@@ -8,7 +8,11 @@ use crate::desktop::identity::DesktopRequestId;
 use crate::engine::enums::{EngineEnumOption, EngineOptionEnumDescriptor};
 use crate::engine::options::EngineOptionsEnumValue;
 use crate::engine::package::manifest::EnginePackageManifest;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
 use crate::presentation::workbench::configuration::{
     PresentationWorkbenchConfiguration, PresentationWorkbenchConfigurationError,
 };
@@ -59,6 +63,8 @@ impl Default for PresentationWorkbenchView {
 }
 
 impl PresentationWorkbenchView {
+    const RUN_LABEL: &'static str = "Run diagnostic";
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -108,26 +114,32 @@ impl PresentationWorkbenchView {
         let intent = egui::ScrollArea::vertical()
             .id_salt("workbench.panel")
             .show(ui, |ui| {
-                ui.heading("Engine Workbench");
+                PresentationThemeComponents::subhead(ui, "Engine Workbench");
                 self.show_admission(ui, controller);
                 if let Some(error) = &self.error {
                     ui.colored_label(ui.visuals().error_fg_color, error.to_string());
                 }
                 let mut intent = self.show_options(ui, controller);
-                ui.separator();
-                if let Some(job) = controller.job() {
-                    Self::show_job(ui, job);
-                } else {
-                    ui.label("No diagnostic job yet. Select an operation and explicitly Run.");
-                }
+                ui.add_space(PresentationThemeTokens::SPACE_3);
+                PresentationThemeComponents::eyebrow(ui, "Diagnostic job");
+                Self::card(ui, |ui| {
+                    if let Some(job) = controller.job() {
+                        Self::show_job(ui, job);
+                    } else {
+                        PresentationThemeComponents::caption(
+                            ui,
+                            "No diagnostic job yet. Select an operation and explicitly Run.",
+                        );
+                    }
+                    if intent.is_none() {
+                        intent = self.show_job_actions(ui, controller);
+                    }
+                });
+                ui.add_space(PresentationThemeTokens::SPACE_3);
                 if intent.is_none() {
-                    intent = self.show_job_actions(ui, controller);
+                    intent = Self::card(ui, |ui| self.show_diagnostics(ui, controller));
                 }
-                ui.separator();
-                if intent.is_none() {
-                    intent = self.show_diagnostics(ui, controller);
-                }
-                ui.separator();
+                ui.add_space(PresentationThemeTokens::SPACE_3);
                 Self::show_unsupported(ui);
                 intent
             })
@@ -197,13 +209,16 @@ impl PresentationWorkbenchView {
         controller: &mut PresentationWorkbenchController,
     ) -> Option<PresentationWorkbenchControllerIntent> {
         let engine = controller.engine()?;
-        ui.strong("Advanced engine configuration");
+        PresentationThemeComponents::subhead(ui, "Advanced engine configuration");
         self.show_package(ui, engine);
-        ui.small("Save each edited option explicitly. CPU and memory admission is rechecked by the backend at an idle configuration barrier.");
+        PresentationThemeComponents::caption(
+            ui,
+            "Save each edited option explicitly. CPU and memory admission is rechecked by the backend at an idle configuration barrier.",
+        );
         let mut intent = None;
         for option in EngineEnumOption::iter() {
             ui.push_id(option.name(), |ui| {
-                ui.group(|ui| {
+                Self::card(ui, |ui| {
                     if intent.is_some() {
                         ui.disable();
                     }
@@ -248,16 +263,20 @@ impl PresentationWorkbenchView {
         let enabled = controller.can_configure() && self.can_submit(ui);
         match descriptor {
             EngineOptionEnumDescriptor::Spin(range) => {
-                ui.strong(option.name());
+                PresentationThemeComponents::subhead(ui, option.name());
                 let unit = PresentationWorkbenchConfiguration::unit(option);
-                ui.small(format!(
-                    "Default: {} {unit}; range {}..{} {unit}",
-                    range.default_value(),
-                    range.minimum(),
-                    range.maximum()
-                ));
+                PresentationThemeComponents::caption(
+                    ui,
+                    format!(
+                        "Default: {} {unit}; range {}..{} {unit}",
+                        range.default_value(),
+                        range.minimum(),
+                        range.maximum()
+                    ),
+                );
                 if option == EngineEnumOption::MultiPv {
-                    ui.small(
+                    PresentationThemeComponents::caption(
+                        ui,
                         "Each search additionally caps candidate count to its legal root moves.",
                     );
                 }
@@ -297,10 +316,13 @@ impl PresentationWorkbenchView {
             }
             EngineOptionEnumDescriptor::Check(default) => match option {
                 EngineEnumOption::Minimal => {
-                    ui.strong(option.name());
-                    ui.small(format!(
-                        "Default: {default}. Minimal suppresses intermediate search output."
-                    ));
+                    PresentationThemeComponents::subhead(ui, option.name());
+                    PresentationThemeComponents::caption(
+                        ui,
+                        format!(
+                            "Default: {default}. Minimal suppresses intermediate search output."
+                        ),
+                    );
                     ui.label(format!(
                         "Applied: {}",
                         engine
@@ -325,10 +347,13 @@ impl PresentationWorkbenchView {
                     }
                 }
                 EngineEnumOption::Chess960 => {
-                    ui.strong(option.name());
-                    ui.small(format!(
-                        "Engine default: {default}. Derived from the selected game's variant."
-                    ));
+                    PresentationThemeComponents::subhead(ui, option.name());
+                    PresentationThemeComponents::caption(
+                        ui,
+                        format!(
+                            "Engine default: {default}. Derived from the selected game's variant."
+                        ),
+                    );
                     if let Some(position) = controller.position() {
                         ui.label(format!(
                             "Current game variant: {:?}",
@@ -337,7 +362,10 @@ impl PresentationWorkbenchView {
                     } else {
                         ui.label("Current game variant: unavailable. Choose through New Game.");
                     }
-                    ui.small("This panel cannot change a live board's variant.");
+                    PresentationThemeComponents::caption(
+                        ui,
+                        "This panel cannot change a live board's variant.",
+                    );
                 }
                 EngineEnumOption::Hash
                 | EngineEnumOption::Threads
@@ -349,7 +377,8 @@ impl PresentationWorkbenchView {
                 }
             },
             EngineOptionEnumDescriptor::Button => {
-                ui.small(
+                PresentationThemeComponents::caption(
+                    ui,
                     "Clear the transposition table only while idle. This action has no value.",
                 );
                 if Self::button(ui, enabled, option.name()) {
@@ -372,8 +401,8 @@ impl PresentationWorkbenchView {
         enabled: bool,
     ) -> Option<PresentationWorkbenchControllerIntent> {
         let tablebases = controller.engine()?.tablebases();
-        ui.strong(EngineEnumOption::SyzygyPath.name());
-        ui.small("Default: empty, optional local Syzygy tables.");
+        PresentationThemeComponents::subhead(ui, EngineEnumOption::SyzygyPath.name());
+        PresentationThemeComponents::caption(ui, "Default: empty, optional local Syzygy tables.");
         match tablebases.state() {
             PresentationWorkbenchTablebaseEnumState::Unconfigured => {
                 ui.label("Tablebases: unconfigured. Ordinary chess remains available.");
@@ -395,9 +424,15 @@ impl PresentationWorkbenchView {
             ui.label(directory.display().to_string());
         }
         if let Some(alias) = tablebases.alias() {
-            ui.small(format!("Managed engine alias: {}", alias.display()));
+            PresentationThemeComponents::caption(
+                ui,
+                format!("Managed engine alias: {}", alias.display()),
+            );
         }
-        ui.small("The backend prepares whitespace-free file links for paths containing spaces. Grant read/traversal access; Unix aliases are private (0700). Windows links need Developer Mode or link privilege. Choose a suitable writable alias parent if preparation fails. Files are never silently copied.");
+        PresentationThemeComponents::caption(
+            ui,
+            "The backend prepares whitespace-free file links for paths containing spaces. Grant read/traversal access; Unix aliases are private (0700). Windows links need Developer Mode or link privilege. Choose a suitable writable alias parent if preparation fails. Files are never silently copied.",
+        );
         let is_prepared = !matches!(
             tablebases.state(),
             PresentationWorkbenchTablebaseEnumState::Unconfigured
@@ -425,8 +460,11 @@ impl PresentationWorkbenchView {
         ui: &mut Ui,
         controller: &mut PresentationWorkbenchController,
     ) -> Option<PresentationWorkbenchControllerIntent> {
-        ui.strong("Diagnostic operations");
-        ui.small("Diagnostics run in isolated backend children, outside the UI and live engine. They require exclusive admission and share the application CPU budget.");
+        PresentationThemeComponents::subhead(ui, "Diagnostic operations");
+        PresentationThemeComponents::caption(
+            ui,
+            "Diagnostics run in isolated backend children, outside the UI and live engine. They require exclusive admission and share the application CPU budget.",
+        );
         ui.horizontal_wrapped(|ui| {
             for operation in WorkbenchEnumOperation::ALL {
                 ui.radio_value(
@@ -438,21 +476,33 @@ impl PresentationWorkbenchView {
         });
         match self.operation {
             WorkbenchEnumOperation::Inspector => {
-                ui.small("Inspect the selected validated position and bounded engine output.");
+                PresentationThemeComponents::caption(
+                    ui,
+                    "Inspect the selected validated position and bounded engine output.",
+                );
             }
             WorkbenchEnumOperation::RawEvaluation => {
-                ui.small("Raw White-perspective static NNUE integer. This is separate from search centipawns.");
+                PresentationThemeComponents::caption(
+                    ui,
+                    "Raw White-perspective static NNUE integer. This is separate from search centipawns.",
+                );
             }
             WorkbenchEnumOperation::Compiler => {
-                ui.small("Read compiler, target and target-feature diagnostics for the selected package.");
+                PresentationThemeComponents::caption(
+                    ui,
+                    "Read compiler, target and target-feature diagnostics for the selected package.",
+                );
             }
             WorkbenchEnumOperation::Perft => {
-                ui.small(format!(
-                    "Default depth {}; range {}..{} plies. Root divide is included.",
-                    WorkbenchPerftDepth::default().value(),
-                    WorkbenchPerftDepth::MINIMUM,
-                    WorkbenchPerftDepth::MAXIMUM
-                ));
+                PresentationThemeComponents::caption(
+                    ui,
+                    format!(
+                        "Default depth {}; range {}..{} plies. Root divide is included.",
+                        WorkbenchPerftDepth::default().value(),
+                        WorkbenchPerftDepth::MINIMUM,
+                        WorkbenchPerftDepth::MAXIMUM
+                    ),
+                );
                 Self::field(
                     ui,
                     "Perft depth (plies)",
@@ -460,16 +510,25 @@ impl PresentationWorkbenchView {
                 );
             }
             WorkbenchEnumOperation::Bench => {
-                ui.small(format!("Built-in {}-position corpus. Empty fields use upstream defaults, independent of gameplay resource settings.", WorkbenchBenchParameters::POSITIONS));
+                PresentationThemeComponents::caption(
+                    ui,
+                    format!(
+                        "Built-in {}-position corpus. Empty fields use upstream defaults, independent of gameplay resource settings.",
+                        WorkbenchBenchParameters::POSITIONS
+                    ),
+                );
                 if let Some(engine) = controller.engine() {
                     match WorkbenchBenchParameters::new(engine.capabilities(), None, None, None) {
                         Ok(defaults) => {
-                            ui.small(format!(
-                                "Defaults: {} MiB, {} thread(s), depth {}",
-                                defaults.hash_mib(),
-                                defaults.threads(),
-                                defaults.depth()
-                            ));
+                            PresentationThemeComponents::caption(
+                                ui,
+                                format!(
+                                    "Defaults: {} MiB, {} thread(s), depth {}",
+                                    defaults.hash_mib(),
+                                    defaults.threads(),
+                                    defaults.depth()
+                                ),
+                            );
                         }
                         Err(error) => {
                             ui.colored_label(ui.visuals().error_fg_color, error.to_string());
@@ -494,11 +553,14 @@ impl PresentationWorkbenchView {
             }
         }
         Self::field(ui, "Deadline (ms)", &mut self.configuration.deadline_millis);
-        ui.small(format!(
-            "Default deadline {} ms; maximum {} ms. Cancellation waits for backend child cleanup.",
-            WorkbenchJobDeadline::default().duration().as_millis(),
-            WorkbenchJobDeadline::MAXIMUM.as_millis()
-        ));
+        PresentationThemeComponents::caption(
+            ui,
+            format!(
+                "Default deadline {} ms; maximum {} ms. Cancellation waits for backend child cleanup.",
+                WorkbenchJobDeadline::default().duration().as_millis(),
+                WorkbenchJobDeadline::MAXIMUM.as_millis()
+            ),
+        );
         let engine = controller.engine()?;
         let parameters = self.configuration.parameters(
             self.operation,
@@ -520,7 +582,7 @@ impl PresentationWorkbenchView {
             ui.label(error.to_string());
         }
         let enabled = self.can_submit(ui) && deadline.is_ok() && matches!(admission, Some(Ok(())));
-        if Self::button(ui, enabled, "Run diagnostic")
+        if Self::button(ui, enabled, Self::RUN_LABEL)
             && let (Ok(parameters), Ok(deadline)) = (parameters, deadline)
         {
             let result = controller.start(parameters, deadline, DesktopRequestId::new());
@@ -530,16 +592,26 @@ impl PresentationWorkbenchView {
     }
 
     fn show_job(ui: &mut Ui, job: &PresentationWorkbenchJobSnapshot) {
-        ui.strong(job.title());
+        PresentationThemeComponents::subhead(ui, job.title());
         ui.label(format!("Job: {}", job.id().value()));
-        ui.label(format!("State: {}", Self::state_label(job.state())));
+        ui.horizontal(|ui| {
+            ui.label(format!("State: {}", Self::state_label(job.state())));
+            PresentationThemeComponents::pill(
+                ui,
+                Self::state_label(job.state()),
+                Self::state_tone(job.state()),
+            );
+        });
         ui.label(job.parameters());
-        ui.small(format!(
-            "Job package: {} | {:?} | {}",
-            job.package().target().triple(),
-            job.package().profile(),
-            job.package().digest()
-        ));
+        PresentationThemeComponents::caption(
+            ui,
+            format!(
+                "Job package: {} | {:?} | {}",
+                job.package().target().triple(),
+                job.package().profile(),
+                job.package().digest()
+            ),
+        );
         ui.label(format!(
             "Progress: {} / {}",
             job.progress().completed(),
@@ -563,7 +635,10 @@ impl PresentationWorkbenchView {
         if let Some(cancellation) = job.cancellation() {
             ui.label(format!("Cancellation reason: {:?}", cancellation.reason()));
             if !job.rows().is_empty() {
-                ui.small("A result arrived during cleanup. The cancellation outcome still applies to this job.");
+                PresentationThemeComponents::caption(
+                    ui,
+                    "A result arrived during cleanup. The cancellation outcome still applies to this job.",
+                );
             }
         }
         if let Some(failure) = job.failure() {
@@ -641,24 +716,56 @@ impl PresentationWorkbenchView {
     }
 
     fn field(ui: &mut Ui, label: &str, value: &mut String) {
-        ui.horizontal_wrapped(|ui| {
-            let label = ui.label(label);
+        let colors = PresentationThemeColors::of(ui.ctx());
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = PresentationThemeTokens::SPACE_1;
+            let label = PresentationThemeComponents::field_label(ui, label);
             ui.add(
                 egui::TextEdit::singleline(value)
                     .id_salt(label.id)
-                    .desired_width(PresentationThemeTokens::PANEL_WIDTH)
+                    .background_color(colors.bg)
+                    .margin(egui::Margin::symmetric(10, 7))
+                    .desired_width(f32::INFINITY)
                     .char_limit(32),
             )
             .labelled_by(label.id);
         });
     }
 
+    fn card<R>(ui: &mut Ui, content: impl FnOnce(&mut Ui) -> R) -> R {
+        PresentationThemeComponents::card(ui)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                content(ui)
+            })
+            .inner
+    }
+
     fn button(ui: &mut Ui, enabled: bool, label: &str) -> bool {
-        ui.add_enabled(
-            enabled,
-            egui::Button::new(label).min_size(egui::vec2(0.0, PresentationThemeTokens::MIN_TARGET)),
-        )
-        .clicked()
+        let variant = if label == Self::RUN_LABEL {
+            PresentationThemeEnumButton::Primary
+        } else {
+            PresentationThemeEnumButton::Secondary
+        };
+        let button = variant.widget(ui, label, PresentationThemeEnumSize::Small);
+        ui.add_enabled(enabled, button).clicked()
+    }
+
+    const fn state_tone(state: WorkbenchEnumJobState) -> PresentationThemeEnumTone {
+        match state {
+            WorkbenchEnumJobState::Queued | WorkbenchEnumJobState::Admitted => {
+                PresentationThemeEnumTone::Neutral
+            }
+            WorkbenchEnumJobState::Running | WorkbenchEnumJobState::Cancelling => {
+                PresentationThemeEnumTone::Run
+            }
+            WorkbenchEnumJobState::Succeeded => PresentationThemeEnumTone::Accent,
+            WorkbenchEnumJobState::Failed | WorkbenchEnumJobState::TimedOut => {
+                PresentationThemeEnumTone::Error
+            }
+            WorkbenchEnumJobState::Cancelled => PresentationThemeEnumTone::Low,
+        }
     }
 
     fn can_submit(&self, ui: &Ui) -> bool {

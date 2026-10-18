@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::{
+    self, Align2, Color32, CornerRadius, FontId, Rect, Response, RichText, Sense, Stroke, Ui, Vec2,
+};
 use thiserror::Error;
 
 use crate::board::enums::{BoardEnumColor, BoardEnumPieceKind};
@@ -8,6 +10,7 @@ use crate::board::r#move::BoardMove;
 use crate::clock::duration::{ClockDuration, ClockDurationError, ClockInstant};
 use crate::clock::state::{ClockState, ClockStateEnumStatus, ClockStateError, ClockStateView};
 use crate::desktop::game_snapshot::DesktopGameSnapshot;
+use crate::desktop::game_snapshot::DesktopGameSnapshotMove;
 use crate::game::draw_claim::{GameDrawClaimEnumIntent, GameDrawClaimEnumKind};
 use crate::game::enums::{
     GameEnumMode, GameEnumOutcomeReason, GameEnumPhase, GameEnumResult, GameEnumSeat, GameId,
@@ -17,7 +20,13 @@ use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::session::GameSessionEnumInterruption;
 use crate::game::takeback::GameTakebackEnumResponse;
 use crate::presentation::board::figurines::PresentationBoardFigurines;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::icon::{PresentationThemeEnumIcon, PresentationThemeIcon};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
+use crate::presentation::theme::typography::PresentationThemeTypography;
 
 #[derive(Debug, Error)]
 pub enum PresentationGamePlayError {
@@ -162,8 +171,68 @@ impl PresentationGamePlayClaimContext {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum PresentationGamePlayEnumTab {
+    #[default]
+    Moves,
+    Info,
+    Notes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentationGamePlayEnumMark {
+    Icon(PresentationThemeEnumIcon),
+    Glyph(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentationGamePlayEnumTileOutcome {
+    Operation(PresentationGamePlayEnumOperation),
+    Resign(BoardEnumColor),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PresentationGamePlayTile {
+    label: &'static str,
+    mark: PresentationGamePlayEnumMark,
+    is_enabled: bool,
+    outcome: PresentationGamePlayEnumTileOutcome,
+}
+
+impl PresentationGamePlayTile {
+    const fn operation(
+        label: &'static str,
+        mark: PresentationGamePlayEnumMark,
+        is_enabled: bool,
+        operation: PresentationGamePlayEnumOperation,
+    ) -> Self {
+        Self {
+            label,
+            mark,
+            is_enabled,
+            outcome: PresentationGamePlayEnumTileOutcome::Operation(operation),
+        }
+    }
+
+    const fn resign(label: &'static str, is_enabled: bool, resigning: BoardEnumColor) -> Self {
+        Self {
+            label,
+            mark: PresentationGamePlayEnumMark::Icon(PresentationThemeEnumIcon::Resign),
+            is_enabled,
+            outcome: PresentationGamePlayEnumTileOutcome::Resign(resigning),
+        }
+    }
+}
+
+struct PresentationGamePlayMoveRow<'a> {
+    number: u32,
+    white: Option<&'a DesktopGameSnapshotMove>,
+    black: Option<&'a DesktopGameSnapshotMove>,
+}
+
 #[derive(Default)]
 pub struct PresentationGamePlay {
+    tab: PresentationGamePlayEnumTab,
     resignation: Option<PresentationGamePlayIntent>,
     intended_move: Option<BoardMove>,
     claim_context: Option<PresentationGamePlayClaimContext>,
@@ -171,6 +240,8 @@ pub struct PresentationGamePlay {
 }
 
 impl PresentationGamePlay {
+    const NUMBER_COLUMN: f32 = 40.0;
+    const MOVE_ROW: f32 = 30.0;
     const DRAW_CLAIMS: [(GameDrawClaimEnumKind, &str, &str); 2] = [
         (
             GameDrawClaimEnumKind::ThreefoldRepetition,
@@ -211,17 +282,36 @@ impl PresentationGamePlay {
         }) {
             self.resignation = None;
         }
-        self.show_players(ui, snapshot, clock);
+        let mut operation = None;
+        ui.spacing_mut().item_spacing.y = PresentationThemeTokens::SPACE_2;
+        Self::show_header(ui, snapshot, clock);
+        Self::show_history_banner(ui, snapshot, is_busy, &mut operation);
         Self::show_status(ui, snapshot, clock);
         if is_busy {
-            ui.weak("Waiting for the game to accept your action.");
+            PresentationThemeComponents::caption(ui, "Waiting for the game to accept your action.");
         }
-        let mut operation = None;
-        ui.separator();
+        PresentationThemeComponents::segmented(
+            ui,
+            &mut self.tab,
+            &[
+                (PresentationGamePlayEnumTab::Moves, "Moves"),
+                (PresentationGamePlayEnumTab::Info, "Info"),
+                (PresentationGamePlayEnumTab::Notes, "Notes"),
+            ],
+            true,
+        );
+        match self.tab {
+            PresentationGamePlayEnumTab::Moves => {
+                Self::show_moves(ui, snapshot, is_busy, &mut operation);
+                Self::show_navigation(ui, snapshot, is_busy, &mut operation);
+            }
+            PresentationGamePlayEnumTab::Info => Self::show_info(ui, snapshot),
+            PresentationGamePlayEnumTab::Notes => Self::show_notes(ui, snapshot),
+        }
+        self.show_players(ui, snapshot, clock);
+        PresentationThemeComponents::divider(ui);
         self.show_controls(ui, snapshot, is_busy, &mut operation);
         self.show_resignation(ui, snapshot, is_busy, &mut operation);
-        ui.separator();
-        Self::show_moves(ui, snapshot, is_busy, &mut operation);
         if clock.status() == ClockStateEnumStatus::Running
             && let Some(delay) =
                 PresentationGamePlayClock::next_refresh(clock.side(clock.active()).displayed())
@@ -238,57 +328,353 @@ impl PresentationGamePlay {
         }))
     }
 
-    fn show_players(&self, ui: &mut Ui, snapshot: &DesktopGameSnapshot, clock: ClockStateView) {
-        for color in [BoardEnumColor::Black, BoardEnumColor::White] {
-            let side = clock.side(color);
-            ui.group(|ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.strong(Self::color_label(color));
-                    let name = match color {
-                        BoardEnumColor::White => snapshot.metadata().known().white.as_ref(),
-                        BoardEnumColor::Black => snapshot.metadata().known().black.as_ref(),
-                    };
-                    if let Some(name) = name {
-                        ui.label(name.as_str());
-                    } else {
-                        ui.label(match snapshot.seats().seat(color) {
-                            GameEnumSeat::Human => "Human",
-                            GameEnumSeat::Reckless => "Reckless",
-                        });
-                    }
-                    if clock.active() == color && clock.status() == ClockStateEnumStatus::Running {
-                        ui.strong("To move");
-                    }
-                });
-                let text = egui::RichText::new(PresentationGamePlayClock::text(side.displayed()))
-                    .monospace()
-                    .strong();
-                let text = if PresentationGamePlayClock::is_low_time(side.displayed()) {
-                    text.color(ui.visuals().warn_fg_color)
-                } else {
-                    text
-                };
-                ui.label(text);
-                if PresentationGamePlayClock::is_low_time(side.displayed()) {
-                    ui.small("Low time");
+    fn show_header(ui: &mut Ui, snapshot: &DesktopGameSnapshot, clock: ClockStateView) {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(Self::title(snapshot))
+                    .size(PresentationThemeTypography::HEADING_POINTS)
+                    .strong(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (text, tone) = Self::run_state(snapshot, clock);
+                PresentationThemeComponents::pill(ui, text, tone);
+            });
+        });
+        let known = snapshot.metadata().known();
+        let opening = match (known.opening.as_ref(), known.variation.as_ref()) {
+            (Some(opening), Some(variation)) => {
+                Some(format!("{}, {}", opening.as_str(), variation.as_str()))
+            }
+            (Some(opening), None) => Some(opening.as_str().to_owned()),
+            (None, Some(_) | None) => None,
+        };
+        let eco = known.eco.as_ref();
+        if opening.is_some() || eco.is_some() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = PresentationThemeTokens::SPACE_1;
+                if let Some(opening) = opening {
+                    ui.label(
+                        RichText::new(opening)
+                            .size(PresentationThemeTypography::CAPTION_POINTS)
+                            .color(colors.text_2),
+                    );
                 }
-                if side.delay_remaining() != ClockDuration::ZERO {
-                    ui.small(format!(
-                        "Delay: {}",
-                        PresentationGamePlayClock::text(Some(side.delay_remaining()))
-                    ));
-                }
-                if side.pending_refund() != ClockDuration::ZERO {
-                    ui.small(format!(
-                        "Pending Bronstein refund: {}",
-                        PresentationGamePlayClock::text(Some(side.pending_refund()))
-                    ));
+                if let Some(eco) = eco {
+                    ui.label(
+                        RichText::new(eco.as_str())
+                            .size(PresentationThemeTypography::CAPTION_POINTS)
+                            .monospace()
+                            .color(colors.text_3),
+                    );
                 }
             });
         }
     }
 
+    fn title(snapshot: &DesktopGameSnapshot) -> &'static str {
+        match snapshot.seats().mode() {
+            GameEnumMode::HumanVersusEngine => "vs Reckless",
+            GameEnumMode::LocalTwoPlayer => "Local game",
+        }
+    }
+
+    fn run_state(
+        snapshot: &DesktopGameSnapshot,
+        clock: ClockStateView,
+    ) -> (&'static str, PresentationThemeEnumTone) {
+        if snapshot.outcome().is_some() {
+            return ("Game over", PresentationThemeEnumTone::Neutral);
+        }
+        if snapshot.is_save_required() {
+            return ("Unsaved", PresentationThemeEnumTone::Unsaved);
+        }
+        if snapshot.interruption().is_some() {
+            return ("Paused", PresentationThemeEnumTone::Low);
+        }
+        if snapshot.phase() != GameEnumPhase::Active {
+            return ("Not running", PresentationThemeEnumTone::Neutral);
+        }
+        let turn = snapshot.live_turn();
+        let is_low = PresentationGamePlayClock::is_low_time(clock.side(turn).displayed());
+        match (snapshot.seats().mode(), snapshot.seats().seat(turn), is_low) {
+            (GameEnumMode::HumanVersusEngine, GameEnumSeat::Human, false) => {
+                ("Your move", PresentationThemeEnumTone::Run)
+            }
+            (GameEnumMode::HumanVersusEngine, GameEnumSeat::Human, true) => {
+                ("Your move", PresentationThemeEnumTone::Low)
+            }
+            (GameEnumMode::HumanVersusEngine, GameEnumSeat::Reckless, _) => {
+                ("Reckless is thinking", PresentationThemeEnumTone::Accent)
+            }
+            (GameEnumMode::LocalTwoPlayer, _, true) => match turn {
+                BoardEnumColor::White => ("White to move", PresentationThemeEnumTone::Low),
+                BoardEnumColor::Black => ("Black to move", PresentationThemeEnumTone::Low),
+            },
+            (GameEnumMode::LocalTwoPlayer, _, false) => match turn {
+                BoardEnumColor::White => ("White to move", PresentationThemeEnumTone::Run),
+                BoardEnumColor::Black => ("Black to move", PresentationThemeEnumTone::Run),
+            },
+        }
+    }
+
+    fn show_history_banner(
+        ui: &mut Ui,
+        snapshot: &DesktopGameSnapshot,
+        is_busy: bool,
+        operation: &mut Option<PresentationGamePlayEnumOperation>,
+    ) {
+        if snapshot.is_viewing_live() {
+            return;
+        }
+        let colors = PresentationThemeColors::of(ui.ctx());
+        PresentationThemeComponents::card(ui)
+            .fill(colors.surface_2)
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    PresentationThemeIcon::show(
+                        ui,
+                        PresentationThemeEnumIcon::Clock,
+                        PresentationThemeTypography::BODY_POINTS,
+                        colors.accent,
+                    );
+                    ui.strong("Viewing history");
+                });
+                let viewed = snapshot
+                    .moves()
+                    .iter()
+                    .find(|movement| movement.id() == snapshot.view())
+                    .map_or_else(
+                        || "the starting position".to_owned(),
+                        |movement| Self::move_text(ui.ctx(), movement),
+                    );
+                ui.label(format!("Viewing {viewed}. The game continues live."));
+                PresentationThemeComponents::caption(
+                    ui,
+                    "The live game, its clocks, and Reckless continue independently.",
+                );
+                if ui
+                    .add_enabled(
+                        !is_busy,
+                        PresentationThemeEnumButton::Primary.widget(
+                            ui,
+                            "Return to Live",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
+                    .clicked()
+                {
+                    *operation = Some(PresentationGamePlayEnumOperation::ReturnToLive);
+                }
+            });
+    }
+
+    fn move_text(context: &egui::Context, movement: &DesktopGameSnapshotMove) -> String {
+        let separator = match movement.mover() {
+            BoardEnumColor::White => ".",
+            BoardEnumColor::Black => "\u{2026}",
+        };
+        format!(
+            "{}{separator}{}",
+            movement.number(),
+            PresentationBoardFigurines::display(context, movement.san(), Some(movement.mover()))
+        )
+    }
+
+    fn show_info(ui: &mut Ui, snapshot: &DesktopGameSnapshot) {
+        let known = snapshot.metadata().known();
+        let rows = [
+            (
+                "Event",
+                known.event.as_ref().map(|text| text.as_str().to_owned()),
+            ),
+            (
+                "Site",
+                known.site.as_ref().map(|text| text.as_str().to_owned()),
+            ),
+            (
+                "Round",
+                known.round.as_ref().map(|text| text.as_str().to_owned()),
+            ),
+            (
+                "Time control",
+                Some(if snapshot.clock().control().is_timed() {
+                    "Timed".to_owned()
+                } else {
+                    "Untimed".to_owned()
+                }),
+            ),
+            ("Moves played", Some(snapshot.moves().len().to_string())),
+        ];
+        egui::Grid::new("live_game_info")
+            .num_columns(2)
+            .spacing([
+                PresentationThemeTokens::SPACE_3,
+                PresentationThemeTokens::SPACE_1,
+            ])
+            .show(ui, |ui| {
+                for (name, value) in rows {
+                    let Some(value) = value else {
+                        continue;
+                    };
+                    PresentationThemeComponents::caption(ui, name);
+                    ui.label(value);
+                    ui.end_row();
+                }
+            });
+    }
+
+    fn show_notes(ui: &mut Ui, snapshot: &DesktopGameSnapshot) {
+        match snapshot.metadata().known().annotator.as_ref() {
+            Some(annotator) => {
+                ui.label(format!("Annotated by {}", annotator.as_str()));
+            }
+            None => {
+                PresentationThemeComponents::caption(ui, "No notes for this game yet.");
+            }
+        }
+    }
+
+    fn show_navigation(
+        ui: &mut Ui,
+        snapshot: &DesktopGameSnapshot,
+        is_busy: bool,
+        operation: &mut Option<PresentationGamePlayEnumOperation>,
+    ) {
+        let moves = snapshot.moves();
+        let index = moves
+            .iter()
+            .position(|movement| movement.id() == snapshot.view());
+        let previous = match index {
+            None => None,
+            Some(0) => Some(snapshot.root()),
+            Some(index) => moves
+                .get(index.saturating_sub(1))
+                .map(DesktopGameSnapshotMove::id),
+        };
+        let next = match index {
+            None => moves.first(),
+            Some(index) => moves.get(index.saturating_add(1)),
+        }
+        .map(DesktopGameSnapshotMove::id);
+        let last = moves.last().map(DesktopGameSnapshotMove::id);
+        let first = (snapshot.view() != snapshot.root()).then_some(snapshot.root());
+        PresentationThemeComponents::divider(ui);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = PresentationThemeTokens::SPACE_1;
+            for (icon, label, target) in [
+                (PresentationThemeEnumIcon::First, "First move", first),
+                (
+                    PresentationThemeEnumIcon::Previous,
+                    "Previous move",
+                    previous,
+                ),
+                (PresentationThemeEnumIcon::Next, "Next move", next),
+                (
+                    PresentationThemeEnumIcon::Last,
+                    "Last move",
+                    last.filter(|last| *last != snapshot.view()),
+                ),
+            ] {
+                let response = ui
+                    .add_enabled_ui(!is_busy && target.is_some(), |ui| {
+                        PresentationThemeIcon::button(ui, icon, label)
+                    })
+                    .inner;
+                if response.clicked()
+                    && let Some(target) = target
+                {
+                    *operation = Some(PresentationGamePlayEnumOperation::Navigate(target));
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                PresentationThemeComponents::caption(
+                    ui,
+                    if snapshot.has_unsaved_changes() {
+                        "Saving to library"
+                    } else {
+                        "Saved to library"
+                    },
+                );
+            });
+        });
+    }
+
+    fn show_players(&self, ui: &mut Ui, snapshot: &DesktopGameSnapshot, clock: ClockStateView) {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        PresentationThemeComponents::divider(ui);
+        for color in [BoardEnumColor::Black, BoardEnumColor::White] {
+            let side = clock.side(color);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = PresentationThemeTokens::SPACE_2;
+                ui.label(
+                    RichText::new(Self::color_label(color))
+                        .size(PresentationThemeTypography::CAPTION_POINTS)
+                        .color(colors.text_3),
+                );
+                let name = match color {
+                    BoardEnumColor::White => snapshot.metadata().known().white.as_ref(),
+                    BoardEnumColor::Black => snapshot.metadata().known().black.as_ref(),
+                };
+                if let Some(name) = name {
+                    ui.label(RichText::new(name.as_str()).strong());
+                } else {
+                    ui.label(
+                        RichText::new(match snapshot.seats().seat(color) {
+                            GameEnumSeat::Human => "Human",
+                            GameEnumSeat::Reckless => "Reckless",
+                        })
+                        .strong(),
+                    );
+                }
+                if clock.active() == color && clock.status() == ClockStateEnumStatus::Running {
+                    PresentationThemeComponents::pill(
+                        ui,
+                        "To move",
+                        PresentationThemeEnumTone::Run,
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let is_low = PresentationGamePlayClock::is_low_time(side.displayed());
+                    let text = RichText::new(PresentationGamePlayClock::text(side.displayed()))
+                        .monospace()
+                        .size(PresentationThemeTypography::BODY_POINTS)
+                        .strong()
+                        .color(if is_low { colors.low } else { colors.text });
+                    ui.label(text);
+                    if is_low {
+                        PresentationThemeComponents::pill(
+                            ui,
+                            "Low time",
+                            PresentationThemeEnumTone::Low,
+                        );
+                    }
+                });
+            });
+            if side.delay_remaining() != ClockDuration::ZERO {
+                PresentationThemeComponents::caption(
+                    ui,
+                    format!(
+                        "Delay: {}",
+                        PresentationGamePlayClock::text(Some(side.delay_remaining()))
+                    ),
+                );
+            }
+            if side.pending_refund() != ClockDuration::ZERO {
+                PresentationThemeComponents::caption(
+                    ui,
+                    format!(
+                        "Pending Bronstein refund: {}",
+                        PresentationGamePlayClock::text(Some(side.pending_refund()))
+                    ),
+                );
+            }
+        }
+    }
+
     fn show_status(ui: &mut Ui, snapshot: &DesktopGameSnapshot, clock: ClockStateView) {
+        let colors = PresentationThemeColors::of(ui.ctx());
         if let Some(outcome) = snapshot.outcome() {
             let result = match outcome.result() {
                 GameEnumResult::Victory(BoardEnumColor::White) => "White wins (1-0)",
@@ -304,35 +690,24 @@ impl PresentationGamePlay {
                 } else {
                     "This game is unsaved. Retry Save before continuing."
                 };
-            ui.colored_label(ui.visuals().error_fg_color, message);
+            ui.colored_label(colors.err, message);
         } else if let Some(interruption) = snapshot.interruption() {
             ui.label(Self::interruption_label(interruption));
         } else {
-            match snapshot.phase() {
+            let text = match snapshot.phase() {
                 GameEnumPhase::Active => {
                     if matches!(clock.status(), ClockStateEnumStatus::Flagged(_)) {
-                        ui.label("Clock expired. Waiting for the native game result.");
+                        "Clock expired. Waiting for the native game result."
                     } else {
-                        ui.label("Game in progress");
+                        "Game in progress"
                     }
                 }
-                GameEnumPhase::Setup => {
-                    ui.label("Game setup");
-                }
-                GameEnumPhase::Interrupted => {
-                    ui.label("Game interrupted");
-                }
-                GameEnumPhase::Completed => {
-                    ui.label("Game completed");
-                }
-                GameEnumPhase::Analysis => {
-                    ui.label("Game review");
-                }
-            }
-        }
-        if !snapshot.is_viewing_live() {
-            ui.strong("Viewing history");
-            ui.small("The live game, its clocks, and Reckless continue independently.");
+                GameEnumPhase::Setup => "Game setup",
+                GameEnumPhase::Interrupted => "Game interrupted",
+                GameEnumPhase::Completed => "Game completed",
+                GameEnumPhase::Analysis => "Game review",
+            };
+            PresentationThemeComponents::caption(ui, text);
         }
     }
 
@@ -343,144 +718,253 @@ impl PresentationGamePlay {
         is_busy: bool,
         operation: &mut Option<PresentationGamePlayEnumOperation>,
     ) {
-        let recovery = if snapshot.is_save_required() {
-            Some(("Retry Save", PresentationGamePlayEnumOperation::Retry))
-        } else {
-            snapshot
-                .interruption()
-                .map(|interruption| match interruption {
-                    GameSessionEnumInterruption::RecoveryRequired(fault) => (
-                        Self::retry_label(fault),
-                        PresentationGamePlayEnumOperation::Retry,
-                    ),
-                    GameSessionEnumInterruption::Adjudication { .. } => (
-                        "Retry Adjudication",
-                        PresentationGamePlayEnumOperation::Retry,
-                    ),
-                    GameSessionEnumInterruption::Paused(_)
-                    | GameSessionEnumInterruption::Recovered(_) => {
-                        ("Resume Game", PresentationGamePlayEnumOperation::Resume)
-                    }
-                    GameSessionEnumInterruption::PendingResult => {
-                        ("Retry Save", PresentationGamePlayEnumOperation::Retry)
-                    }
-                })
-        };
-        if let Some((label, action)) = recovery {
-            Self::action(ui, label, !is_busy, action, operation);
-        } else if snapshot.phase() == GameEnumPhase::Active {
-            Self::action(
-                ui,
-                "Pause Game",
-                !is_busy,
-                PresentationGamePlayEnumOperation::Pause,
-                operation,
-            );
-        }
+        let can_act = !is_busy && !snapshot.is_save_required();
+        let mut tiles = Vec::new();
         let can_takeback = snapshot.takeback_target().is_some()
             && snapshot.takeback_pending().is_none()
-            && !is_busy
-            && !snapshot.is_save_required();
+            && can_act;
         if snapshot.takeback_pending().is_none() {
             match snapshot.seats().mode() {
-                GameEnumMode::HumanVersusEngine => {
-                    Self::action(
-                        ui,
-                        "Takeback",
-                        can_takeback,
-                        PresentationGamePlayEnumOperation::Takeback {
-                            requester: Self::human_color(snapshot),
-                        },
-                        operation,
-                    );
-                }
+                GameEnumMode::HumanVersusEngine => tiles.push(PresentationGamePlayTile::operation(
+                    "Takeback",
+                    PresentationGamePlayEnumMark::Icon(PresentationThemeEnumIcon::Takeback),
+                    can_takeback,
+                    PresentationGamePlayEnumOperation::Takeback {
+                        requester: Self::human_color(snapshot),
+                    },
+                )),
                 GameEnumMode::LocalTwoPlayer => {
-                    ui.horizontal_wrapped(|ui| {
-                        for requester in [BoardEnumColor::White, BoardEnumColor::Black] {
-                            Self::action(
-                                ui,
-                                Self::takeback_label(requester),
-                                can_takeback,
-                                PresentationGamePlayEnumOperation::Takeback { requester },
-                                operation,
-                            );
-                        }
-                    });
+                    for requester in [BoardEnumColor::White, BoardEnumColor::Black] {
+                        tiles.push(PresentationGamePlayTile::operation(
+                            Self::takeback_label(requester),
+                            PresentationGamePlayEnumMark::Icon(PresentationThemeEnumIcon::Takeback),
+                            can_takeback,
+                            PresentationGamePlayEnumOperation::Takeback { requester },
+                        ));
+                    }
                 }
             }
-        } else {
-            Self::show_takeback_consent(
-                ui,
-                snapshot,
-                !is_busy && !snapshot.is_save_required(),
-                operation,
-            );
         }
-        self.show_claims(
-            ui,
-            snapshot,
-            !is_busy && !snapshot.is_save_required(),
-            operation,
-        );
-        if let Some(premove) = snapshot.premove() {
-            ui.strong("Queued Premove");
-            let promotion = match premove.promotion() {
-                None => String::new(),
-                Some(kind) => format!(" = {}", Self::piece_label(kind)),
-            };
-            ui.label(format!(
-                "{} to {}{promotion}",
-                premove.origin(),
-                premove.destination()
+        if let Some((label, action, icon)) = Self::recovery(snapshot) {
+            tiles.push(PresentationGamePlayTile::operation(
+                label,
+                PresentationGamePlayEnumMark::Icon(icon),
+                !is_busy,
+                action,
             ));
-            Self::action(
-                ui,
-                "Cancel Premove",
-                !is_busy && !snapshot.is_save_required(),
-                PresentationGamePlayEnumOperation::CancelPremove,
-                operation,
-            );
+        } else if snapshot.phase() == GameEnumPhase::Active {
+            tiles.push(PresentationGamePlayTile::operation(
+                "Pause Game",
+                PresentationGamePlayEnumMark::Icon(PresentationThemeEnumIcon::Pause),
+                !is_busy,
+                PresentationGamePlayEnumOperation::Pause,
+            ));
+        }
+        let claimant = snapshot.live_turn();
+        let can_claim = can_act
+            && snapshot.seats().seat(claimant) == GameEnumSeat::Human
+            && snapshot.phase() == GameEnumPhase::Active;
+        for (kind, label, _) in Self::DRAW_CLAIMS {
+            tiles.push(PresentationGamePlayTile::operation(
+                label,
+                PresentationGamePlayEnumMark::Glyph("\u{bd}"),
+                can_claim && snapshot.claimable().contains(kind),
+                PresentationGamePlayEnumOperation::ClaimDraw {
+                    claimant,
+                    kind,
+                    intent: GameDrawClaimEnumIntent::Current,
+                },
+            ));
         }
         let can_resign = matches!(
             snapshot.phase(),
             GameEnumPhase::Active | GameEnumPhase::Interrupted
-        ) && !is_busy
-            && !snapshot.is_save_required();
+        ) && can_act;
         match snapshot.seats().mode() {
-            GameEnumMode::HumanVersusEngine => {
-                if ui
-                    .add_enabled(can_resign, egui::Button::new("Resign"))
-                    .clicked()
-                {
-                    self.resignation = Some(PresentationGamePlayIntent::new(
-                        snapshot.id(),
-                        snapshot.revision(),
-                        PresentationGamePlayEnumOperation::Resign {
-                            resigning: Self::human_color(snapshot),
-                        },
+            GameEnumMode::HumanVersusEngine => tiles.push(PresentationGamePlayTile::resign(
+                "Resign",
+                can_resign,
+                Self::human_color(snapshot),
+            )),
+            GameEnumMode::LocalTwoPlayer => {
+                for resigning in [BoardEnumColor::White, BoardEnumColor::Black] {
+                    tiles.push(PresentationGamePlayTile::resign(
+                        Self::resign_label(resigning),
+                        can_resign,
+                        resigning,
                     ));
                 }
             }
-            GameEnumMode::LocalTwoPlayer => {
-                ui.horizontal_wrapped(|ui| {
-                    for resigning in [BoardEnumColor::White, BoardEnumColor::Black] {
-                        if ui
-                            .add_enabled(
-                                can_resign,
-                                egui::Button::new(Self::resign_label(resigning)),
-                            )
-                            .clicked()
-                        {
-                            self.resignation = Some(PresentationGamePlayIntent::new(
-                                snapshot.id(),
-                                snapshot.revision(),
-                                PresentationGamePlayEnumOperation::Resign { resigning },
-                            ));
+        }
+        self.show_tiles(ui, snapshot, &tiles, operation);
+        if snapshot.takeback_pending().is_some() {
+            Self::show_takeback_consent(ui, snapshot, can_act, operation);
+        }
+        self.show_intended_claims(ui, snapshot, can_claim, operation);
+        if let Some(premove) = snapshot.premove() {
+            PresentationThemeComponents::card(ui)
+                .inner_margin(egui::Margin::same(10))
+                .show(ui, |ui| {
+                    ui.strong("Queued Premove");
+                    let promotion = match premove.promotion() {
+                        None => String::new(),
+                        Some(kind) => format!(" = {}", Self::piece_label(kind)),
+                    };
+                    ui.label(format!(
+                        "{} to {}{promotion}",
+                        premove.origin(),
+                        premove.destination()
+                    ));
+                    Self::action(
+                        ui,
+                        "Cancel Premove",
+                        can_act,
+                        PresentationGamePlayEnumOperation::CancelPremove,
+                        operation,
+                    );
+                });
+        }
+    }
+
+    fn recovery(
+        snapshot: &DesktopGameSnapshot,
+    ) -> Option<(
+        &'static str,
+        PresentationGamePlayEnumOperation,
+        PresentationThemeEnumIcon,
+    )> {
+        if snapshot.is_save_required() {
+            return Some((
+                "Retry Save",
+                PresentationGamePlayEnumOperation::Retry,
+                PresentationThemeEnumIcon::ResetCamera,
+            ));
+        }
+        snapshot
+            .interruption()
+            .map(|interruption| match interruption {
+                GameSessionEnumInterruption::RecoveryRequired(fault) => (
+                    Self::retry_label(fault),
+                    PresentationGamePlayEnumOperation::Retry,
+                    PresentationThemeEnumIcon::ResetCamera,
+                ),
+                GameSessionEnumInterruption::Adjudication { .. } => (
+                    "Retry Adjudication",
+                    PresentationGamePlayEnumOperation::Retry,
+                    PresentationThemeEnumIcon::ResetCamera,
+                ),
+                GameSessionEnumInterruption::Paused(_)
+                | GameSessionEnumInterruption::Recovered(_) => (
+                    "Resume Game",
+                    PresentationGamePlayEnumOperation::Resume,
+                    PresentationThemeEnumIcon::Play,
+                ),
+                GameSessionEnumInterruption::PendingResult => (
+                    "Retry Save",
+                    PresentationGamePlayEnumOperation::Retry,
+                    PresentationThemeEnumIcon::ResetCamera,
+                ),
+            })
+    }
+
+    fn show_tiles(
+        &mut self,
+        ui: &mut Ui,
+        snapshot: &DesktopGameSnapshot,
+        tiles: &[PresentationGamePlayTile],
+        operation: &mut Option<PresentationGamePlayEnumOperation>,
+    ) {
+        let gap = PresentationThemeTokens::SPACE_2;
+        let width = ((ui.available_width() - gap) / 2.0).max(PresentationThemeTokens::CONTROL_LG);
+        ui.spacing_mut().item_spacing = Vec2::splat(gap);
+        for row in tiles.chunks(2) {
+            ui.horizontal(|ui| {
+                for tile in row {
+                    if Self::tile(ui, tile, width).clicked() {
+                        match tile.outcome {
+                            PresentationGamePlayEnumTileOutcome::Operation(requested) => {
+                                *operation = Some(requested);
+                            }
+                            PresentationGamePlayEnumTileOutcome::Resign(resigning) => {
+                                self.resignation = Some(PresentationGamePlayIntent::new(
+                                    snapshot.id(),
+                                    snapshot.revision(),
+                                    PresentationGamePlayEnumOperation::Resign { resigning },
+                                ));
+                            }
                         }
                     }
-                });
-            }
+                }
+            });
         }
+    }
+
+    fn tile(ui: &mut Ui, tile: &PresentationGamePlayTile, width: f32) -> Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        ui.add_enabled_ui(tile.is_enabled, |ui| {
+            let (rect, response) = ui.allocate_exact_size(
+                Vec2::new(width, PresentationThemeTokens::CONTROL_MD),
+                Sense::click(),
+            );
+            let is_danger = matches!(tile.outcome, PresentationGamePlayEnumTileOutcome::Resign(_));
+            let text = match (is_danger, tile.is_enabled) {
+                (_, false) => colors.text_3,
+                (true, true) => colors.err,
+                (false, true) => colors.text,
+            };
+            let fill = if response.hovered() && tile.is_enabled {
+                colors.surface_3
+            } else {
+                colors.surface_2
+            };
+            ui.painter().rect(
+                rect,
+                CornerRadius::same(PresentationThemeTokens::RADIUS_MD),
+                fill,
+                Stroke::new(1.0, colors.line),
+                egui::StrokeKind::Inside,
+            );
+            let font = FontId::proportional(PresentationThemeTypography::UI_POINTS);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(tile.label.to_owned(), font, text);
+            let mark = PresentationThemeTypography::BODY_POINTS;
+            let total = mark + PresentationThemeTokens::SPACE_2 + galley.size().x;
+            let left = rect.center().x - total / 2.0;
+            let mark_rect = Rect::from_center_size(
+                egui::pos2(left + mark / 2.0, rect.center().y),
+                Vec2::splat(mark),
+            );
+            match tile.mark {
+                PresentationGamePlayEnumMark::Icon(icon) => {
+                    PresentationThemeIcon::paint(ui.painter(), mark_rect, icon, text);
+                }
+                PresentationGamePlayEnumMark::Glyph(glyph) => {
+                    ui.painter().text(
+                        mark_rect.center(),
+                        Align2::CENTER_CENTER,
+                        glyph,
+                        FontId::proportional(PresentationThemeTypography::BODY_POINTS),
+                        text,
+                    );
+                }
+            }
+            ui.painter().galley(
+                egui::pos2(
+                    left + mark + PresentationThemeTokens::SPACE_2,
+                    rect.center().y - galley.size().y / 2.0,
+                ),
+                galley,
+                text,
+            );
+            let label = tile.label.to_owned();
+            let is_enabled = tile.is_enabled;
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, is_enabled, label.clone())
+            });
+            response
+        })
+        .inner
     }
 
     fn show_takeback_consent(
@@ -525,31 +1009,14 @@ impl PresentationGamePlay {
         });
     }
 
-    fn show_claims(
+    fn show_intended_claims(
         &mut self,
         ui: &mut Ui,
         snapshot: &DesktopGameSnapshot,
-        is_enabled: bool,
+        can_claim: bool,
         operation: &mut Option<PresentationGamePlayEnumOperation>,
     ) {
         let claimant = snapshot.live_turn();
-        let human_turn = snapshot.seats().seat(claimant) == GameEnumSeat::Human;
-        let can_claim = is_enabled && human_turn && snapshot.phase() == GameEnumPhase::Active;
-        ui.horizontal_wrapped(|ui| {
-            for (kind, label, _) in Self::DRAW_CLAIMS {
-                Self::action(
-                    ui,
-                    label,
-                    can_claim && snapshot.claimable().contains(kind),
-                    PresentationGamePlayEnumOperation::ClaimDraw {
-                        claimant,
-                        kind,
-                        intent: GameDrawClaimEnumIntent::Current,
-                    },
-                    operation,
-                );
-            }
-        });
         ui.add_enabled_ui(can_claim && snapshot.is_viewing_live(), |ui| {
             let variant = snapshot.board().variant();
             let movement_label = |movement: Option<BoardMove>| {
@@ -609,7 +1076,7 @@ impl PresentationGamePlay {
         let Some(intent) = self.resignation else {
             return;
         };
-        ui.group(|ui| {
+        PresentationThemeComponents::card(ui).show(ui, |ui| {
             ui.strong("Resign this game?");
             if let PresentationGamePlayEnumOperation::Resign { resigning } = intent.operation() {
                 ui.label(format!(
@@ -621,14 +1088,18 @@ impl PresentationGamePlay {
                 if ui
                     .add_enabled(
                         !is_busy && !snapshot.is_save_required(),
-                        egui::Button::new("Confirm Resignation"),
+                        PresentationThemeEnumButton::DangerSolid.widget(
+                            ui,
+                            "Confirm Resignation",
+                            PresentationThemeEnumSize::Small,
+                        ),
                     )
                     .clicked()
                 {
                     *operation = Some(intent.operation());
                     self.resignation = None;
                 }
-                if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                if PresentationThemeEnumButton::Ghost
                     .show(ui, "Keep Playing")
                     .clicked()
                 {
@@ -644,52 +1115,131 @@ impl PresentationGamePlay {
         is_busy: bool,
         operation: &mut Option<PresentationGamePlayEnumOperation>,
     ) {
-        ui.strong("Moves");
-        if !snapshot.is_viewing_live() {
-            Self::action(
-                ui,
-                "Return to Live",
-                !is_busy,
-                PresentationGamePlayEnumOperation::ReturnToLive,
-                operation,
-            );
+        let mut rows: Vec<PresentationGamePlayMoveRow<'_>> = Vec::new();
+        for movement in snapshot.moves() {
+            match (movement.mover(), rows.last_mut()) {
+                (BoardEnumColor::Black, Some(row))
+                    if row.number == movement.number() && row.black.is_none() =>
+                {
+                    row.black = Some(movement);
+                }
+                (BoardEnumColor::White, _) => rows.push(PresentationGamePlayMoveRow {
+                    number: movement.number(),
+                    white: Some(movement),
+                    black: None,
+                }),
+                (BoardEnumColor::Black, _) => rows.push(PresentationGamePlayMoveRow {
+                    number: movement.number(),
+                    white: None,
+                    black: Some(movement),
+                }),
+            }
         }
         egui::ScrollArea::vertical()
             .id_salt("live_game_move_list")
             .max_height(PresentationThemeTokens::PANEL_WIDTH)
             .show(ui, |ui| {
                 ui.add_enabled_ui(!is_busy, |ui| {
-                    if ui
-                        .selectable_label(snapshot.view() == snapshot.root(), "Starting Position")
-                        .clicked()
+                    ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+                    let width = ui.available_width();
+                    let cell = ((width - Self::NUMBER_COLUMN) / 2.0).max(0.0);
+                    if Self::move_cell(
+                        ui,
+                        "Starting Position",
+                        "Starting Position",
+                        snapshot.view() == snapshot.root(),
+                        width,
+                    )
+                    .clicked()
                     {
                         *operation =
                             Some(PresentationGamePlayEnumOperation::Navigate(snapshot.root()));
                     }
-                    for movement in snapshot.moves() {
-                        let separator = match movement.mover() {
-                            BoardEnumColor::White => ".",
-                            BoardEnumColor::Black => "...",
-                        };
-                        let label = format!(
-                            "{}{separator} {}",
-                            movement.number(),
-                            PresentationBoardFigurines::display(
-                                ui.ctx(),
-                                movement.san(),
-                                Some(movement.mover())
-                            )
-                        );
-                        if ui
-                            .selectable_label(snapshot.view() == movement.id(), label)
-                            .clicked()
-                        {
-                            *operation =
-                                Some(PresentationGamePlayEnumOperation::Navigate(movement.id()));
-                        }
+                    for row in rows {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            let colors = PresentationThemeColors::of(ui.ctx());
+                            let (number, _) = ui.allocate_exact_size(
+                                Vec2::new(Self::NUMBER_COLUMN, Self::MOVE_ROW),
+                                Sense::hover(),
+                            );
+                            ui.painter().text(
+                                number.left_center() + Vec2::new(8.0, 0.0),
+                                Align2::LEFT_CENTER,
+                                format!("{}.", row.number),
+                                FontId::proportional(PresentationThemeTypography::CAPTION_POINTS),
+                                colors.text_3,
+                            );
+                            for movement in [row.white, row.black] {
+                                let Some(movement) = movement else {
+                                    ui.allocate_exact_size(
+                                        Vec2::new(cell, Self::MOVE_ROW),
+                                        Sense::hover(),
+                                    );
+                                    continue;
+                                };
+                                let separator = match movement.mover() {
+                                    BoardEnumColor::White => ".",
+                                    BoardEnumColor::Black => "...",
+                                };
+                                let display = PresentationBoardFigurines::display(
+                                    ui.ctx(),
+                                    movement.san(),
+                                    Some(movement.mover()),
+                                );
+                                let label = format!("{}{separator} {display}", movement.number());
+                                if Self::move_cell(
+                                    ui,
+                                    &display,
+                                    &label,
+                                    snapshot.view() == movement.id(),
+                                    cell,
+                                )
+                                .clicked()
+                                {
+                                    *operation = Some(PresentationGamePlayEnumOperation::Navigate(
+                                        movement.id(),
+                                    ));
+                                }
+                            }
+                        });
                     }
                 });
             });
+    }
+
+    fn move_cell(ui: &mut Ui, text: &str, label: &str, selected: bool, width: f32) -> Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, Self::MOVE_ROW), Sense::click());
+        let fill = if selected {
+            colors.accent_soft
+        } else if response.hovered() {
+            colors.surface_2
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter()
+            .rect_filled(rect, PresentationThemeTokens::RADIUS_MD, fill);
+        let font = FontId::proportional(PresentationThemeTypography::BODY_POINTS);
+        ui.painter().text(
+            rect.left_center() + Vec2::new(8.0, 0.0),
+            Align2::LEFT_CENTER,
+            text,
+            font,
+            if selected { colors.accent } else { colors.text },
+        );
+        let label = label.to_owned();
+        let is_enabled = ui.is_enabled();
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Button,
+                is_enabled,
+                selected,
+                label.clone(),
+            )
+        });
+        response
     }
 
     fn action(
@@ -700,7 +1250,14 @@ impl PresentationGamePlay {
         operation: &mut Option<PresentationGamePlayEnumOperation>,
     ) {
         if ui
-            .add_enabled(is_enabled, egui::Button::new(label))
+            .add_enabled(
+                is_enabled,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    label,
+                    PresentationThemeEnumSize::Small,
+                ),
+            )
             .clicked()
         {
             *operation = Some(requested);

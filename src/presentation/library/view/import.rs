@@ -1,4 +1,4 @@
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::Ui;
 
 use crate::desktop::file_handle::DesktopFileHandleId;
 use crate::desktop::identity::DesktopRequestId;
@@ -7,6 +7,9 @@ use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
 use crate::presentation::library::view::{
     PresentationLibraryEnumEffect, PresentationLibraryEnumFileRequest, PresentationLibraryPanel,
+};
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
 };
 use crate::storage::import_session::{
     StorageImportSessionDetailRequest, StorageImportSessionEnumChoice,
@@ -56,7 +59,14 @@ impl PresentationLibraryPanel {
             ui.label("Working on the import preview");
         }
         let Some(summary) = self.controller.import().summary().copied() else {
-            let choose = ui.add_enabled(!busy, egui::Button::new("Choose PGN file to import"));
+            let choose = ui.add_enabled(
+                !busy,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Choose PGN file to import",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.frame.clicked(ui, &choose) {
                 effects.push(PresentationLibraryEnumEffect::SelectFile(
                     PresentationLibraryEnumFileRequest::ImportSource,
@@ -72,7 +82,14 @@ impl PresentationLibraryPanel {
             summary.duplicates(),
             summary.selected()
         ));
-        let rows = ui.add_enabled(!busy, egui::Button::new("Show preview rows"));
+        let rows = ui.add_enabled(
+            !busy,
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Show preview rows",
+                PresentationThemeEnumSize::Small,
+            ),
+        );
         if self.frame.clicked(ui, &rows) {
             let result = StorageImportSessionPageRequest::new(
                 0,
@@ -88,7 +105,14 @@ impl PresentationLibraryPanel {
         }
         self.import_rows(ui, busy, effects);
         self.import_details(ui);
-        let freeze = ui.add_enabled(!busy, egui::Button::new("Freeze preview"));
+        let freeze = ui.add_enabled(
+            !busy,
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Freeze preview",
+                PresentationThemeEnumSize::Small,
+            ),
+        );
         if self.frame.clicked(ui, &freeze) {
             let result = self.controller.import_freeze(DesktopRequestId::new());
             self.collect(result, effects);
@@ -97,14 +121,25 @@ impl PresentationLibraryPanel {
             let committed = confirmation.summary().selected();
             let commit = ui.add_enabled(
                 !busy,
-                egui::Button::new(format!("Commit import of {committed} games")),
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    format!("Commit import of {committed} games"),
+                    PresentationThemeEnumSize::Small,
+                ),
             );
             if self.frame.clicked(ui, &commit) {
                 let result = self.controller.import_commit(DesktopRequestId::new());
                 self.collect(result, effects);
             }
         }
-        let cancel = ui.add_enabled(!busy, egui::Button::new("Cancel import"));
+        let cancel = ui.add_enabled(
+            !busy,
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Cancel import",
+                PresentationThemeEnumSize::Small,
+            ),
+        );
         if self.frame.clicked(ui, &cancel) {
             let result = self.controller.import_cancel(DesktopRequestId::new());
             self.collect(result, effects);
@@ -122,7 +157,7 @@ impl PresentationLibraryPanel {
         if let Some(page) = self.controller.import().page() {
             for row in page.rows() {
                 ui.push_id(row.ordinal(), |ui| {
-                    ui.group(|ui| {
+                    PresentationThemeComponents::card(ui).show(ui, |ui| {
                         ui.label(format!(
                             "Game {}: {} vs {}",
                             row.ordinal(),
@@ -152,18 +187,38 @@ impl PresentationLibraryPanel {
                         ui.label(format!("Current choice: {current}"));
                         let has_match = row.exact_matches() > 0 || row.potential_matches() > 0;
                         if has_match {
-                            let skip = ui.add_enabled(!busy, egui::Button::new("Skip"));
+                            let skip = ui.add_enabled(
+                                !busy,
+                                PresentationThemeEnumButton::Secondary.widget(
+                                    ui,
+                                    "Skip",
+                                    PresentationThemeEnumSize::Small,
+                                ),
+                            );
                             if self.frame.clicked(ui, &skip) {
                                 choose =
                                     Some((row.ordinal(), StorageImportSessionEnumChoice::Skip));
                             }
-                            let keep = ui.add_enabled(!busy, egui::Button::new("Keep copy"));
+                            let keep = ui.add_enabled(
+                                !busy,
+                                PresentationThemeEnumButton::Secondary.widget(
+                                    ui,
+                                    "Keep copy",
+                                    PresentationThemeEnumSize::Small,
+                                ),
+                            );
                             if self.frame.clicked(ui, &keep) {
                                 choose =
                                     Some((row.ordinal(), StorageImportSessionEnumChoice::KeepCopy));
                             }
-                            let differences =
-                                ui.add_enabled(!busy, egui::Button::new("Show differences"));
+                            let differences = ui.add_enabled(
+                                !busy,
+                                PresentationThemeEnumButton::Secondary.widget(
+                                    ui,
+                                    "Show differences",
+                                    PresentationThemeEnumSize::Small,
+                                ),
+                            );
                             if self.frame.clicked(ui, &differences) {
                                 detail = Some(row.ordinal());
                             }

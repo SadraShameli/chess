@@ -288,6 +288,14 @@ impl PresentationThemeComponents {
         .inner
     }
 
+    pub fn dialog_label(ui: &Ui, label: &str) {
+        ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
+            node.set_role(egui::accesskit::Role::Dialog);
+            node.set_label(label);
+            node.set_modal();
+        });
+    }
+
     pub fn modal(context: &egui::Context, id: egui::Id) -> egui::Modal {
         let colors = PresentationThemeColors::of(context);
         egui::Modal::new(id).backdrop_color(colors.scrim).frame(
@@ -337,7 +345,7 @@ impl PresentationThemeComponents {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 ui.horizontal(|ui| {
-                    let count = options.len().max(1) as f32;
+                    let count = u16::try_from(options.len().max(1)).map_or(1.0, f32::from);
                     let width = if wide {
                         (ui.available_width() - 2.0 * (count - 1.0)) / count
                     } else {
@@ -437,5 +445,122 @@ impl PresentationThemeComponents {
             rect.center().y,
             Stroke::new(1.0, colors.line),
         );
+    }
+}
+
+impl PresentationThemeComponents {
+    pub fn mono(ui: &mut Ui, text: impl Into<String>, color: Color32, points: f32) -> Response {
+        ui.label(
+            RichText::new(text)
+                .monospace()
+                .size(points)
+                .strong()
+                .color(color),
+        )
+    }
+
+    pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, key: &str) -> Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        Frame::new()
+            .fill(colors.bg)
+            .stroke(Stroke::new(1.0, colors.line))
+            .corner_radius(CornerRadius::same(PresentationThemeTokens::RADIUS_MD))
+            .inner_margin(Margin::symmetric(8, 2))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    PresentationThemeIcon::show(
+                        ui,
+                        PresentationThemeEnumIcon::Search,
+                        16.0,
+                        colors.text_3,
+                    );
+                    let width = (ui.available_width() - 28.0).max(80.0);
+                    let response = ui.add(
+                        egui::TextEdit::singleline(text)
+                            .hint_text(RichText::new(hint).color(colors.text_3))
+                            .frame(egui::Frame::NONE)
+                            .desired_width(width),
+                    );
+                    Self::kbd(ui, key);
+                    response
+                })
+                .inner
+            })
+            .inner
+    }
+
+    pub fn outcome_bar(ui: &mut Ui, white: u64, draws: u64, black: u64, width: f32) -> Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 8.0), Sense::hover());
+        let total = white.saturating_add(draws).saturating_add(black);
+        let painter = ui.painter();
+        painter.rect_filled(rect, 2.0, colors.surface_3);
+        if total > 0 {
+            let draw = colors.eval_draw;
+            let mut left = rect.left();
+            for (count, fill) in [
+                (white, colors.eval_white),
+                (draws, draw),
+                (black, colors.eval_black),
+            ] {
+                let share = Self::share(count, total);
+                let right = left + rect.width() * share;
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(left, rect.top()),
+                        egui::pos2(right, rect.bottom()),
+                    ),
+                    0.0,
+                    fill,
+                );
+                left = right;
+            }
+            painter.rect_stroke(
+                rect,
+                2.0,
+                Stroke::new(1.0, colors.line),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let label = format!("White wins {white}, draws {draws}, Black wins {black}");
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, label.clone())
+        });
+        response
+    }
+
+    pub fn share(count: u64, total: u64) -> f32 {
+        if total == 0 {
+            return 0.0;
+        }
+        let per_mille = count.saturating_mul(1000) / total;
+        f32::from(u16::try_from(per_mille.min(1000)).unwrap_or(1000)) / 1000.0
+    }
+
+    pub fn eval_bar(ui: &mut Ui, size: Vec2, white_share: f32) -> Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+        let painter = ui.painter();
+        painter.rect_filled(rect, 3.0, colors.eval_black);
+        let share = white_share.clamp(0.0, 1.0);
+        let white = if size.y > size.x {
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.bottom() - rect.height() * share),
+                rect.max,
+            )
+        } else {
+            egui::Rect::from_min_max(
+                rect.min,
+                egui::pos2(rect.left() + rect.width() * share, rect.bottom()),
+            )
+        };
+        painter.rect_filled(white, 3.0, colors.eval_white);
+        painter.rect_stroke(
+            rect,
+            3.0,
+            Stroke::new(1.0, colors.line),
+            egui::StrokeKind::Inside,
+        );
+        response
     }
 }

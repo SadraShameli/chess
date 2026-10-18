@@ -1,5 +1,9 @@
 use bevy_egui::egui::{self, Ui};
 
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton,
+};
+
 use crate::engine::package::manifest::{EnginePackageEnumProfile, EnginePackageManifest};
 use crate::engine::package::selector::EnginePackageSelected;
 
@@ -107,15 +111,22 @@ impl PresentationWorkbenchEngineInformation {
         egui::CollapsingHeader::new("Engine Information")
             .default_open(true)
             .show(ui, |ui| {
-                for line in self.lines() {
-                    ui.label(line);
-                }
+                PresentationThemeComponents::card(ui).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    for line in self.lines() {
+                        PresentationThemeComponents::caption(ui, line);
+                    }
+                });
                 let can_retry = matches!(
                     self.state,
                     PresentationWorkbenchEngineInformationEnumState::Diagnostic(_)
                         | PresentationWorkbenchEngineInformationEnumState::SetupRequired(_)
                 );
-                if can_retry && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary.show(ui, "Retry Engine").clicked() {
+                if can_retry
+                    && PresentationThemeEnumButton::Secondary
+                        .show(ui, "Retry Engine")
+                        .clicked()
+                {
                     intent = Some(PresentationWorkbenchEngineInformationEnumIntent::Retry);
                 }
             });

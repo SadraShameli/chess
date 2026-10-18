@@ -57,7 +57,7 @@ impl PresentationThemeIcon {
         let rect_at = |x: f32, y: f32, w: f32, h: f32, radius: f32| {
             painter.rect_stroke(
                 Rect::from_min_size(at(x, y), Vec2::new(w, h) * scale),
-                CornerRadius::same(u8::try_from((radius * scale).round() as i64).unwrap_or(0)),
+                CornerRadius::from(radius * scale),
                 stroke,
                 egui::StrokeKind::Middle,
             );
@@ -128,9 +128,9 @@ impl PresentationThemeIcon {
                 line(&[(14.0, 7.0), (17.0, 4.0), (20.0, 7.0)]);
             }
             PresentationThemeEnumIcon::ResetCamera => {
-                let points: Vec<(f32, f32)> = (0..=24)
+                let points: Vec<(f32, f32)> = (0_u8..=24)
                     .map(|step| {
-                        let angle = std::f32::consts::PI * (0.75 + 1.5 * step as f32 / 24.0);
+                        let angle = std::f32::consts::PI * (0.75 + 1.5 * f32::from(step) / 24.0);
                         (12.0 + 8.0 * angle.cos(), 12.0 + 8.0 * angle.sin())
                     })
                     .collect();
@@ -211,11 +211,11 @@ impl PresentationThemeIcon {
                 ]);
             }
             PresentationThemeEnumIcon::Star => {
-                let points: Vec<(f32, f32)> = (0..=10)
+                let points: Vec<(f32, f32)> = (0_u8..=10)
                     .map(|step| {
                         let radius = if step % 2 == 0 { 9.0 } else { 4.0 };
-                        let angle =
-                            -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * step as f32 / 5.0;
+                        let angle = -std::f32::consts::FRAC_PI_2
+                            + std::f32::consts::PI * f32::from(step) / 5.0;
                         (12.0 + radius * angle.cos(), 12.5 + radius * angle.sin())
                     })
                     .collect();

@@ -90,6 +90,15 @@ impl PresentationAnalysisLineScore {
         )
     }
 
+    pub(super) fn compact_label(&self) -> String {
+        let value = self.0.white_value();
+        let inequality = Self::inequality(self.0.white_bound());
+        match self.0.reported() {
+            EngineAnalysisEnumScore::Centipawns(_) => format!("{inequality}{}", Self::pawns(value)),
+            EngineAnalysisEnumScore::Mate(_) => format!("{inequality}#{value:+}"),
+        }
+    }
+
     pub(super) fn reported_label(&self) -> String {
         let side = match self.0.perspective() {
             BoardEnumColor::White => "White",
@@ -130,13 +139,15 @@ impl PresentationAnalysisLineScore {
 
     fn value(&self, value: i64) -> String {
         match self.0.reported() {
-            EngineAnalysisEnumScore::Centipawns(_) => {
-                let sign = if value < 0 { "-" } else { "+" };
-                let magnitude = value.unsigned_abs();
-                format!("{sign}{}.{:02} pawns", magnitude / 100, magnitude % 100)
-            }
+            EngineAnalysisEnumScore::Centipawns(_) => format!("{} pawns", Self::pawns(value)),
             EngineAnalysisEnumScore::Mate(_) => format!("mate {value:+}"),
         }
+    }
+
+    fn pawns(value: i64) -> String {
+        let sign = if value < 0 { "-" } else { "+" };
+        let magnitude = value.unsigned_abs();
+        format!("{sign}{}.{:02}", magnitude / 100, magnitude % 100)
     }
 
     const fn inequality(bound: EngineAnalysisEnumBound) -> &'static str {

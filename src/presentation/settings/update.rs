@@ -1,5 +1,8 @@
 use bevy_egui::egui::Ui;
 
+use crate::presentation::theme::components::{
+    PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::update::credentials::UpdateCredentialEnumStatus;
 use crate::update::state::{UpdateEnumFailure, UpdateEnumPhase, UpdateState};
 
@@ -127,9 +130,28 @@ impl PresentationSettingsUpdate {
     ) -> Option<PresentationSettingsUpdateEnumAction> {
         ui.label(Self::status(state, credential));
         let mut chosen = None;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for action in Self::actions(state, credential) {
-                if ui.button(action.label()).clicked() {
+                let variant = match action {
+                    PresentationSettingsUpdateEnumAction::Download
+                    | PresentationSettingsUpdateEnumAction::Install => {
+                        PresentationThemeEnumButton::Primary
+                    }
+                    PresentationSettingsUpdateEnumAction::Cancel => {
+                        PresentationThemeEnumButton::Ghost
+                    }
+                    PresentationSettingsUpdateEnumAction::Check
+                    | PresentationSettingsUpdateEnumAction::EnterCredential
+                    | PresentationSettingsUpdateEnumAction::UseSessionCredential
+                    | PresentationSettingsUpdateEnumAction::Approve
+                    | PresentationSettingsUpdateEnumAction::Retry => {
+                        PresentationThemeEnumButton::Secondary
+                    }
+                };
+                if variant
+                    .show_sized(ui, action.label(), PresentationThemeEnumSize::Small)
+                    .clicked()
+                {
                     chosen = Some(action);
                 }
             }

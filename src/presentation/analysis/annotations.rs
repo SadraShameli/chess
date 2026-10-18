@@ -21,7 +21,10 @@ use crate::presentation::analysis::editor_intent::{
     PresentationAnalysisEditorModal, PresentationAnalysisEditorPending,
     PresentationAnalysisEditorServiceCompletion,
 };
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentationAnalysisAnnotationsEnumDestination {
@@ -782,6 +785,7 @@ impl PresentationAnalysisAnnotations {
     ) -> Result<Option<PresentationAnalysisAnnotationsEnumEffect>, PresentationAnalysisEditorError>
     {
         ui.set_min_width(PresentationThemeTokens::PANEL_WIDTH);
+        PresentationThemeComponents::eyebrow(ui, "Annotations");
         ui.heading("Notes and Markings");
         if self.publication.is_none() {
             ui.label("Open a game to add notes and drawings.");
@@ -796,23 +800,30 @@ impl PresentationAnalysisAnnotations {
         let can_save = self.source_pending.is_none() && !self.is_conflicted && self.save.is_none();
         let can_edit = self.guard.is_none();
         if let Some(draft) = &mut self.draft {
-            ui.label("Plain text notes");
+            PresentationThemeComponents::field_label(ui, "Plain text notes");
             let notes = ui.add_enabled(
                 can_edit,
                 egui::TextEdit::multiline(&mut draft.notes)
                     .id_salt("chess.analysis.notes")
+                    .background_color(PresentationThemeColors::of(ui.ctx()).bg)
+                    .margin(egui::Margin::symmetric(10, 8))
+                    .desired_width(f32::INFINITY)
                     .desired_rows(6),
             );
             if notes.changed() {
                 draft.version.advance()?;
             }
-            ui.label("Notation marks (NAGs)");
+            PresentationThemeComponents::field_label(ui, "Notation marks (NAGs)");
             let mut remove = None;
             ui.horizontal_wrapped(|ui| {
                 for (index, nag) in draft.nags.iter().enumerate() {
                     let response = ui.add_enabled(
                         can_edit,
-                        egui::Button::new(format!("Remove ${}", nag.value())),
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            format!("Remove ${}", nag.value()),
+                            PresentationThemeEnumSize::Small,
+                        ),
                     );
                     if self.frame.clicked(ui, &response) {
                         remove = Some(index);
@@ -830,7 +841,14 @@ impl PresentationAnalysisAnnotations {
                         .range(u8::MIN..=u8::MAX)
                         .prefix("NAG "),
                 );
-                let response = ui.add_enabled(can_edit, egui::Button::new("Add NAG"));
+                let response = ui.add_enabled(
+                    can_edit,
+                    PresentationThemeEnumButton::Secondary.widget(
+                        ui,
+                        "Add NAG",
+                        PresentationThemeEnumSize::Small,
+                    ),
+                );
                 if self.frame.clicked(ui, &response) {
                     let nag = GameMoveNodeNag::new(self.nag_value);
                     if !draft.nags.contains(&nag) {
@@ -847,7 +865,11 @@ impl PresentationAnalysisAnnotations {
         if ui
             .add_enabled(
                 can_save && can_edit && self.has_notes_changes(),
-                egui::Button::new("Save Notes and NAGs"),
+                PresentationThemeEnumButton::Primary.widget(
+                    ui,
+                    "Save Notes and NAGs",
+                    PresentationThemeEnumSize::Medium,
+                ),
             )
             .clicked()
             && !ui.is_sizing_pass()
@@ -860,14 +882,18 @@ impl PresentationAnalysisAnnotations {
             && ui
                 .add_enabled(
                     self.save.is_none(),
-                    egui::Button::new("Discard Draft and Use Current Position"),
+                    PresentationThemeEnumButton::Danger.widget(
+                        ui,
+                        "Discard Draft and Use Current Position",
+                        PresentationThemeEnumSize::Medium,
+                    ),
                 )
                 .clicked()
             && !ui.is_sizing_pass()
         {
             self.discard_draft()?;
         }
-        ui.separator();
+        PresentationThemeComponents::divider(ui);
         ui.add_enabled_ui(
             can_edit && self.save.is_none() && self.source_pending.is_none(),
             |ui| self.show_marking_input(ui),
@@ -876,7 +902,11 @@ impl PresentationAnalysisAnnotations {
         if ui
             .add_enabled(
                 can_save && can_edit && (!self.temporary.is_empty() || self.hide_saved),
-                egui::Button::new("Save Markings"),
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Save Markings",
+                    PresentationThemeEnumSize::Medium,
+                ),
             )
             .clicked()
             && !ui.is_sizing_pass()
@@ -890,7 +920,7 @@ impl PresentationAnalysisAnnotations {
             .save
             .as_ref()
             .is_some_and(|save| save.request.has_failure())
-            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            && PresentationThemeEnumButton::Secondary
                 .show(ui, "Retry Save")
                 .clicked()
             && !ui.is_sizing_pass()
@@ -903,7 +933,7 @@ impl PresentationAnalysisAnnotations {
         if self.guard.is_some() {
             self.modal.capture_invoker(ui.ctx());
             let mut choice = None;
-            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+            let modal = PresentationThemeComponents::modal(
                 ui.ctx(),
                 egui::Id::new("chess.analysis.unsaved_notes"),
             )
@@ -915,24 +945,30 @@ impl PresentationAnalysisAnnotations {
                     ui.label("Saving your changes. Stay here to cancel leaving.");
                 }
                 let mut focusable = Vec::new();
-                for (label, candidate, enabled) in [
+                for (label, candidate, enabled, kind) in [
                     (
                         "Stay",
                         PresentationAnalysisAnnotationsEnumGuardChoice::Stay,
                         true,
+                        PresentationThemeEnumButton::Secondary,
                     ),
                     (
                         "Discard",
                         PresentationAnalysisAnnotationsEnumGuardChoice::Discard,
                         self.source_pending.is_none() && self.save.is_none(),
+                        PresentationThemeEnumButton::Danger,
                     ),
                     (
                         "Save",
                         PresentationAnalysisAnnotationsEnumGuardChoice::Save,
                         can_save && self.save.is_none(),
+                        PresentationThemeEnumButton::Primary,
                     ),
                 ] {
-                    let response = ui.add_enabled(enabled, egui::Button::new(label));
+                    let response = ui.add_enabled(
+                        enabled,
+                        kind.widget(ui, label, PresentationThemeEnumSize::Medium),
+                    );
                     if response.enabled() {
                         focusable.push(response.id);
                     }
@@ -1074,7 +1110,7 @@ impl PresentationAnalysisAnnotations {
     }
 
     fn show_marking_input(&mut self, ui: &mut Ui) -> Result<(), PresentationAnalysisEditorError> {
-        ui.label("Board drawings");
+        PresentationThemeComponents::subhead(ui, "Board drawings");
         let color = self
             .marking_color
             .get_or_insert(Self::DEFAULT_MARKING_COLOR);
@@ -1105,20 +1141,14 @@ impl PresentationAnalysisAnnotations {
         let mut clear_temporary = false;
         let mut clear_saved = false;
         ui.horizontal_wrapped(|ui| {
-            let circle =
-                crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
-                    .show(ui, "Toggle Circle");
+            let circle = PresentationThemeEnumButton::Secondary.show(ui, "Toggle Circle");
             is_circle = self.frame.clicked(ui, &circle);
-            let arrow =
-                crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
-                    .show(ui, "Toggle Arrow");
+            let arrow = PresentationThemeEnumButton::Secondary.show(ui, "Toggle Arrow");
             is_arrow = self.frame.clicked(ui, &arrow);
             let temporary =
-                crate::presentation::theme::components::PresentationThemeEnumButton::Danger
-                    .show(ui, "Clear Temporary Markings");
+                PresentationThemeEnumButton::Danger.show(ui, "Clear Temporary Markings");
             clear_temporary = self.frame.clicked(ui, &temporary);
-            let saved = crate::presentation::theme::components::PresentationThemeEnumButton::Danger
-                .show(ui, "Remove Saved Markings");
+            let saved = PresentationThemeEnumButton::Danger.show(ui, "Remove Saved Markings");
             clear_saved = self.frame.clicked(ui, &saved);
         });
         if ui.is_sizing_pass() {

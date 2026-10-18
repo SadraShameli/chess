@@ -16,6 +16,9 @@ use crate::desktop::editor_commands::{
 };
 use crate::desktop::error::DesktopFailure;
 use crate::presentation::editor::controller::PresentationEditorController;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PresentationEditorViewEnumAction {
@@ -67,13 +70,21 @@ impl PresentationEditorView {
     ) -> Option<PresentationEditorViewEnumAction> {
         let frame = ui.ctx().cumulative_frame_nr();
         let mut action = None;
+        PresentationThemeComponents::eyebrow(ui, "Edit position");
         ui.heading("Position Editor");
         if let Some(failure) = &self.failure {
             ui.colored_label(ui.visuals().error_fg_color, failure.message());
         }
         let Some(snapshot) = controller.snapshot() else {
             if ui
-                .add_enabled(!controller.is_pending(), egui::Button::new("New Draft"))
+                .add_enabled(
+                    !controller.is_pending(),
+                    PresentationThemeEnumButton::Primary.widget(
+                        ui,
+                        "New Draft",
+                        PresentationThemeEnumSize::Small,
+                    ),
+                )
                 .clicked()
             {
                 action = Some(PresentationEditorViewEnumAction::Create);
@@ -114,8 +125,8 @@ impl PresentationEditorView {
             }
         }
         if snapshot.prompt().is_some() {
-            ui.group(|ui| {
-                ui.label("Save this draft before continuing?");
+            PresentationThemeComponents::card(ui).show(ui, |ui| {
+                PresentationThemeComponents::subhead(ui, "Save this draft before continuing?");
                 let can_resolve = !controller.is_pending()
                     && matches!(snapshot.write(), DesktopEditorCommandsEnumWriteStatus::Idle);
                 ui.horizontal(|ui| {
@@ -129,7 +140,11 @@ impl PresentationEditorView {
                                 can_resolve
                                     || choice == DesktopEditorCommandsEnumChoice::Stay
                                         && !controller.is_pending(),
-                                egui::Button::new(label),
+                                PresentationThemeEnumButton::Secondary.widget(
+                                    ui,
+                                    label,
+                                    PresentationThemeEnumSize::Small,
+                                ),
                             )
                             .clicked()
                         {
@@ -148,7 +163,7 @@ impl PresentationEditorView {
         let editable = controller.can_edit() && self.confirmation.is_none();
         ui.add_enabled_ui(editable, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                if PresentationThemeEnumButton::Secondary
                     .show(ui, "New Draft")
                     .clicked()
                 {
@@ -157,7 +172,11 @@ impl PresentationEditorView {
                 if ui
                     .add_enabled(
                         matches!(snapshot.write(), DesktopEditorCommandsEnumWriteStatus::Idle),
-                        egui::Button::new("Save Draft"),
+                        PresentationThemeEnumButton::Primary.widget(
+                            ui,
+                            "Save Draft",
+                            PresentationThemeEnumSize::Small,
+                        ),
                     )
                     .clicked()
                 {
@@ -165,7 +184,7 @@ impl PresentationEditorView {
                         DesktopEditorCommandsEnumOperation::Save { expected: context },
                     ));
                 }
-                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                if PresentationThemeEnumButton::Secondary
                     .show(ui, "Leave Editor")
                     .clicked()
                 {
@@ -174,13 +193,27 @@ impl PresentationEditorView {
                     ));
                 }
                 if ui
-                    .add_enabled(snapshot.has_undo(), egui::Button::new("Undo Editor Edit"))
+                    .add_enabled(
+                        snapshot.has_undo(),
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            "Undo Editor Edit",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     action = Some(Self::edit(context, BoardEditorSessionEnumOperation::Undo));
                 }
                 if ui
-                    .add_enabled(snapshot.has_redo(), egui::Button::new("Redo Editor Edit"))
+                    .add_enabled(
+                        snapshot.has_redo(),
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            "Redo Editor Edit",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     action = Some(Self::edit(context, BoardEditorSessionEnumOperation::Redo));
@@ -191,21 +224,35 @@ impl PresentationEditorView {
                     ("Clear Board", BoardEditorSessionEnumSetup::ClearBoard),
                     ("Standard Setup", BoardEditorSessionEnumSetup::StandardSetup),
                 ] {
-                    if ui.button(label).clicked() {
+                    if ui
+                        .add(PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            label,
+                            PresentationThemeEnumSize::Small,
+                        ))
+                        .clicked()
+                    {
                         self.confirmation = Some((context, setup));
                     }
                 }
             });
         });
         if let Some((expected, setup)) = self.confirmation {
-            ui.group(|ui| {
+            PresentationThemeComponents::card(ui).show(ui, |ui| {
                 ui.label("Replace the draft position? This remains an editor Undo step.");
                 let label = match setup {
                     BoardEditorSessionEnumSetup::ClearBoard => "Confirm Clear Board",
                     BoardEditorSessionEnumSetup::StandardSetup => "Confirm Standard Setup",
                 };
                 if ui
-                    .add_enabled(!controller.is_pending(), egui::Button::new(label))
+                    .add_enabled(
+                        !controller.is_pending(),
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            label,
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     action = Some(Self::edit(
@@ -217,7 +264,7 @@ impl PresentationEditorView {
                     ));
                     self.confirmation = None;
                 }
-                if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                if PresentationThemeEnumButton::Ghost
                     .show(ui, "Cancel Setup Replacement")
                     .clicked()
                 {
@@ -233,7 +280,11 @@ impl PresentationEditorView {
                     if ui
                         .add_enabled(
                             snapshot.selection() != BoardEditorSessionEnumSelection::None,
-                            egui::Button::new("Place Selected Piece"),
+                            PresentationThemeEnumButton::Secondary.widget(
+                                ui,
+                                "Place Selected Piece",
+                                PresentationThemeEnumSize::Small,
+                            ),
                         )
                         .clicked()
                     {
@@ -242,7 +293,7 @@ impl PresentationEditorView {
                             BoardEditorSessionEnumOperation::PlaceSelected(square),
                         ));
                     }
-                    if crate::presentation::theme::components::PresentationThemeEnumButton::Danger
+                    if PresentationThemeEnumButton::Danger
                         .show(ui, "Remove Focused Piece")
                         .clicked()
                     {
@@ -259,7 +310,7 @@ impl PresentationEditorView {
             });
             self.show_fields(ui, snapshot, &mut action);
             ui.horizontal_wrapped(|ui| {
-                if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                if PresentationThemeEnumButton::Secondary
                     .show(ui, "Validate Draft")
                     .clicked()
                 {
@@ -269,7 +320,14 @@ impl PresentationEditorView {
                 }
                 let valid = snapshot.status() == BoardEditorValidationEnumStatus::Valid;
                 if ui
-                    .add_enabled(valid, egui::Button::new("Copy FEN"))
+                    .add_enabled(
+                        valid,
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            "Copy FEN",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     action = Some(PresentationEditorViewEnumAction::Command(
@@ -277,7 +335,14 @@ impl PresentationEditorView {
                     ));
                 }
                 if ui
-                    .add_enabled(valid, egui::Button::new("Play from Position"))
+                    .add_enabled(
+                        valid,
+                        PresentationThemeEnumButton::Primary.widget(
+                            ui,
+                            "Play from Position",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     action = Some(PresentationEditorViewEnumAction::Command(
@@ -285,7 +350,14 @@ impl PresentationEditorView {
                     ));
                 }
                 if ui
-                    .add_enabled(valid, egui::Button::new("Open as Study"))
+                    .add_enabled(
+                        valid,
+                        PresentationThemeEnumButton::Primary.widget(
+                            ui,
+                            "Open as Study",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     action = Some(PresentationEditorViewEnumAction::Command(
@@ -302,7 +374,10 @@ impl PresentationEditorView {
         for finding in snapshot.findings() {
             ui.colored_label(ui.visuals().error_fg_color, finding.to_string());
         }
-        ui.label("Editor keys: K/Q/R/B/N/P choose a piece, C changes color, Enter places, Delete removes, Cmd/Ctrl+Z undoes, Shift+Cmd/Ctrl+Z redoes. Arrow keys focus squares.");
+        PresentationThemeComponents::caption(
+            ui,
+            "Editor keys: K/Q/R/B/N/P choose a piece, C changes color, Enter places, Delete removes, Cmd/Ctrl+Z undoes, Shift+Cmd/Ctrl+Z redoes. Arrow keys focus squares.",
+        );
         self.emit(frame, action)
     }
 
@@ -312,8 +387,8 @@ impl PresentationEditorView {
         enabled: bool,
         action: &mut Option<PresentationEditorViewEnumAction>,
     ) {
-        ui.group(|ui| {
-            ui.label("FEN to a separate draft");
+        PresentationThemeComponents::card(ui).show(ui, |ui| {
+            PresentationThemeComponents::subhead(ui, "FEN to a separate draft");
             ui.add(
                 egui::TextEdit::multiline(&mut self.fen)
                     .hint_text("FEN")
@@ -333,7 +408,11 @@ impl PresentationEditorView {
                 if ui
                     .add_enabled(
                         enabled && !self.fen.trim().is_empty(),
-                        egui::Button::new("Import FEN"),
+                        PresentationThemeEnumButton::Primary.widget(
+                            ui,
+                            "Import FEN",
+                            PresentationThemeEnumSize::Small,
+                        ),
                     )
                     .clicked()
                 {

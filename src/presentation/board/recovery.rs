@@ -3,6 +3,11 @@ use bevy_egui::egui::{self, Ui};
 use crate::desktop::renderer_commands::{
     DesktopRendererCommands, DesktopRendererCommandsEnumState,
 };
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::tokens::PresentationThemeColors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentationBoardRecoveryEnumIntent {
@@ -39,30 +44,52 @@ impl PresentationBoardRecovery {
     ) -> Option<PresentationBoardRecoveryEnumIntent> {
         let headline = Self::headline(commands)?;
         let mut intent = None;
-        ui.group(|ui| {
-            let response = ui.heading("Graphics paused");
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_role(egui::accesskit::Role::Status);
-                node.set_live(egui::accesskit::Live::Assertive);
+        let colors = PresentationThemeColors::of(ui.ctx());
+        PresentationThemeComponents::card(ui)
+            .fill(colors.surface_2)
+            .shadow(ui.visuals().popup_shadow)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    PresentationThemeComponents::pill(
+                        ui,
+                        "Graphics",
+                        PresentationThemeEnumTone::Error,
+                    );
+                    let response = PresentationThemeComponents::subhead(ui, "Graphics paused");
+                    ui.ctx().accesskit_node_builder(response.id, |node| {
+                        node.set_role(egui::accesskit::Role::Status);
+                        node.set_live(egui::accesskit::Live::Assertive);
+                    });
+                });
+                ui.label(egui::RichText::new(headline).color(colors.text_2));
+                match commands.state() {
+                    DesktopRendererCommandsEnumState::Interrupted(_)
+                    | DesktopRendererCommandsEnumState::Unrecoverable(_) => {
+                        if PresentationThemeEnumButton::Primary
+                            .show_sized(ui, "Retry", PresentationThemeEnumSize::Small)
+                            .clicked()
+                        {
+                            intent = Some(PresentationBoardRecoveryEnumIntent::Retry);
+                        }
+                    }
+                    DesktopRendererCommandsEnumState::Ready => {
+                        if PresentationThemeEnumButton::Primary
+                            .show_sized(ui, "Resume games", PresentationThemeEnumSize::Small)
+                            .clicked()
+                        {
+                            intent = Some(PresentationBoardRecoveryEnumIntent::ResumeGames);
+                        }
+                    }
+                    DesktopRendererCommandsEnumState::Retrying { .. } => {
+                        let button = PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            "Retrying",
+                            PresentationThemeEnumSize::Small,
+                        );
+                        ui.add_enabled(false, button);
+                    }
+                }
             });
-            ui.label(headline);
-            match commands.state() {
-                DesktopRendererCommandsEnumState::Interrupted(_)
-                | DesktopRendererCommandsEnumState::Unrecoverable(_) => {
-                    if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary.show(ui, "Retry").clicked() {
-                        intent = Some(PresentationBoardRecoveryEnumIntent::Retry);
-                    }
-                }
-                DesktopRendererCommandsEnumState::Ready => {
-                    if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary.show(ui, "Resume games").clicked() {
-                        intent = Some(PresentationBoardRecoveryEnumIntent::ResumeGames);
-                    }
-                }
-                DesktopRendererCommandsEnumState::Retrying { .. } => {
-                    ui.add_enabled(false, egui::Button::new("Retrying"));
-                }
-            }
-        });
         intent
     }
 }

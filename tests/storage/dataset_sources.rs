@@ -26,7 +26,7 @@ fn the_frozen_manifest_names_the_three_cc0_sources_and_refuses_while_hashes_are_
         sources
             .sources()
             .iter()
-            .any(|source| source.version == "2026-10-05")
+            .any(|source| source.version == "2026-10-02")
     );
     assert!(matches!(
         sources.verify(|_| Ok(None)),

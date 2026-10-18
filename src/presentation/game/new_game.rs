@@ -15,11 +15,81 @@ use crate::presentation::game::configuration::{
     PresentationGameConfigurationEnumFinalQuota, PresentationGameConfigurationError,
     PresentationGameConfigurationStage,
 };
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
+use crate::presentation::theme::typography::PresentationThemeTypography;
 
 pub struct PresentationGameNewGame {
     draft: PresentationGameConfiguration,
     submitted_frame: Option<u64>,
+    cancelled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentationGameNewGameEnumVariant {
+    Standard,
+    Chess960,
+    Dfrc,
+    Custom,
+}
+
+impl PresentationGameNewGameEnumVariant {
+    const fn of(start: &GameConfigurationEnumStart) -> Self {
+        match start {
+            GameConfigurationEnumStart::Standard => Self::Standard,
+            GameConfigurationEnumStart::Chess960 { .. } => Self::Chess960,
+            GameConfigurationEnumStart::Dfrc { .. } => Self::Dfrc,
+            GameConfigurationEnumStart::Custom(_) => Self::Custom,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentationGameNewGameEnumStrength {
+    Quick,
+    Balanced,
+    Strong,
+    Deep,
+}
+
+impl PresentationGameNewGameEnumStrength {
+    const QUICK_LIMIT: u64 = 1_000;
+    const BALANCED_LIMIT: u64 = 5_000;
+    const STRONG_LIMIT: u64 = 15_000;
+
+    const fn of(millis: u64) -> Self {
+        if millis < Self::QUICK_LIMIT {
+            Self::Quick
+        } else if millis < Self::BALANCED_LIMIT {
+            Self::Balanced
+        } else if millis < Self::STRONG_LIMIT {
+            Self::Strong
+        } else {
+            Self::Deep
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Quick => "Level 1 \u{b7} quick replies",
+            Self::Balanced => "Level 2 \u{b7} balanced",
+            Self::Strong => "Level 3 \u{b7} strong",
+            Self::Deep => "Level 4 \u{b7} deep search",
+        }
+    }
+}
+
+struct PresentationGameNewGameLayout;
+
+impl PresentationGameNewGameLayout {
+    const WIDTH: f32 = 560.0;
+    const TILE_HEIGHT: f32 = 52.0;
+    const TILE_COLUMNS: usize = 4;
+    const TILE_GAP: f32 = 8.0;
+    const STRENGTH_MIN_MILLIS: u64 = 100;
+    const STRENGTH_MAX_MILLIS: u64 = 60_000;
 }
 
 impl PresentationGameNewGame {
@@ -27,7 +97,12 @@ impl PresentationGameNewGame {
         Self {
             draft: PresentationGameConfiguration::new(),
             submitted_frame: None,
+            cancelled: false,
         }
+    }
+
+    pub fn take_cancel(&mut self) -> bool {
+        std::mem::take(&mut self.cancelled)
     }
 
     pub fn from_position(position: BoardPosition) -> Self {
@@ -49,129 +124,261 @@ impl PresentationGameNewGame {
     }
 
     pub fn show(&mut self, ui: &mut Ui) -> Option<GameConfiguration> {
+        ui.set_max_width(PresentationGameNewGameLayout::WIDTH);
         ui.heading("New Game");
-        ui.label("Play offline against Reckless or share the board with another player.");
-        let mut submitted = None;
+        PresentationThemeComponents::caption(
+            ui,
+            "Play offline against Reckless or share the board with another player.",
+        );
+        ui.add_space(PresentationThemeTokens::SPACE_3);
+        let mut start_edit = Ok(());
         egui::ScrollArea::vertical()
             .id_salt("new_game_configuration")
             .show(ui, |ui| {
                 self.show_opponent(ui);
-                ui.separator();
-                let start_edit = self.show_start(ui);
-                ui.separator();
+                ui.add_space(PresentationThemeTokens::SPACE_4);
                 self.show_clock(ui);
-                ui.separator();
+                ui.add_space(PresentationThemeTokens::SPACE_4);
+                start_edit = self.show_side_and_variant(ui);
+                ui.add_space(PresentationThemeTokens::SPACE_4);
                 self.show_options(ui);
-                let configuration = match start_edit {
-                    Ok(()) => self.configuration(),
-                    Err(error) => Err(error.into()),
-                };
-                if let Err(error) = &configuration {
-                    ui.colored_label(ui.visuals().error_fg_color, error.to_string());
+            });
+        let configuration = match start_edit {
+            Ok(()) => self.configuration(),
+            Err(error) => Err(error.into()),
+        };
+        ui.add_space(PresentationThemeTokens::SPACE_3);
+        PresentationThemeComponents::divider(ui);
+        ui.add_space(PresentationThemeTokens::SPACE_3);
+        let mut submitted = None;
+        ui.horizontal(|ui| {
+            match &configuration {
+                Ok(_) => {
+                    PresentationThemeComponents::caption(ui, "Opens in a new tab.");
                 }
-                if ui
-                    .add_enabled(
-                        configuration.is_ok(),
-                        egui::Button::new("Start Game").min_size(egui::vec2(
-                            PresentationThemeTokens::PANEL_WIDTH,
-                            PresentationThemeTokens::MIN_TARGET,
-                        )),
-                    )
+                Err(error) => {
+                    let colors = PresentationThemeColors::of(ui.ctx());
+                    ui.label(
+                        egui::RichText::new(error.to_string())
+                            .size(PresentationThemeTypography::CAPTION_POINTS)
+                            .color(colors.err),
+                    );
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                PresentationThemeComponents::kbd(ui, "Enter");
+                let start = ui.add_enabled(
+                    configuration.is_ok(),
+                    PresentationThemeEnumButton::Primary.widget(
+                        ui,
+                        "Start Game",
+                        PresentationThemeEnumSize::Medium,
+                    ),
+                );
+                if PresentationThemeEnumButton::Ghost
+                    .show(ui, "Cancel")
                     .clicked()
+                {
+                    self.cancelled = true;
+                }
+                let pressed_enter = ui.ctx().memory(|memory| memory.focused().is_none())
+                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                if (start.clicked() || pressed_enter)
                     && self.submitted_frame != Some(ui.ctx().cumulative_frame_nr())
-                    && let Ok(configuration) = configuration
+                    && let Ok(configuration) = &configuration
                 {
                     self.submitted_frame = Some(ui.ctx().cumulative_frame_nr());
-                    submitted = Some(configuration);
+                    submitted = Some(configuration.clone());
                 }
             });
+        });
         submitted
     }
 
     fn show_opponent(&mut self, ui: &mut Ui) {
-        ui.strong("Opponent");
-        ui.horizontal_wrapped(|ui| {
-            ui.radio_value(
-                &mut self.draft.mode,
-                GameEnumMode::HumanVersusEngine,
-                "Play Reckless",
-            );
-            ui.radio_value(
-                &mut self.draft.mode,
-                GameEnumMode::LocalTwoPlayer,
-                "Local two-player",
-            );
-        });
-        if self.draft.mode == GameEnumMode::HumanVersusEngine {
-            ui.horizontal_wrapped(|ui| {
-                ui.radio_value(
-                    &mut self.draft.human,
-                    BoardEnumColor::White,
-                    "Play as White",
-                );
-                ui.radio_value(
-                    &mut self.draft.human,
-                    BoardEnumColor::Black,
-                    "Play as Black",
-                );
-            });
-        }
+        PresentationThemeComponents::field_label(ui, "Opponent");
+        PresentationThemeComponents::segmented(
+            ui,
+            &mut self.draft.mode,
+            &[
+                (GameEnumMode::HumanVersusEngine, "Play Reckless"),
+                (GameEnumMode::LocalTwoPlayer, "Local two-player"),
+            ],
+            true,
+        );
     }
 
-    fn show_start(&mut self, ui: &mut Ui) -> Result<(), BoardStartIndexError> {
-        ui.strong("Starting position");
+    fn show_side_and_variant(&mut self, ui: &mut Ui) -> Result<(), BoardStartIndexError> {
         ui.horizontal_wrapped(|ui| {
-            if ui
-                .radio(
-                    matches!(self.draft.start, GameConfigurationEnumStart::Standard),
-                    "Standard chess",
-                )
-                .clicked()
-            {
+            if self.draft.mode == GameEnumMode::HumanVersusEngine {
+                ui.vertical(|ui| {
+                    PresentationThemeComponents::field_label(ui, "Play as");
+                    PresentationThemeComponents::segmented(
+                        ui,
+                        &mut self.draft.human,
+                        &[
+                            (BoardEnumColor::White, "Play as White"),
+                            (BoardEnumColor::Black, "Play as Black"),
+                        ],
+                        false,
+                    );
+                });
+                ui.add_space(PresentationThemeTokens::SPACE_4);
+            }
+            ui.vertical(|ui| {
+                PresentationThemeComponents::field_label(ui, "Variant");
+                self.show_variant(ui);
+            });
+        });
+        self.show_start(ui)
+    }
+
+    fn show_variant(&mut self, ui: &mut Ui) {
+        let mut options = vec![
+            (
+                PresentationGameNewGameEnumVariant::Standard,
+                "Standard chess",
+            ),
+            (
+                PresentationGameNewGameEnumVariant::Chess960,
+                "Chess960 / FRC",
+            ),
+            (PresentationGameNewGameEnumVariant::Dfrc, "DFRC"),
+        ];
+        if self.draft.custom_position.is_some() {
+            options.push((
+                PresentationGameNewGameEnumVariant::Custom,
+                "Custom position",
+            ));
+        }
+        let mut variant = PresentationGameNewGameEnumVariant::of(&self.draft.start);
+        if !PresentationThemeComponents::segmented(ui, &mut variant, &options, false) {
+            return;
+        }
+        match variant {
+            PresentationGameNewGameEnumVariant::Standard => {
                 self.draft.start = GameConfigurationEnumStart::Standard;
             }
-            if ui
-                .radio(
-                    matches!(
-                        self.draft.start,
-                        GameConfigurationEnumStart::Chess960 { .. }
-                    ),
-                    "Chess960 / FRC",
-                )
-                .clicked()
-                && !matches!(
-                    self.draft.start,
-                    GameConfigurationEnumStart::Chess960 { .. }
-                )
-            {
+            PresentationGameNewGameEnumVariant::Chess960 => {
                 self.draft.start = GameConfigurationEnumStart::Chess960 {
                     index: GameConfigurationEnumIndex::Random,
                 };
             }
-            if ui
-                .radio(
-                    matches!(self.draft.start, GameConfigurationEnumStart::Dfrc { .. }),
-                    "DFRC",
-                )
-                .clicked()
-                && !matches!(self.draft.start, GameConfigurationEnumStart::Dfrc { .. })
-            {
+            PresentationGameNewGameEnumVariant::Dfrc => {
                 self.draft.start = GameConfigurationEnumStart::Dfrc {
                     white: GameConfigurationEnumIndex::Random,
                     black: GameConfigurationEnumIndex::Random,
                 };
             }
-            if let Some(position) = &self.draft.custom_position
-                && ui
-                    .radio(
-                        matches!(self.draft.start, GameConfigurationEnumStart::Custom(_)),
-                        "Custom position",
-                    )
-                    .clicked()
-            {
-                self.draft.start = GameConfigurationEnumStart::Custom(position.clone());
+            PresentationGameNewGameEnumVariant::Custom => {
+                if let Some(position) = &self.draft.custom_position {
+                    self.draft.start = GameConfigurationEnumStart::Custom(position.clone());
+                }
             }
+        }
+    }
+
+    fn preset_category(preset: GameConfigurationEnumPreset) -> &'static str {
+        match preset {
+            GameConfigurationEnumPreset::Untimed => "No clock",
+            GameConfigurationEnumPreset::OnePlusZero | GameConfigurationEnumPreset::TwoPlusOne => {
+                "Bullet"
+            }
+            GameConfigurationEnumPreset::ThreePlusZero
+            | GameConfigurationEnumPreset::ThreePlusTwo
+            | GameConfigurationEnumPreset::FivePlusZero
+            | GameConfigurationEnumPreset::FivePlusThree => "Blitz",
+            GameConfigurationEnumPreset::TenPlusZero
+            | GameConfigurationEnumPreset::TenPlusFive
+            | GameConfigurationEnumPreset::FifteenPlusTen => "Rapid",
+            GameConfigurationEnumPreset::ThirtyPlusZero => "Classical",
+        }
+    }
+
+    fn show_tiles(&mut self, ui: &mut Ui) {
+        let mut tiles: Vec<(
+            PresentationGameConfigurationEnumControl,
+            &'static str,
+            &'static str,
+        )> = GameConfigurationEnumPreset::iter()
+            .map(|preset| {
+                (
+                    PresentationGameConfigurationEnumControl::Preset(preset),
+                    preset.label(),
+                    Self::preset_category(preset),
+                )
+            })
+            .collect();
+        tiles.push((
+            PresentationGameConfigurationEnumControl::Custom,
+            "Custom clock",
+            "Your rules",
+        ));
+        let gaps = PresentationGameNewGameLayout::TILE_GAP * 3.0;
+        let width = ((ui.available_width() - gaps) / 4.0).max(PresentationThemeTokens::CONTROL_LG);
+        for chunk in tiles.chunks(PresentationGameNewGameLayout::TILE_COLUMNS) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = PresentationGameNewGameLayout::TILE_GAP;
+                for (control, label, category) in chunk {
+                    if Self::tile(ui, width, label, category, self.draft.control == *control)
+                        .clicked()
+                    {
+                        self.draft.control = *control;
+                    }
+                }
+            });
+            ui.add_space(PresentationGameNewGameLayout::TILE_GAP);
+        }
+    }
+
+    fn tile(
+        ui: &mut Ui,
+        width: f32,
+        label: &str,
+        category: &str,
+        selected: bool,
+    ) -> egui::Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(width, PresentationGameNewGameLayout::TILE_HEIGHT),
+            egui::Sense::click(),
+        );
+        let (fill, stroke) = if selected {
+            (colors.accent_soft, colors.accent)
+        } else if response.hovered() {
+            (colors.surface_2, colors.line_strong)
+        } else {
+            (colors.surface_1, colors.line)
+        };
+        ui.painter().rect(
+            rect,
+            egui::CornerRadius::same(PresentationThemeTokens::RADIUS_MD),
+            fill,
+            egui::Stroke::new(1.0, stroke),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            rect.center() - egui::vec2(0.0, 8.0),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(PresentationThemeTypography::BODY_POINTS),
+            colors.text,
+        );
+        ui.painter().text(
+            rect.center() + egui::vec2(0.0, 10.0),
+            egui::Align2::CENTER_CENTER,
+            category,
+            egui::FontId::proportional(PresentationThemeTypography::MICRO_POINTS),
+            colors.text_3,
+        );
+        let label = label.to_owned();
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, label.clone())
         });
+        response
+    }
+
+    fn show_start(&mut self, ui: &mut Ui) -> Result<(), BoardStartIndexError> {
         match &mut self.draft.start {
             GameConfigurationEnumStart::Standard => {}
             GameConfigurationEnumStart::Chess960 { index } => {
@@ -240,22 +447,12 @@ impl PresentationGameNewGame {
     }
 
     fn show_clock(&mut self, ui: &mut Ui) {
-        ui.strong("Time control");
-        ui.horizontal_wrapped(|ui| {
-            for preset in GameConfigurationEnumPreset::iter() {
-                ui.radio_value(
-                    &mut self.draft.control,
-                    PresentationGameConfigurationEnumControl::Preset(preset),
-                    preset.label(),
-                );
-            }
-            ui.radio_value(
-                &mut self.draft.control,
-                PresentationGameConfigurationEnumControl::Custom,
-                "Custom clock",
-            );
-        });
-        ui.small("Presets show minutes per side + Fischer seconds after each accepted move.");
+        PresentationThemeComponents::field_label(ui, "Time control");
+        self.show_tiles(ui);
+        PresentationThemeComponents::caption(
+            ui,
+            "Presets show minutes per side + Fischer seconds after each accepted move.",
+        );
         if self.draft.control != PresentationGameConfigurationEnumControl::Custom {
             return;
         }
@@ -309,7 +506,9 @@ impl PresentationGameNewGame {
                     if self.draft.clock_format
                         == PresentationGameConfigurationEnumClockFormat::Staged
                         && count > 1
-                        && crate::presentation::theme::components::PresentationThemeEnumButton::Danger.show(ui, "Remove stage").clicked()
+                        && PresentationThemeEnumButton::Danger
+                            .show(ui, "Remove stage")
+                            .clicked()
                     {
                         remove = Some(index);
                     }
@@ -321,7 +520,7 @@ impl PresentationGameNewGame {
         }
         if (self.draft.clock_format == PresentationGameConfigurationEnumClockFormat::Staged
             || self.draft.stages.is_empty())
-            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            && PresentationThemeEnumButton::Secondary
                 .show(ui, "Add stage")
                 .clicked()
         {
@@ -362,14 +561,27 @@ impl PresentationGameNewGame {
     }
 
     fn show_options(&mut self, ui: &mut Ui) {
-        ui.strong("Game options");
         if self.draft.mode == GameEnumMode::HumanVersusEngine {
-            Self::show_millis(
+            PresentationThemeComponents::field_label(ui, "Engine strength");
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Reckless time per untimed move");
+                ui.add(
+                    egui::Slider::new(
+                        &mut self.draft.untimed_move_millis,
+                        PresentationGameNewGameLayout::STRENGTH_MIN_MILLIS
+                            ..=PresentationGameNewGameLayout::STRENGTH_MAX_MILLIS,
+                    )
+                    .logarithmic(true)
+                    .clamping(egui::SliderClamping::Never)
+                    .suffix(" ms"),
+                );
+                PresentationThemeComponents::caption(
+                    ui,
+                    PresentationGameNewGameEnumStrength::of(self.draft.untimed_move_millis).label(),
+                );
+            });
+            PresentationThemeComponents::caption(
                 ui,
-                "Reckless time per untimed move",
-                &mut self.draft.untimed_move_millis,
-            );
-            ui.small(
                 "This budget applies only to untimed games. Timed games use their chess clocks.",
             );
             ui.checkbox(

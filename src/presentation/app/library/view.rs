@@ -11,6 +11,9 @@ use crate::presentation::app::library::{
 };
 use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::library::view::PresentationLibraryEnumEffect;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 
 impl PresentationAppLibrary {
     pub(in crate::presentation::app) fn show_query<
@@ -112,7 +115,11 @@ impl PresentationAppLibrary {
             && !self.annotations.has_guard();
         let save = ui.add_enabled(
             can_act && self.annotations.has_notes_changes(),
-            egui::Button::new("Save Notes and NAGs"),
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Save Notes and NAGs",
+                PresentationThemeEnumSize::Small,
+            ),
         );
         if self.clicked(ui, &save) {
             self.save_notes(false, port)?;
@@ -123,9 +130,8 @@ impl PresentationAppLibrary {
             }
         }
         if self.annotations.is_conflicted() && !self.editor_busy() {
-            let discard =
-                crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
-                    .show(ui, "Discard Draft and Use Current Position");
+            let discard = PresentationThemeEnumButton::Ghost
+                .show(ui, "Discard Draft and Use Current Position");
             if self.clicked(ui, &discard) {
                 self.annotations.discard_draft()?;
                 self.notes.clear();
@@ -136,7 +142,14 @@ impl PresentationAppLibrary {
         }
         ui.separator();
         ui.heading("Moves and Variations");
-        let load = ui.add_enabled(can_act, egui::Button::new("Load Moves"));
+        let load = ui.add_enabled(
+            can_act,
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Load Moves",
+                PresentationThemeEnumSize::Small,
+            ),
+        );
         if self.clicked(ui, &load) {
             self.load_tree(false, port)?;
         }
@@ -146,7 +159,11 @@ impl PresentationAppLibrary {
                     .tree
                     .tree_page()
                     .is_some_and(|page| page.next_cursor().is_some()),
-            egui::Button::new("Next moves"),
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Next moves",
+                PresentationThemeEnumSize::Small,
+            ),
         );
         if self.clicked(ui, &next) {
             self.load_tree(true, port)?;
@@ -212,7 +229,11 @@ impl PresentationAppLibrary {
             });
         let append = ui.add_enabled(
             can_act && self.selected_move.is_some(),
-            egui::Button::new("Append Study Branch"),
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                "Append Study Branch",
+                PresentationThemeEnumSize::Small,
+            ),
         );
         if self.clicked(ui, &append)
             && let Some(movement) = self.selected_move
@@ -239,7 +260,7 @@ impl PresentationAppLibrary {
         }
         self.modal.capture_invoker(ui.ctx());
         let mut choice = None;
-        let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+        let modal = PresentationThemeComponents::modal(
             ui.ctx(),
             egui::Id::new("chess.library.unsaved_notes"),
         )
@@ -250,18 +271,31 @@ impl PresentationAppLibrary {
             );
             ui.heading("Save your notes before leaving?");
             ui.label("Save these notes, discard your edits, or stay here.");
-            let stay = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
-                .show(ui, "Stay");
+            let stay = PresentationThemeEnumButton::Ghost.show(ui, "Stay");
             if self.clicked(ui, &stay) {
                 choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Stay);
             }
             let enabled =
                 !self.editor_busy() && !self.source_changed && !self.annotations.is_conflicted();
-            let discard = ui.add_enabled(!self.editor_busy(), egui::Button::new("Discard"));
+            let discard = ui.add_enabled(
+                !self.editor_busy(),
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Discard",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.clicked(ui, &discard) {
                 choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Discard);
             }
-            let save = ui.add_enabled(enabled, egui::Button::new("Save"));
+            let save = ui.add_enabled(
+                enabled,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Save",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.clicked(ui, &save) {
                 choice = Some(PresentationAnalysisAnnotationsEnumGuardChoice::Save);
             }

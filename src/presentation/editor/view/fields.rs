@@ -5,6 +5,9 @@ use crate::board::enums::{BoardEnumColor, BoardEnumVariant};
 use crate::desktop::editor_commands::DesktopEditorCommandsSnapshot;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::editor::view::{PresentationEditorView, PresentationEditorViewEnumAction};
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 
 impl PresentationEditorView {
     pub(super) fn show_fields(
@@ -15,8 +18,8 @@ impl PresentationEditorView {
     ) {
         let context = snapshot.context();
         let fields = snapshot.draft().fields();
-        ui.group(|ui| {
-            ui.label("Position fields");
+        PresentationThemeComponents::card(ui).show(ui, |ui| {
+            PresentationThemeComponents::subhead(ui, "Position fields");
             let mut turn = fields.turn();
             ui.horizontal(|ui| {
                 ui.label("Side to move");
@@ -91,10 +94,20 @@ impl PresentationEditorView {
                     }),
                 ));
             }
-            ui.label("Castling rights use the original rook squares");
+            PresentationThemeComponents::caption(
+                ui,
+                "Castling rights use the original rook squares",
+            );
             ui.horizontal_wrapped(|ui| {
                 for rook in fields.castling_rights() {
-                    if ui.button(format!("Revoke {rook} castling right")).clicked() {
+                    if ui
+                        .add(PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            format!("Revoke {rook} castling right"),
+                            PresentationThemeEnumSize::Small,
+                        ))
+                        .clicked()
+                    {
                         *action = Some(Self::edit(
                             context,
                             BoardEditorSessionEnumOperation::Edit(
@@ -122,7 +135,11 @@ impl PresentationEditorView {
                 if ui
                     .add_enabled(
                         self.castling_square.is_some(),
-                        egui::Button::new("Grant Castling Right"),
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            "Grant Castling Right",
+                            PresentationThemeEnumSize::Small,
+                        ),
                     )
                     .clicked()
                     && let Some(rook) = self.castling_square

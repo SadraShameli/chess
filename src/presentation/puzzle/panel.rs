@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::Ui;
 use thiserror::Error;
 use tokio::sync::watch;
 
@@ -31,8 +31,12 @@ use crate::presentation::puzzle::history::{
     PresentationPuzzleHistory, PresentationPuzzleHistoryEnumChoice,
 };
 use crate::presentation::puzzle::setup::PresentationPuzzleSetup;
+use crate::presentation::puzzle::style::PresentationPuzzleStyle;
 use crate::presentation::puzzle::summary::PresentationPuzzleSummary;
 use crate::presentation::puzzle::view::PresentationPuzzleView;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton,
+};
 use crate::puzzle::history::{PuzzleHistoryEnumConfirmation, PuzzleHistoryEnumScope};
 use crate::puzzle::persistence::PuzzlePersistenceStorageRevision;
 use crate::puzzle::run::PuzzleRunEnumStatus;
@@ -430,7 +434,7 @@ impl PresentationPuzzlePanel {
     ) -> Result<(), PresentationPuzzlePanelError> {
         self.synchronize(port)?;
         if let Some(failure) = &self.failure {
-            ui.colored_label(ui.visuals().error_fg_color, failure.to_string());
+            PresentationPuzzleStyle::error(ui, failure.to_string());
         }
         if (self
             .ordinary
@@ -440,7 +444,7 @@ impl PresentationPuzzlePanel {
                 .urgent
                 .as_ref()
                 .is_some_and(|pending| !pending.is_pending()))
-            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            && PresentationThemeEnumButton::Secondary
                 .show(ui, "Retry Puzzle Request")
                 .clicked()
         {
@@ -451,17 +455,20 @@ impl PresentationPuzzlePanel {
         match self.connection.state.borrow().activity() {
             DesktopPuzzleServiceEnumActivity::Idle => {}
             DesktopPuzzleServiceEnumActivity::Loading { .. } => {
-                ui.label("Loading saved puzzle run");
+                PresentationPuzzleStyle::note(ui, "Loading saved puzzle run");
             }
             DesktopPuzzleServiceEnumActivity::Replacing { .. } => {
-                ui.label("Replacing the selected puzzle run");
+                PresentationPuzzleStyle::note(ui, "Replacing the selected puzzle run");
             }
             DesktopPuzzleServiceEnumActivity::Selected => {}
             DesktopPuzzleServiceEnumActivity::Closing => {
-                ui.label("Closing puzzle runs. Save recovery remains available");
+                PresentationPuzzleStyle::note(
+                    ui,
+                    "Closing puzzle runs. Save recovery remains available",
+                );
             }
             DesktopPuzzleServiceEnumActivity::ShutdownComplete => {
-                ui.label("Puzzle service stopped");
+                PresentationPuzzleStyle::note(ui, "Puzzle service stopped");
             }
         }
         if self.controller.is_some() && !self.is_opening() {
@@ -470,16 +477,18 @@ impl PresentationPuzzlePanel {
                 .as_ref()
                 .is_some_and(|pending| pending.is_pending() && pending.intent.is_none());
             if projection_pending {
-                ui.label("Waiting for the saved puzzle request");
+                PresentationPuzzleStyle::note(ui, "Waiting for the saved puzzle request");
                 let can_pause = self.controller.as_ref().is_some_and(|controller| {
                     controller.can_request(PresentationPuzzleControllerEnumAction::Pause(
                         PuzzleTimerEnumPauseReason::Manual,
                     ))
                 });
-                if ui
-                    .add_enabled(can_pause, egui::Button::new("Pause"))
-                    .clicked()
-                {
+                if PresentationPuzzleStyle::small(
+                    ui,
+                    PresentationThemeEnumButton::Secondary,
+                    "Pause",
+                    can_pause,
+                ) {
                     self.request_action(
                         PresentationPuzzleControllerEnumAction::Pause(
                             PuzzleTimerEnumPauseReason::Manual,
@@ -496,31 +505,38 @@ impl PresentationPuzzlePanel {
                     self.submit_intent(intent, port)?;
                 }
             } else {
-                ui.label(
+                PresentationPuzzleStyle::note(
+                    ui,
                     "Puzzle content is hidden until its workspace and selected run are available",
                 );
                 let can_retry_save = self.controller.as_ref().is_some_and(|controller| {
                     controller.can_request(PresentationPuzzleControllerEnumAction::RetrySave)
                 }) && self.ensure_slot(false).is_ok();
-                if ui
-                    .add_enabled(can_retry_save, egui::Button::new("Retry Save"))
-                    .clicked()
-                {
+                if PresentationPuzzleStyle::small(
+                    ui,
+                    PresentationThemeEnumButton::Secondary,
+                    "Retry Save",
+                    can_retry_save,
+                ) {
                     self.request_action(PresentationPuzzleControllerEnumAction::RetrySave, port)?;
                 }
             }
             ui.horizontal(|ui| -> Result<(), PresentationPuzzlePanelError> {
                 let enabled = self.ensure_slot(false).is_ok();
-                if ui
-                    .add_enabled(enabled, egui::Button::new("Refresh Puzzle State"))
-                    .clicked()
-                {
+                if PresentationPuzzleStyle::small(
+                    ui,
+                    PresentationThemeEnumButton::Secondary,
+                    "Refresh Puzzle State",
+                    enabled,
+                ) {
                     self.refresh_snapshot(port)?;
                 }
-                if ui
-                    .add_enabled(enabled, egui::Button::new("Show Run Summary"))
-                    .clicked()
-                {
+                if PresentationPuzzleStyle::small(
+                    ui,
+                    PresentationThemeEnumButton::Secondary,
+                    "Show Run Summary",
+                    enabled,
+                ) {
                     self.request_summary(port)?;
                 }
                 Ok(())
@@ -529,7 +545,7 @@ impl PresentationPuzzlePanel {
         } else if let Some(summary) = &self.ended_summary {
             PresentationPuzzleSummary::show(ui, summary);
         }
-        ui.separator();
+        PresentationThemeComponents::divider(ui);
         if self.setup.show(ui, &[], false).is_some() {
             return Err(PresentationPuzzlePanelError::Response);
         }
@@ -989,14 +1005,15 @@ impl PresentationPuzzlePanel {
         );
         let enabled = finished && self.deletion.is_none();
         let mut requested = None;
-        ui.heading("Archived attempts");
+        PresentationThemeComponents::subhead(ui, "Archived attempts");
         for attempt in attempts {
-            ui.horizontal(|ui| {
-                ui.label(format!("Attempt {}", attempt.value()));
-                if ui
-                    .add_enabled(enabled, egui::Button::new("Delete Attempt"))
-                    .clicked()
-                {
+            PresentationPuzzleStyle::row(ui, &format!("Attempt {}", attempt.value()), |ui| {
+                if PresentationPuzzleStyle::small(
+                    ui,
+                    PresentationThemeEnumButton::Danger,
+                    "Delete Attempt",
+                    enabled,
+                ) {
                     requested = Some(PuzzleHistoryEnumScope::Attempt {
                         session,
                         attempt: *attempt,
@@ -1005,7 +1022,10 @@ impl PresentationPuzzlePanel {
             });
         }
         if !finished {
-            ui.small("Attempts can be deleted after the run has ended");
+            PresentationThemeComponents::caption(
+                ui,
+                "Attempts can be deleted after the run has ended",
+            );
         }
         if requested.is_some() {
             self.deletion = requested;
@@ -1017,24 +1037,31 @@ impl PresentationPuzzlePanel {
         ui: &mut Ui,
         port: &DesktopApplicationPort<C, W>,
     ) -> Result<(), PresentationPuzzlePanelError> {
-        ui.heading("Saved puzzle runs");
-        ui.small("Run identifiers are ordered numerically. Open validates the saved run; this list contains metadata only");
+        PresentationThemeComponents::subhead(ui, "Saved puzzle runs");
+        PresentationThemeComponents::caption(
+            ui,
+            "Run identifiers are ordered numerically. Open validates the saved run; this list contains metadata only",
+        );
         let enabled = self.ensure_slot(false).is_ok();
         ui.horizontal(|ui| -> Result<(), PresentationPuzzlePanelError> {
-            if ui
-                .add_enabled(enabled, egui::Button::new("First Page"))
-                .clicked()
-            {
+            if PresentationPuzzleStyle::small(
+                ui,
+                PresentationThemeEnumButton::Secondary,
+                "First Page",
+                enabled,
+            ) {
                 self.first_page(port)?;
             }
             let has_next = self
                 .inventory
                 .as_ref()
                 .is_some_and(|page| page.next_cursor().is_some());
-            if ui
-                .add_enabled(enabled && has_next, egui::Button::new("Next Page"))
-                .clicked()
-            {
+            if PresentationPuzzleStyle::small(
+                ui,
+                PresentationThemeEnumButton::Secondary,
+                "Next Page",
+                enabled && has_next,
+            ) {
                 self.next_page(port)?;
             }
             Ok(())
@@ -1042,26 +1069,33 @@ impl PresentationPuzzlePanel {
         .inner?;
         if let Some(page) = &self.inventory {
             if page.entries().is_empty() {
-                ui.label("No saved puzzle runs on this page");
+                PresentationPuzzleStyle::note(ui, "No saved puzzle runs on this page");
             }
             let mut selected = None;
             let mut requested = None;
             for entry in page.entries() {
-                ui.horizontal(|ui| {
-                    ui.label(format!(
-                        "Run {}: saved revision {}, {} events",
-                        entry.id().value(),
-                        entry.storage_revision().value(),
-                        entry.persisted_event_count()
-                    ));
-                    if ui.add_enabled(enabled, egui::Button::new("Open")).clicked() {
-                        selected = Some((entry.id(), entry.storage_revision()));
-                    }
-                    if ui
-                        .add_enabled(enabled, egui::Button::new("Delete Run"))
-                        .clicked()
-                    {
+                let label = format!(
+                    "Run {}: saved revision {}, {} events",
+                    entry.id().value(),
+                    entry.storage_revision().value(),
+                    entry.persisted_event_count()
+                );
+                PresentationPuzzleStyle::row(ui, &label, |ui| {
+                    if PresentationPuzzleStyle::small(
+                        ui,
+                        PresentationThemeEnumButton::Danger,
+                        "Delete Run",
+                        enabled,
+                    ) {
                         requested = Some(PuzzleHistoryEnumScope::Session(entry.id()));
+                    }
+                    if PresentationPuzzleStyle::small(
+                        ui,
+                        PresentationThemeEnumButton::Secondary,
+                        "Open",
+                        enabled,
+                    ) {
+                        selected = Some((entry.id(), entry.storage_revision()));
                     }
                 });
             }
@@ -1072,12 +1106,14 @@ impl PresentationPuzzlePanel {
                 self.deletion = requested;
             }
         } else {
-            ui.label("Select First Page to read saved runs");
+            PresentationPuzzleStyle::note(ui, "Select First Page to read saved runs");
         }
-        if ui
-            .add_enabled(enabled, egui::Button::new("Delete All History"))
-            .clicked()
-        {
+        if PresentationPuzzleStyle::small(
+            ui,
+            PresentationThemeEnumButton::Danger,
+            "Delete All History",
+            enabled,
+        ) {
             self.deletion = Some(PuzzleHistoryEnumScope::All);
         }
         self.show_deletion_confirmation(ui, port)?;
@@ -1088,7 +1124,7 @@ impl PresentationPuzzlePanel {
                     DesktopPuzzleServiceEnumOperation::Inventory { .. }
                 )
         }) {
-            ui.label("Loading saved-run page");
+            PresentationPuzzleStyle::note(ui, "Loading saved-run page");
         }
         Ok(())
     }

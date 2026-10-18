@@ -1,9 +1,12 @@
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::Ui;
 
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::library_organization::GameLibraryOrganizationFolderId;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::view::{PresentationLibraryEnumEffect, PresentationLibraryPanel};
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::storage::trash::StorageTrashPreviewRequest;
 
 impl PresentationLibraryPanel {
@@ -35,16 +38,16 @@ impl PresentationLibraryPanel {
         let busy = self
             .controller
             .is_pending(PresentationLibraryEnumLane::Trash);
-        ui.group(|ui| {
+        PresentationThemeComponents::card(ui).show(ui, |ui| {
             ui.label(format!(
                 "Remove folder {folder}? {folders} folders are removed and {games} games move to Unfiled. No game is deleted."
             ));
-            let confirm = ui.add_enabled(!busy, egui::Button::new("Confirm folder removal"));
+            let confirm = ui.add_enabled(!busy, PresentationThemeEnumButton::Secondary.widget(ui, "Confirm folder removal", PresentationThemeEnumSize::Small));
             if self.frame.clicked(ui, &confirm) {
                 let result = self.controller.remove_folder(DesktopRequestId::new());
                 self.collect(result, effects);
             }
-            let cancel = ui.add_enabled(!busy, egui::Button::new("Keep folder"));
+            let cancel = ui.add_enabled(!busy, PresentationThemeEnumButton::Secondary.widget(ui, "Keep folder", PresentationThemeEnumSize::Small));
             if self.frame.clicked(ui, &cancel) {
                 self.controller.dismiss_trash_plan();
             }

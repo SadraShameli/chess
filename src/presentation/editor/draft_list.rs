@@ -2,6 +2,9 @@ use bevy_egui::egui::Ui;
 
 use crate::board::editor::{BoardEditorDraftId, BoardEditorValidationEnumStatus};
 use crate::desktop::editor_commands::DesktopEditorCommandsContext;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::storage::editor_repository::{
     StorageEditorRepositoryCursor, StorageEditorRepositoryEntry, StorageEditorRepositoryPage,
     StorageEditorRepositoryRevision,
@@ -44,8 +47,11 @@ impl PresentationEditorDraftList {
         {
             self.delete_confirmation = None;
         }
-        ui.label("Saved position drafts");
-        ui.label("Valid and invalid editor drafts are separate from recorded games.");
+        PresentationThemeComponents::subhead(ui, "Saved position drafts");
+        PresentationThemeComponents::caption(
+            ui,
+            "Valid and invalid editor drafts are separate from recorded games.",
+        );
         if page.entries().is_empty() {
             ui.label("No saved position drafts on this page");
         }
@@ -57,19 +63,33 @@ impl PresentationEditorDraftList {
                         BoardEditorValidationEnumStatus::Valid => "Valid position draft",
                         BoardEditorValidationEnumStatus::Invalid => "Invalid position draft",
                     });
-                    if ui.button(format!("Open draft {}", entry.id())).clicked() {
+                    if ui
+                        .add(PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            format!("Open draft {}", entry.id()),
+                            PresentationThemeEnumSize::Small,
+                        ))
+                        .clicked()
+                    {
                         action = Some(PresentationEditorDraftListEnumAction::Open(entry.id()));
                     }
-                    if ui.button(format!("Delete draft {}", entry.id())).clicked() {
+                    if ui
+                        .add(PresentationThemeEnumButton::Danger.widget(
+                            ui,
+                            format!("Delete draft {}", entry.id()),
+                            PresentationThemeEnumSize::Small,
+                        ))
+                        .clicked()
+                    {
                         self.delete_confirmation = Some(*entry);
                     }
                 });
             });
         }
         if let Some(entry) = self.delete_confirmation {
-            ui.group(|ui| {
+            PresentationThemeComponents::card(ui).show(ui, |ui| {
                 ui.label(format!("Delete saved draft {}?", entry.id()));
-                if crate::presentation::theme::components::PresentationThemeEnumButton::DangerSolid
+                if PresentationThemeEnumButton::DangerSolid
                     .show(ui, "Confirm Delete Draft")
                     .clicked()
                 {
@@ -80,7 +100,7 @@ impl PresentationEditorDraftList {
                     });
                     self.delete_confirmation = None;
                 }
-                if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                if PresentationThemeEnumButton::Ghost
                     .show(ui, "Keep Saved Draft")
                     .clicked()
                 {
@@ -89,14 +109,14 @@ impl PresentationEditorDraftList {
             });
         }
         ui.horizontal(|ui| {
-            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            if PresentationThemeEnumButton::Secondary
                 .show(ui, "Refresh Position Drafts")
                 .clicked()
             {
                 action = Some(PresentationEditorDraftListEnumAction::List { after: None });
             }
             if let Some(after) = page.next_cursor()
-                && crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                && PresentationThemeEnumButton::Primary
                     .show(ui, "Next Position Drafts")
                     .clicked()
             {

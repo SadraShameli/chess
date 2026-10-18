@@ -7,6 +7,9 @@ use crate::presentation::opening::controller::{
     PresentationOpeningController, PresentationOpeningEnumOrigin, PresentationOpeningEnumTab,
     PresentationOpeningIntent,
 };
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 
 #[cfg(test)]
@@ -16,6 +19,8 @@ mod tests;
 pub struct PresentationOpeningExplorer;
 
 impl PresentationOpeningExplorer {
+    const BAR_WIDTH: f32 = 96.0;
+
     pub fn show_tabs(
         ui: &mut Ui,
         controller: &mut PresentationOpeningController,
@@ -26,14 +31,7 @@ impl PresentationOpeningExplorer {
                 ("Explorer", PresentationOpeningEnumTab::Explorer),
                 ("Book", PresentationOpeningEnumTab::Book),
             ] {
-                if ui
-                    .add(
-                        egui::Button::new(label)
-                            .selected(controller.tab() == tab)
-                            .min_size(egui::vec2(0.0, PresentationThemeTokens::MIN_TARGET)),
-                    )
-                    .clicked()
-                {
+                if PresentationThemeComponents::tab(ui, label, controller.tab() == tab).clicked() {
                     controller.select_tab(tab);
                 }
             }
@@ -53,6 +51,7 @@ impl PresentationOpeningExplorer {
         ui: &mut Ui,
         controller: &PresentationOpeningController,
     ) -> Option<PresentationOpeningIntent> {
+        PresentationThemeComponents::eyebrow(ui, "Bundled games");
         ui.heading("Opening explorer");
         ui.small(
             "Explorer moves are study navigation only and never play a move in a running game",
@@ -75,13 +74,32 @@ impl PresentationOpeningExplorer {
                 continuation.frequency.numerator,
                 continuation.frequency.denominator
             );
-            if ui
-                .add(
-                    egui::Button::new(text)
-                        .min_size(egui::vec2(0.0, PresentationThemeTokens::MIN_TARGET)),
-                )
-                .clicked()
-            {
+            let outcomes = &continuation.outcomes;
+            let clicked = ui
+                .horizontal(|ui| {
+                    let clicked = ui
+                        .add(
+                            PresentationThemeEnumButton::Ghost
+                                .widget(ui, text, PresentationThemeEnumSize::Small)
+                                .min_size(egui::vec2(0.0, PresentationThemeTokens::MIN_TARGET)),
+                        )
+                        .clicked();
+                    PresentationThemeComponents::outcome_bar(
+                        ui,
+                        outcomes.white,
+                        outcomes.draws,
+                        outcomes.black,
+                        Self::BAR_WIDTH,
+                    );
+                    let share = PresentationThemeComponents::share(
+                        continuation.frequency.numerator,
+                        continuation.frequency.denominator,
+                    );
+                    PresentationThemeComponents::caption(ui, format!("{:.0}%", share * 100.0));
+                    clicked
+                })
+                .inner;
+            if clicked {
                 intent = Some(PresentationOpeningIntent::FollowContinuation {
                     origin: PresentationOpeningEnumOrigin::Explorer,
                     movement: continuation.movement,
@@ -103,14 +121,22 @@ impl PresentationOpeningExplorer {
                 if sample.partial_date {
                     ui.small("Partial date");
                 }
-                if sample.library && ui.button(format!("Open Sample {}", sample.game)).clicked() {
+                if sample.library
+                    && PresentationThemeEnumButton::Secondary
+                        .show_sized(
+                            ui,
+                            format!("Open Sample {}", sample.game),
+                            PresentationThemeEnumSize::Small,
+                        )
+                        .clicked()
+                {
                     intent = Some(PresentationOpeningIntent::OpenSample(sample.game));
                 }
             });
         }
         if let Some(offset) = view.next_sample_offset
-            && crate::presentation::theme::components::PresentationThemeEnumButton::Primary
-                .show(ui, "Next Samples")
+            && PresentationThemeEnumButton::Ghost
+                .show_sized(ui, "Next Samples", PresentationThemeEnumSize::Small)
                 .clicked()
         {
             intent = Some(PresentationOpeningIntent::SamplePage(offset));

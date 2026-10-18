@@ -6,6 +6,9 @@ use crate::desktop::editor_commands::DesktopEditorCommandsSnapshot;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
 use crate::presentation::editor::controller::PresentationEditorControllerPalette;
 use crate::presentation::editor::view::{PresentationEditorView, PresentationEditorViewEnumAction};
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 
 impl PresentationEditorView {
     pub(super) fn show_palette(
@@ -13,8 +16,8 @@ impl PresentationEditorView {
         snapshot: &DesktopEditorCommandsSnapshot,
         action: &mut Option<PresentationEditorViewEnumAction>,
     ) {
-        ui.group(|ui| {
-            ui.label("Piece palette");
+        PresentationThemeComponents::card(ui).show(ui, |ui| {
+            PresentationThemeComponents::subhead(ui, "Piece palette");
             for color in [BoardEnumColor::White, BoardEnumColor::Black] {
                 ui.horizontal_wrapped(|ui| {
                     for kind in [
@@ -32,7 +35,8 @@ impl PresentationEditorView {
                             PresentationBoardSemanticGrid::piece_name(kind)
                         );
                         let response = ui.add(
-                            egui::Button::new(label)
+                            PresentationThemeEnumButton::Secondary
+                                .widget(ui, label, PresentationThemeEnumSize::Small)
                                 .selected(snapshot.selection() == selection)
                                 .sense(egui::Sense::click_and_drag()),
                         );

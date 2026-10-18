@@ -32,6 +32,7 @@ pub struct PresentationThemeColors {
     pub unsaved_soft: Color32,
     pub eval_white: Color32,
     pub eval_black: Color32,
+    pub eval_draw: Color32,
     pub scrim: Color32,
 }
 
@@ -61,6 +62,7 @@ impl PresentationThemeColors {
         unsaved_soft: Color32::from_rgba_unmultiplied_const(0xe3, 0xbc, 0x5b, 0x26),
         eval_white: Color32::from_rgb(0xee, 0xe8, 0xdc),
         eval_black: Color32::from_rgb(0x2a, 0x26, 0x22),
+        eval_draw: Color32::from_rgb(0x8f, 0x88, 0x7d),
         scrim: Color32::from_rgba_unmultiplied_const(0x08, 0x07, 0x06, 0xa3),
     };
 
@@ -89,6 +91,7 @@ impl PresentationThemeColors {
         unsaved_soft: Color32::from_rgba_unmultiplied_const(0x8a, 0x65, 0x10, 0x1f),
         eval_white: Color32::from_rgb(0xee, 0xe8, 0xdc),
         eval_black: Color32::from_rgb(0x2a, 0x26, 0x22),
+        eval_draw: Color32::from_rgb(0x8f, 0x88, 0x7d),
         scrim: Color32::from_rgba_unmultiplied_const(0x1c, 0x1a, 0x17, 0x66),
     };
 

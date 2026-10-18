@@ -11,6 +11,9 @@ impl PresentationThemeTypography {
     pub const HEADING_POINTS: f32 = 18.0;
     pub const TITLE_POINTS: f32 = 24.0;
     pub const CLOCK_POINTS: f32 = 24.0;
+    pub const INPUT_POINTS: f32 = 16.0;
+    pub const SECTION_POINTS: f32 = 20.0;
+    pub const LOGO_POINTS: f32 = 24.0;
 
     pub fn apply(context: &Context) {
         context.all_styles_mut(|style| {

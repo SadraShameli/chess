@@ -1,6 +1,9 @@
 use bevy_egui::egui::{self, Ui};
 
-use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
+use crate::presentation::puzzle::style::PresentationPuzzleStyle;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton,
+};
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::history::PuzzleHistoryEnumScope;
 
@@ -34,24 +37,31 @@ impl PresentationPuzzleHistory {
     ) -> PresentationPuzzleHistoryEnumChoice {
         let mut confirm = false;
         let mut cancel = false;
-        let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
-            ui.ctx(),
-            egui::Id::new("puzzle.history.deletion"),
-        )
-        .show(ui.ctx(), |ui| {
-            ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
-            PresentationAnalysisEditorModal::label(ui, "Delete puzzle history");
-            ui.heading("Delete puzzle history?");
-            ui.label(Self::warning(scope));
-            ui.label("A run in progress cannot be deleted.");
-            cancel = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
-                .show(ui, "Keep History")
-                .clicked();
-            confirm =
-                crate::presentation::theme::components::PresentationThemeEnumButton::DangerSolid
-                    .show(ui, "Confirm Delete")
-                    .clicked();
-        });
+        let modal =
+            PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("puzzle.history.deletion"))
+                .show(ui.ctx(), |ui| {
+                    ui.set_width(PresentationThemeTokens::MODAL_WIDTH);
+                    ui.spacing_mut().item_spacing.y = PresentationThemeTokens::SPACE_4;
+                    PresentationPuzzleStyle::alert_dialog(ui, "Delete puzzle history");
+                    PresentationPuzzleStyle::dialog_heading(
+                        ui,
+                        "Delete puzzle history?",
+                        Self::warning(scope),
+                    );
+                    PresentationThemeComponents::caption(
+                        ui,
+                        "A run in progress cannot be deleted.",
+                    );
+                    PresentationPuzzleStyle::dialog_footer(ui, |ui| {
+                        confirm = PresentationThemeEnumButton::DangerSolid
+                            .show(ui, "Confirm Delete")
+                            .clicked();
+                        PresentationThemeComponents::kbd(ui, "Esc");
+                        cancel = PresentationThemeEnumButton::Ghost
+                            .show(ui, "Keep History")
+                            .clicked();
+                    });
+                });
         if cancel || modal.should_close() {
             PresentationPuzzleHistoryEnumChoice::Cancel
         } else if confirm {

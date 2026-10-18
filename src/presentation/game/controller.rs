@@ -14,8 +14,13 @@ use crate::game::enums::{
     GameEnumPhase, GameEnumSeat, GameId, GameIdentityError, GameMoveId, GameRevision,
 };
 use crate::game::premove::{GamePremoveError, GamePremoveIntent};
+use crate::presentation::board::figurines::PresentationBoardFigurines;
 use crate::presentation::board::scene::PresentationBoardScene;
 use crate::presentation::board::semantic_grid::PresentationBoardSemanticGrid;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
 
 #[derive(Debug, Error)]
 pub enum PresentationGameControllerError {
@@ -179,6 +184,9 @@ pub struct PresentationGameController {
 }
 
 impl PresentationGameController {
+    const PROMOTION_BUTTON: f32 = 48.0;
+    const PROMOTION_GLYPH: f32 = 32.0;
+
     const INPUT_CAPACITY: usize = 1024;
     const PROMOTION_CHOICES: [BoardEnumPieceKind; 4] = [
         BoardEnumPieceKind::Queen,
@@ -364,7 +372,7 @@ impl PresentationGameController {
         let mut selected = None;
         let mut is_cancelled = false;
         if let Some(promotion) = &mut self.promotion {
-            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+            let modal = PresentationThemeComponents::modal(
                 ui.ctx(),
                 egui::Id::new(("chess.game.promotion", snapshot.id())),
             )
@@ -380,30 +388,38 @@ impl PresentationGameController {
                     ui.ctx()
                         .memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
                 }
-                ui.heading("Choose Promotion");
-                ui.horizontal_wrapped(|ui| {
-                    for kind in &promotion.choices {
-                        let button = ui
-                            .add_enabled(!is_busy, egui::Button::new(Self::promotion_label(*kind)));
-                        if button.enabled() {
-                            focusable.push(button.id);
-                        }
-                        if promotion.is_focus_pending
-                            && can_focus
-                            && button.enabled()
-                            && !ui.is_sizing_pass()
-                        {
-                            button.request_focus();
-                            promotion.is_focus_pending = false;
-                        }
-                        if button.clicked() {
-                            selected = Some(*kind);
-                        }
-                    }
-                });
-                let cancel =
-                    crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
-                        .show(ui, "Cancel Promotion");
+                let colors = PresentationThemeColors::of(ui.ctx());
+                let color = promotion.movement.mode.color();
+                PresentationThemeComponents::subhead(ui, "Choose Promotion");
+                PresentationThemeComponents::card(ui)
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = PresentationThemeTokens::SPACE_1;
+                            for kind in &promotion.choices {
+                                let button = ui
+                                    .add_enabled_ui(!is_busy, |ui| {
+                                        Self::promotion_button(ui, &colors, color, *kind)
+                                    })
+                                    .inner;
+                                if button.enabled() {
+                                    focusable.push(button.id);
+                                }
+                                if promotion.is_focus_pending
+                                    && can_focus
+                                    && button.enabled()
+                                    && !ui.is_sizing_pass()
+                                {
+                                    button.request_focus();
+                                    promotion.is_focus_pending = false;
+                                }
+                                if button.clicked() {
+                                    selected = Some(*kind);
+                                }
+                            }
+                        });
+                    });
+                let cancel = PresentationThemeEnumButton::Ghost.show(ui, "Cancel Promotion");
                 focusable.push(cancel.id);
                 is_cancelled = cancel.clicked();
                 if can_focus && !ui.is_sizing_pass() {
@@ -672,6 +688,51 @@ impl PresentationGameController {
             request_id,
             action,
         })
+    }
+
+    fn promotion_button(
+        ui: &mut Ui,
+        colors: &PresentationThemeColors,
+        color: BoardEnumColor,
+        kind: BoardEnumPieceKind,
+    ) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(
+            egui::Vec2::splat(Self::PROMOTION_BUTTON),
+            egui::Sense::click(),
+        );
+        let is_enabled = ui.is_enabled();
+        let fill = if response.has_focus() || response.hovered() {
+            colors.accent_soft
+        } else {
+            colors.surface_2
+        };
+        let stroke = if response.has_focus() {
+            colors.accent
+        } else {
+            colors.line
+        };
+        ui.painter().rect(
+            rect,
+            egui::CornerRadius::same(PresentationThemeTokens::RADIUS_MD),
+            fill,
+            egui::Stroke::new(1.0, stroke),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            PresentationBoardFigurines::glyph(color, kind),
+            egui::FontId::proportional(Self::PROMOTION_GLYPH),
+            if is_enabled {
+                colors.text
+            } else {
+                colors.text_3
+            },
+        );
+        let label = Self::promotion_label(kind);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, is_enabled, label));
+        response.on_hover_text(label)
     }
 
     const fn promotion_label(kind: BoardEnumPieceKind) -> &'static str {

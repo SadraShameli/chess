@@ -43,6 +43,10 @@ use crate::presentation::analysis::controller::{
 use crate::presentation::analysis::view::{
     PresentationAnalysisView, PresentationAnalysisViewError,
 };
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
 use crate::presentation::workbench::controller::{
     PresentationWorkbenchController, PresentationWorkbenchControllerContext,
     PresentationWorkbenchControllerEnumAction, PresentationWorkbenchControllerEnumAdmission,
@@ -1145,20 +1149,19 @@ impl PresentationEnginePanels {
         ui: &mut Ui,
         port: &DesktopApplicationPort<C, W>,
     ) -> Result<(), PresentationEnginePanelsError> {
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.selectable_value(
-                &mut self.tab,
-                PresentationEnginePanelsEnumTab::Analysis,
-                "Analysis",
-            );
-            ui.selectable_value(
-                &mut self.tab,
-                PresentationEnginePanelsEnumTab::Workbench,
-                "Workbench",
-            );
-        });
+        PresentationThemeComponents::divider(ui);
+        PresentationThemeComponents::eyebrow(ui, "Engine tools");
+        PresentationThemeComponents::segmented(
+            ui,
+            &mut self.tab,
+            &[
+                (PresentationEnginePanelsEnumTab::Analysis, "Analysis"),
+                (PresentationEnginePanelsEnumTab::Workbench, "Workbench"),
+            ],
+            true,
+        );
         if let Some(failure) = &self.failure {
+            PresentationThemeComponents::pill(ui, "Engine error", PresentationThemeEnumTone::Error);
             ui.colored_label(ui.visuals().error_fg_color, failure);
         }
         let frame = ui.ctx().cumulative_frame_nr();
@@ -1174,7 +1177,7 @@ impl PresentationEnginePanels {
                 .control
                 .as_ref()
                 .is_some_and(|pending| pending.receipt.is_none()))
-            && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+            && PresentationThemeEnumButton::Secondary
                 .show(ui, "Retry Engine Action")
                 .clicked()
             && self.refresh_frame != Some(frame)
@@ -1199,7 +1202,7 @@ impl PresentationEnginePanels {
                 }
             });
             if let Some((native, context, admitted)) = setup
-                && crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                && PresentationThemeEnumButton::Ghost
                     .show(ui, "Cancel Diagnostic Setup")
                     .clicked()
             {
@@ -1220,7 +1223,7 @@ impl PresentationEnginePanels {
             }
             if let Some(controller) = &mut self.analysis
                 && controller.can_stop()
-                && crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                && PresentationThemeEnumButton::Secondary
                     .show(ui, "Stop Active Analysis")
                     .clicked()
                 && let Some(intent) = controller.stop(DesktopRequestId::new())?
@@ -1231,7 +1234,7 @@ impl PresentationEnginePanels {
                 && let Some(controller) = &mut self.workbench
                 && controller.can_cancel()
                 && let Some(job) = controller.job().map(|job| job.id())
-                && crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                && PresentationThemeEnumButton::Ghost
                     .show(ui, "Cancel Active Diagnostic")
                     .clicked()
                 && let Some(intent) = controller.cancel(job, DesktopRequestId::new())?
@@ -1251,7 +1254,7 @@ impl PresentationEnginePanels {
                 .export
                 .as_ref()
                 .ok_or(PresentationEnginePanelsError::Response)?;
-            ui.heading("Diagnostic export preview");
+            PresentationThemeComponents::subhead(ui, "Diagnostic export preview");
             ui.label(format!(
                 "{} bytes, SHA-256 {}",
                 preview.length(),
@@ -1268,7 +1271,7 @@ impl PresentationEnginePanels {
                 .show(ui, |ui| {
                     ui.monospace(String::from_utf8_lossy(preview.bytes()));
                 });
-            if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+            if PresentationThemeEnumButton::Primary
                 .show(ui, "Save Diagnostic Export")
                 .clicked()
                 && self.pending.is_none()
@@ -1280,7 +1283,7 @@ impl PresentationEnginePanels {
                 )?);
                 Self::admit(&mut self.pending, port)?;
             }
-            if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+            if PresentationThemeEnumButton::Ghost
                 .show(ui, "Cancel Diagnostic Export")
                 .clicked()
                 && self.pending.is_none()
@@ -1295,7 +1298,14 @@ impl PresentationEnginePanels {
         }
         if self.snapshot.state() == EngineSearchEnumState::Failed
             && ui
-                .add_enabled(self.pending.is_none(), egui::Button::new("Retry Engine"))
+                .add_enabled(
+                    self.pending.is_none(),
+                    PresentationThemeEnumButton::Primary.widget(
+                        ui,
+                        "Retry Engine",
+                        PresentationThemeEnumSize::Medium,
+                    ),
+                )
                 .clicked()
             && self.refresh_frame != Some(frame)
         {

@@ -8,6 +8,9 @@ use crate::game::library_organization::{
 use crate::game::session::{GameMetadataDate, GameMetadataOpeningCode, GameMetadataText};
 use crate::notation::game_identity::NotationGameIdentityEnumResult;
 use crate::presentation::library::error::PresentationLibraryError;
+use crate::presentation::theme::components::PresentationThemeComponents;
+use crate::presentation::theme::tokens::PresentationThemeColors;
+use crate::presentation::theme::typography::PresentationThemeTypography;
 use crate::storage::library_prepared::StorageLibraryEnumStartKind;
 use crate::storage::library_query::{
     StorageLibraryDateInterval, StorageLibraryEnumFilter, StorageLibraryEnumFolderFilter,
@@ -34,9 +37,179 @@ impl PresentationLibraryFilters {
     const DATE_CHARACTERS: usize = 10;
     const CODE_CHARACTERS: usize = 3;
     const PLY_CHARACTERS: usize = 6;
+    const SEARCH_WIDTH: f32 = 420.0;
+
+    const fn results() -> [(NotationGameIdentityEnumResult, &'static str); 4] {
+        [
+            (NotationGameIdentityEnumResult::Unfinished, "Unfinished"),
+            (
+                NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(
+                    BoardEnumColor::White,
+                )),
+                "White won",
+            ),
+            (
+                NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(
+                    BoardEnumColor::Black,
+                )),
+                "Black won",
+            ),
+            (
+                NotationGameIdentityEnumResult::Completed(GameEnumResult::Draw),
+                "Draw",
+            ),
+        ]
+    }
+
+    const fn sorts() -> [(StorageLibraryEnumSort, &'static str); 6] {
+        [
+            (
+                StorageLibraryEnumSort::UpdatedDescending,
+                "Recently modified",
+            ),
+            (StorageLibraryEnumSort::UpdatedAscending, "Oldest modified"),
+            (StorageLibraryEnumSort::DateDescending, "Newest game date"),
+            (StorageLibraryEnumSort::DateAscending, "Oldest game date"),
+            (StorageLibraryEnumSort::PliesDescending, "Longest game"),
+            (StorageLibraryEnumSort::PliesAscending, "Shortest game"),
+        ]
+    }
+
+    pub(super) fn search(&mut self, ui: &mut Ui) -> bool {
+        ui.horizontal(|ui| {
+            let field_label = PresentationThemeComponents::field_label(ui, "Search players");
+            ui.set_max_width(ui.available_width().min(Self::SEARCH_WIDTH));
+            let response = PresentationThemeComponents::search_field(
+                ui,
+                &mut self.query,
+                "Search library",
+                "/",
+            )
+            .labelled_by(field_label.id);
+            if ui.input(|input| input.key_pressed(egui::Key::Slash)) && !response.has_focus() {
+                response.request_focus();
+            }
+            response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        })
+        .inner
+    }
+
+    pub(super) fn quick(&mut self, ui: &mut Ui) -> bool {
+        let mut changed = false;
+        ui.menu_button("Result", |ui| {
+            changed |= ui
+                .selectable_value(
+                    &mut self.options.result,
+                    StorageLibraryEnumFilter::Any,
+                    "Any result",
+                )
+                .clicked();
+            for (value, label) in Self::results() {
+                changed |= ui
+                    .selectable_value(
+                        &mut self.options.result,
+                        StorageLibraryEnumFilter::Value(value),
+                        label,
+                    )
+                    .clicked();
+            }
+        });
+        ui.menu_button("Opening", |ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.opening)
+                    .id_salt("library-quick-opening")
+                    .char_limit(Self::TEXT_CHARACTERS)
+                    .hint_text("Opening name contains"),
+            );
+            let submitted =
+                response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if submitted || ui.button("Apply opening filter").clicked() {
+                changed = true;
+                ui.close();
+            }
+        });
+        ui.menu_button("Date", |ui| {
+            for (sort, label) in Self::sorts() {
+                if matches!(
+                    sort,
+                    StorageLibraryEnumSort::DateDescending | StorageLibraryEnumSort::DateAscending
+                ) {
+                    changed |= ui
+                        .selectable_value(&mut self.options.sort, sort, label)
+                        .clicked();
+                }
+            }
+        });
+        changed
+    }
+
+    pub(super) fn chips(&mut self, ui: &mut Ui) -> bool {
+        let mut changed = false;
+        ui.horizontal_wrapped(|ui| {
+            if let StorageLibraryEnumFilter::Value(result) = &self.options.result {
+                let label = Self::results()
+                    .into_iter()
+                    .find(|(value, _)| value == result)
+                    .map_or("Unavailable selection", |(_, label)| label);
+                if Self::chip(ui, &format!("Result: {label}")) {
+                    self.options.result = StorageLibraryEnumFilter::Any;
+                    changed = true;
+                }
+            }
+            if self.options.favorite == StorageLibraryEnumFilter::Value(true)
+                && Self::chip(ui, "Favorites only")
+            {
+                self.options.favorite = StorageLibraryEnumFilter::Any;
+                changed = true;
+            }
+            if self.options.folder != StorageLibraryEnumFolderFilter::Any
+                && Self::chip(ui, "Folder filter")
+            {
+                self.options.folder = StorageLibraryEnumFolderFilter::Any;
+                changed = true;
+            }
+            let tags = self.tags().len();
+            if tags > 0 && Self::chip(ui, &format!("Tags: {tags}")) {
+                self.options.tags = StorageLibraryEnumTagFilter::Any;
+                changed = true;
+            }
+            if !self.opening.trim().is_empty()
+                && Self::chip(ui, &format!("Opening: {}", self.opening.trim()))
+            {
+                self.opening.clear();
+                changed = true;
+            }
+        });
+        changed
+    }
+
+    fn chip(ui: &mut Ui, text: &str) -> bool {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let response = ui.add(
+            egui::Button::new(
+                egui::RichText::new(format!("{text}  \u{d7}"))
+                    .size(PresentationThemeTypography::CAPTION_POINTS)
+                    .color(colors.accent),
+            )
+            .fill(colors.accent_soft)
+            .stroke(egui::Stroke::NONE)
+            .corner_radius(egui::CornerRadius::same(u8::MAX)),
+        );
+        response.clicked()
+    }
+
+    pub(super) fn show_all_games(&mut self) {
+        self.options.favorite = StorageLibraryEnumFilter::Any;
+        self.options.folder = StorageLibraryEnumFolderFilter::Any;
+        self.options.tags = StorageLibraryEnumTagFilter::Any;
+    }
+
+    pub(super) fn show_favorites(&mut self) {
+        self.show_all_games();
+        self.options.favorite = StorageLibraryEnumFilter::Value(true);
+    }
 
     pub(super) fn show(&mut self, ui: &mut Ui) {
-        Self::text(ui, "Search players", &mut self.query, Self::TEXT_CHARACTERS);
         ui.collapsing("Game filters", |ui| {
             Self::text(ui, "White player", &mut self.white, Self::TEXT_CHARACTERS);
             Self::text(ui, "Black player", &mut self.black, Self::TEXT_CHARACTERS);
@@ -53,30 +226,7 @@ impl PresentationLibraryFilters {
                 Self::DATE_CHARACTERS,
             );
             ui.label("Partial saved dates may match. Matching rows identify incomplete dates.");
-            Self::filter(
-                ui,
-                "Result",
-                &mut self.options.result,
-                &[
-                    (NotationGameIdentityEnumResult::Unfinished, "Unfinished"),
-                    (
-                        NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(
-                            BoardEnumColor::White,
-                        )),
-                        "White won",
-                    ),
-                    (
-                        NotationGameIdentityEnumResult::Completed(GameEnumResult::Victory(
-                            BoardEnumColor::Black,
-                        )),
-                        "Black won",
-                    ),
-                    (
-                        NotationGameIdentityEnumResult::Completed(GameEnumResult::Draw),
-                        "Draw",
-                    ),
-                ],
-            );
+            Self::filter(ui, "Result", &mut self.options.result, &Self::results());
             Self::filter(
                 ui,
                 "Rules variant",
@@ -132,17 +282,7 @@ impl PresentationLibraryFilters {
                 Self::PLY_CHARACTERS,
             );
         });
-        let sorts = [
-            (
-                StorageLibraryEnumSort::UpdatedDescending,
-                "Recently modified",
-            ),
-            (StorageLibraryEnumSort::UpdatedAscending, "Oldest modified"),
-            (StorageLibraryEnumSort::DateDescending, "Newest game date"),
-            (StorageLibraryEnumSort::DateAscending, "Oldest game date"),
-            (StorageLibraryEnumSort::PliesDescending, "Longest game"),
-            (StorageLibraryEnumSort::PliesAscending, "Shortest game"),
-        ];
+        let sorts = Self::sorts();
         let label = sorts
             .iter()
             .find(|(sort, _)| *sort == self.options.sort)
