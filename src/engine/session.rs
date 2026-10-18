@@ -1,0 +1,1020 @@
+use std::num::NonZeroU32;
+use std::sync::Arc;
+use std::time::Duration;
+
+use thiserror::Error;
+use tokio::time::{Instant, timeout, timeout_at};
+
+use crate::board::enums::BoardEnumVariant;
+use crate::board::r#move::BoardMoveError;
+
+use crate::engine::analysis::{EngineAnalysis, EngineAnalysisError};
+use crate::engine::capabilities::{EngineCapabilities, EngineCapabilitiesError, EngineIdentity};
+use crate::engine::diagnostic::EngineDiagnosticEnumCommand;
+use crate::engine::diagnostics::EngineDiagnostics;
+use crate::engine::options::{
+    EngineOptionsApplied, EngineOptionsEnumAcknowledgment, EngineOptionsEnumOutcome,
+    EngineOptionsEnumTablebases, EngineOptionsEnumValue, EngineOptionsError, EngineOptionsSetting,
+};
+use crate::engine::package::selector::EnginePackageSelected;
+use crate::engine::process_provider::{
+    EngineProcess, EngineProcessEnumPipe, EngineProcessError, EngineProcessLimits,
+    EngineProcessLine, EngineProcessProvider,
+};
+use crate::engine::resource_config::{EngineResourceConfig, EngineResourceConfigError};
+use crate::engine::search::enums::{EngineSearchEnumOutput, EngineSearchEnumState};
+use crate::engine::search::event::EngineSearchEvent;
+use crate::engine::search::identity::{
+    EngineSearchContext, EngineSearchGeneration, EngineSearchTag,
+};
+use crate::engine::search::limit::EngineSearchLimit;
+use crate::engine::search::position::EngineSearchPosition;
+use crate::engine::search::stop::EngineSearchStop;
+
+#[derive(Debug, Error)]
+pub enum EngineSessionError {
+    #[error(transparent)]
+    Options(#[from] EngineOptionsError),
+    #[error(transparent)]
+    Analysis(#[from] EngineAnalysisError),
+    #[error(transparent)]
+    Process(#[from] EngineProcessError),
+    #[error(transparent)]
+    Capabilities(#[from] EngineCapabilitiesError),
+    #[error(transparent)]
+    ResourceConfig(#[from] EngineResourceConfigError),
+    #[error("Engine {0} handshake exceeded five seconds")]
+    Timeout(&'static str),
+    #[error("The engine sent an unexpected startup response")]
+    UnexpectedResponse,
+    #[error("Engine startup failed ({startup}); cleanup also failed ({cleanup})")]
+    Cleanup {
+        #[source]
+        startup: Box<Self>,
+        cleanup: EngineProcessError,
+    },
+    #[error("The engine cannot perform this operation while {0:?}")]
+    State(EngineSearchEnumState),
+    #[error("A terminal position must be adjudicated before starting an engine search")]
+    TerminalPosition,
+    #[error("The engine stop exceeded its deadline from application receipt")]
+    StopDeadline,
+    #[error("Engine stop delivery was interrupted and its process cannot be reused")]
+    AmbiguousStopDelivery,
+    #[error("The stop request belongs to another search or process generation")]
+    StaleSearch,
+    #[error("The engine search sent an unsupported or malformed response")]
+    SearchResponse,
+    #[error("The engine search returned an invalid move: {0}")]
+    SearchMove(#[from] BoardMoveError),
+    #[error("Engine operation failed ({operation}); forced cleanup also failed ({cleanup})")]
+    OperationCleanup {
+        #[source]
+        operation: Box<Self>,
+        cleanup: Box<Self>,
+    },
+    #[error("The engine reported successful shutdown without observing all owned resources")]
+    ShutdownUnobserved,
+    #[error("Engine session shutdown previously failed: {0}")]
+    ShutdownFailed(#[source] Arc<Self>),
+    #[error("{operation}")]
+    Diagnosed {
+        #[source]
+        operation: Box<Self>,
+        diagnostics: Box<EngineDiagnostics>,
+    },
+    #[error("Engine initialization already started or its process was transferred or closed")]
+    StartupUnavailable,
+}
+
+impl EngineSessionError {
+    pub fn operation(&self) -> &Self {
+        if let Self::Diagnosed { operation, .. } = self {
+            operation
+        } else {
+            self
+        }
+    }
+
+    pub fn diagnostics(&self) -> Option<&EngineDiagnostics> {
+        if let Self::Diagnosed { diagnostics, .. } = self {
+            Some(diagnostics)
+        } else {
+            None
+        }
+    }
+
+    fn shutdown_result(failure: Option<&Arc<Self>>) -> Result<(), Self> {
+        match failure {
+            Some(error) => Err(Self::ShutdownFailed(Arc::clone(error))),
+            None => Ok(()),
+        }
+    }
+}
+
+struct EngineSessionSearch {
+    tag: EngineSearchTag,
+    position: EngineSearchPosition,
+}
+
+enum EngineSessionEnumStopDelivery {
+    Pending,
+    Complete,
+}
+
+enum EngineSessionEnumLifecycle {
+    Idle,
+    Preparing,
+    Searching(EngineSessionSearch),
+    Stopping {
+        active: EngineSessionSearch,
+        request: EngineSearchStop,
+        delivery: EngineSessionEnumStopDelivery,
+    },
+    Failed,
+}
+
+#[derive(Clone, Copy)]
+enum EngineSessionEnumShutdown {
+    Running,
+    SendingStop,
+    Graceful,
+    Forced,
+    Complete,
+}
+
+enum EngineSessionStartupEnumState {
+    Ready,
+    Initializing,
+    Closing,
+    Transferred,
+}
+
+struct EngineSessionStartupProcess<P: EngineProcess> {
+    process: P,
+    package: EnginePackageSelected,
+}
+
+pub struct EngineSessionStartup<P: EngineProcess> {
+    resources: Option<EngineSessionStartupProcess<P>>,
+    state: EngineSessionStartupEnumState,
+    shutdown_failure: Option<Arc<EngineSessionError>>,
+    diagnostics: EngineDiagnostics,
+}
+
+impl<P: EngineProcess> EngineSessionStartup<P> {
+    pub fn new(
+        provider: &impl EngineProcessProvider<Process = P>,
+        package: EnginePackageSelected,
+    ) -> Result<Self, EngineSessionError> {
+        let process = provider.spawn(&package)?;
+        Ok(Self {
+            resources: Some(EngineSessionStartupProcess { process, package }),
+            state: EngineSessionStartupEnumState::Ready,
+            shutdown_failure: None,
+            diagnostics: EngineDiagnostics::default(),
+        })
+    }
+
+    pub async fn initialize(&mut self) -> Result<EngineSession<P>, EngineSessionError> {
+        if !matches!(self.state, EngineSessionStartupEnumState::Ready) {
+            return Err(EngineSessionError::StartupUnavailable);
+        }
+        self.state = EngineSessionStartupEnumState::Initializing;
+        let process = &mut self
+            .resources
+            .as_mut()
+            .ok_or(EngineSessionError::StartupUnavailable)?
+            .process;
+        let identity = EngineSession::<P>::handshake(process, &mut self.diagnostics).await?;
+        let applied = EngineOptionsApplied::new(identity.capabilities())?;
+        let resources = self
+            .resources
+            .take()
+            .ok_or(EngineSessionError::StartupUnavailable)?;
+        self.state = EngineSessionStartupEnumState::Transferred;
+        Ok(EngineSession {
+            process: Some(resources.process),
+            identity,
+            package: resources.package,
+            generation: EngineSearchGeneration::fresh(),
+            applied,
+            lifecycle: EngineSessionEnumLifecycle::Idle,
+            shutdown: EngineSessionEnumShutdown::Running,
+            shutdown_failure: None,
+            diagnostics: std::mem::take(&mut self.diagnostics),
+            pending_failure: None,
+        })
+    }
+
+    pub fn diagnostics(&self) -> &EngineDiagnostics {
+        &self.diagnostics
+    }
+
+    pub fn take_diagnostics(&mut self) -> EngineDiagnostics {
+        std::mem::take(&mut self.diagnostics)
+    }
+
+    pub fn is_shutdown_complete(&self) -> bool {
+        self.resources
+            .as_ref()
+            .is_none_or(|resources| resources.process.is_shutdown_complete())
+    }
+
+    pub async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineSessionError> {
+        if self.resources.is_none() {
+            return EngineSessionError::shutdown_result(self.shutdown_failure.as_ref());
+        }
+        let graceful = matches!(
+            self.state,
+            EngineSessionStartupEnumState::Ready | EngineSessionStartupEnumState::Initializing
+        );
+        self.state = EngineSessionStartupEnumState::Closing;
+        let process = &mut self
+            .resources
+            .as_mut()
+            .ok_or(EngineSessionError::StartupUnavailable)?
+            .process;
+        let result = EngineSession::<P>::shutdown_process(
+            process,
+            &mut self.diagnostics,
+            graceful,
+            deadline,
+        )
+        .await;
+        if self.is_shutdown_complete() {
+            self.resources = None;
+            self.shutdown_failure = result.err().map(Arc::new);
+            EngineSessionError::shutdown_result(self.shutdown_failure.as_ref())
+        } else {
+            result
+        }
+    }
+
+    pub(crate) async fn terminate_retained(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<(), EngineSessionError> {
+        self.state = EngineSessionStartupEnumState::Closing;
+        self.shutdown_retained(deadline).await
+    }
+}
+
+pub struct EngineSession<P: EngineProcess> {
+    process: Option<P>,
+    identity: EngineIdentity,
+    package: EnginePackageSelected,
+    generation: EngineSearchGeneration,
+    applied: EngineOptionsApplied,
+    lifecycle: EngineSessionEnumLifecycle,
+    shutdown: EngineSessionEnumShutdown,
+    shutdown_failure: Option<Arc<EngineSessionError>>,
+    diagnostics: EngineDiagnostics,
+    pending_failure: Option<EngineSessionError>,
+}
+
+impl<P: EngineProcess> EngineSession<P> {
+    pub const HANDSHAKE: Duration = Duration::from_secs(5);
+
+    pub async fn start(
+        provider: &impl EngineProcessProvider<Process = P>,
+        package: EnginePackageSelected,
+    ) -> Result<Self, EngineSessionError> {
+        let mut owner = EngineSessionStartup::new(provider, package)?;
+        match owner.initialize().await {
+            Ok(session) => Ok(session),
+            Err(startup) => {
+                let process = &mut owner
+                    .resources
+                    .as_mut()
+                    .ok_or(EngineSessionError::StartupUnavailable)?
+                    .process;
+                let cleanup = process
+                    .shutdown_observed(
+                        Instant::now() + EngineProcessLimits::SHUTDOWN,
+                        &mut owner.diagnostics,
+                        true,
+                    )
+                    .await;
+                let operation = match cleanup {
+                    Ok(()) => startup,
+                    Err(cleanup) => EngineSessionError::Cleanup {
+                        startup: Box::new(startup),
+                        cleanup,
+                    },
+                };
+                Err(EngineSessionError::Diagnosed {
+                    operation: Box::new(operation),
+                    diagnostics: Box::new(owner.take_diagnostics()),
+                })
+            }
+        }
+    }
+
+    pub fn identity(&self) -> &EngineIdentity {
+        &self.identity
+    }
+
+    pub(crate) async fn begin_diagnostic(
+        &mut self,
+        command: EngineDiagnosticEnumCommand<'_>,
+    ) -> Result<EngineOptionsApplied, EngineSessionError> {
+        self.require_idle()?;
+        if let Some(position) = command.position() {
+            let setting = EngineOptionsSetting::new(
+                EngineOptionsEnumValue::Chess960(position.current().variant()),
+                self.identity.capabilities(),
+            )?;
+            self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+            self.configure_variant(&setting).await?;
+            self.process_mut()?.send(position.command()).await?;
+        }
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        self.process_mut()?.send(&command.command()).await?;
+        Ok(self.applied.clone())
+    }
+
+    pub(crate) async fn terminate_retained(
+        &mut self,
+        deadline: Instant,
+    ) -> Result<(), EngineSessionError> {
+        if self.process.is_some() {
+            self.shutdown = EngineSessionEnumShutdown::Forced;
+        }
+        self.shutdown_retained(deadline).await
+    }
+
+    pub(crate) async fn receive_diagnostic(
+        &mut self,
+    ) -> Result<EngineProcessLine, EngineSessionError> {
+        if !matches!(self.lifecycle, EngineSessionEnumLifecycle::Preparing) {
+            return Err(EngineSessionError::State(self.state()));
+        }
+        Ok(self.receive_line().await?)
+    }
+
+    pub(crate) fn complete_diagnostic(&mut self) -> Result<(), EngineSessionError> {
+        if !matches!(self.lifecycle, EngineSessionEnumLifecycle::Preparing) {
+            return Err(EngineSessionError::State(self.state()));
+        }
+        self.lifecycle = EngineSessionEnumLifecycle::Idle;
+        Ok(())
+    }
+
+    pub fn package(&self) -> &EnginePackageSelected {
+        &self.package
+    }
+
+    pub fn generation(&self) -> EngineSearchGeneration {
+        self.generation
+    }
+
+    pub fn resources(&self) -> Option<EngineResourceConfig> {
+        self.applied.resources()
+    }
+
+    pub fn applied_options(&self) -> Option<&EngineOptionsApplied> {
+        matches!(
+            self.state(),
+            EngineSearchEnumState::Idle
+                | EngineSearchEnumState::Searching
+                | EngineSearchEnumState::Stopping
+        )
+        .then_some(&self.applied)
+    }
+
+    pub async fn configure_option(
+        &mut self,
+        setting: EngineOptionsSetting,
+    ) -> Result<EngineOptionsEnumOutcome, EngineSessionError> {
+        self.require_idle()?;
+        setting.validate(self.identity.capabilities())?;
+        let resources = setting.updated_resources(self.applied.resources())?;
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        if setting.value().is_resource() {
+            self.applied.set_resources(None);
+        }
+        let result = timeout(Self::HANDSHAKE, async {
+            let outcome = self.send_option(&setting).await?;
+            self.ready_session().await?;
+            Ok(outcome)
+        })
+        .await
+        .map_err(|_elapsed| EngineSessionError::Timeout("option configuration"))
+        .and_then(|result| result);
+        let outcome = self.finish_preparation(result).await?;
+        self.applied.apply(&setting, &outcome, resources)?;
+        Ok(outcome)
+    }
+
+    pub fn state(&self) -> EngineSearchEnumState {
+        match self.lifecycle {
+            EngineSessionEnumLifecycle::Idle => EngineSearchEnumState::Idle,
+            EngineSessionEnumLifecycle::Preparing => EngineSearchEnumState::Preparing,
+            EngineSessionEnumLifecycle::Searching(_) => EngineSearchEnumState::Searching,
+            EngineSessionEnumLifecycle::Stopping { .. } => EngineSearchEnumState::Stopping,
+            EngineSessionEnumLifecycle::Failed => EngineSearchEnumState::Failed,
+        }
+    }
+
+    pub async fn readiness(&mut self) -> Result<(), EngineSessionError> {
+        self.require_idle()?;
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        let result = timeout(Self::HANDSHAKE, self.ready_session())
+            .await
+            .map_err(|_elapsed| EngineSessionError::Timeout("readiness"))
+            .and_then(|result| result);
+        self.finish_preparation(result).await
+    }
+
+    pub async fn new_game(&mut self, variant: BoardEnumVariant) -> Result<(), EngineSessionError> {
+        self.require_idle()?;
+        let setting = EngineOptionsSetting::new(
+            EngineOptionsEnumValue::Chess960(variant),
+            self.identity.capabilities(),
+        )?;
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        let result = timeout(Self::HANDSHAKE, async {
+            self.process_mut()?.send("ucinewgame").await?;
+            self.configure_variant(&setting).await
+        })
+        .await
+        .map_err(|_elapsed| EngineSessionError::Timeout("new game"))
+        .and_then(|result| result);
+        self.finish_preparation(result).await
+    }
+
+    pub async fn configure_resources(
+        &mut self,
+        config: EngineResourceConfig,
+    ) -> Result<(), EngineSessionError> {
+        self.require_idle()?;
+        config.validate(self.identity.capabilities())?;
+        let [threads, hash, overhead] = config.settings().map(|(option, value)| {
+            EngineOptionsSetting::resource(option, value, self.identity.capabilities())
+        });
+        let settings = [threads?, hash?, overhead?];
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        self.applied.set_resources(None);
+        let result = timeout(Self::HANDSHAKE, async {
+            for setting in &settings {
+                self.send_option(setting).await?;
+            }
+            self.ready_session().await
+        })
+        .await
+        .map_err(|_elapsed| EngineSessionError::Timeout("resource configuration"))
+        .and_then(|result| result);
+        self.finish_preparation(result).await?;
+        self.applied.set_resources(Some(config));
+        Ok(())
+    }
+
+    pub async fn start_search(
+        &mut self,
+        context: EngineSearchContext,
+        position: EngineSearchPosition,
+        limit: EngineSearchLimit,
+    ) -> Result<EngineSearchTag, EngineSessionError> {
+        self.start_search_tagged(
+            EngineSearchTag::fresh(self.generation, context),
+            position,
+            limit,
+        )
+        .await
+    }
+
+    pub(crate) async fn start_search_tagged(
+        &mut self,
+        tag: EngineSearchTag,
+        position: EngineSearchPosition,
+        limit: EngineSearchLimit,
+    ) -> Result<EngineSearchTag, EngineSessionError> {
+        if tag.generation() != self.generation {
+            return Err(EngineSessionError::StaleSearch);
+        }
+        self.require_idle()?;
+        if position.current().legal_moves().is_empty() {
+            return Err(EngineSessionError::TerminalPosition);
+        }
+        let variant = if self.applied.variant() != position.current().variant() {
+            Some(EngineOptionsSetting::new(
+                EngineOptionsEnumValue::Chess960(position.current().variant()),
+                self.identity.capabilities(),
+            )?)
+        } else {
+            None
+        };
+        self.lifecycle = EngineSessionEnumLifecycle::Preparing;
+        let result = timeout(Self::HANDSHAKE, async {
+            if let Some(setting) = &variant {
+                self.configure_variant(setting).await?;
+            }
+            self.process_mut()?.send(position.command()).await?;
+            self.process_mut()?.send(&limit.command()).await?;
+            Ok(())
+        })
+        .await
+        .map_err(|_elapsed| EngineSessionError::Timeout("search setup"))
+        .and_then(|result| result);
+        if let Err(error) = result {
+            return Err(self
+                .fail(error, Instant::now() + EngineProcessLimits::SHUTDOWN)
+                .await);
+        }
+        self.lifecycle =
+            EngineSessionEnumLifecycle::Searching(EngineSessionSearch { tag, position });
+        Ok(tag)
+    }
+
+    pub async fn next_event(&mut self) -> Result<EngineSearchEvent, EngineSessionError> {
+        self.active()?;
+        let stop = self.stop_request();
+        match self.receive_event().await {
+            Ok(event) => Ok(event),
+            Err(error) => {
+                let termination_deadline = stop.map_or_else(
+                    || Instant::now() + EngineProcessLimits::SHUTDOWN,
+                    EngineSearchStop::termination_deadline,
+                );
+                Err(self.fail(error, termination_deadline).await)
+            }
+        }
+    }
+
+    pub async fn stop(
+        &mut self,
+        request: EngineSearchStop,
+    ) -> Result<EngineSearchTag, EngineSessionError> {
+        self.request_stop(request).await?;
+        loop {
+            let event = self.next_event().await?;
+            if matches!(event.output(), EngineSearchEnumOutput::Stopped) {
+                return Ok(event.tag());
+            }
+        }
+    }
+
+    pub(crate) async fn request_stop(
+        &mut self,
+        request: EngineSearchStop,
+    ) -> Result<(), EngineSessionError> {
+        if self.active()?.tag != request.tag() {
+            return Err(EngineSessionError::StaleSearch);
+        }
+        let previous = std::mem::replace(&mut self.lifecycle, EngineSessionEnumLifecycle::Failed);
+        let send_stop = match previous {
+            EngineSessionEnumLifecycle::Searching(active) => {
+                self.lifecycle = EngineSessionEnumLifecycle::Stopping {
+                    active,
+                    request,
+                    delivery: EngineSessionEnumStopDelivery::Pending,
+                };
+                true
+            }
+            EngineSessionEnumLifecycle::Stopping {
+                active,
+                request: existing,
+                delivery,
+            } => {
+                let request = if request.deadline() < existing.deadline() {
+                    request
+                } else {
+                    existing
+                };
+                self.lifecycle = EngineSessionEnumLifecycle::Stopping {
+                    active,
+                    request,
+                    delivery,
+                };
+                false
+            }
+            EngineSessionEnumLifecycle::Idle
+            | EngineSessionEnumLifecycle::Preparing
+            | EngineSessionEnumLifecycle::Failed => {
+                return Err(EngineSessionError::State(self.state()));
+            }
+        };
+        let request = self
+            .stop_request()
+            .ok_or(EngineSessionError::State(self.state()))?;
+        if request.has_expired(Instant::now()) {
+            return Err(self
+                .fail(
+                    EngineSessionError::StopDeadline,
+                    request.termination_deadline(),
+                )
+                .await);
+        }
+        if send_stop {
+            let sent = timeout_at(request.deadline(), self.process_mut()?.send("stop"))
+                .await
+                .map_err(|_elapsed| EngineSessionError::StopDeadline)
+                .and_then(|result| result.map_err(EngineSessionError::Process));
+            if let Err(error) = sent {
+                return Err(self.fail(error, request.termination_deadline()).await);
+            }
+            let state = self.state();
+            let EngineSessionEnumLifecycle::Stopping { delivery, .. } = &mut self.lifecycle else {
+                return Err(EngineSessionError::State(state));
+            };
+            *delivery = EngineSessionEnumStopDelivery::Complete;
+        }
+        Ok(())
+    }
+
+    pub async fn shutdown(mut self) -> Result<(), EngineSessionError> {
+        match self
+            .shutdown_retained(Instant::now() + EngineProcessLimits::SHUTDOWN)
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(operation) => Err(EngineSessionError::Diagnosed {
+                operation: Box::new(operation),
+                diagnostics: Box::new(self.take_diagnostics()),
+            }),
+        }
+    }
+
+    pub fn diagnostics(&self) -> &EngineDiagnostics {
+        &self.diagnostics
+    }
+
+    pub fn take_diagnostics(&mut self) -> EngineDiagnostics {
+        std::mem::take(&mut self.diagnostics)
+    }
+
+    pub fn is_shutdown_complete(&self) -> bool {
+        self.process
+            .as_ref()
+            .is_none_or(EngineProcess::is_shutdown_complete)
+    }
+
+    pub async fn shutdown_retained(&mut self, deadline: Instant) -> Result<(), EngineSessionError> {
+        if self.process.is_none() {
+            return EngineSessionError::shutdown_result(self.shutdown_failure.as_ref());
+        }
+        let deadline = self.stop_request().map_or(deadline, |request| {
+            deadline.min(request.termination_deadline())
+        });
+        let send_stop = if matches!(self.shutdown, EngineSessionEnumShutdown::Running) {
+            let state = self.state();
+            self.shutdown = if self.has_pending_stop_delivery()
+                || matches!(
+                    state,
+                    EngineSearchEnumState::Failed | EngineSearchEnumState::Preparing
+                ) {
+                EngineSessionEnumShutdown::Forced
+            } else if matches!(
+                state,
+                EngineSearchEnumState::Searching | EngineSearchEnumState::Stopping
+            ) {
+                EngineSessionEnumShutdown::SendingStop
+            } else {
+                EngineSessionEnumShutdown::Graceful
+            };
+            matches!(self.shutdown, EngineSessionEnumShutdown::SendingStop)
+        } else {
+            if matches!(self.shutdown, EngineSessionEnumShutdown::SendingStop) {
+                self.shutdown = EngineSessionEnumShutdown::Forced;
+            }
+            false
+        };
+        self.lifecycle = EngineSessionEnumLifecycle::Failed;
+        let result = async {
+            if send_stop {
+                timeout_at(deadline, self.process_mut()?.send("stop"))
+                    .await
+                    .map_err(EngineProcessError::ShutdownDeadline)??;
+                self.shutdown = EngineSessionEnumShutdown::Graceful;
+            }
+            let graceful = matches!(self.shutdown, EngineSessionEnumShutdown::Graceful);
+            let process = self
+                .process
+                .as_mut()
+                .ok_or(EngineSessionError::State(EngineSearchEnumState::Failed))?;
+            Self::shutdown_process(process, &mut self.diagnostics, graceful, deadline).await
+        }
+        .await;
+        if self.is_shutdown_complete() {
+            self.process = None;
+            self.shutdown = EngineSessionEnumShutdown::Complete;
+            if let Err(error) = result {
+                self.shutdown_failure = Some(Arc::new(error));
+            }
+            EngineSessionError::shutdown_result(self.shutdown_failure.as_ref())
+        } else {
+            self.shutdown = EngineSessionEnumShutdown::Forced;
+            result
+        }
+    }
+
+    async fn shutdown_process(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+        graceful: bool,
+        deadline: Instant,
+    ) -> Result<(), EngineSessionError> {
+        let result = timeout_at(
+            deadline,
+            process.shutdown_observed(deadline, diagnostics, graceful),
+        )
+        .await;
+        result.map_err(EngineProcessError::ShutdownDeadline)??;
+        if !process.is_shutdown_complete() {
+            return Err(EngineSessionError::ShutdownUnobserved);
+        }
+        Ok(())
+    }
+
+    fn require_idle(&self) -> Result<(), EngineSessionError> {
+        if matches!(self.lifecycle, EngineSessionEnumLifecycle::Idle) {
+            Ok(())
+        } else {
+            Err(EngineSessionError::State(self.state()))
+        }
+    }
+
+    fn process_mut(&mut self) -> Result<&mut P, EngineSessionError> {
+        self.process
+            .as_mut()
+            .ok_or(EngineSessionError::State(EngineSearchEnumState::Failed))
+    }
+
+    fn active(&self) -> Result<&EngineSessionSearch, EngineSessionError> {
+        match &self.lifecycle {
+            EngineSessionEnumLifecycle::Searching(active)
+            | EngineSessionEnumLifecycle::Stopping { active, .. } => Ok(active),
+            EngineSessionEnumLifecycle::Idle
+            | EngineSessionEnumLifecycle::Preparing
+            | EngineSessionEnumLifecycle::Failed => Err(EngineSessionError::State(self.state())),
+        }
+    }
+
+    fn stop_request(&self) -> Option<EngineSearchStop> {
+        match self.lifecycle {
+            EngineSessionEnumLifecycle::Stopping { request, .. } => Some(request),
+            EngineSessionEnumLifecycle::Idle
+            | EngineSessionEnumLifecycle::Preparing
+            | EngineSessionEnumLifecycle::Searching(_)
+            | EngineSessionEnumLifecycle::Failed => None,
+        }
+    }
+
+    fn has_pending_stop_delivery(&self) -> bool {
+        matches!(
+            self.lifecycle,
+            EngineSessionEnumLifecycle::Stopping {
+                delivery: EngineSessionEnumStopDelivery::Pending,
+                ..
+            }
+        )
+    }
+
+    async fn configure_variant(
+        &mut self,
+        setting: &EngineOptionsSetting,
+    ) -> Result<(), EngineSessionError> {
+        let outcome = self.send_option(setting).await?;
+        self.ready_session().await?;
+        self.applied
+            .apply(setting, &outcome, self.applied.resources())?;
+        Ok(())
+    }
+
+    async fn send_option(
+        &mut self,
+        setting: &EngineOptionsSetting,
+    ) -> Result<EngineOptionsEnumOutcome, EngineSessionError> {
+        let acknowledgment = setting.acknowledgment()?;
+        self.process_mut()?.send(&setting.command()).await?;
+        match acknowledgment {
+            EngineOptionsEnumAcknowledgment::Readiness => {
+                Ok(EngineOptionsEnumOutcome::Applied(setting.option()))
+            }
+            EngineOptionsEnumAcknowledgment::Exact(expected) => loop {
+                let line = self.receive_line().await?;
+                if line.pipe() == EngineProcessEnumPipe::Stderr {
+                    continue;
+                }
+                if line.text() != expected {
+                    return Err(EngineSessionError::UnexpectedResponse);
+                }
+                return Ok(EngineOptionsEnumOutcome::Applied(setting.option()));
+            },
+            EngineOptionsEnumAcknowledgment::Tablebases => {
+                let EngineOptionsEnumValue::SyzygyPath(path) = setting.value() else {
+                    return Err(EngineSessionError::UnexpectedResponse);
+                };
+                loop {
+                    let line = self.receive_line().await?;
+                    match line.pipe() {
+                        EngineProcessEnumPipe::Stderr => {
+                            if line.text() == "Failed to load Syzygy tablebases" {
+                                return Ok(EngineOptionsEnumOutcome::Tablebases(
+                                    EngineOptionsEnumTablebases::Unavailable { path: path.clone() },
+                                ));
+                            }
+                        }
+                        EngineProcessEnumPipe::Stdout => {
+                            let pieces = line
+                                .text()
+                                .strip_prefix("info string Loaded Syzygy tablebases with ")
+                                .and_then(|value| value.strip_suffix(" pieces"))
+                                .and_then(|value| value.parse::<u32>().ok())
+                                .and_then(NonZeroU32::new)
+                                .ok_or(EngineSessionError::UnexpectedResponse)?;
+                            return Ok(EngineOptionsEnumOutcome::Tablebases(
+                                EngineOptionsEnumTablebases::Loaded {
+                                    path: path.clone(),
+                                    pieces,
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn finish_preparation<T>(
+        &mut self,
+        result: Result<T, EngineSessionError>,
+    ) -> Result<T, EngineSessionError> {
+        match result {
+            Ok(value) => {
+                self.lifecycle = EngineSessionEnumLifecycle::Idle;
+                Ok(value)
+            }
+            Err(error) => Err(self
+                .fail(error, Instant::now() + EngineProcessLimits::SHUTDOWN)
+                .await),
+        }
+    }
+
+    pub(crate) fn take_pending_failure(&mut self) -> Option<EngineSessionError> {
+        self.pending_failure.take()
+    }
+
+    async fn fail(
+        &mut self,
+        operation: EngineSessionError,
+        deadline: Instant,
+    ) -> EngineSessionError {
+        self.lifecycle = EngineSessionEnumLifecycle::Failed;
+        self.pending_failure = Some(operation);
+        let cleanup = self.shutdown_retained(deadline).await;
+        let operation = match self.pending_failure.take() {
+            Some(operation) => operation,
+            None => return EngineSessionError::ShutdownUnobserved,
+        };
+        match cleanup {
+            Ok(()) => operation,
+            Err(cleanup) => EngineSessionError::OperationCleanup {
+                operation: Box::new(operation),
+                cleanup: Box::new(cleanup),
+            },
+        }
+    }
+
+    async fn receive_event(&mut self) -> Result<EngineSearchEvent, EngineSessionError> {
+        if self.has_pending_stop_delivery() {
+            return Err(EngineSessionError::AmbiguousStopDelivery);
+        }
+        let line = if let Some(request) = self.stop_request() {
+            if request.has_expired(Instant::now()) {
+                return Err(EngineSessionError::StopDeadline);
+            }
+            timeout_at(request.deadline(), self.receive_line())
+                .await
+                .map_err(|_elapsed| EngineSessionError::StopDeadline)??
+        } else {
+            self.receive_line().await?
+        };
+        if self
+            .stop_request()
+            .is_some_and(|request| request.has_expired(Instant::now()))
+        {
+            return Err(EngineSessionError::StopDeadline);
+        }
+        let active = self.active()?;
+        let tag = active.tag;
+        let text = line.text();
+        let output = if line.pipe() == EngineProcessEnumPipe::Stderr {
+            EngineSearchEnumOutput::Diagnostic {
+                pipe: line.pipe(),
+                text: text.to_owned(),
+            }
+        } else if text == "readyok" {
+            EngineSearchEnumOutput::Readiness
+        } else if text.starts_with("info ") {
+            EngineSearchEnumOutput::Info(EngineAnalysis::parse(text, active.position.current())?)
+        } else if let Some(value) = text.strip_prefix("bestmove ") {
+            if value.contains(char::is_whitespace) {
+                return Err(EngineSessionError::SearchResponse);
+            }
+            let movement = active.position.current().parse_uci(value)?;
+            let stopped = matches!(self.lifecycle, EngineSessionEnumLifecycle::Stopping { .. });
+            self.lifecycle = EngineSessionEnumLifecycle::Idle;
+            if stopped {
+                EngineSearchEnumOutput::Stopped
+            } else {
+                EngineSearchEnumOutput::BestMove(movement)
+            }
+        } else {
+            return Err(EngineSessionError::SearchResponse);
+        };
+        Ok(EngineSearchEvent::new(tag, output))
+    }
+
+    async fn receive_line(&mut self) -> Result<EngineProcessLine, EngineProcessError> {
+        let process = self
+            .process
+            .as_mut()
+            .ok_or(EngineProcessError::Closed(EngineProcessEnumPipe::Stdout))?;
+        Self::receive(process, &mut self.diagnostics).await
+    }
+
+    async fn receive(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<EngineProcessLine, EngineProcessError> {
+        let line = process.receive().await?;
+        diagnostics.record(&line);
+        Ok(line)
+    }
+
+    async fn ready_session(&mut self) -> Result<(), EngineSessionError> {
+        let process = self
+            .process
+            .as_mut()
+            .ok_or(EngineSessionError::State(EngineSearchEnumState::Failed))?;
+        Self::ready(process, &mut self.diagnostics).await
+    }
+
+    async fn handshake(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<EngineIdentity, EngineSessionError> {
+        let identity = timeout(Self::HANDSHAKE, Self::identify(process, diagnostics))
+            .await
+            .map_err(|_elapsed| EngineSessionError::Timeout("uci"))??;
+        timeout(Self::HANDSHAKE, Self::ready(process, diagnostics))
+            .await
+            .map_err(|_elapsed| EngineSessionError::Timeout("readiness"))??;
+        Ok(identity)
+    }
+
+    async fn identify(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<EngineIdentity, EngineSessionError> {
+        process.send("uci").await?;
+        let mut name = None;
+        let mut author = None;
+        let mut capabilities = EngineCapabilities::default();
+        loop {
+            let line = Self::receive(process, diagnostics).await?;
+            if line.pipe() == EngineProcessEnumPipe::Stderr {
+                continue;
+            }
+            let text = line.text();
+            if let Some(value) = text.strip_prefix("id name ") {
+                if name.replace(value.to_owned()).is_some() {
+                    return Err(EngineSessionError::UnexpectedResponse);
+                }
+            } else if let Some(value) = text.strip_prefix("id author ") {
+                if author.replace(value.to_owned()).is_some() {
+                    return Err(EngineSessionError::UnexpectedResponse);
+                }
+            } else if text.starts_with("option ") {
+                capabilities.discover(text)?;
+            } else if text == "uciok" {
+                return Ok(EngineIdentity::new(
+                    name.ok_or(EngineCapabilitiesError::IdentityMismatch)?,
+                    author.ok_or(EngineCapabilitiesError::IdentityMismatch)?,
+                    capabilities,
+                )?);
+            } else {
+                return Err(EngineSessionError::UnexpectedResponse);
+            }
+        }
+    }
+
+    async fn ready(
+        process: &mut P,
+        diagnostics: &mut EngineDiagnostics,
+    ) -> Result<(), EngineSessionError> {
+        process.send("isready").await?;
+        loop {
+            let line = Self::receive(process, diagnostics).await?;
+            if line.pipe() == EngineProcessEnumPipe::Stderr {
+                continue;
+            }
+            if line.text() == "readyok" {
+                return Ok(());
+            }
+            return Err(EngineSessionError::UnexpectedResponse);
+        }
+    }
+}

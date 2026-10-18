@@ -2,79 +2,54 @@
 
 **Date**: 2026-10-16
 
-**Status**: Source research plus selected design decisions under owner delegation.
-[Final resolution research](#final-resolution-research) and
-[resolved decisions](decisions.md) supersede earlier draft alternatives and
-separate runtime/release evidence from planning selections.
+**Status**: Native-egui architecture revision on 2026-10-16. Source/API research
+resolves the owner's latest framework choice. Existing engine, data, behavior and
+exactness findings remain authoritative alongside [resolved decisions](decisions.md).
 
-**Scope**: Phase 0 evidence for [the plan](plan.md). Primary source inspection,
-release/API metadata, documentation, and a read-only macOS binary-header check.
-No builds, engine execution, application dependency installations, or performance
-measurements. Stripe CLI help automatically installed its Directory plugin for
-provider discovery; the subsequent dataset search returned no results.
+**Scope**: Read-only upstream source/manifest/license checks and documentation
+changes. No native-egui dependencies were installed, compiled or benchmarked by
+this revision. Existing partial implementation/evidence covers the previous
+shell; it is neither erased nor represented as native acceptance.
 
 ## 1. Desktop framework and presentation
 
-**Confirmed owner stack**: Tauri 2, Vue, Tailwind CSS, shadcn, Bun, ESLint,
-and Prettier. Use the Vue-compatible shadcn-vue project rather than React-only
-shadcn/ui. Exact selected versions and supporting tooling are recorded in
-final resolution research.
+**Decision**: Bevy 0.20.0 + bevy_egui 0.43.1, using the plugin-compatible egui
+0.36 family. Bevy owns the native application/window/render host. It replaces
+the proposed eframe shell; egui remains the Rust widget toolkit.
 
-**Proposed integration**: Vue 3 SFC presentation, strict TypeScript 6.0.3, Vite 8,
-Tailwind 4 through its official Vite plugin, shadcn-vue/Reka UI components,
-Bun as package manager and script runtime, ESLint flat configuration with Vue
-type-aware rules, and Prettier with Tailwind class ordering.
+**Authority**: The owner requested native Rust, then an engine handling native
+Metal/Vulkan-class APIs, and could not select among the researched options.
+Choose Bevy under the existing instruction to pick the best recommendation.
+This is a delegated assistant decision, not an explicit quoted Bevy answer.
+The owner removed the interim Vulkan-only requirement. No forced API or
+Vulkan-to-Metal packaging path is selected.
 
-**Rationale**: This is the owner's selected stack. Rust retains the game,
-clock, process, and storage authorities. Vue holds presentation state and typed
-interaction controllers, not an independent chess rules engine.
+**Rationale**: The real-time sculpted board, materials, lighting and shadows are
+central to the approved product. Bevy supplies established scene facilities and
+wgpu backend management, while egui suits the substantial desktop panels.
+Existing Rust domain/backend components remain independent of ECS. Keeping one
+host avoids independent windows/devices and duplicate authoritative state.
+Frequent Bevy breaking releases and custom premium-widget/accessibility work
+are acknowledged maintenance costs, not reasons to reduce product scope.
 
-| Alternative evaluated | Tradeoff |
+**Alternatives considered**:
+
+| Alternative | Why not selected |
 | --- | --- |
-| Slint 1.18.1 | Strong native/Rust alternative, different UI language and licensing choice |
-| Iced 0.14.0 | Rust-only messages/tasks, experimental status and accessibility concerns |
-| egui/eframe 0.37.0 | Strong engine-workbench fit, more bespoke consumer visual work |
-| Lit 3.3.3 | Class-based Web Components, superseded by the owner's Vue selection |
+| eframe 0.37 + egui-wgpu 0.37 + wgpu 30.0.1 | Native API abstraction works, but leaves more scene/lighting/shadow implementation than Bevy |
+| eframe + sgl-3d 0.4.2 | Compatible with wgpu 30 and supplies scene facilities, but young; no verified native-egui/macOS integration |
+| Glow + three-d | Established OpenGL rendering, but does not provide desired native Metal/Vulkan-class selection |
+| Godot + Rust bindings | Complete engine/editor, but C++ runtime, different UI and required authored unsafe extension entrypoint conflict with current Rust policy |
+| Former browser app | Superseded by owner native-Rust choice |
 
-No comparative performance superiority is established. Actual system WebViews,
-engine saturation, and the polished board must be measured together.
+No performance superiority is asserted. Backend and scene-source inspection is
+not a native execution or accessibility result. Exact compatibility is in
+[renderer research](#native-egui-renderer-and-integration).
 
-**Verified compatibility facts**:
-
-- Stable Tauri v2 is 2.12.4. GitHub's latest-release flag currently points at a
-  v3 alpha; never use that flag alone to select the engine shell version.
-- Current Tauri JS API is 2.12.4 and CLI is 2.12.3. Compatible patches need not
-  have identical numbers.
-- Current registry Vue is 3.5.44; Tailwind and its Vite plugin are 4.3.3;
-  shadcn-vue is 2.8.2; ESLint is 10.12.0; Prettier is 3.9.10.
-- TypeScript 7 is currently advertised by latest metadata, but current
-  typescript-eslint 8.71.2 peers require TypeScript below 6.1. TypeScript 6.0.3 is
-  the mutually compatible stable proposal. Do not hide unsupported-version checks.
-- Tailwind 4 requires modern CSS support: official minimums include Safari 16.4,
-  Chrome 111, and Firefox 128. macOS 14's Safari generation fits. Ubuntu 22.04
-  requires an updated WebKitGTK runtime and actual CSS/visual tests.
-- A frozen Bun install is not enough if the lockfile is absent: require committed
-  text bun.lock and fail before install when missing. Native optional packages
-  still need installation on each native target.
-- Bun should execute tools intentionally with its documented runtime mode;
-  package installation alone does not prove every native-test worker runs on Bun.
-- The Tauri WebdriverIO service peers with WDIO 9, while latest WDIO is 10.
-  Use a mutually compatible stable family, proposed 9.31.9, not latest blindly.
-
-Sources:
-
-- [Tauri v2.12.4](https://github.com/tauri-apps/tauri/releases/tag/tauri-v2.12.4)
-- [Tauri WebViews](https://v2.tauri.app/reference/webview-versions/)
-- [Vue TypeScript](https://vuejs.org/guide/typescript/overview)
-- [Tailwind Vite integration](https://tailwindcss.com/docs/installation/using-vite)
-- [Tailwind compatibility](https://tailwindcss.com/docs/compatibility)
-- [shadcn-vue installation](https://www.shadcn-vue.com/docs/installation/vite.html)
-- [Vue ESLint TypeScript configuration](https://github.com/vuejs/eslint-config-typescript/blob/v14.9.0/README.md)
-- [Bun frozen installs](https://github.com/oven-sh/bun/blob/bun-v1.4.3/docs/pm/cli/install.mdx)
-- [Prettier Tailwind plugin](https://github.com/tailwindlabs/prettier-plugin-tailwindcss)
-- [Slint](https://github.com/slint-ui/slint/tree/v1.18.1)
-- [Iced](https://github.com/iced-rs/iced/tree/0.14.0)
-- [egui](https://github.com/emilk/egui/tree/0.37.0)
+Sources: [Bevy 0.20](https://github.com/bevyengine/bevy/tree/v0.20.0),
+[bevy_egui 0.43.1](https://github.com/vladbat00/bevy_egui/tree/v0.43.1),
+[plugin manifest](https://github.com/vladbat00/bevy_egui/blob/v0.43.1/Cargo.toml),
+[Bevy render settings](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_render/src/settings.rs).
 
 ## 2. Engine selection and complete coverage
 
@@ -118,16 +93,27 @@ Sources:
 ## 3. Chess rules, notation, and persistence
 
 **Decision**: Wrap shakmaty 0.30.2 in owning BoardPosition/GameSession types; use
-pgn-reader 0.29.1 for bounded streaming PGN import, and an owned exporter for the
-supported move-tree/annotation contract. The owner selected SQLite for indexed
-data, with PGN/FEN interchange. Select bundled rusqlite and the storage actor/
-schema ownership in resolved decisions.
+pgn-reader 0.29.1 helpers with a strict owned bounded PGN lexer, and an owned
+exporter for the supported move-tree/annotation contract. The owner selected SQLite for indexed
+data, with PGN/FEN interchange. Select Diesel over bundled SQLite and the
+storage actor/schema ownership in resolved decisions. The original rusqlite
+selection is superseded by the
+[persistence amendment](#persistence-orm-and-library-replacement).
 
 **Rationale**: Legality, FEN/SAN/UCI conversions, castling, and standard/Chess960
 support are concrete library facilities. pgn-reader moved into the shakmaty
 repository; its old separate repository is not the current release source.
 Its 0.29.1 manifest depends on shakmaty 0.30. Both declare Rust 1.97 minimum,
 compatible with the project's 1.99 pin.
+
+Implementation inspection showed that Reader success can silently omit malformed
+tokens and semicolon comments. The notation owner therefore performs strict
+lexical validation and reuses the board owner for legality. A standalone semantic
+probe also observed incorrect adjacent backslash-pair decoding in the pinned
+RawTag helper before the importer adopted one strict pair decoder. The NAG
+helper remains in use; vendor code is unchanged. Exact source observations,
+the probe and integration limits are retained in
+[PGN import evidence](evidence/pgn-import.md).
 
 **Alternatives considered**: The engine's FEN parser is not a rules library.
 Implementing every move rule from scratch adds correctness risk. Browser chess
@@ -149,7 +135,7 @@ requests. Solved puzzles show solution review and wait for Next without charging
 session time during review; active hints keep the countdown running.
 Variations are analyzed on demand; reports pause during
 live games and resume afterward. The owner approved move labels and an
-app-calculated accuracy percentage, with formulas/thresholds still open. Displayed
+app-calculated accuracy percentage, with versioned formulas/thresholds selected in decisions.md. Displayed
 search evaluations are White-positive. Timed puzzles offer whole-session and
 per-puzzle countdowns, defaulting to configurable 5-minute sessions and 60-second
 puzzles, with one countdown mode per timed run. Manual pause and app focus loss
@@ -165,10 +151,12 @@ in [the UI contract](contracts/ui-experience.md#settings-tab). Starter
 data plus personal imports are approved within a 2 GB installed starter-data
 budget excluding app/engines. The opening book is study-only and never supplies
 opponent moves.
-No external corpus/book/puzzle provider has been chosen or acquired.
+Selected CC0 sources and formulas are resolved in decisions.md; source files
+remain unacquired by this planning revision.
 
 Confirmed live-game behavior keeps clocks running on app focus loss and pauses
-timed play on computer sleep pending explicit Resume. Both modes allow takebacks:
+all live games and engine searches on computer sleep pending explicit Resume.
+Both modes allow takebacks:
 previous human turn against Reckless, one move locally. Restore clocks before
 undone moves, reversing increments. Local confirmation is configurable per game
 and required by default. Clocks continue until local consent is accepted; then
@@ -202,34 +190,145 @@ Sources:
 
 ## 4. Process lifecycle, transport, and capacity
 
-**Decision**: A Rust engine actor owns stdin/stdout/stderr and the process handle.
-Use Tauri's shared async runtime and async child pipes; isolate CPU search in the
-sidecar. A CapacityCoordinator partitions heavy work between the primary engine
-and workbench. Use ordered typed Tauri channels for streams, with bounded producer
-queues and coalesced replaceable analysis snapshots.
+**Decision**: Retain engine/storage actors and the capacity coordinator. Root
+owns one Tokio 1.53.3 runtime, bounded Rust message ports, latest-value telemetry
+and a Bevy App. Domain state remains ordinary Rust, while Bevy resources/entities
+represent presentation and scene instances. Associated system methods receive
+ports/snapshots without constructing services inside render systems.
 
-**Rationale**: UCI supplies no correlation IDs, and Reckless ignores configuration
-commands while searching. Only serialized transitions can attach output to the
-right application search. General Tauri events are not the high-throughput
-analysis transport.
+**Rationale**: UCI lacks correlation and ignores configuration during search.
+Typed in-process messages remove redundant UI serialization but retain revision,
+idempotency, stale-generation and cancellation requirements. Repeated UI passes
+or Bevy updates must not create repeated state transitions.
 
-One engine gets all detected usable capacity by default, constrained by its
-advertised maximum. When another heavy task is admitted, stop and rebudget the
-engine before launching it, rather than independently creating a full-size pool.
-Brief UI/IPC work is not another unbounded CPU executor. Measure its contention
-with full search and adapt only from evidence. Do not introduce Rayon merely
-because parallel execution is desirable.
+Tokio serves asynchronous UCI/network/application work outside Bevy update
+systems. Bevy's task pools are not a Tokio reactor; do not run Tokio-dependent
+I/O on a pool without its owned runtime context. CPU domain work stays on the
+existing bounded executor. Partition native worker capacity before initializing
+Bevy global pools, including render/asset work, Rayon and active engines.
+TaskPoolOptions::with_num_threads alone is not a strict combined cap at small
+counts because default IO/async/compute minima can each allocate a worker.
+Use explicit assignment policies and the [capacity design](decisions.md#native-engine-capacity-partition).
 
-**Alternatives considered**: A thread per line, unbounded event queues, a second
-async runtime, arbitrary small thread caps, or direct JS shell access conflict
-with correctness, safety, or the feature's resource requirements.
+Use reactive Bevy updates with explicit wakeups after backend publication.
+WinitSettings::desktop_app defaults to long reactive waits, so it is insufficient
+for visible clocks/animation. EventLoopProxyWrapper.send_event(WinitUserEvent::WakeUp)
+can wake the native loop. Pinned bevy_egui only forwards immediate repaint requests;
+nonzero egui request_repaint_after alone is not a native timer. A presentation
+scheduler must own the next clock/animation deadline and native wakeup.
 
-Sources:
+Disable automatic close on the main window; close/menu/quit/update all use one
+owned confirmation/save/stop/reap state machine. Use WindowPlugin close_when_requested=false and ExitCondition::DontExit;
+only successful completion sends final AppExit::Success. Native macOS Cmd+Q
+requires an application-owned quit/menu adapter to intercept confirmation, plus
+an idempotent bounded cleanup resource holding its own required handles. Bevy
+may clear/drop resources without returning from App::run; do not rely on drop
+order or only post-run cleanup. Inject a bounded platform-termination fallback and preserve crash
+recovery. Native focus is distinct from desktop sleep; a platform power adapter
+is required because winit suspended does not guarantee desktop sleep reporting.
 
-- [Tauri channels](https://v2.tauri.app/develop/calling-frontend/#channels)
-- [Tauri sidecars](https://v2.tauri.app/develop/sidecar/)
-- [Engine protocol sequencing](contracts/engine-protocol.md)
-- [Concrete capacity model](data-model.md)
+**Alternatives considered**: Independent full-capacity pools, detached CPU work,
+blocking UI futures, hidden Tauri runtime, trusting egui repaint timers alone or
+starting asynchronous saves only on final AppExit fail the selected boundaries.
+
+Sources: [Bevy winit configuration](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_winit/src/winit_config.rs),
+[Bevy task-pool options](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_app/src/task_pool_plugin.rs),
+[plugin source](https://github.com/vladbat00/bevy_egui/blob/v0.43.1/src/lib.rs),
+[Tokio](https://docs.rs/tokio/1.53.3/tokio/runtime/struct.Runtime.html),
+[message contract](contracts/desktop-ipc.md).
+
+### Local profile ownership and activation
+
+**Decision**: Enforce the clarified single-writer profile policy with Rust's
+`File::try_lock` on a permanent control file and interprocess 2.4.5 with its Tokio
+feature for activation-only local sockets. Acquire the exclusive guard before
+opening user databases, starting migrations/recovery or allocating engines.
+The root retains one un-cloned handle through complete shutdown. The selected
+algorithm and limits live in [profile ownership](decisions.md#local-profile-ownership-and-activation).
+
+**Rationale**: `try_lock` is stable since Rust 1.89, within the existing 1.99 pin,
+and distinguishes contention from an I/O failure. OS lock lifetime avoids stale
+PID-file ownership. Locks are advisory on Unix: every application/helper follows
+the protocol, and the lock file is never unlinked, replaced, truncated for
+metadata or inherited by children. A restore replaces data, not this anchor.
+Successful exclusive acquisition is the authority for a new writable lifetime;
+stale metadata, a PID lookup or activation timeout cannot grant that authority.
+No claim of coordination with unrelated programs that ignore this protocol is
+made. Supported profiles use validated local filesystems.
+
+Interprocess supplies safe async Unix-domain sockets and Windows named pipes.
+Use its generic local-socket API on Unix: `ListenerOptions::create_tokio`, async
+`accept`/`Stream::connect`, `reclaim_name(false)` and `ListenerOptionsExt::mode`.
+Select filesystem sockets in user-private directories on Unix, not Linux
+abstract names or implicit `/tmp`
+mapping. The pre-bind socket mode option may return Unsupported on macOS;
+private-directory protection and verified peer effective-user identity remain
+required there. Windows pipes reject remote clients by default; provide an
+explicit current-user/SYSTEM security descriptor rather than a default DACL.
+Use the concrete Windows `PipeListenerOptions`/Tokio duplex byte-stream API.
+The generic Windows client ignores its requested wait mode and can enter an
+uncancellable blocking connect. Select `connect_by_path_with_wait_mode` with
+`ConnectWaitMode::Timeout(Duration::ZERO)` and application-owned async retry
+within the overall deadline. Written pipe streams can also create hidden linger
+workers on drop. A narrow stream owner always calls safe `assume_flushed()`
+before dropping, including cancellation; do not start an underlying pipe flush.
+The [activation protocol](contracts/desktop-ipc.md#local-activation-interface)
+acknowledges receipt consumption before the client closes. On timeout,
+discarding incomplete activation bytes is acceptable and never grants ownership.
+
+Reuse sysinfo 0.39.6's current-process effective-user query for Unix directory
+and peer-credential validation. On Windows select winsafe 0.0.29, `advapi`
+feature, for safe fallible current-token SID acquisition, plus widestring 1.0.2
+for the interprocess descriptor parser. Build an explicit protected DACL granting
+the current SID and SYSTEM, not a permissive default or unchecked PID identity.
+Winsafe is MIT with Rust 1.87; widestring is MIT OR Apache-2.0 with Rust 1.58.
+Reciprocal server authentication uses the kernel pipe peer PID and safe Winsafe
+limited-query process/token access to compare the server's User SID. A DACL
+alone does not authenticate a pipe replacement after an owner exits. Query
+failure rejects activation; PID lookup never authorizes profile takeover.
+Reserve handler capacity before accepting: the Windows listener creates its
+replacement instance before returning the connected stream, so the selected
+four handlers need one additional pending instance and pre-accept admission.
+Interprocess is 0BSD OR Apache-2.0 and declares Rust 1.75. These are source/API
+findings, not installed-target authentication or locked-build evidence. Winit
+0.30.13 is a direct matching dependency for the adapter's native attention types,
+sharing Bevy's resolved instance rather than adding a second event loop.
+
+Activation requests reach the owner's native thread through bounded messages.
+Bevy exposes `Window::set_minimized(false)` and focus requests where supported.
+Its compatible winit 0.30.13 `request_user_attention(Informational)` uses
+xdg-activation on Wayland; the compositor still decides focus. Wayland does not
+support Bevy's ordinary focus/unminimize setters. Track requested versus actually
+observed focus and explain manual window selection when the OS refuses; never
+open a competing writable session. Startup-token setters for an existing window
+are not supplied by this winit version and are not invented here.
+
+A durable installation intent closes the parent/helper ownership gap. Every
+new guard holder checks it before mutable initialization. An ordinary launch
+cannot initialize a profile while installation is pending. The helper observes
+actual parent exit, acquires the same guard and revalidates before installing;
+interruption leaves explicit recovery rather than timeout-based takeover.
+
+**Alternatives considered**: PID-only files, heartbeat expiry, deleting a locked
+file, SQLite's busy timeout or unique socket binding alone do not coordinate
+all clocks, subprocesses, migrations and installers. TCP listeners add an
+unnecessary network boundary. A framework-only focus flag is insufficient on
+Wayland. Inherited lock transfer is not selected because its cross-platform
+lifetime/duplication semantics are unnecessary with the durable intent.
+
+Sources: [Rust File locking](https://doc.rust-lang.org/1.99.0/std/fs/struct.File.html#method.try_lock),
+[Rust 1.89 stabilization](https://blog.rust-lang.org/2025/08/07/Rust-1.89.0/),
+[interprocess 2.4.5](https://docs.rs/crate/interprocess/2.4.5/source/Cargo.toml.orig),
+[listener options](https://docs.rs/crate/interprocess/2.4.5/source/src/local_socket/listener/options.rs),
+[Unix security options](https://docs.rs/crate/interprocess/2.4.5/source/src/os/unix/local_socket.rs),
+[Windows security options](https://docs.rs/crate/interprocess/2.4.5/source/src/os/windows/local_socket.rs),
+[pipe connection implementation](https://docs.rs/crate/interprocess/2.4.5/source/src/os/windows/named_pipe/tokio/stream/impl/ctor.rs),
+[pipe flush suppression](https://docs.rs/crate/interprocess/2.4.5/source/src/os/windows/named_pipe/tokio/stream/impl/send.rs),
+[generic Windows client](https://docs.rs/crate/interprocess/2.4.5/source/src/os/windows/named_pipe/local_socket/tokio/stream.rs),
+[Winsafe token query](https://docs.rs/crate/winsafe/0.0.29/source/src/advapi/handles/haccesstoken.rs),
+[sysinfo effective identity](https://docs.rs/sysinfo/0.39.6/sysinfo/struct.Process.html#method.effective_user_id),
+[Bevy window updates](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_winit/src/system.rs),
+[winit Wayland window](https://docs.rs/crate/winit/0.30.13/source/src/platform_impl/linux/wayland/window/mod.rs).
 
 ## 5. Visual design and accessibility
 
@@ -237,8 +336,8 @@ Sources:
 and a full light theme. The owner selected the Chess.com-inspired layout with
 collapsible left navigation, a large board/player bars/clocks, and resizable
 right-side tabs. Configurable board aids, a command palette, keyboard shortcuts,
-and optional move/check/result sounds are approved. Strict TypeScript and Vite
-are also owner approved.
+and optional move/check/result sounds remain approved. The native UI choice
+supersedes earlier TypeScript/Vite approval.
 
 **Confirmed appearance defaults**: Graphite surfaces, emerald accents, green/cream
 board, and warm light theme. Legal-move dots appear on selection; last-move/check
@@ -247,7 +346,7 @@ during active play and silent in background. The owner chose sculpted 3D-style
 pieces, bundled modern sans-serif UI/notation with tabular clock digits, and
 configurable 180 ms piece moves/160 ms panel transitions with subtle elevation,
 respecting reduced motion. Real-time 3D board/pieces with camera rotation/zoom,
-ivory/ebony satin materials, and a 1280x800 CSS-pixel minimum window are confirmed.
+ivory/ebony satin materials, and a 1280x800 native-logical-point minimum window are confirmed.
 The default camera is centered at 20 degrees from top-down with all squares
 visible. Maximum manual zoom-in keeps the full board visible. Reset View restores
 default pose/framing/tilt while retaining White/Black orientation. Normal piece dragging,
@@ -260,117 +359,114 @@ share the selected board position. Quality defaults to Automatic
 with manual Low/Medium/High overrides. Graphics failure preserves the game,
 pauses clocks, and offers Retry; explicit resume is required after recovery.
 
-**Resolved presentation details**: Exact tokens, Three.js 0.186.1, original GLB
+**Resolved presentation details**: Exact tokens, native scene integration, original GLB
 meshes/synthesized WAV, Inter 4.1/SVG figurines, panel sizes, camera framing,
 quality/adaptation, keyboard/audio and context recovery follow
 [presentation decisions](decisions.md#presentation-assets-and-input). Animation
 durations and selected hardware baselines remain targets rather than measured
-performance. Accessibility and native WebView validation remain release work.
+performance. Accessibility and native graphics/window validation remain release work.
 
 **Rationale**: Appearance must remain coherent during play, analysis, errors,
 resizing, promotion, and keyboard navigation. Semantic squares enable keyboard
 movement and assistive technology alongside the selected real-time 3D scene.
 The owner chose real-time 3D with rotation/zoom over pre-rendered and fixed-camera
-options. Direct Three.js inside Vue with a dedicated scene controller and
-WebGL2 is owner selected. Pins are selected in final resolution research; scene
-rendering and camera transforms cannot remove accessible board controls.
+options. The selected architecture uses egui widgets and Bevy scene rendering
+in one native host. Native logical points retain the approved apparent layout size;
+physical framebuffer dimensions are derived at the scene boundary.
 
-Vue views use shared Tailwind/shadcn-vue theme tokens. Typed interaction
-controllers receive application ports from bootstrap; view setup does not create
-concrete engine or storage clients. Reka UI primitives support control behavior,
-but real WebView keyboard and assistive-technology checks remain necessary.
+One typed theme owner supplies widget and scene tokens. AccessKit semantics and
+keyboard controls accompany rendered squares. Neither custom mesh rendering nor
+installing egui proves VoiceOver/NVDA/Orca behavior. Actual native target checks
+remain required, including focus, promotion, reduced motion and display scaling.
 
-**Alternatives considered**: A canvas-only board, drag-only interaction, or a
-generic dashboard template would need additional accessibility work or weaken
-the desired visual identity. See [the UI contract](contracts/ui-experience.md).
+**Alternatives considered**: Drag-only interaction, visuals without a semantic
+board or adopting unstyled stock widgets as completed premium design would fail
+the approved experience. [The UI contract](contracts/ui-experience.md) retains
+full visual/interaction acceptance.
 
-Sources:
-
-- [Vue testing](https://vuejs.org/guide/scaling-up/testing.html)
-- [Reka UI accessibility](https://reka-ui.com/docs/overview/accessibility)
-- [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
+Sources: [egui accessibility](https://github.com/emilk/egui/blob/0.36.0/README.md),
+[AccessKit](https://github.com/AccessKit/accesskit),
+[WCAG 2.2](https://www.w3.org/TR/WCAG22/).
 
 ## 6. Cross-platform packaging and testing
 
-**Subsequent owner decisions**: Windows NSIS .exe installer and macOS Apple
-Silicon .dmg containing the app. Under the no-payment constraint, use unsigned
-personal-use Windows installers and locally ad-hoc-signed macOS builds without
-Developer ID/notarization. Document Windows warnings and validate manual macOS
-approval; OTA signatures remain mandatory. No paid services or setup are
-authorized. Linux is x86-64 only, with .deb and AppImage selected. Bundle the offline Evergreen WebView2 installer; Linux dependency
-installation may use internet access, with offline-preparation guidance.
-Linux .deb updates download and verify the package, then open the system
-installer after confirmed pause/save/backup, with OS approval where required.
-Validate this integration separately from AppImage OTA. Hosted CI uses included
-standard-runner allowance only, with account limits and controls preventing paid
-overages verified before workflows are enabled; stop on exhausted allowance.
-No account billing controls have been verified during planning. Keep the offline
-OTA signing-key backup on passphrase-encrypted removable storage kept disconnected;
-its exact procedure requires separate approval. Matching OTA
-artifacts and native install behavior still require validation.
+**Decision**: Use framework-independent cargo-packager 0.11.8 for Windows NSIS,
+macOS .app/.dmg, Linux .deb/AppImage. It has an egui example and does not require
+Tauri. Native builders retain Windows 11 x86-64, macOS 14+ ARM64 and Ubuntu
+22.04+ x86-64 baselines; Linux validation includes X11 and Wayland.
 
-**Decision**: Native builders for Windows x86-64, macOS ARM64, and Linux
-x86-64 only; explicit CPU baselines and a matching engine package manifest.
-Use test-only embedded WebDriver automation for native integration.
+**Rationale**: The selected installer formats survive the UI change. Framework-
+independent packaging avoids keeping obsolete WebView dependencies. Bevy needs
+actual native GPU/window/driver checks, not browser CSS tests.
+Cargo-packager is MIT/Apache-2.0; inspect its pinned config/resource mapping and
+installer outputs before acceptance. Platform ad-hoc signing and install/update
+helpers remain integration work, not guaranteed packager behavior.
 
-**Rationale**: Tauri's system WebView, native graphics, sidecar loading, signing,
-and Linux glibc cannot be proven by cross-compilation alone. Current Tauri docs
-support embedded WebDriver on macOS as well as Windows/Linux; direct
-`tauri-driver` alone still has narrower platform coverage.
+**Testing decision**: Match egui_kittest 0.36.0 to the plugin's egui 0.36 graph,
+without its standalone renderer. Test semantic trees, inputs, focus and command
+submission with fixed clocks/seeds. Headless Bevy App tests cover adapter
+scheduling, snapshot-to-entity updates, wake/deadline logic and cleanup. Real
+native scene tests run the production Bevy host on the OS main thread using a
+Cargo `harness = false` executable, temporary data and bounded orchestration.
+The explicit target-selection policy below keeps this native execution outside
+ordinary hermetic tests without dropping its compile, lint or acceptance checks.
 
-**Alternatives considered**: Intel/universal macOS violates owner scope;
-shipping host-native compiler flags is unsafe for distribution; relying on an
-AppImage does not establish all-Linux compatibility. Linux ARM64 was removed
-from first-release scope; no Linux ARM64 build is required.
+Capture through Bevy Screenshot::primary_window or Screenshot::image and observe
+ScreenshotCaptured, after rendering. Limit captures to one in flight; require
+completion before a deadline and verify scene/widgets/expected dimensions.
+Matching-egui image utilities can compare these images; do not replace production
+GPU testing with a separate kittest renderer. Former eframe request_screenshot,
+run_native/on_exit and WDIO APIs are not selected testing/lifecycle mechanisms.
 
-Sources:
+**Alternatives considered**: Tauri bundling/WDIO would preserve an obsolete
+runtime. Software/headless widgets alone do not establish production native GPU rendering, sleep,
+OS dialogs or screen-reader support. Cross-compilation alone does not establish
+minimum-platform compatibility.
 
-- [Tauri WebDriver guidance](https://v2.tauri.app/develop/tests/webdriver/)
-- [WebdriverIO Tauri service](https://webdriver.io/docs/desktop-testing/tauri/)
-- [Tauri distribution](https://v2.tauri.app/distribute/)
-- [AppImage constraints](https://v2.tauri.app/distribute/appimage/)
-- [macOS signing](https://v2.tauri.app/distribute/sign/macos/)
-- [Reckless release workflow](https://github.com/codedeliveryservice/Reckless/blob/v0.9.0/.github/workflows/release.yml)
-- [Compiler SIMD stability](https://doc.rust-lang.org/stable/core/arch/x86/fn._mm512_add_epi16.html)
+Use unsigned Windows installers and nested ad-hoc macOS signing, with tested OS
+warning/approval guidance. No paid signing, notarization or services. No WebView2
+or WebKitGTK runtime is needed by the final app. Linux dependencies may use
+internet during installation, with offline-preparation instructions. Native
+file dialogs may require portal/D-Bus services independently of the renderer.
 
-## 7. Network asset and redistribution
+Sources: [cargo-packager 0.11.8](https://docs.rs/cargo-packager/0.11.8/cargo_packager/),
+[packager repository](https://github.com/crabnebula-dev/cargo-packager),
+[egui_kittest 0.36](https://docs.rs/egui_kittest/0.36.0/egui_kittest/),
+[Bevy screenshot source](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_render/src/view/window/screenshot.rs).
 
-**Confirmed owner use**: Private personal use. The application license is
-not changed: private owner rights and existing upstream notices are retained,
-with no application license file or distribution to other people planned.
+### Native test target selection
 
-**Proposed build approach**: Build against the exact embedded network and record
-source/build provenance. Local private implementation can proceed; licensing
-checks for external distribution apply if the owner later requests it.
+**Decision**: Register the `native` target at `tests/native.rs` with
+`harness = false` and `test = false`. Keep default Cargo test selection for
+hermetic suites and library doctests. Execute the native target explicitly by
+name through `make native-tests`, using optimized production Bevy rendering,
+fixture-only storage and bounded orchestration on the OS main thread.
 
-**Rationale**: Reckless v0.9.0 uses AGPLv3; Fathom uses MIT. shakmaty and pgn-reader
-are GPL-3.0-or-later. A UCI subprocess is a technical boundary and does not itself
-establish a licensing exemption. The separate network repository lacks an
-explicit LICENSE, so its redistribution terms cannot be invented.
+**Rationale**: The [Cargo test target-selection reference](https://doc.rust-lang.org/cargo/commands/cargo-test.html#target-selection)
+states that a named `--test` selection overrides `test = false`. The
+[harness field](https://doc.rust-lang.org/cargo/reference/cargo-targets.html#the-harness-field)
+controls the entry point, not default execution. Source for the installed Cargo
+1.99 commit `5f94df4789f005f9a352888e8355ffc645b7ed0e` confirms that
+[`--all-targets` selects all enabled target classes before named filters](https://github.com/rust-lang/cargo/blob/5f94df4789f005f9a352888e8355ffc645b7ed0e/src/ops/cargo_compile/compile_filter.rs#L113-L167),
+but [the all-tests rule filters on `Target::tested`](https://github.com/rust-lang/cargo/blob/5f94df4789f005f9a352888e8355ffc645b7ed0e/src/ops/cargo_compile/unit_generator.rs#L465-L495).
+Consequently it omits this `test = false` target. Lint and optimized/profiling
+build gates need an additional separate named `--test native` invocation,
+without `--all-targets`; the build invocation compiles/links without running it.
+`make native-test-build` exposes that optimized nonexecuting check. Actual
+GPU/OS execution is separate, required release evidence and fails when required
+resources are unavailable. Test controls stay in the harness executable and
+are absent from application entry points and installed packages.
+The integration target's `cfg(test)` does not enable test-only helpers in its
+normal library dependency. Drive real application ports with harness-owned
+adapters in `tests/native.rs` and `tests/native/`, including multiprocess fixture
+launches, rather than adding an automation mode to the shipping executable.
 
-Exact network: `v54-5478683c.nnue`, 63,266,880 bytes, SHA-256
-`5478683cb1bababde29ae8f29468a99846726548fc6a0ed54cac40ab6d38efbf`.
-The build script downloads it unless provided; acquire and verify it as a build
-input using `EVALFILE`, then bundle the compiled engine. No runtime model
-download or EvalFile control is required.
-
-**Alternatives considered**: Linking only the moving upstream branch, asserting
-the model is permissively licensed, or claiming that private development requires
-immediate public publication is unsupported. No license file is changed here.
-
-This is an explicit release gate with an evidence owner, not an unresolved GUI
-or integration decision. Resolve it by obtaining authoritative model terms and
-documenting compatible application licensing and corresponding-source delivery
-before any external distribution occurs. Do not contact maintainers in this task.
-
-Sources:
-
-- [Reckless license](https://github.com/codedeliveryservice/Reckless/blob/v0.9.0/LICENSE)
-- [Fathom license](https://github.com/codedeliveryservice/Reckless/blob/v0.9.0/deps/Fathom/LICENSE)
-- [Build script](https://github.com/codedeliveryservice/Reckless/blob/v0.9.0/build/build.rs)
-- [Network embedding](https://github.com/codedeliveryservice/Reckless/blob/v0.9.0/src/nnue.rs)
-- [Network repository](https://github.com/codedeliveryservice/RecklessNetworks)
-- [Network release](https://github.com/codedeliveryservice/RecklessNetworks/releases/tag/networks)
+**Alternatives considered**: `harness = false` alone still runs under default
+Cargo tests. Optional feature gating does not establish separation while the
+test gate uses `--all-features`. Appending a named target to `--all-targets`
+does not force selection in the pinned Cargo implementation. Ignoring tests or
+returning success when GPU prerequisites are missing would conceal acceptance
+failures. A second renderer would not exercise production Bevy behavior.
 
 ## Evidence limits and next-phase checks
 
@@ -387,46 +483,104 @@ implementation/release acceptance, not an assumed successful result:
 | Model distribution rights | No explicit model LICENSE found | Authoritative terms before external distribution |
 
 
-## Real-time 3D renderer options, reviewed 2026-10-16
+## Native egui renderer and integration
 
-**Status**: Owner selected direct Three.js inside Vue with a dedicated scene
-controller and WebGL2. Automatic quality adapts to sustained frame-time changes
-with safeguards against rapid switching. The owner selected a 60 fps active
-target, on-demand idle scene rendering with separate clock updates, and reducing
-shadows/effects before internal resolution. Exact dependency pins are unapproved;
-Tauri compatibility/performance remains unmeasured. No renderer is installed.
+**Decision**: Bevy 0.20.0 + bevy_egui 0.43.1 and the matching egui 0.36 graph.
+Use Bevy's compatible wgpu dependency graph; do not force standalone eframe's
+wgpu 30.0.1 into it. Enable the required PBR/glTF/camera/window/native-backend
+features and bevy_egui AccessKit explicitly. Package a single host/device, no
+browser scene or parallel eframe renderer.
 
-- [Three.js r186](https://github.com/mrdoob/three.js/releases/tag/r186) has a
-  [WebGL2 renderer](https://github.com/mrdoob/three.js/blob/r186/src/renderers/WebGLRenderer.js)
-  and a [WebGPU renderer with WebGL2 fallback](https://github.com/mrdoob/three.js/blob/r186/src/renderers/webgpu/WebGPURenderer.js).
-  Both render the approved 3D board; backend fallback does not introduce a 2D view.
-- [TresJS](https://github.com/Tresjs/tres) describes declarative Vue components
-  using a Vue custom renderer over Three.js. The release list includes stable
-  [core 5.9.3](https://github.com/Tresjs/tres/releases/tag/%40tresjs/core%405.9.3).
-  This offers Vue scene composition, adding another lifecycle/integration layer.
-  Exact Three.js peer compatibility must be checked before choosing pins.
-- [Babylon.js 9.30.0](https://github.com/BabylonJS/Babylon.js/releases/tag/9.30.0)
-  is another rendering-engine option with a
-  [WebGPU engine entry point](https://github.com/BabylonJS/Babylon.js/blob/9.30.0/packages/dev/core/src/Engines/webgpuEngine.ts).
-  Choosing it requires its own scene integration and dependency assessment.
+**Rationale**: Bevy provides GLB asset loading, reusable physically based
+materials, lighting/shadows, camera, scene hierarchy and native render lifecycle.
+The chess-specific adapter owns instance selection, board layout, snapshots,
+interaction, quality and error/recovery policy. It does not rewrite a general
+renderer or move chess correctness into ECS.
 
-**Owner selection and rationale**: Direct Three.js gives the scene owner
-explicit renderer/resource lifecycle control without a Vue scene wrapper. This
-is an architectural preference, not evidence that it is faster than alternatives.
-The owner selected WebGL2 after asking about native Vulkan/OpenGL/ImGui.
-WebGL2 is the WebView-facing OpenGL ES-based API; native Vulkan rendering would
-require a different native-surface integration, and Dear ImGui is a separate UI
-toolkit rather than a Three.js graphics backend. WebGL2 keeps fewer backend
-paths across system WebViews;
-WebGPU-preferred with WebGL2 fallback is an alternative requiring both paths to
-be tested. Neither API support nor successful source inspection establishes
-actual availability on the minimum supported OS/GPU configurations.
+### Scene, assets and viewport
 
-Exact dependency pins, licenses, asset pipeline, GPU baseline, device-loss
-handling, shader/material compatibility, worker boundaries, quality thresholds,
-are selected in presentation decisions; actual frame/input/memory results
-remain implementation validation work.
+The pinned GLB has one scene with 12 overlapping named color/kind parents, one
+mesh child each, two metallic-roughness materials and no textures, extensions or
+external buffers. Preserve the existing 1,376,224 bytes and SHA-256
+`ee0c9bf8cd98f1239046b0566748030c4c320f049fd6ab3232f1f7e9691a020e`.
+Do not spawn the entire library scene as the board. Resolve named Gltf nodes,
+descendants and mesh/material subassets into a reusable typed piece registry,
+retaining authored transforms. Bevy 0.20 scene assets use WorldAssetRoot and
+Handle<WorldAsset>; old SceneRoot tutorial APIs are not the selected source.
 
+A camera renders the board into a persistent image displayed inside an egui
+widget. Official plugin examples demonstrate this arrangement. The adapter owns
+current egui rectangle, clipping, logical/physical sizes, camera viewport and
+render-target generation. Resize/DPI changes update these together. Scene input
+must first map from the visible image rectangle into the camera's physical
+viewport; generate an explicit camera ray for mesh picking/board-plane mapping.
+Bevy's ordinary window-pointer RayMap does not automatically traverse egui image
+indirection. Reject points outside the current clipped board viewport.
+
+Map hits back through the adapter's stable piece/square registry, then submit
+native game intents. Legality remains in BoardPosition. Test every square,
+all allowed camera bounds, drag/click/right-draw/promotion and revision changes.
+An alternate direct-camera viewport was considered, but cached offscreen rendering
+better separates unchanged 3D work from clock/widget repaints.
+
+Use PBR satin materials, directional shadows and the selected quality tiers,
+without speculative postprocessing. Reuse GPU/asset instances and update only
+changed snapshot fields. Static scene image content is reused during unrelated
+widget/clock updates. On-demand scheduling still services pending assets/GPU work,
+requested animations and native events. Validate actual frame pacing and idle
+CPU; WinitSettings alone does not establish that the renderer stops work.
+
+### Native APIs and render failure
+
+Bevy's automatic backend settings support native Metal/Vulkan/DX12. macOS uses
+native Metal without MoltenVK; Windows may select Vulkan or Direct3D according
+to available adapters, and Linux supports Vulkan. Do not promise one default
+Windows API or force a Vulkan-only mask. Surface/driver compatibility remains a
+native acceptance gate on all selected minimum systems.
+
+Bevy 0.20 exposes RenderErrorHandler and RenderErrorPolicy including StopRendering
+and Recover(RenderCreation). Its default log/exit behavior does not meet the
+product's preserved-state/Retry policy. Configure a custom handler, serialize
+one application interruption, invalidate the scene generation and rebuild GPU
+resources only through explicit Retry. Recovery reruns render startup; every
+adapter-owned resource and pending screenshot/pick must follow the new generation.
+Bevy's default automatic initialization still contains panic paths for missing
+adapters/device request failures. Use an intentional fallible native initialization
+adapter, not catch_unwind around default startup, and prove safe startup/error UI
+in the first migration slice. This is project integration, not a claim that
+friendly startup and every driver-loss scenario work automatically.
+
+Safe manual constructors exist for RenderDevice, RenderQueue, RenderAdapterInfo,
+RenderAdapter and RenderInstance, passed through RenderCreation::manual. Wgpu
+adapter/device requests return Result. However, RenderPlugin build needs them
+before the normal winit runner creates its window; headless preflight does not
+prove actual surface compatibility. The first native bootstrap spike must
+resolve real-window timing without authored unsafe code or vendor changes.
+The official render_recovery example establishes Bevy recovery mechanisms, but
+bevy_egui caches GPU resources in Plugin::finish rather than RenderStartup. Add
+a recovery adapter reinitializing its public renderer caches/pipelines on each
+device generation and test actual restored widgets. Merely selecting Recover
+does not establish complete egui recovery.
+
+**Alternatives considered**: Eframe/wgpu requires more scene work; sgl-3d is young;
+Glow/three-d is OpenGL; Rend3 is archived; Godot adds a C++ host and an unsafe
+extension-policy conflict. Bevy is selected under owner delegation.
+
+**Acceptance gates**: One locked compatible graph, original assets/materials,
+render-to-image picking/scaling/clipping, frame/idle metrics, safe GPU startup,
+custom device-loss/retry policy, real target screenshots, input and resource
+cleanup. Native accessibility uses the separate explicit semantic board.
+No performance or minimum-platform guarantee follows from source inspection.
+
+Sources:
+
+- [Bevy render settings](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_render/src/settings.rs)
+- [Bevy GLB loader](https://github.com/bevyengine/bevy/tree/v0.20.0/crates/bevy_gltf/src)
+- [GLB example](https://github.com/bevyengine/bevy/blob/v0.20.0/examples/gltf/load_gltf.rs)
+- [Bevy-egui render-to-image](https://github.com/vladbat00/bevy_egui/blob/v0.43.1/examples/render_to_image_widget.rs)
+- [Render errors](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_render/src/error_handler.rs)
+- [Renderer initialization](https://github.com/bevyengine/bevy/blob/v0.20.0/crates/bevy_render/src/renderer/mod.rs)
+- [Official recovery example](https://github.com/bevyengine/bevy/blob/v0.20.0/examples/app/render_recovery.rs)
 
 ## Bundled font candidates, license review 2026-10-16
 
@@ -487,43 +641,54 @@ and detailed cache/replacement mechanics remain unvalidated.
 Remaining delivery policies
 are selected in [resolved decisions](decisions.md).
 
-**Verified upstream facts**: [Tauri updater documentation](https://v2.tauri.app/plugin/updater/)
-requires cryptographic update signatures and documents public-key verification,
-private signing keys, HTTPS endpoints, static manifests, and dynamic update
-servers. [The official action README](https://github.com/tauri-apps/tauri-action)
-documents release publication, updater JSON, and signature artifact upload.
-Updater signatures do not replace platform code signing/notarization.
+**Decision**: Replace Tauri update/plugin/action assumptions with native
+application-owned policy, cargo-packager 0.11.8 installers, reqwest 0.13.5 async
+streaming, keyring 4.2.0 credentials, minisign-verify 0.3.0 verification and
+minisign 0.10.0 release signing tooling. Exact wire/install details are in
+[packaging](contracts/packaging.md#desktop-ota-and-github-actions).
 
-**Implementation evidence needed**: Private GitHub release authentication/discovery/download must be
-validated end to end against the selected stable 2.14.0 pin. Action commit
-pins, per-target artifact/relaunch support, key access controls, network-cost
-detection and recovery implementation require the selected verification gates;
-no unanswered owner choice blocks task generation. No updates are built, signed, or published by this review.
+**Rationale**: Private GitHub discovery and downloads need authenticated API
+requests, redirect credential isolation, bounded disk staging and all selected
+cancellation/timeouts. A small explicit orchestration layer composes established
+HTTP, signature, credential and packaging libraries. It does not implement
+cryptography or assume the native scene engine is an updater framework.
 
+**Verified facts and limits**:
 
-### Private GitHub update delivery investigation
+- Cargo-packager is framework-independent, MIT/Apache-2.0 and supports the four
+  selected formats. Its separate cargo-packager-updater 0.2.3 uses blocking
+  in-memory downloads, offers no cancel callback, does not reverify signatures
+  during install and handles Linux AppImage rather than the approved .deb path.
+  Do not make it the policy owner or assume it meets our staged-cache contract.
+- Minisign-verify exposes streaming verification. Verify the exact signed manifest
+  bytes before JSON parsing, then bind every installer to its target/version,
+  length and SHA-256 in that signed manifest. Revalidate cached manifest and
+  installer bytes before handoff. Use no new bespoke signature algorithm.
+- Native platform installer adapters/helper must wait for process exit, validate
+  installed destination, perform safe package handoff/replacement and report
+  retry/relaunch capabilities. This is project integration work, not a proven
+  universal self-update API. Detailed target behavior stays in packaging.
+- Keyring 4.2.0 uses OS credential stores. Linux lacking a working Secret Service
+  shows explicit setup status or user-selected session-only credentials, never
+  silent plaintext storage. Keep credentials outside export/backup/log state.
+- [GitHub asset retrieval](https://docs.github.com/en/rest/releases/assets#get-a-release-asset)
+  supports fine-grained Contents-read tokens and octet-stream responses, direct
+  or redirected. [Discovery](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
+  is separate from asset download. Authenticate only approved GitHub API requests;
+  follow approved asset redirects without forwarding the token to other origins.
 
-[GitHub release asset documentation](https://docs.github.com/en/rest/releases/assets#get-a-release-asset)
-documents authenticated asset retrieval through the API, including fine-grained
-Contents-read tokens, an octet-stream Accept header, and direct or redirected
-responses. [Latest-release discovery](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
-is a separate API operation from fetching a release's manifest/installer assets.
-The stock action's browser-download links are not proof of private access.
+**Alternatives considered**: Tauri updater requires its removed framework;
+cargo-packager-updater fails current policy needs. Generic binary replacement
+without platform-aware installer/backup handling is insufficient. A paid update
+service is excluded. No authenticated end-to-end update or installer test was
+performed by this planning revision.
 
-[Inspected native updater source on the v2 branch](https://github.com/tauri-apps/plugins-workspace/blob/v2/plugins/updater/src/updater.rs)
-accepts native request headers for checks/downloads, exposes the resolved update
-URL/headers, and verifies installer bytes before installation. This inspection
-is a feasibility finding, not a verified stable plugin pin or an end-to-end test.
-
-**Owner-approved design requiring source-pinned validation**: A user-provided
-fine-grained token limited to this repository's Contents-read permission, stored
-in the platform credential store, with native GitHub release/asset discovery.
-Resolve authenticated manifest and platform assets through the GitHub API rather
-than relying on anonymous private-release browser URLs. Retain update-signature
-verification and validate redirects, target/version/asset identity, manifest URL
-mapping, expiry/revocation, unavailable credentials, and rate limits. A browser
-OAuth sign-in was considered but not selected; it would require GitHub app
-registration and separate scope/device-flow assessment. No token is requested or stored during planning.
+Sources: [cargo-packager](https://docs.rs/cargo-packager/0.11.8/cargo_packager/),
+[updater source](https://docs.rs/crate/cargo-packager-updater/0.2.3/source/src/),
+[minisign-verify](https://docs.rs/minisign-verify/0.3.0/minisign_verify/),
+[minisign](https://docs.rs/minisign/0.10.0/minisign/),
+[reqwest](https://docs.rs/reqwest/0.13.5/reqwest/),
+[keyring](https://docs.rs/keyring/4.2.0/keyring/).
 
 ## Selected starter-data direction
 
@@ -534,6 +699,132 @@ starters, two selectable CC0 online collections including a titled-master subset
 broad puzzle difficulty, manual updates and the 2 GB installed cap are selected.
 Exact file checksums and measured collection sizes are preparation outputs,
 not unanswered preferences or already acquired data.
+
+### Deterministic starter subset preparation
+
+**Decision**: Use [starter subset selection v1](decisions.md#starter-subset-selection-v1)
+for exact rating/time/theme strata, canonical ordering, quota remainders and
+installed-byte prefix reduction. Keep the full ratings, TimeControl and theme
+metadata separately from these preparation-only derived values.
+
+**Rationale**: [Lichess export documentation](https://database.lichess.org/)
+describes WhiteElo/BlackElo and a list of puzzle Themes; it defines no canonical
+primary puzzle theme. The [time-control FAQ](https://lichess.org/faq#time-controls)
+uses base seconds plus 40 increments, with Bullet below 180 seconds, Blitz below
+480, Rapid below 1500 and Classical above that boundary; UltraBullet is grouped
+into Bullet for this application. Correspondence is explicit source metadata:
+the [pinned Lichess exporter](https://github.com/lichess-org/lila/blob/cec1a24e965583b69cbb9790735021bf43817ecc/modules/game/src/main/PgnDump.scala#L129-L131)
+emits days-per-move TimeControl text. The
+[internal speed enum](https://github.com/lichess-org/scalachess/blob/b3d8b8d9efb91c404629ed05cddc8866deb805d6/core/src/main/scala/Speed.scala)
+also uses a long-clock boundary; the selected FAQ-based preparation policy
+intentionally requires explicit day-per-move metadata for Correspondence.
+The versioned policy resolves missing-side ratings, multi-theme records, empty
+strata, quota remainders and cap reductions without source-order dependence.
+
+**Alternatives considered**: Using whichever player's rating is present changes
+the meaning of known bands. First-listed themes depend on source token order.
+Inferring correspondence from missing clocks conflates unavailable metadata with
+a known class. Nested quotas overweight sparse groups. Unseeded sampling and
+worker-arrival allocation prevent independent reconstruction. Single-record
+full rebuilds can waste preparation work; bounded prefix reduction preserves a
+reproducible collection without promising maximum possible counts.
+
+## Persistence ORM and library replacement
+
+Recorded 2026-10-17 from published crate sources downloaded into a scratch
+directory. Source inspection establishes APIs and licenses; locked compilation,
+strict-lint compatibility and throughput remain implementation evidence.
+
+### Diesel for SQLite persistence
+
+**Decision**: The owner selected Diesel. Use diesel 2.3.14 with the `sqlite`
+feature (and `returning_clauses_for_sqlite_3_35` where `RETURNING` is used),
+diesel_migrations 2.3.2 `embed_migrations!`, and diesel-derive-enum 2.1.0
+`sqlite` for TEXT enum columns. Keep libsqlite3-sys 0.38.2 with `bundled` as
+the single SQLite link. Remove rusqlite with its last caller.
+
+**Rationale**: Typed schema, compile-checked queries and row mapping replace
+about 130 hand-written `prepare`/`query_row`/`execute` calls across 13 storage
+and puzzle persistence files, and the manual string-to-enum row parsing in
+`src/storage/library_prepared.rs`. Boxed queries (`into_boxed`) express the
+library's optional filters without string-built SQL.
+
+**Verified facts**:
+
+- diesel 2.3.14 declares `libsqlite3-sys >=0.17.2, <0.39.0`, so it unifies with
+  the 0.38.2 crate already resolved; only one crate may link `sqlite3`. Diesel
+  has no `bundled` feature; bundling stays on libsqlite3-sys. MSRV 1.86.
+- `SqliteConnection` provides `immediate_transaction` and
+  `exclusive_transaction`; nested `transaction` calls become savepoints.
+- Migration versions are the directory name before the first `_` with dashes
+  removed (`migrations_internals::version_from_string`), so `0001_core/up.sql`
+  is version `0001`. A migration directory requires only `up.sql`.
+- `MigrationHarness` exposes `applied_migrations`, `pending_migrations` and
+  `run_pending_migrations`. Diesel does not detect applied versions absent from
+  the embedded set; the storage owner checks this explicitly.
+- Diesel exposes no SQLite online-backup API. `serialize_database_to_buffer`
+  copies the whole database into memory and does not fit multi-gigabyte
+  libraries.
+- `table!` and the `Queryable`/`Selectable`/`Insertable`/`AsChangeset` derives
+  emit no `unsafe`, so `unsafe_code = "forbid"` holds. `MultiConnection` and
+  `sql_function` with user `unsafe` are not used.
+- Default `32-column-tables` covers the widest current table
+  (`library_entries`, 27 columns); a wider table requires the `64-column-tables` feature.
+- diesel_cli 2.3.14 `sqlite-bundled` provides `print-schema` as a development
+  tool only; it is never a runtime or package dependency.
+- Licenses: diesel, diesel_migrations, migrations_internals, diesel_derives,
+  diesel-derive-enum and diesel_cli are MIT OR Apache-2.0.
+
+**Continuity**: Superseded by owner decision on 2026-10-17. Pre-Diesel
+databases are not supported; the former v1..v4 SQL is squashed into one
+`0001_initial` baseline with an identical final schema, and a database lacking
+the Diesel migration table is refused unchanged. Pending migrations still run
+as savepoints inside one immediate transaction, so each upgrade from the
+baseline onward stays all-or-nothing.
+
+**Backup**: Use `VACUUM INTO` through `sql_query` inside the read transaction
+that also reads the manifest revision. Under WAL this yields a consistent
+snapshot without blocking the writer, and the copy is compacted. This replaces
+the online-backup API, removes the second SQLite binding, and keeps the
+revision-consistent manifest contract. Throughput and peak disk use are
+measured during US11.
+
+**Alternatives considered**: Keeping rusqlite only for backup retains two
+bindings over one library for a single call. sqlx is async-first and would add
+a second runtime model over a synchronous actor. SeaORM builds on sqlx. Raw
+rusqlite is the current state the owner asked to replace.
+
+### Bounded CSV records
+
+**Decision**: Replace the owned byte-level quote state machine in
+`src/puzzle/csv_import.rs` with csv-core 0.1.13 (Unlicense/MIT, the parser
+under csv 1.4.0). Keep the owned header, cancellation, row-number and typed
+issue layers.
+
+**Rationale**: `csv_core::Reader::read_record` writes into caller-owned output
+and field-end buffers and returns `OutputFull` or `OutputEndsFull` instead of
+growing them, so the 1 MiB row limit is enforced before allocation. The
+higher-level `csv::Reader` grows its record buffers to fit any row, which does
+not meet the bounded-input decision; it is not selected.
+
+### Enum string tables
+
+**Decision**: Use strum 0.28.0 (MIT) `EnumString`, `AsRefStr`, `Display` and
+`EnumIter` for the roughly 33 hand-written enum string tables that are not
+database columns. Enums stored in columns use diesel-derive-enum with
+`db_rename`/`DbValueStyle`, so each persisted string is defined exactly once.
+`EnumIter` drives closed-family registries and their contract coverage.
+Explicit variant names preserve every existing persisted spelling.
+
+### Reviewed and kept
+
+- UCI parsing stays owned: vampirc-uci 0.11.1 has had no release since 2022.
+- Polyglot keys already use shakmaty `Zobrist64`; the 16-byte record codec is
+  small and format-specific.
+- The 115-line mutation request cache keeps its combined count and age bounds;
+  an LRU crate would cover only the count bound.
+- Fixed-width import-session index/disk records stay owned codecs over
+  standard byte arrays, avoiding a layout crate for two record types.
 
 ## Final resolution research
 
@@ -568,59 +859,87 @@ these selections. No payment or provider provisioning occurred.
 
 ### Selected stable library versions
 
-Versions were checked against npm package manifests and crates.io stable,
-non-yanked releases. These are design selections, not an installed compatible
-lockfile. Implementation must verify exact dependency resolution and APIs.
+Native versions replace former npm and Tauri pins. Resolve one compatible stable
+locked graph during implementation; these selections are not a built native app.
 
 | Area | Selected version |
 | --- | --- |
 | Rust / edition | Existing 1.99.0 / 2024 |
-| Tauri Rust / JS API / CLI | 2.12.4 / 2.12.4 / 2.12.3 |
-| Updater Rust / JS | 2.14.0 / 2.14.0; native ownership |
-| Vue / Vue TypeScript checker | 3.5.44 / 3.3.13 |
-| TypeScript / typescript-eslint | 6.0.3 / 8.71.2 |
-| Bun / Vite / Vue Vite plugin | 1.4.3 / 8.3.4 / 6.0.10 |
-| Tailwind / shadcn-vue | 4.3.3 / 2.8.2 |
-| ESLint / Prettier | 10.12.0 / 3.9.10 |
-| Three.js | 0.186.1 |
-| shakmaty / pgn-reader | 0.30.2 / 0.29.1 |
-| rusqlite / schemars / Serde | 0.40.2 / 1.2.3 / 1.0.229 |
-| reqwest / keyring / Rayon | 0.13.5 / 4.2.0 / 1.12.0 |
-| json-schema-to-ts / Ajv | 3.1.1 / 8.20.0 |
-| Vitest / browser-playwright provider | 5.0.5 / 5.0.5 |
-| Playwright / Vue Test Utils | 1.64.1 / 2.5.1 |
-| WebdriverIO / @wdio/tauri-service | 9.31.9 / 1.5.0 |
-| Inter | v4.1, Inter-4.1.zip |
+| Bevy / bevy_egui | 0.20.0 / 0.43.1 |
+| egui / egui_kittest | Matching 0.36 family / 0.36.0 test harness |
+| wgpu | Bevy-compatible 30 family, frozen in Cargo.lock; no separate eframe/wgpu graph |
+| winit | Bevy-compatible 0.30.13; direct matching dependency for native attention types, sharing the same resolved instance |
+| Tokio / Rayon | Existing 1.53.3 / 1.12.0 |
+| shakmaty / pgn-reader | Existing 0.30.2 / 0.29.1 |
+| diesel / diesel_migrations / diesel-derive-enum | 2.3.14 `sqlite` / 2.3.2 / 2.1.0 `sqlite`, over bundled libsqlite3-sys 0.38.2; replaces rusqlite 0.40.2 |
+| csv-core / strum | 0.1.13 / 0.28.0 `derive` |
+| schemars / Serde | Existing 1.2.3 / 1.0.229 |
+| rfd / directories | 0.17.2 / 6.0.0 |
+| Profile activation | interprocess 2.4.5 with `tokio`; pinned std file locks |
+| Windows activation security | winsafe 0.0.29 with `advapi`, widestring 1.0.2; target-specific only |
+| reqwest / keyring | 0.13.5 / 4.2.0 |
+| cargo-packager | 0.11.8, build-time packaging |
+| minisign-verify / minisign | 0.3.0 runtime verification / 0.10.0 release tooling |
+| Inter | v4.1, retain font/notice |
 
-TypeScript 7 is newer but outside typescript-eslint's declared <6.1 peer range;
-retain 6.0.3. WebdriverIO 10 is newer but the selected Tauri service declares
-webdriverio ^9.0.0; retain 9.31.9. Vite, ESLint and browser-test tools declare
-Node engine constraints; execution on Bun requires actual toolchain tests rather
-than assuming those fields prove Bun support. Resolve supporting dependencies
-at stable compatible pins and commit their lockfiles in implementation.
-Sources include [npm registry](https://registry.npmjs.org/),
-[crates.io API](https://crates.io/data-access),
-[Inter v4.1](https://github.com/rsms/inter/releases/tag/v4.1), and
-[Inter OFL](https://github.com/rsms/inter/blob/master/LICENSE.txt).
+Bevy and egui are MIT/Apache-2.0; bevy_egui is MIT; cargo-packager MIT/Apache-2.0;
+minisign-verify and minisign MIT. Existing chess copyleft and NNUE provenance
+gates remain. Inspect resolved transitive licenses and features. No Tauri,
+eframe, Node or Bun package is a final runtime prerequisite. Keep Bevy asset
+watchers/processors, dynamic linking and development-only features out of release
+builds; select features required by the product and verify resulting native
+window/audio/portal dependencies. Approved PCM WAV sounds require the WAV
+decoder feature rather than assuming the default Vorbis audio profile suffices.
+Embedded fonts, LUTs and other resources retain their own notices; Inter and
+any enabled default font payloads are not covered by a blanket crate license.
 
-### Pinned updater and CI feasibility
+### Native runtime, dialogs and accessibility acceptance
 
-Inspected src/updater.rs from the published
-[tauri-plugin-updater 2.14.0 crate](https://crates.io/crates/tauri-plugin-updater/2.14.0).
-It supports native headers, explicit verification of cached bytes, and install
-that verifies bytes before invoking the platform installer. Its download API
-returns Vec<u8>; use native streamed staging for downloads, then account for
-byte-buffer memory before verification/install. It also contains Debian/RPM
-installer support, so earlier branch-only claims about package limitations must
-not be treated as a current absence of native support. Retain the owner's
-system-installer .deb handoff policy and validate it independently. Header
-support alone does not prove private GitHub API discovery/redirect safety.
+Main constructs Bevy, ports, capacity and owned Tokio runtime before the native
+runner. Publish bounded backend results, then issue a native wake. Visible clock
+updates and animations use one explicit presentation deadline scheduler. Normal
+close/menu/quit waits for pause/save/reap; final AppExit occurs only afterwards.
+Power-notification adapters distinguish sleep from focus. Headless tests cannot
+establish actual OS quit, sleep, dialog or GPU behavior.
 
-[GitHub's Actions billing documentation](https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions)
-confirms private-repository quotas and billing beyond included usage. No account
-budget, allowance or billing control was read or changed. Gate CI activation on
-verified hard-stop controls for compute and storage. A YAML timeout alone does
-not guarantee zero cost. No paid runner or overage is selected.
+Enable bevy_egui's optional accesskit feature and the relevant Bevy platform
+accessibility support, including accesskit_unix for Linux. Plugin integration
+uses the Bevy window AccessKit adapter directly and does not automatically merge
+ordinary scene-node semantics. The board needs 64 named, stable, visible semantic
+square controls as part of the egui tree. Invisible widgets may be omitted.
+The pinned plugin does not forward AccessKit ActionRequest to egui; add a narrow
+application adapter translating native actions to egui AccessKitActionRequest
+after EguiPreUpdateSet::ProcessInput and before BeginPass. Verify roles, focus, activation, square labels, legal moves,
+dialogs and throttled announcements with matching-egui semantic tests plus actual
+VoiceOver/NVDA/Orca. Tree inspection alone is insufficient evidence of usable
+screen-reader interaction.
+
+Use rfd 0.17.2 via the dialog port, creating platform-required dialog handles on
+the owning window thread and awaiting through one bounded owned actor. Bevy
+window/raw-handle integration replaces former eframe Frame use. Validate macOS
+main-thread creation, Linux portals and supported parent handles. Rfd cancellation
+results cannot prove that every backend failure has a distinct error.
+
+Use directories 6.0.0 behind the data-path adapter. Preserve the existing
+nl.sadra.chess data identity through explicit discovery; no silent empty-library
+migration. Resolve read-only Bevy asset roots separately from writable data,
+especially macOS Contents/Resources versus Contents/MacOS. Credential buffers
+stay outside snapshots, exports and backups; unavailable Secret Service gives
+the selected setup/session-only policy.
+
+Sources: [plugin manifest/source](https://github.com/vladbat00/bevy_egui/tree/v0.43.1),
+[egui_kittest](https://docs.rs/egui_kittest/0.36.0/egui_kittest/),
+[rfd](https://docs.rs/rfd/0.17.2/rfd/),
+[directories](https://docs.rs/directories/6.0.0/directories/).
+
+### CI feasibility
+
+[GitHub Actions billing documentation](https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-actions/about-billing-for-github-actions)
+confirms private-repository quotas and potential billing beyond included usage.
+Verify hard stops for compute, artifact and release storage before activation.
+Use standard included runners only and immutable verified action commits. Native
+egui does not remove the zero-cost gate. No account settings, signing keys,
+workflow activation or release publication occur during planning.
 
 ### Rules and exactness risk
 

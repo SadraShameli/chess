@@ -3,8 +3,85 @@ name = "chess"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99"
+default-run = "chess"
+
+[[bin]]
+name = "chess-tools"
+path = "tools/main.rs"
+
+[[bin]]
+name = "chess-update-helper"
+path = "tools/packaging/update_helper.rs"
+
+[[test]]
+name = "native"
+path = "tests/native.rs"
+harness = false
+test = false
+
+[[test]]
+name = "assets"
+path = "tests/assets.rs"
+required-features = ["asset-tools"]
+
+[features]
+asset-tools = ["dep:boolmesh", "dep:earcutr", "dep:gltf-json"]
 
 [dependencies]
+bevy = { version = "=0.20.0", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_gltf", "bevy_pbr", "bevy_winit", "bevy_audio", "wav", "png", "scene", "mesh_picking", "mouse", "keyboard", "reflect_auto_register", "tonemapping_luts", "zstd_rust", "x11", "wayland", "accesskit_unix"] }
+bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "accesskit", "manage_clipboard"] }
+boolmesh = { version = "=0.2.1", default-features = false, optional = true }
+csv-core = "=0.1.13"
+diesel = { version = "=2.3.14", default-features = false, features = ["sqlite", "returning_clauses_for_sqlite_3_35", "32-column-tables", "with-deprecated"] }
+diesel_migrations = { version = "=2.3.2", features = ["sqlite"] }
+directories = "=6.0.0"
+earcutr = { version = "=0.5.0", optional = true }
+gltf-json = { version = "=1.4.1", features = ["names"], optional = true }
+hashbrown = { version = "=0.16.1", default-features = false, features = ["default-hasher"] }
+icu_casemap = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
+interprocess = { version = "=2.4.5", default-features = false, features = ["tokio"] }
+keyring = "=4.2.0"
+minisign-verify = "=0.3.0"
+pgn-reader = "=0.29.1"
+rand = "=0.10.3"
+rayon = "=1.12.0"
+rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls"] }
+same-file = "=1.0.6"
+libsqlite3-sys = { version = "=0.38.2", features = ["bundled"] }
+semver = "=1.0.28"
+strum = { version = "=0.28.0", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.154", features = ["raw_value"] }
+sha2 = "=0.11.1"
+shakmaty = "=0.30.2"
+tempfile = "=3.27.0"
+thiserror = "=2.0.21"
+tokio = { version = "=1.53.3", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+url = "=2.5.8"
+uuid = { version = "=1.28.0", features = ["serde", "v4"] }
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+win-sd = { version = "=0.3.1", default-features = false }
+winapi-util = "=0.1.11"
+windows-permissions = "=0.2.4"
+widestring = "=1.0.2"
+winsafe = { version = "=0.0.29", default-features = false, features = ["advapi"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", default-features = false, features = ["fs", "std"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+exacl = { version = "=0.13.0", default-features = false }
+muda = { version = "=0.20.0", default-features = false }
+
+[dev-dependencies]
+egui_kittest = { version = "=0.36.0", default-features = false }
+tokio = { version = "=1.53.3", features = ["test-util"] }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -42,13 +119,66 @@ unwrap_used = "deny"
 wildcard_enum_match_arm = "deny"
 wildcard_imports = "deny"
 
+[profile.dev]
+opt-level = 1
+debug = false
+debug-assertions = true
+overflow-checks = true
+strip = "debuginfo"
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.debugging]
+inherits = "dev"
+opt-level = 0
+debug = "full"
+strip = "none"
+
+[profile.test]
+opt-level = 1
+debug = false
+debug-assertions = true
+overflow-checks = true
+strip = "debuginfo"
+incremental = true
+
+[profile.test.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
-lto = "thin"
-debug = "line-tables-only"
-overflow-checks = true
+debug = false
+debug-assertions = false
+overflow-checks = false
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
+incremental = false
+
+[profile.release-debugging]
+inherits = "release"
+debug = "full"
+strip = "none"
+lto = false
+codegen-units = 16
+incremental = true
 
 [profile.profiling]
 inherits = "release"
 debug = true
 strip = "none"
+
+[[bench]]
+name = "storage"
+harness = false
+
+[[bench]]
+name = "opening"
+harness = false
+
+[[bench]]
+name = "engine"
+harness = false

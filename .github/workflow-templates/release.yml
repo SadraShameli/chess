@@ -1,0 +1,57 @@
+name: release
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  check-version:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@0000000000000000000000000000000000000000
+        with:
+          persist-credentials: false
+      - run: cargo run --bin chess-tools -- release-check "${GITHUB_REF_NAME}"
+  build:
+    needs: check-version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            target: macos-arm64
+          - os: windows-2022
+            target: windows-x86_64
+          - os: ubuntu-22.04
+            target: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@0000000000000000000000000000000000000000
+        with:
+          persist-credentials: false
+      - run: make package TARGET=${{ matrix.target }}
+      - uses: actions/upload-artifact@0000000000000000000000000000000000000000
+        with:
+          name: package-${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+          retention-days: 1
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@0000000000000000000000000000000000000000
+      - env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" --draft --verify-tag
+          gh release upload "${GITHUB_REF_NAME}" package-*/* manifest.json manifest.json.minisig
+          gh release edit "${GITHUB_REF_NAME}" --draft=false

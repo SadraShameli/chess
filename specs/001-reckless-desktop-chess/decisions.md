@@ -9,6 +9,13 @@ remain authoritative. These are selected requirements and implementation
 strategies, not results of runtime tests. Engineering rules remain in
 [the canonical catalog](../../.specify/rules/README.md).
 
+Later direct owner instructions take precedence over earlier selections. These
+delegated decisions fill details within the approved specification; they cannot
+remove its scope. The plan and contracts implement those decisions. Historical
+task checkmarks describe their recorded work, never authority to override the
+current requirements or evidence of native acceptance. Resolve a conflict at
+its authoritative owner before reconciling dependent tasks.
+
 ## Delivery and evidence
 
 Complete the full first-release scope, then generate implementation tasks in a
@@ -24,7 +31,7 @@ Build for Windows 11 x86-64, macOS 14+ ARM64, and Ubuntu 22.04+ x86-64, with
 X11 and Wayland validation. Retain NSIS, DMG, .deb, and AppImage selections.
 Unsigned Windows and ad-hoc-signed macOS packages need tested OS-warning and
 manual-approval instructions. OTA signatures remain mandatory on all targets.
-Native installation, WebView compatibility, dead-position adjudication, private
+Native installation, GPU/window compatibility, dead-position adjudication, private
 updater delivery, and measured performance are release gates, never inferred
 from design. See [the release evidence register](#release-evidence-register).
 
@@ -48,20 +55,104 @@ preparation explicitly; do not silently fetch a different snapshot. These large
 files have not been acquired by planning.
 
 Target up to 100,000 master games, 250,000 broad games, and 200,000 puzzles.
-These are upper selection targets, not promised available counts. Choose games
-by deterministic ascending SHA-256 of canonical source identity. Stratify broad
-games by known rating bands (<1200, 1200..1599, 1600..1999, 2000..2399,
-2400+, unknown), then by bullet/blitz/rapid/classical/correspondence/unknown
-time class, allocating equally to nonempty strata. Apply the same deterministic
-method to puzzles by 250-point rating bands and primary theme, redistributing
-unused quota to nonempty strata. Retain source identity for all entries.
+These are upper selection targets, not promised available counts. Selection
+uses the following versioned preparation policy, chosen under owner delegation.
+
+### Starter subset selection v1
+
+ASCII whitespace in this policy is exactly space, tab, LF, form feed and CR
+(bytes 20, 09, 0A, 0C and 0D in hexadecimal), matching Rust `trim_ascii` and
+`split_ascii_whitespace`. Do not trim or split additional Unicode characters.
+
+Validate and normalize candidates before selection. Deduplicate games using the
+approved full game identity, retaining every source identity and its metadata.
+If copies differ in nonidentity metadata, use the copy with lexicographically
+smallest original UTF-8 source-record bytes for classification; retain the other
+copies as provenance. Puzzle identity is the source's PuzzleId. Conflicting
+records with the same PuzzleId fail preparation rather than choose a solution
+silently; byte-identical copies count once.
+
+For broad games, form one flat stratum per observed pair of rating band and time
+class. Both normalized WhiteElo and BlackElo must be available unsigned 32-bit
+integers to assign a known rating band. Compare their checked 64-bit sum with
+2400, 3200, 4000 and 4800: the resulting exact arithmetic mean belongs to
+<1200, [1200,1600), [1600,2000), [2000,2400) or >=2400 respectively. Do not round
+the mean before comparison. A missing or invalid rating on either side assigns
+the typed Unknown band, with original metadata and the quality reason retained.
+This preparation rule does not change explorer rating averages or filters.
+
+Time-class parsing trims outer ASCII whitespace and consumes the entire tag.
+Recognize `1 day per move` or `N days per move` for unsigned decimal N >=2
+within u32 as Correspondence. Otherwise accept ASCII decimal `B` or `B+I`,
+with u32 base/increment seconds, no internal whitespace and at least one positive
+operand; plain B means I=0. Compute checked u64 E=B+40*I. Assign Bullet for
+E<180, Blitz for 180<=E<480, Rapid for 480<=E<1500 and Classical for E>=1500;
+UltraBullet is included in Bullet. Missing/blank/?/- tags are Unknown unavailable.
+Malformed, overflowing, multi-stage, slash or hourglass tags are Unknown with
+their raw value and reason retained. Do not infer Correspondence from Event,
+missing clocks or an unusually long real-time control. These are application
+preparation classes, not a claim to reproduce every Lichess internal speed enum.
+
+For puzzles, a known unsigned 32-bit rating belongs to band k=floor(Rating/250),
+covering [250*k,min(250*k+249,u32::MAX)] with endpoints calculated in checked u64;
+missing/invalid optional ratings use Unknown.
+Split Themes on ASCII whitespace, deduplicate exact case-sensitive tokens and
+choose the smallest UTF-8 bytewise token as the preparation-only primary theme.
+An empty theme list uses typed Unknown, distinct from any literal theme token.
+Retain all original themes for filtering; the selected primary theme conveys no
+chess importance. Each observed (rating band, primary theme) pair is one stratum.
+
+Order game strata by the five known rating bands ascending, then Unknown; within
+each band order Bullet, Blitz, Rapid, Classical, Correspondence, Unknown. Order
+puzzle strata by known numeric band ascending, then Unknown; within each band
+order known theme tokens bytewise, then Unknown. Allocate equally across these
+flat observed pairs, without a second nested quota. Within each stratum order
+candidates by ascending SHA-256 digest bytes of the selection identity defined
+below, then those identity bytes to break a digest collision. Build one selection
+sequence by repeatedly taking the next candidate from each nonexhausted stratum
+in that fixed order. Skip exhausted strata and stop at the target or exhaustion;
+a partial final cycle gives remaining slots to earlier keys. The master subset
+uses its title filter and one unstratified sequence in the same hash order.
+Every smaller requested count takes a prefix of its subset's sequence. Source
+iteration order, parallel completion order and a random seed cannot change it.
+
+Selection identity bytes are separate from retained provenance/source IDs.
+For games, serialize the approved normalized full game identity as the compact
+UTF-8 JSON array `[variant, initial_fen, mainline_uci, white, black, date, result]`
+using Serde JSON escaping and no whitespace outside strings. Variant and result
+use their existing canonical external strings; initial_fen and ordered mainline
+move strings use canonical notation. Player strings use the existing NFC,
+trimmed, case-folded identity normalization; absent values use JSON null. Date
+is `[year, month, day]` with null for each unknown component. For puzzles,
+selection identity is the exact nonempty UTF-8 PuzzleId string, without JSON
+quotes. Hash each candidate independently; never concatenate unframed identities.
+One preparation identity encoder owns both branches: typed tuple JSON through
+`serde_json::to_vec` for games and raw PuzzleId UTF-8 bytes for puzzles. It uses
+no maps, floating-point values or formatting.
+Fixture bytes and digests pin this encoding as part of policy version 1.
+
+Record policy version 1, source hashes, available/unknown/rejected counts,
+ordered stratum counts, selected prefix lengths and selection-sequence digests
+in the preparation manifest. Retain selected identities/strata in the dataset
+provenance so selection can be independently reconstructed from frozen inputs.
+The selection-sequence digest hashes an unsigned 64-bit big-endian record count,
+followed by each selected identity's unsigned 64-bit big-endian byte length and
+identity bytes in selection order. Length/count conversion is checked.
 
 The hard installed starter-data cap is 2,000,000,000 bytes including indexes,
 source-game storage, book, puzzle data, manifests, and labels. Component ceilings:
 800 MB master, 800 MB broad, 300 MB puzzles, 50 MB book, 50 MB labels/manifests.
-Use decimal MB. Measure the actual installed read-only databases and reduce
-deterministic selection counts until every ceiling and the total cap pass;
-report final counts and coverage. Do not pad collections or count compressed
+Use decimal MB. Measure actual installed file lengths, including every index
+and provenance file, assigning each file to exactly one component. Inspect
+overflows in master, broad, puzzles, book, labels/manifests order. On the first
+reducible overflow, shorten that subset's prefix from n to floor(9*n/10) and
+rebuild affected artifacts before rechecking. Book overflow shortens the master
+prefix and rebuilds both master data and its derived book. A labels/manifests
+overflow, unclassified file, empty required subset or fixed overhead that cannot
+fit fails preparation explicitly; do not discard required provenance or silently
+ship an empty collection. This bounded prefix reduction need not maximize record
+count. Record each reduction and final component/total bytes; every ceiling and
+the total must pass. Do not pad collections or count compressed
 download size as installed size. Personal imports are outside this starter cap.
 Starter indexes cover the first 40 plies; retained full games support samples
 and deeper positions with an explicit bounded background index extension.
@@ -88,10 +179,16 @@ unlisted moves is introduced.
 
 Use persisted shuffle order and opponent-reply choices from an injected,
 seedable random provider. Save each accepted move, hint, failure, skip, timeout,
-pause, review, and session transition transactionally. While active, checkpoint
-remaining time once per second; crash recovery restores the last durable
+pause, review, and session transition transactionally. While active, request a
+remaining-time checkpoint every 250 ms, keeping at most one pending commit and
+coalescing newer countdown snapshots; crash recovery restores the last durable
 checkpoint paused, with at most one second of unsaved countdown lost. A failed
-puzzle checkpoint pauses the run and exposes Retry Save. Per-puzzle timeout
+puzzle checkpoint pauses the run and exposes Retry Save. Bound durable lag,
+not merely the checkpoint scheduling interval: active countdown cannot advance
+more than one second beyond the last committed checkpoint. If the next commit
+is still pending at that boundary, freeze the run in a saving/interrupted state;
+failure exposes Retry Save and recovery still requires explicit Resume.
+Per-puzzle timeout
 records the outcome and advances directly when the next board is ready;
 solution review remains accessible in history. Session timeout ends the run
 and displays its summary. Skip preserves earlier failed primary outcomes and
@@ -248,11 +345,167 @@ admission allowances if reference-system peaks require it. No automatic shrink
 of configured hash to admit a game. Treat these as initial conservative budgets,
 not guaranteed memory bounds. Recheck on admission and report OS pressure.
 
+### Native engine capacity partition
+
+The default application budget remains all detected usable hardware threads C.
+Reservations describe runnable CPU work, not every allocated sleeping I/O or
+notification thread. Bevy pools must be configured before their global creation;
+stock pool defaults plus independent full-size engines/Rayon are not selected.
+
+Choose a **phase-based capacity policy**, retaining the four-thread baseline.
+The normal multithreaded Bevy topology needs at least one worker in each IO,
+async-compute and compute pool; setting all pool minima to zero is unsafe.
+Stock hierarchy propagation assumes a nonzero compute worker and unscoped
+asset/pipeline tasks need workers that actually poll. Disable pipelined rendering
+in the first native baseline to avoid its extra render thread; rendering remains
+on the native host thread. Reconsider only with measured shared-budget evidence.
+
+During preparation/recovery, stop and acknowledge current engine searches and
+drain conflicting Rayon leases before admitting heavy Bevy asset/pipeline work.
+Preload all piece/font/audio assets and approved quality-tier pipelines before
+live search admission. Re-enable searches only after bounded preparation jobs
+complete and the measured/render resource state is ready. No detached asset
+preparation or hot-reload activity may begin outside this capacity phase.
+
+During steady live play reserve the host/render work and one compute worker;
+IO/async-compute pools are quiescent after prewarm rather than counted as
+permanently busy CPUs. Their allocated threads remain owned and observable.
+The remaining runnable budget is shared by engines and admitted Rayon work
+through the coordinator. Divide active engine shares equally within that budget,
+not C independently of app work. A newly required heavyweight asset/pipeline job
+first enters the acknowledged preparation transition; it cannot independently
+consume engine-reserved capacity. Small control/I/O work is bounded separately;
+CPU-intensive storage/import/decoding goes through admission.
+
+Use explicit TaskPoolOptions policies: IO one native worker, async-compute one,
+and compute one for the initial steady rendering topology. These are supported
+framework minima/dependency reservations, not a cap on all app computation.
+Parallel imports/reports/proofs use the existing executor and all admitted spare
+capacity. During asset preparation the framework's fixed worker topology may
+limit its own scaling; measure this instead of claiming all-core asset decode.
+Never lend a slot to an engine before conflicting work is quiescent, or start
+conflicting work before the old engine allocation is stopped/reaped as required.
+
+The first native migration gate must prove quiescence/admission, bounded wakeup,
+minimum C=4 and maximum-capacity behavior, frame/stop latency and actual pool
+counts. If uncontrolled upstream work prevents the contract, leave the gate
+failed and repair scheduling; do not report the budget satisfied or raise the
+minimum platform silently. This policy is a concrete integration strategy,
+not a measured scheduler implementation or permission to oversubscribe.
+
+## Local profile ownership and activation
+
+Select one writable owner for the existing `nl.sadra.chess` local data. This is
+startup coordination, not a profile picker or multi-user feature. Resolve the
+existing data directory explicitly, canonicalize aliases to the same directory
+identity, and keep a permanent `control/owner.lock` outside replaceable database
+and settings files. User backups/restore do not copy or replace the control
+directory, its destination-local profile identity or activation records. Do not
+silently relocate the profile through directories-crate naming defaults.
+
+Bootstrap opens the stable lock file without truncation and calls
+`std::fs::File::try_lock`. A root-owned, un-cloned `DesktopProfileLease` retains
+the exclusive handle. Never unlink/recreate that file, explicitly unlock early
+or pass the handle to an engine/installer child. The control directory is
+user-private and validated before use; unsupported locking, unsafe permissions
+or ambiguous directory identity refuse startup with a typed recovery status.
+All application/helper writers cooperate with this OS-backed exclusion.
+
+On contention, the new process reads only bounded activation metadata and
+attempts activation. It creates no storage actor, migrations, restore/backup
+jobs, games, engine leases or Bevy worker pools. An unavailable endpoint or
+response timeout means Busy, never permission to steal the lock. After a prior
+owner exits, exclusive acquisition permits normal stale-record cleanup and
+saved-state recovery, leaving unfinished games and puzzle runs paused. A
+diagnostic PID is not an ownership credential or process-identity proof.
+
+Before ordinary initialization, each successful lock holder checks the durable
+installation intent. Pending or unresolved installation enters the
+[installer handoff policy](contracts/packaging.md#profile-ownership-during-installation)
+instead of opening data. Otherwise the owner creates a fresh instance generation,
+binds the activation endpoint and atomically publishes a versioned owner record.
+Only then open storage, run migrations/restore-journal recovery and construct
+application, engine and presentation services. Accept activation while starting
+and coalesce it into one request to show the main window when ready.
+
+Use interprocess 2.4.5 with `tokio` on the single owned runtime. Unix uses its
+generic local-socket API and an explicit filesystem socket in a mode-0700
+user-owned directory, with peer
+effective-user validation on both ends and mode 0600 where supported. macOS
+must not fail solely because the optional pre-bind socket-mode operation is
+Unsupported. Keep the socket path within native length limits using a short
+user-private runtime directory when necessary; its owner record still binds
+the canonical profile/generation. Windows uses a local named pipe with an
+explicit current-user/SYSTEM DACL and remote clients disabled. Name reclamation
+is disabled on Unix; only the guard holder cleans its own stale endpoint. Reuse
+sysinfo 0.39.6 for the actual Unix effective user. Windows-only winsafe 0.0.29
+(`advapi`) obtains the current token SID through safe fallible APIs; widestring
+1.0.2 supplies the security-descriptor input. Inability to establish private
+authenticated transport produces a typed startup failure,
+not an unauthenticated fallback. Same-user administrator/malicious-process
+isolation is not claimed by a desktop activation endpoint.
+Authenticate the Windows server reciprocally: query the connected stream's
+kernel peer PID, open that process with limited-query access and compare its
+token User SID with the current SID through Winsafe. Fail closed if this cannot
+be established. The kernel peer PID locates a token, not profile ownership;
+this closes an owner-exit/pipe-replacement race after lock contention.
+
+The Windows adapter uses concrete `PipeListenerOptions` with an explicit
+descriptor, `accept_remote(false)`, `inheritable(false)` and five instances:
+four accepted clients plus one pending listener. Acquire a handler-capacity
+permit before calling/polling accept, counting connected-but-not-yet-dispatched
+streams; release it on every completion/failure/cancellation. The library creates
+the replacement pending instance before returning an accepted stream. Use
+`DuplexPipeStream<Bytes>::connect_by_path_with_wait_mode` with zero timeout;
+only the application schedules bounded async retry. Do not use the generic
+Windows local-socket connect path. An owned wrapper suppresses dirty-stream
+linger with safe `assume_flushed()` before every drop, including cancellation,
+and never starts an underlying pipe flush. The version-2 exchange adds a
+ReceiptAcknowledged frame: the owner reads the client's matching receipt before
+acknowledging it, then retains the stream until the client reads that acknowledgment
+and closes. This proves consumption of both final frames before either endpoint
+discards bytes, without a pipe write half-close or linger worker. All four steps
+share the original absolute deadlines; version 1 is rejected before activation.
+Timeout discards incomplete bytes without spawning linger workers.
+
+The [activation contract](contracts/desktop-ipc.md#local-activation-interface)
+owns versioned framing and closed operations. Select a 4 KiB maximum frame,
+one activation/response/receipt/acknowledgment exchange per connection, at most four in-flight
+clients and one coalesced pending window request. The second-launch attempt has a 2-second total deadline,
+including at most four metadata/connect trials while the owner starts; each
+accepted connection has a 1-second read/write deadline. Reject oversized,
+malformed, wrong-profile, stale-generation or unsupported-version requests.
+No command, path, credential or arbitrary CLI argument is forwarded. There is
+no polling heartbeat when idle and no automatic reconnect loop.
+
+Activation only requests the existing window. The native-thread adapter makes
+it visible, unminimizes/focuses where supported, and requests informational
+attention through winit 0.30.13 on Wayland, using the same resolved winit instance
+as Bevy and its public native-window access. Report Focused only after
+observed native focus; an OS-denied/unconfirmed request explains how to select
+the existing window. Activation never resumes paused games/puzzles or dismisses
+confirmation/recovery state. A canceled quit or failed save retains the lease.
+Normal shutdown stops admission, drains/observes jobs, reaps children, closes
+storage and shuts down owned runtimes before final lease release at process
+teardown. This guard must not be an independently dropped Bevy resource.
+
 ## Storage, imports, and backup recovery
 
-Use bundled SQLite via rusqlite on one dedicated async-facing storage actor;
-no blocking database work on runtime workers. WAL, foreign_keys=ON,
-synchronous=FULL, 5-second busy timeout, and transactional numbered migrations.
+Use bundled SQLite through the Diesel ORM on one dedicated async-facing storage
+actor; no blocking database work on runtime workers. Every connection applies
+WAL, foreign_keys=ON, synchronous=FULL and a 5-second busy timeout before use.
+Migrations are numbered `diesel_migrations` directories embedded in the binary
+and applied in one immediate transaction. Diesel row, table and changeset types
+stay private to the storage component; repositories return validated domain
+values. Enum columns map through one derive per enum, preserving existing
+stored spellings. The generated `schema.rs` must match the embedded migrations.
+
+There is no pre-Diesel database support: the schema starts at the
+`0001_initial` baseline. A database with user tables but no Diesel migration
+table is refused unchanged as unsupported, and any applied Diesel version
+absent from the embedded set is a future schema, also refused unchanged. The
+Diesel migration table is the only schema-version authority. Exact verified behavior
+is in [persistence research](research.md#persistence-orm-and-library-replacement).
 Tables own games, move nodes, notes/marks, clock snapshots, folders, tags,
 reports/jobs/results, datasets/provenance, puzzle definitions/attempts/runs,
 preferences, and backup history. Add foreign-key and query indexes; immutable
@@ -261,9 +514,15 @@ hash lookup accelerators. Emit an autosave receipt only after transaction commit
 On failure retain in-memory state and pause the affected game as selected.
 Retry Save uses the newest consistent snapshot under serialized ownership;
 quit/update/Trash cannot discard unsaved state after a failed prerequisite save.
+Crash recovery loses zero acknowledged committed revisions and restores game
+state and clocks from the same latest durable revision, paused and without
+downtime charges. Accepted but uncommitted changes may be lost; never label
+them Saved. Migration and restore preserve either the complete last valid
+snapshot or the complete validated replacement, with no mixed data/settings
+versions. A backup guarantees its recorded consistent revision, not later edits.
 
-Use the SQLite online-backup API and a revision-consistent manifest in a
-checksummed archive; keep credentials, update installers and datasets out.
+Use `VACUUM INTO` inside the read transaction that reads the manifest revision,
+producing a revision-consistent copy and manifest in a checksummed archive; keep credentials, update installers and datasets out.
 Validate archive paths, entry count, decompression size and checksums before
 restore. First automatic backup is due 24 hours after first successful user-data
 creation if no earlier automatic backup exists. An overdue launch schedules it
@@ -277,7 +536,10 @@ machine's paths by default, disable unavailable options after preview, and
 require explicit confirmation of the resolved plan. Support current schema and
 explicitly shipped older migrations; reject newer/unsupported schemas unchanged.
 Prepare and migrate a complete staged database, fsync it and its manifest, then
-use a recoverable same-volume rename journal. Keep the current database until
+use a recoverable same-volume rename journal. Retain the
+[profile lease](#local-profile-ownership-and-activation) throughout staging,
+replacement and recovery; replace database/settings files without replacing
+their control-directory anchor. Keep the current database until
 the staged restore validates; interrupted startup finishes or rolls back the
 journal deterministically. Never mix database/settings versions. Safety-backup
 failure prevents replacement. Restore all games and runs paused.
@@ -296,12 +558,19 @@ required staging and final space and refuse safely if unavailable.
 
 Retain existing UCI 64 KiB lines, 256 control messages, 1 MiB diagnostic tails,
 20 Hz telemetry, 64 unacknowledged UI events, 5-second handshakes, 2-second stop
-safety deadline, 3-second shutdown and p95 stop target of 1 second. IPC mutation
+safety deadline, 3-second shutdown and p95 stop target of 1 second. Native-message mutation
 idempotency stores the last 1024 request results for 5 minutes per app session;
 expiry requires snapshot reconciliation. Each subscription has a 10-second
 ack deadline before closing with resync required. File/job progress is coalesced
 to 5 Hz. Workbench deadline defaults to 60 seconds, configurable to 10 minutes;
 noninterruptible engine jobs cancel by child termination/reaping.
+
+- **Unmanaged databases (2026-10-17, T325)**: opening a database that has user
+  tables but no Diesel migration table fails with `UnmanagedDatabase` and
+  asks the owner to delete it. This is a refusal guard, not legacy support:
+  no pre-Diesel schema is read, adopted or migrated, and nothing is deleted
+  automatically. It stays so foreign or corrupted files are never migrated
+  in place.
 
 ## Presentation, assets, and input
 
@@ -316,10 +585,10 @@ Bundle Inter variable roman 4.1 with its OFL notice. Use original monochrome SVG
 piece silhouettes for inline figurine notation, with accessible letter labels;
 the board remains fully 3D. Avoid reliance on OS chess-glyph coverage.
 
-Initial window/reset size is 1440x900 CSS pixels, clamped to the usable display
+Initial window/reset size is 1440x900 native logical points, clamped to the usable display
 and the selected 1280x800 minimum; tell the user if a display cannot fit it.
 Navigation widths are 208 expanded/64 collapsed; side panel defaults to 360,
-range 300..560; reserve at least 560 CSS pixels for the board workspace.
+range 300..560; reserve at least 560 native logical points for the board workspace.
 Collapse navigation first, then make the side panel an explicit drawer at widths
 below 1360. Library, Positions, Puzzles, Settings and Workbench are nav entries;
 review/report tools are board-side tabs. Retain last selected layout as approved.
@@ -339,7 +608,7 @@ Remember tilt/yaw offset/zoom separately from game orientation; auto-flip adds
 180 degrees to orientation without rewriting the stored offset. Reset zeroes
 offset and restores 20-degree tilt/1.1 zoom. Keyboard board focus follows
 visual White/Black orientation, independent of free camera yaw; labels and a
-visible orientation compass disclose this. Drag threshold 5 CSS pixels; cancel
+visible orientation compass disclose this. Drag threshold 5 native logical points; cancel
 on Escape, pointer loss, off-board release, phase/revision change, or dialog.
 An accepted move cancels any obsolete animation without delaying the next input.
 
@@ -350,9 +619,10 @@ at Medium. Sample active frame times over 2 seconds; degrade after 3 consecutive
 windows above 20 ms p95, upgrade after 10 windows below 13 ms, with a 30-second
 cooldown. Reduce shadows/effects through tiers first, then render scale in 0.1
 steps down to 0.75; recover resolution before effects. Ignore idle/background
-and loading windows. Manual tiers disable adaptation. GPU baseline: hardware
-WebGL2, max texture dimension at least 4096, working instanced drawing and
-depth textures. Validate integrated Intel UHD 620-class Windows/Linux hardware
+and loading windows. Manual tiers disable adaptation. GPU baseline: hardware rendering through the selected native backend, max
+texture dimension at least 4096, working instancing and depth targets. Native
+Metal/macOS and supported Vulkan/Direct3D on other targets are engine-selected;
+there is no forced Vulkan portability path. Validate integrated Intel UHD 620-class Windows/Linux hardware
 and Apple M1-class macOS rather than inferring speed from feature support.
 Minimum 8 GiB system RAM, 4 logical CPU threads and 6 GB free installation disk,
 plus staging/backup/import space; these are selected validation baselines.
@@ -362,7 +632,7 @@ load errors produce a native interruption of all renderer-dependent live games
 and an explicit Retry screen. Retry has a 10-second initialization deadline;
 no automatic game resume. Failed initial launch shows diagnostic/setup guidance,
 not an empty playable board. Hidden windows stop scene animation; rendering
-failure cannot convert clocks into browser-owned state.
+failure cannot convert clocks into presentation-owned state.
 
 Shortcuts retain approved Cmd/Ctrl+K, N, comma and F. Add Escape cancel,
 Left/Right previous/next and Home/End first/live in focused notation, Space
@@ -392,50 +662,147 @@ snapshotted, not retroactively replaced. Safe runtime option changes retain
 saved-versus-effective indication. Keyboard/screen-reader semantic board,
 VoiceOver/NVDA/Orca, reduced motion, 200% scale and WCAG AA remain acceptance gates.
 
+## Acceptance measurement protocol
+
+This section defines SC-003, SC-004, SC-005 and SC-009 measurements. These are
+acceptance requirements, not recorded benchmark results. Use the declared
+Apple M1-class baseline on macOS ARM64 and Intel UHD 620-class x86-64 baselines
+on Windows and Linux; test both X11 and Wayland on Linux. Record exact CPU/GPU, usable thread count,
+RAM, OS, driver, display refresh/scale, power mode, compiler, lockfile, asset
+and fixture hashes, quality settings, engine configuration and capacity leases.
+Use optimized packaged builds with no test-only renderer or prelaunch helper
+prewarming. Record disk-cache state; a fresh process does not imply a cold OS
+cache. If required timing instrumentation is unavailable, report unverified.
+
+Run each workload five times and report every run. For accepted-move feedback,
+rejected-input feedback and engine stop, collect at least 200 samples per
+applicable workload per run. Sort samples and use the nearest-rank p95 at index
+ceil(0.95 * sample_count), counting from one. Timeouts and slow samples remain
+failures or samples, never omitted successes. Do not average separate runs or
+platforms into a passing percentile. Reference fixtures include both themes,
+supported display scales/orientations, camera bounds, legal/illegal input and
+promotion, plus one maximum-capacity engine search, multiple admitted engine
+games, and search with spare-capacity indexing. Live-game workloads pause reports
+as selected; a separate no-live-game workload covers report/interactive-analysis
+scheduling. Exercise all applicable fixtures within the admitted budget.
+
+Move feedback starts at native receipt of the final click, square activation,
+drag release or promotion choice that submits the move, excluding the player's
+promotion deliberation. It ends at the first actually presented frame showing
+the accepted authoritative move or the beginning of its configured animation.
+A drag preview, selection highlight or input acknowledgment alone does not
+satisfy this criterion. Measure explicit rejected-input feedback separately;
+both p95 limits are 100 ms. Disk-save and animation completion are separate
+measurements. Use correlated native presentation timestamps or equivalent
+display instrumentation, not CPU submission time as proof that feedback
+appeared. A local game's legal moves can supply input samples while another
+admitted engine game consumes search capacity.
+
+For frame pacing, use a nominal 60 Hz display and Automatic quality. Allow at
+most 30 seconds of reported stabilization, then capture at least 60 seconds of
+continuous prescribed board/camera/move activity per run. Measure actual
+presentation-to-presentation intervals; include stalls and missed refreshes
+while work requires frames. Each run's p95 must be at most 16.7 ms. Exclude only
+intentional idle/background intervals, not slow active frames. Record quality
+changes, render scale and GPU/CPU timing separately; CPU frame work alone does
+not establish presentation pacing. Manual tiers are reviewed separately and
+cannot substitute for Automatic acceptance.
+
+For offline launch, the harness records monotonic time immediately before
+spawning the installed executable against a new local-data fixture with bundled
+starter indexes already installed. Submit default New Game/Start immediately
+when enabled, without human reaction time. Stop at the first presented,
+interactive game board with correct clocks, loaded assets and required engine
+readiness/admission. Ownership, schema initialization, resource/pipeline
+preparation and necessary local-data readiness all count. Each of five fresh
+process launches must finish within three seconds. Do not exclude a first-run
+index build or perform mandatory startup work before the start timestamp.
+Record supported existing-data upgrade timing separately; OS installer prompts,
+explicit recovery and user-requested migrations are outside this clean-launch
+fixture, never silently discarded samples from it.
+
+Engine-stop timing starts at application-port receipt of Stop, before queue
+admission, and ends
+after consuming the matching final bestmove/completion and reaching idle with
+that search invalidated. A request acknowledgment or readyok is not completion.
+The normal p95 target is one second; the separate two-second safety deadline
+starts termination/reaping on noncompletion and records a failed/interrupted
+search. Never call forced termination a successful normal stop. The independent
+1,000 controlled stop/change/restart cycles require zero stale mutations even
+when timing fails; no new lease is granted before the old work releases it.
+
+For idle CPU, use an unchanged foreground workspace with no live games,
+searches, reports, imports, countdowns, animations, transfers or due backups;
+settle for 10 seconds, then take five independent 60-second intervals. Include
+the main process and every owned helper/child, all worker threads and render
+activity. CPU percent is 100 * summed user-and-kernel CPU seconds / elapsed
+monotonic seconds, using one logical core as denominator without dividing by
+machine capacity. Every interval must be below 1%; report wakeups and rendered
+frames too. Record compositor/GPU activity separately rather than hiding app
+CPU work in a presentation-only sample.
+
+Compare one assigned engine/CPU-work worker with the maximum admitted
+allocation on identical fixed inputs; native host/framework reservations remain
+in force in both cases. Report throughput, latency, peak application/child/hash
+memory and GPU allocations separately. Correctness, preserved state and budget
+admission must match in both configurations; more threads are not proof of
+better scaling.
+
 ## Supporting libraries and interface completion
 
-Select the versions in [research](research.md#final-resolution-research) as design
-pins, with compatibility and lockfile resolution during implementation. Retain
-Rust 1.99.0. Use bundled rusqlite, Serde, schemars draft-07 JSON Schema,
-json-schema-to-ts for generated wire types and Ajv strict validation. Generate
-from one Rust DTO schema, with comment-free output. Use Tauri's existing Tokio
-runtime, one capacity-coordinated Rayon executor for CPU work, native reqwest
-for private downloads, and keyring backed by Keychain/Windows Credential Manager/
-Linux Secret Service. If no Linux credential service is available, show an
-update-auth setup error, with session-only token entry as an explicit action;
-never silently persist plaintext. Keep tokens out of WebView payloads after
-native entry, logs, exports and backups. Bun is the script/package runtime;
-validate Vite/ESLint/Vitest behavior on Bun against the selected pins.
+**Native revision**: Select Bevy 0.20.0 + bevy_egui 0.43.1 under owner delegation
+after the owner requested help choosing and could not select. It replaces the
+previous eframe proposal, preserving egui and all product behavior. Native API
+selection remains automatic through Bevy/wgpu, including Metal on macOS and
+Vulkan/Direct3D where supported. No forced Vulkan or Glow/three-d path remains.
+[Renderer research](research.md#native-egui-renderer-and-integration) owns exact
+compatibility, alternatives, source findings and native acceptance limits.
 
-Use Vitest browser tests with Playwright and Vue Test Utils, plus WebdriverIO's
-stable Tauri service and test-only native WebDriver plugin on packaged targets.
-No beta-only testing dependency or release automation listener is selected.
-Preserve canonical make verify ordering; extend it for frontend formatting,
-schema drift, strict vue-tsc, zero-warning ESLint, tests, and builds. Pin actual
-supporting dependency versions and hashes in lockfiles when adding them; verify
-stable tags and compatibility rather than guessing unresearched patch numbers.
+Retain Rust 1.99.0 and existing domain/clock/storage/engine/capacity components.
+Persistence uses Diesel; bounded CSV records use csv-core; enum string tables use
+strum unless the enum is a database column. Owned infrastructure remains only
+where research finds no suitable maintained library.
+Share native Rust command/event types between UI and application. Serde and
+schemars remain for external/persisted files, without generated TypeScript or
+Ajv on an in-process UI boundary. Replace Tauri runtime and service ownership
+with explicit root-owned runtime/OS adapters. Current native dependency options,
+source/API evidence and test limits live in [research](research.md#final-resolution-research).
+Profile locking uses the pinned standard library; local activation and native
+security adapters follow [ownership research](research.md#local-profile-ownership-and-activation).
 
-Extend desktop IPC with typed ID/revision/preview operations: library query/
-organize/trash/restore/delete, editor new/update/validate/save/list/delete,
-notes save, variation promote/delete, markings save, report start/cancel/read/
-list, corpus preview/apply/query, book preview/apply/query, puzzle import/filter/
-start/move/hint/skip/next/pause/resume/end/history/delete, backup create/list/
-preview/restore, renderer failed/retry status, and update check/approve-download/
-cancel/retry/install/credential-status. Mutation payloads carry expected entity
-revision; preview/apply pairs carry immutable preview IDs and digest. Rust owns
-file handles and update credentials. Result envelopes and streams retain the
-existing correlation/backpressure contract. Do not add raw command strings or
-generic filesystem execution to accommodate these operations.
+Use bounded application actors, the existing shared CPU executor, reqwest private
+streaming and keyring credential adapters. Linux without a credential service
+shows setup status and permits explicit session-only credentials, never silent
+plaintext persistence. Secrets stay outside general UI snapshots/logs/exports/
+backups. Native logical points preserve the selected window/layout sizes.
+
+Matching egui_kittest 0.36.0 semantic/input tests, Bevy adapter tests, native
+Bevy screenshots, OS lifecycle and real screen-reader checks replace browser
+tests after migration. Enable plugin AccessKit and Linux platform support;
+explicitly bridge native accessibility actions into egui. A native migration
+acceptance slice must prove lifecycle, GPU-init/recovery and shared task-pool
+integration before those facilities are accepted as implemented. Existing Makefile commands still execute the former implementation;
+change their definitions only during verified migration.
+
+Extend typed desktop operation families for library organization/imports,
+editor drafts, notes/variations/markings, reports, corpora/books, puzzles,
+backups, rendering interruption/retry and update credential/check/download/install
+state. Mutations carry expected entity revisions. Preview/apply pairs retain
+immutable preview identity and digest. [Desktop messages](contracts/desktop-ipc.md)
+own complete envelopes, delivery bounds and command semantics.
 
 ## Updater completion and zero-cost CI
 
-Use stable Tauri updater 2.14.0 after source-pinned integration validation.
+Use the native updater composition in [packaging](contracts/packaging.md#desktop-ota-and-github-actions):
+cargo-packager 0.11.8 installers, reqwest 0.13.5 async transport, keyring 4.2.0,
+minisign-verify 0.3.0 signed-manifest verification and minisign 0.10.0 release
+tooling. No Tauri updater runtime remains in the final app.
 Authenticated GitHub API discovery maps manifests and target assets to verified
 release asset IDs; reject arbitrary manifest origins and never forward tokens
 to a different origin on redirect. Follow signed asset redirects without the
 GitHub Authorization header. Check version, target, length limit, digest and
-Tauri signature. HTTPS only, no downgrade, no prerelease channel. Release tags
-must match Cargo/Tauri/UI versions. Download to a bounded private staging file,
+signed-manifest payload binding. HTTPS only, no downgrade, no prerelease channel. Release tags
+must match Cargo/package/signed-manifest versions. Download to a bounded private staging file,
 fsync and rename on successful validation; incomplete attempt files are deleted
 on failure/cancel/relaunch. Keep at most one completed current version and one
 replacement in progress. Keep the completed old version until replacement
@@ -516,16 +883,16 @@ claiming that profile verified.
 | Requirements | Owning contracts and validation focus |
 | --- | --- |
 | FR-001, FR-002, FR-003 | Game/clock model, engine protocol and UI; legal fixtures, clocks, claims, takebacks, premoves, concurrent games and exact-adjudication gate |
-| FR-004 | Study tools and storage decisions; library organization, PGN/FEN, notes/variations, staging, round trips and Trash |
+| FR-004 | Study tools, storage and profile ownership; library/interchange/Trash, data continuity, exclusive startup and activation without competing writers |
 | FR-005, FR-006 | Capability inventory, workbench and packaging; every pinned usable operation/profile and disclosed unsupported facilities |
-| FR-007, FR-008, FR-009, FR-010 | Engine protocol, IPC, capacity and report scheduler; scores, limits, correlation, bounded cancellation and shared CPU/hash |
+| FR-007, FR-008, FR-009, FR-010 | Engine protocol, desktop messages, capacity and report scheduler; scores, limits, correlation, bounded cancellation and shared CPU/hash |
 | FR-011, FR-012 | UI and presentation decisions; premium 3D, motion/camera/quality, keyboard/accessibility and actual frame/input measurements |
 | FR-013, FR-014, FR-015, FR-016 | Packaging, storage and lifecycle; target installers, offline use, durable recovery, notices/identity and no account/telemetry requirement |
 | FR-017 | Editor and board model; structural validation, invalid drafts, controls, FEN and explicit start |
 | FR-018 | Study tools and report decisions; versioned scoring, exact source correlation, jobs, partial/outdated states and review |
 | FR-019, FR-020 | Explorer/book and dataset decisions; exact statistics, filtering/deduplication, source identity, legal Polyglot and study-only behavior |
 | FR-021, FR-022 | Puzzle/study and provenance decisions; CSV/setup move, listed solutions, hints, timers, persistence, full offline extras and no silent scope reduction |
-| FR-023, FR-024 | UI/IPC/presentation; settings apply/import/reset, palette, remapping, audio lifecycle and safe resource controls |
+| FR-023, FR-024 | Native UI/messages/presentation; settings apply/import/reset, palette, remapping, audio lifecycle and safe resource controls |
 | FR-025 | Storage/backup decisions; retention, consistent snapshots, path review and interruption-safe confirmed restore |
 | FR-026 | Packaging/updater and zero-cost CI; private authenticated signed delivery, cache, approval, safeguards, native handoff and verified billing hard stops |
 
@@ -542,12 +909,15 @@ this allocation does not mark any unimplemented behavior as tested.
 | Data provenance | Actual frozen source manifests/hashes, CC0 section-specific notices, master title filtering, puzzle setup-move tests and total installed bytes below cap |
 | Assets | Original GLB/sound provenance, Inter OFL and packaged font identity, premium visual review at all allowed camera views |
 | Performance | Selected hardware/OS records, one/max-worker runs, p95 latency/stop/frame times, memory/admission allowances and idle CPU; no timing claims yet |
-| Desktop | Minimum OS/WebView compatibility, accessibility, context recovery, sleep, precise clocks, native installer and manual OS approval on actual targets |
+| Desktop | Minimum OS/GPU/window compatibility, accessibility, context recovery, sleep, precise clocks, native installer and manual OS approval on actual targets |
+| Profile ownership | Simultaneous launch exclusion, authenticated bounded activation, unresponsive owner refusal, stable lock through restore/quit and gap-free installer intent; actual Windows/macOS/X11/Wayland focus behavior |
 | Updater | Pinned-source tests of private discovery/redirects/token handling, stable signatures, cache/timing/network-cost states, .deb handoff, interrupted migration/backup/install recovery |
 | CI and budget | Actual free allowance and hard-stop controls, native ARM Mac runner availability within allowance, storage/asset-limit checks; block workflow activation if not established |
 | Engine licensing | Preserve AGPL/Fathom notices and model provenance; no external conveyance without resolving the separate NNUE model-license issue |
 
-These are implementation and release validation obligations, not unanswered owner
-preferences. Failure of a gate cannot silently remove an approved feature or
-justify a claim that the application has been tested. The plan is ready for task
-generation; neither application implementation nor release readiness is claimed.
+Bevy + egui resolves the scene-engine choice under owner delegation. Gates in
+this table remain implementation/release obligations, not unresolved preferences.
+Failure of a gate cannot silently remove an approved feature or justify a claim
+that the application has been tested. The reconciled [implementation tasks](tasks.md)
+allocate this native design and its evidence gates. Partial implementation exists;
+no native migration or release readiness is claimed.

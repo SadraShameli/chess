@@ -1,7 +1,16 @@
 # Owner Decision Review
 
-**Status**: Planning decisions resolved under explicit owner delegation; ready
-for task generation. Runtime and release acceptance remain unperformed.
+**Status**: Native Bevy + egui architecture selected under owner delegation on
+2026-10-16; existing implementation and task history preserved. Native migration
+and full runtime/release acceptance remain unperformed.
+
+The owner requested native egui, then an engine selecting native GPU APIs, and
+could not choose among the researched alternatives. The assistant selects Bevy
++ bevy_egui under the owner's earlier instruction to pick the best recommendation.
+This replaces eframe as host; it is recorded as a delegated selection rather than
+an explicit quoted Bevy answer. The latest backend preference permits automatic
+Metal/Vulkan/Direct3D selection, without forcing Vulkan. All product behavior is
+preserved. Former CSS dimensions map to native logical points under OS scaling.
 
 ## Confirmed decisions
 
@@ -11,7 +20,7 @@ for task generation. Runtime and release acceptance remain unperformed.
 | Engine | Reckless, with complete usable feature coverage |
 | First-release modes | Offline engine play, analysis, local two-player |
 | Application extras | All eight feature groups, including both opening explorer and opening book |
-| Stack | Tauri 2, Vue, Tailwind CSS, shadcn, Bun, ESLint, Prettier |
+| Stack | Bevy + bevy_egui in native Rust, selected under delegation; replaces eframe and former Tauri/Vue tooling |
 | Windows minimum | Windows 11, x86-64 |
 | macOS minimum | macOS 14+, Apple Silicon only |
 | Linux minimum | Ubuntu 22.04+, x86-64 only; Linux ARM64 removed by owner |
@@ -22,7 +31,7 @@ for task generation. Runtime and release acceptance remain unperformed.
 | UI-01: Visual direction | Dark-first premium style with richer effects and animation, plus a light theme |
 | BOOK-01: Opening book | Opening study only; never supplies opponent moves |
 | STORE-01: Storage | SQLite for indexed data, with PGN/FEN import/export |
-| TOOL-01: Frontend tooling | Strict TypeScript with Vite |
+| TOOL-01: Frontend tooling | Superseded by native Rust/Cargo UI; no TypeScript/Vite app pipeline in final architecture |
 | DATA-03: Import formats | PGN opening games/studies, Polyglot .bin opening books, puzzle CSV |
 | PUZ-01: Puzzle experience | Theme/difficulty filters, hints, retries, solution review, saved progress, and timed sessions |
 | REPORT-01: Report initiation | Automatically after each game played in the app completes; imported completed games require explicit request under REPORT-05 |
@@ -50,7 +59,7 @@ for task generation. Runtime and release acceptance remain unperformed.
 | UI-09: Animation defaults | Configurable 180 ms piece moves, 160 ms panel transitions, subtle elevation; respect reduced motion and responsiveness |
 | UI-10: Rendering | Real-time 3D board and pieces with camera rotation and zoom |
 | UI-11: Piece materials | Ivory and ebony with subtle satin highlights |
-| UI-12: Minimum window | 1280x800 CSS pixels, with panel reflow/collapse as needed |
+| UI-12: Minimum window | 1280x800 native logical points, preserving apparent size; panel reflow/collapse retained |
 | UI-13: Default camera | Lightly tilted readable perspective; exact initial tilt and framing confirmed in CAMERA-02 through CAMERA-04 |
 | UI-14: Pointer controls | Normal piece dragging; right-drag draws; visible controls rotate/zoom the camera |
 | UI-15: View scope | 3D only; no selectable or fallback 2D board |
@@ -181,7 +190,7 @@ for task generation. Runtime and release acceptance remain unperformed.
 | ANNOT-05: Temporary marks | Clear unsaved temporary arrows/circles when selected board position changes; saved marks remain attached |
 | ANNOT-06: Branch deletion | Confirm deletion explicitly identifying the entire analysis branch and descendants; cannot remove running-game played history |
 | UI-20: Drawing gestures | Right-click toggles circle; right-drag toggles arrow; repeating same marking removes it; camera remains on visible controls |
-| UI-21: Drawing colors | Green/red/blue/yellow, initially green; exact shades/modifiers pending |
+| UI-21: Drawing colors | Green/red/blue/yellow, initially green; exact shades/modifiers selected in decisions.md; native input validation remains |
 | PLAY-21: Premoves | One queued premove against Reckless; configurable and initially disabled; revalidate after engine move |
 | PLAY-22: Premove clock | Charge actual elapsed time with no added fixed minimum; normal increment/delay still applies |
 | PLAY-23: Premove promotion | Choose promotion piece before queueing, supporting all four pieces |
@@ -195,9 +204,9 @@ for task generation. Runtime and release acceptance remain unperformed.
 | PLAY-28: Presets | Untimed, 1+0, 2+1, 3+0, 3+2, 5+0, 5+3, 10+0, 10+5, 15+10, 30+0; custom controls retained; initial 10+5 |
 | UI-24: Coordinates | Initially always visible around board, following orientation; configurable |
 | UI-25: Layout persistence | Remember window size/position, navigation collapse, panel widths, selected side-panel tab; Reset Layout; fit current displays/minimum size |
-| GFX-03: Renderer | Direct Three.js 0.186.1 inside Vue with dedicated scene controller; native compatibility/performance validation remains |
-| GFX-04: Backend | WebGL2 for first release, following owner fallback choice; native Vulkan/ImGui not selected |
-| GFX-05: Automatic quality | Adapt during use to sustained frame-time changes, preventing rapid quality switching; thresholds/presets pending |
+| GFX-03: Renderer | Bevy scene/PBR/assets with bevy_egui panels, selected under delegation; preserved backend and GLB assets |
+| GFX-04: Backend | Automatic native Bevy/wgpu selection: Metal/macOS, supported Vulkan/Direct3D elsewhere; no forced Vulkan |
+| GFX-05: Automatic quality | Adapt during use to sustained frame-time changes, preventing rapid quality switching; thresholds/presets selected in decisions.md; measurements remain |
 | GFX-06: Frame target | Initially target 60 fps during active rendering; measured platform acceptance remains outstanding |
 | GFX-07: Idle rendering | On-demand 3D rendering; stop continuous scene frames while unchanged; clocks update separately |
 | GFX-08: Quality priority | Reduce shadows/effects before internal resolution, preserving crisp board rendering as long as possible |
@@ -212,7 +221,7 @@ for task generation. Runtime and release acceptance remain unperformed.
 | NOTATION-01: Display | Offer standard letters and figurines; initially letters; PGN retains standard letters |
 | AUDIO-03: Routing | Selected-game move/check sounds; result/low-time alerts from all live games while foregrounded; respect mute/background silence |
 | AUDIO-04: Priority | For one move play result over check over ordinary move; do not layer those events |
-| AUDIO-05: Controls | Master volume plus independent move/check/result/low-time volume and enable controls; initial values pending |
+| AUDIO-05: Controls | Master volume plus independent move/check/result/low-time volume and enable controls; initial values selected in decisions.md |
 | AUDIO-06: Levels | Initially 70% master and 100% each category, combined multiplicatively; configurable |
 | AUDIO-07: Background | Suppress sounds whenever no app-owned window is focused, including minimized/hidden; live games/clocks continue |
 | AUDIO-08: Suppression | Discard muted/background sound events; never replay on focus return or unmute |
@@ -251,7 +260,7 @@ for task generation. Runtime and release acceptance remain unperformed.
 | PKG-02: macOS signing | Locally ad-hoc-signed personal macOS builds without Developer ID/notarization; document and validate manual OS approval |
 | PKG-03: Installers | Windows NSIS .exe installer; macOS Apple Silicon .dmg containing the app; matching OTA artifacts require validation |
 | COST-01: Budget | No payments for anything for now; signing, CI, hosting, assets, and data must fit this constraint; no paid setup authorized |
-| PKG-05: Windows runtime | Bundle the offline Evergreen WebView2 installer; integration and redistribution require validation |
+| PKG-05: Windows runtime | Former WebView2 requirement superseded by native app; validate native graphics driver/runtime prerequisites |
 | PKG-06: Linux prerequisites | Permit internet-assisted installation of missing system dependencies; document offline preparation; app remains offline after installation |
 | PKG-04: Linux formats | Both .deb and AppImage, x86-64 only; validate AppImage OTA and define a separate supported .deb update path |
 | PKG-07: .deb updates | Download and verify the .deb; after confirmed pause/save/backup, open the system installer and request OS approval where required; validate integration |
@@ -298,8 +307,9 @@ to a chess game is separate from the owner's prohibition on authored code commen
 
 ## Current questions awaiting answers
 
-None. The owner explicitly delegated all subsequent choices to the assistant.
-This replaces the previous requirement to ask about every open preference.
+None. After the owner could not choose, select Bevy + egui under the existing
+recommendation delegation. Engine comparison is resolved in research.md; native
+execution and release gates remain evidence work rather than preference questions.
 
 ## Final delegated resolutions
 
@@ -324,6 +334,19 @@ remain separately selectable, with combined-query deduplication. This source
 selection is an assistant decision under delegation, not an earlier owner answer.
 
 ## Readiness and remaining evidence
+
+The subsequent clarification selected one writable owner per existing local
+profile, with second-launch activation and no takeover of an unreachable live
+owner. It was chosen under the same prior delegation, not a new owner response.
+Story 9.8, FR-004 and SC-006 now map to
+[the ownership design](decisions.md#local-profile-ownership-and-activation),
+[activation contract](contracts/desktop-ipc.md#local-activation-interface) and
+[helper handoff](contracts/packaging.md#profile-ownership-during-installation).
+The plan acquires OS exclusion before mutable initialization and retains it
+through restore/shutdown; durable installation intent closes the helper gap.
+Actual OS locking, authenticated activation and focus/installer outcomes remain
+native acceptance work. Existing implementation, index and task status are
+preserved by this planning revision.
 
 Planning decisions are resolved and task generation can proceed. The
 [release evidence register](decisions.md#release-evidence-register) separates

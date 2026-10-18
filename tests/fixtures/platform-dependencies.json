@@ -1,0 +1,27 @@
+{
+  "required": [
+    { "name": "pieces", "path": "pieces/chess.glb", "failure": "interruption" },
+    { "name": "engine-manifest", "path": "engine/manifest.json", "failure": "interruption" }
+  ],
+  "optional": [
+    { "name": "sounds", "path": "sounds", "failure": "feature-local" },
+    { "name": "licenses", "path": "licenses", "failure": "feature-local" },
+    { "name": "credential-service", "path": null, "failure": "feature-local" },
+    { "name": "desktop-portal", "path": null, "failure": "feature-local" },
+    { "name": "audio-device", "path": null, "failure": "feature-local" },
+    { "name": "tablebases", "path": null, "failure": "feature-local" }
+  ],
+  "dataset_local": ["starter-openings", "starter-puzzles"],
+  "dependencies": [
+    { "name": "graphics", "class": "interruption" },
+    { "name": "fonts", "class": "interruption" },
+    { "name": "shaders", "class": "interruption" },
+    { "name": "pieces", "class": "interruption" },
+    { "name": "engine", "class": "interruption" },
+    { "name": "credentials", "class": "feature-local" },
+    { "name": "portal", "class": "feature-local" },
+    { "name": "audio", "class": "feature-local" },
+    { "name": "tablebases", "class": "feature-local" },
+    { "name": "starter-dataset", "class": "dataset-local" }
+  ]
+}

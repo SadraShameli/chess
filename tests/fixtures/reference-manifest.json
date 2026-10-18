@@ -1,0 +1,1621 @@
+{
+  "schema": 1,
+  "statuses": {
+    "scenario": "tests named for this scenario",
+    "story-level": "tests of the owning story; per-scenario assertions not yet attributed",
+    "pending": "owning feature not implemented"
+  },
+  "scenarios": [
+    {
+      "id": "US1-1",
+      "story": 1,
+      "scenario": 1,
+      "summary": "**Given** a fresh offline installation, **When** the player starts a game,",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-2",
+      "story": 1,
+      "scenario": 2,
+      "summary": "**Given** legal castling, en passant, or promotion, **When** the move is",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-3",
+      "story": 1,
+      "scenario": 3,
+      "summary": "**Given** checkmate, stalemate, an automatic draw, a valid draw claim,",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-4",
+      "story": 1,
+      "scenario": 4,
+      "summary": "**Given** a supported Fischer-random start, **When** either side castles,",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-5",
+      "story": 1,
+      "scenario": 5,
+      "summary": "**Given** a timed game, **When** either side moves, **Then** its clock and",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-6",
+      "story": 1,
+      "scenario": 6,
+      "summary": "**Given** a claimable human draw, **When** Claim Draw is validated, **Then**",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-7",
+      "story": 1,
+      "scenario": 7,
+      "summary": "**Given** a running game, **When** a takeback is accepted, **Then** the required",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US1-8",
+      "story": 1,
+      "scenario": 8,
+      "summary": "**Given** a queued premove, **When** Reckless replies, **Then** a still-legal",
+      "fixtures": [
+        "tests/fixtures/positions.json",
+        "tests/fixtures/adjudication.json",
+        "tests/fixtures/mate_proof.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/game/result.rs",
+        "tests/game/session.rs",
+        "tests/game/mate_proof.rs",
+        "tests/clock/state.rs",
+        "tests/game/pause.rs",
+        "tests/game/takeback.rs",
+        "tests/game/premove.rs",
+        "tests/engine/live_game.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us1.md"
+    },
+    {
+      "id": "US2-1",
+      "story": 2,
+      "scenario": 1,
+      "summary": "**Given** a position under analysis, **When** engine results arrive, **Then**",
+      "fixtures": [
+        "tests/fixtures/engine-capabilities.json"
+      ],
+      "tests": [
+        "tests/engine/analysis.rs",
+        "tests/engine/options.rs",
+        "tests/engine/capabilities.rs",
+        "tests/engine/lifecycle.rs",
+        "tests/engine/tablebase.rs",
+        "tests/engine/workbench.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/engine-capability-coverage.md"
+    },
+    {
+      "id": "US2-2",
+      "story": 2,
+      "scenario": 2,
+      "summary": "**Given** a running search, **When** the player stops or changes positions,",
+      "fixtures": [
+        "tests/fixtures/engine-capabilities.json"
+      ],
+      "tests": [
+        "tests/engine/analysis.rs",
+        "tests/engine/options.rs",
+        "tests/engine/capabilities.rs",
+        "tests/engine/lifecycle.rs",
+        "tests/engine/tablebase.rs",
+        "tests/engine/workbench.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/engine-capability-coverage.md"
+    },
+    {
+      "id": "US2-3",
+      "story": 2,
+      "scenario": 3,
+      "summary": "**Given** a supported advanced setting, **When** a valid value is applied,",
+      "fixtures": [
+        "tests/fixtures/engine-capabilities.json"
+      ],
+      "tests": [
+        "tests/engine/analysis.rs",
+        "tests/engine/options.rs",
+        "tests/engine/capabilities.rs",
+        "tests/engine/lifecycle.rs",
+        "tests/engine/tablebase.rs",
+        "tests/engine/workbench.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/engine-capability-coverage.md"
+    },
+    {
+      "id": "US2-4",
+      "story": 2,
+      "scenario": 4,
+      "summary": "**Given** compatible local tablebases, **When** probing is enabled, **Then**",
+      "fixtures": [
+        "tests/fixtures/engine-capabilities.json"
+      ],
+      "tests": [
+        "tests/engine/analysis.rs",
+        "tests/engine/options.rs",
+        "tests/engine/capabilities.rs",
+        "tests/engine/lifecycle.rs",
+        "tests/engine/tablebase.rs",
+        "tests/engine/workbench.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/engine-capability-coverage.md"
+    },
+    {
+      "id": "US2-5",
+      "story": 2,
+      "scenario": 5,
+      "summary": "**Given** a diagnostic or build-specific capability, **When** its workbench",
+      "fixtures": [
+        "tests/fixtures/engine-capabilities.json"
+      ],
+      "tests": [
+        "tests/engine/analysis.rs",
+        "tests/engine/options.rs",
+        "tests/engine/capabilities.rs",
+        "tests/engine/lifecycle.rs",
+        "tests/engine/tablebase.rs",
+        "tests/engine/workbench.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/engine-capability-coverage.md"
+    },
+    {
+      "id": "US3-1",
+      "story": 3,
+      "scenario": 1,
+      "summary": "**Given** local two-player mode, **When** either side moves, **Then** the same",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/game/rules.rs",
+        "tests/desktop/local_play.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-2",
+      "story": 3,
+      "scenario": 2,
+      "summary": "**Given** an annotated game, **When** it is imported and exported, **Then**",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/notation/interchange.rs",
+        "tests/notation/pgn_export.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-3",
+      "story": 3,
+      "scenario": 3,
+      "summary": "**Given** a saved game or application restart, **When** it is reopened,",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/storage/library_played.rs",
+        "tests/desktop/library_service.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-4",
+      "story": 3,
+      "scenario": 4,
+      "summary": "**Given** historical navigation during play, **When** an earlier position is",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/notation/interchange.rs",
+        "tests/notation/pgn_import.rs",
+        "tests/notation/pgn_export.rs",
+        "tests/storage/library.rs",
+        "tests/storage/library_import.rs",
+        "tests/storage/library_trash.rs",
+        "tests/game/annotations.rs",
+        "tests/desktop/library_service.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-5",
+      "story": 3,
+      "scenario": 5,
+      "summary": "**Given** an existing annotated game and a matching import, **When** the import",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/storage/library_import.rs",
+        "tests/storage/import_session.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-6",
+      "story": 3,
+      "scenario": 6,
+      "summary": "**Given** an organized library, **When** the player searches, filters, sorts,",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/notation/interchange.rs",
+        "tests/notation/pgn_import.rs",
+        "tests/notation/pgn_export.rs",
+        "tests/storage/library.rs",
+        "tests/storage/library_import.rs",
+        "tests/storage/library_trash.rs",
+        "tests/game/annotations.rs",
+        "tests/desktop/library_service.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-7",
+      "story": 3,
+      "scenario": 7,
+      "summary": "**Given** a game in Trash, **When** Restore is selected, **Then** it returns",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/notation/interchange.rs",
+        "tests/notation/pgn_import.rs",
+        "tests/notation/pgn_export.rs",
+        "tests/storage/library.rs",
+        "tests/storage/library_import.rs",
+        "tests/storage/library_trash.rs",
+        "tests/game/annotations.rs",
+        "tests/desktop/library_service.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-8",
+      "story": 3,
+      "scenario": 8,
+      "summary": "**Given** a PGN with an invalid variation, **When** import is previewed,",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/notation/interchange.rs",
+        "tests/notation/pgn_import.rs",
+        "tests/notation/pgn_export.rs",
+        "tests/storage/library.rs",
+        "tests/storage/library_import.rs",
+        "tests/storage/library_trash.rs",
+        "tests/game/annotations.rs",
+        "tests/desktop/library_service.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US3-9",
+      "story": 3,
+      "scenario": 9,
+      "summary": "**Given** unsaved notes or a proposed branch deletion or promotion, **When**",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/notation/interchange.rs",
+        "tests/notation/pgn_import.rs",
+        "tests/notation/pgn_export.rs",
+        "tests/storage/library.rs",
+        "tests/storage/library_import.rs",
+        "tests/storage/library_trash.rs",
+        "tests/game/annotations.rs",
+        "tests/desktop/library_service.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us3.md"
+    },
+    {
+      "id": "US4-1",
+      "story": 4,
+      "scenario": 1,
+      "summary": "**Given** a resized window, changed display scale or move between displays,",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-2",
+      "story": 4,
+      "scenario": 2,
+      "summary": "**Given** either theme, **When** selection, check, a move, or an error is",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-3",
+      "story": 4,
+      "scenario": 3,
+      "summary": "**Given** keyboard-only input, **When** starting a game, selecting a move,",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-4",
+      "story": 4,
+      "scenario": 4,
+      "summary": "**Given** reduced-motion preferences, **When** a piece moves, **Then** its",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-5",
+      "story": 4,
+      "scenario": 5,
+      "summary": "**Given** any permitted camera pose, **When** the player rotates, tilts or",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-6",
+      "story": 4,
+      "scenario": 6,
+      "summary": "**Given** a customized layout and camera, **When** the app reopens on a",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-7",
+      "story": 4,
+      "scenario": 7,
+      "summary": "**Given** Automatic quality during sustained slow frames, **When** quality",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US4-8",
+      "story": 4,
+      "scenario": 8,
+      "summary": "**Given** a supported screen reader and either board orientation, **When**",
+      "fixtures": [],
+      "tests": [
+        "tests/presentation/board.rs",
+        "tests/presentation/shortcuts.rs",
+        "tests/presentation/settings.rs",
+        "tests/presentation/audio.rs",
+        "tests/scene/camera.rs",
+        "tests/scene/picking.rs",
+        "tests/scene/quality.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US5-1",
+      "story": 5,
+      "scenario": 1,
+      "summary": "**Given** a clean supported target installation, **When** it launches offline,",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-2",
+      "story": 5,
+      "scenario": 2,
+      "summary": "**Given** CPU or optional-system limitations, **When** an engine package is",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-3",
+      "story": 5,
+      "scenario": 3,
+      "summary": "**Given** an engine exit, timeout, or invalid response, **When** it occurs,",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-4",
+      "story": 5,
+      "scenario": 4,
+      "summary": "**Given** the engine information view, **When** opened, **Then** exact version,",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-5",
+      "story": 5,
+      "scenario": 5,
+      "summary": "**Given** an engine or graphics failure, **When** Retry succeeds, **Then**",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-6",
+      "story": 5,
+      "scenario": 6,
+      "summary": "**Given** a live game that was saved before an unexpected exit, **When** the",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-7",
+      "story": 5,
+      "scenario": 7,
+      "summary": "**Given** missing graphics support, corrupt presentation assets or an",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US5-8",
+      "story": 5,
+      "scenario": 8,
+      "summary": "**Given** compatible local data from an earlier application version, **When**",
+      "fixtures": [
+        "tests/fixtures/platform-dependencies.json",
+        "tests/fixtures/migrations"
+      ],
+      "tests": [
+        "tests/desktop/installation.rs",
+        "tests/desktop/profile_lease.rs",
+        "tests/desktop/recovery.rs",
+        "tests/storage/migration_continuity.rs",
+        "tests/storage/schema.rs",
+        "tests/engine/package_selection.rs"
+      ],
+      "coverage": "story-level",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us5.md"
+    },
+    {
+      "id": "US6-1",
+      "story": 6,
+      "scenario": 1,
+      "summary": "**Given** the editor, **When** pieces, turn, and castling state are changed,",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/board/editor.rs",
+        "tests/presentation/editor.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US6-2",
+      "story": 6,
+      "scenario": 2,
+      "summary": "**Given** an invalid position, **When** validation is requested, **Then** its",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/presentation/editor.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US6-3",
+      "story": 6,
+      "scenario": 3,
+      "summary": "**Given** an annotated branch, **When** the game is saved or exported,",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/game/annotations.rs",
+        "tests/notation/pgn_export.rs",
+        "tests/notation/interchange.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US6-4",
+      "story": 6,
+      "scenario": 4,
+      "summary": "**Given** an invalid draft, **When** it is saved and reopened, **Then** its",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/presentation/app_editor.rs",
+        "tests/storage/editor_repository.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US6-5",
+      "story": 6,
+      "scenario": 5,
+      "summary": "**Given** a valid draft, **When** Play from Position is selected, **Then**",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/presentation/app_editor.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US6-6",
+      "story": 6,
+      "scenario": 6,
+      "summary": "**Given** unsaved draft edits, **When** the player leaves or imports a FEN,",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/presentation/editor.rs",
+        "tests/presentation/app_editor.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US6-7",
+      "story": 6,
+      "scenario": 7,
+      "summary": "**Given** edits in the current editor session, **When** Undo, Redo, Clear Board",
+      "fixtures": [
+        "tests/fixtures/positions.json"
+      ],
+      "tests": [
+        "tests/presentation/editor/keyboard.rs",
+        "tests/presentation/editor.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us6.md"
+    },
+    {
+      "id": "US7-1",
+      "story": 7,
+      "scenario": 1,
+      "summary": "**Given** a game, **When** a report completes, **Then** each reported move",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-2",
+      "story": 7,
+      "scenario": 2,
+      "summary": "**Given** report cancellation, **When** the job stops, **Then** completed and",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-3",
+      "story": 7,
+      "scenario": 3,
+      "summary": "**Given** an opening corpus, **When** a position is selected, **Then** its",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-4",
+      "story": 7,
+      "scenario": 4,
+      "summary": "**Given** an opening book, **When** a book position is inspected, **Then**",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-5",
+      "story": 7,
+      "scenario": 5,
+      "summary": "**Given** a move-quality finding, **When** it is clicked, **Then** the board",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-6",
+      "story": 7,
+      "scenario": 6,
+      "summary": "**Given** a selected position, **When** the player switches between move list,",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-7",
+      "story": 7,
+      "scenario": 7,
+      "summary": "**Given** a queued report, **When** another live game runs, **Then** report",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-8",
+      "story": 7,
+      "scenario": 8,
+      "summary": "**Given** an imported completed game or an edited main line, **When** reports",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-9",
+      "story": 7,
+      "scenario": 9,
+      "summary": "**Given** overlapping opening datasets with unknown results or repeated",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US7-10",
+      "story": 7,
+      "scenario": 10,
+      "summary": "**Given** a study-only book move or a zero-weight position, **When** it is",
+      "fixtures": [],
+      "tests": [
+        "tests/opening/explorer.rs",
+        "tests/opening/book.rs",
+        "tests/opening/index.rs",
+        "tests/report/service.rs",
+        "tests/report/scoring.rs",
+        "tests/presentation/report.rs",
+        "tests/presentation/opening.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-1",
+      "story": 8,
+      "scenario": 1,
+      "summary": "**Given** a valid puzzle, **When** the player follows an accepted solution,",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-2",
+      "story": 8,
+      "scenario": 2,
+      "summary": "**Given** an incorrect or illegal attempt, **When** it is submitted,",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-3",
+      "story": 8,
+      "scenario": 3,
+      "summary": "**Given** invalid puzzle data, **When** it is loaded, **Then** validation",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-4",
+      "story": 8,
+      "scenario": 4,
+      "summary": "**Given** a timed active puzzle, **When** focus is lost, sleep occurs or the",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-5",
+      "story": 8,
+      "scenario": 5,
+      "summary": "**Given** a listed solution, **When** the player requests progressive hints,",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-6",
+      "story": 8,
+      "scenario": 6,
+      "summary": "**Given** failure followed by a practice solve, **When** the session summary",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-7",
+      "story": 8,
+      "scenario": 7,
+      "summary": "**Given** either timer mode, **When** it expires, **Then** the selected",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-8",
+      "story": 8,
+      "scenario": 8,
+      "summary": "**Given** an exhausted filtered collection, **When** progress is shown,",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US8-9",
+      "story": 8,
+      "scenario": 9,
+      "summary": "**Given** saved puzzle history, **When** a confirmed history deletion occurs",
+      "fixtures": [],
+      "tests": [
+        "tests/puzzle/csv_import.rs",
+        "tests/puzzle/run.rs",
+        "tests/puzzle/selection.rs",
+        "tests/puzzle/timer.rs",
+        "tests/presentation/puzzle_panel.rs",
+        "tests/storage/puzzle_repository.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-1",
+      "story": 9,
+      "scenario": 1,
+      "summary": "**Given** several running games, **When** the player changes tabs or browses",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-2",
+      "story": 9,
+      "scenario": 2,
+      "summary": "**Given** insufficient thread or memory capacity, **When** another engine game",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-3",
+      "story": 9,
+      "scenario": 3,
+      "summary": "**Given** changes in running games, **When** existing searches reach safe",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-4",
+      "story": 9,
+      "scenario": 4,
+      "summary": "**Given** a failed game autosave, **When** the failure is reported, **Then**",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-5",
+      "story": 9,
+      "scenario": 5,
+      "summary": "**Given** running games, **When** closing a tab or quitting is confirmed,",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-6",
+      "story": 9,
+      "scenario": 6,
+      "summary": "**Given** running games in selected and unselected tabs, **When** app focus",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-7",
+      "story": 9,
+      "scenario": 7,
+      "summary": "**Given** running games, **When** quit is requested through the window close",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US9-8",
+      "story": 9,
+      "scenario": 8,
+      "summary": "**Given** an existing local profile, **When** the app is launched again while",
+      "fixtures": [],
+      "tests": [
+        "tests/game/concurrent_games.rs",
+        "tests/desktop/game_registry.rs",
+        "tests/desktop/game_supervisor.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US10-1",
+      "story": 10,
+      "scenario": 1,
+      "summary": "**Given** Settings, **When** appearance changes or other values are saved,",
+      "fixtures": [],
+      "tests": [
+        "tests/desktop/preferences.rs",
+        "tests/storage/preferences_repository.rs",
+        "tests/presentation/settings.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US10-2",
+      "story": 10,
+      "scenario": 2,
+      "summary": "**Given** unsaved settings, **When** leaving, **Then** Save, Discard and Stay",
+      "fixtures": [],
+      "tests": [
+        "tests/desktop/preferences.rs",
+        "tests/storage/preferences_repository.rs",
+        "tests/presentation/settings.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US10-3",
+      "story": 10,
+      "scenario": 3,
+      "summary": "**Given** an import with supported fields and unavailable engine options,",
+      "fixtures": [],
+      "tests": [
+        "tests/desktop/preferences.rs",
+        "tests/storage/preferences_repository.rs",
+        "tests/presentation/settings.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US10-4",
+      "story": 10,
+      "scenario": 4,
+      "summary": "**Given** an older or newer settings file, **When** it is imported, **Then**",
+      "fixtures": [],
+      "tests": [
+        "tests/desktop/preferences.rs",
+        "tests/storage/preferences_repository.rs",
+        "tests/presentation/settings.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US10-5",
+      "story": 10,
+      "scenario": 5,
+      "summary": "**Given** a user action or shortcut remap, **When** it is requested through",
+      "fixtures": [],
+      "tests": [
+        "tests/desktop/preferences.rs",
+        "tests/storage/preferences_repository.rs",
+        "tests/presentation/settings.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US10-6",
+      "story": 10,
+      "scenario": 6,
+      "summary": "**Given** events from several games, **When** focus, mute or volume changes,",
+      "fixtures": [],
+      "tests": [
+        "tests/desktop/preferences.rs",
+        "tests/storage/preferences_repository.rs",
+        "tests/presentation/settings.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US11-1",
+      "story": 11,
+      "scenario": 1,
+      "summary": "**Given** saved user data, **When** Backup Now or a due daily backup succeeds,",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/backup.rs",
+        "tests/storage/restore.rs",
+        "tests/storage/restore_ownership.rs",
+        "tests/presentation/backup.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US11-2",
+      "story": 11,
+      "scenario": 2,
+      "summary": "**Given** a failed automatic backup with working autosave, **When** the",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/backup.rs",
+        "tests/storage/restore.rs",
+        "tests/storage/restore_ownership.rs",
+        "tests/presentation/backup.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US11-3",
+      "story": 11,
+      "scenario": 3,
+      "summary": "**Given** a compatible backup from another supported platform, **When** restore",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/backup.rs",
+        "tests/storage/restore.rs",
+        "tests/storage/restore_ownership.rs",
+        "tests/presentation/backup.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US11-4",
+      "story": 11,
+      "scenario": 4,
+      "summary": "**Given** a corrupt, unsupported or interrupted restore, **When** recovery",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/backup.rs",
+        "tests/storage/restore.rs",
+        "tests/storage/restore_ownership.rs",
+        "tests/presentation/backup.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US12-1",
+      "story": 12,
+      "scenario": 1,
+      "summary": "**Given** startup or Check for Updates, **When** the check runs, **Then**",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/discovery.rs",
+        "tests/update/credentials.rs",
+        "tests/presentation/update.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-2",
+      "story": 12,
+      "scenario": 2,
+      "summary": "**Given** an available update, **When** download starts on a known unmetered",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/download.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-3",
+      "story": 12,
+      "scenario": 3,
+      "summary": "**Given** an active download, **When** canceled, failed, timed out or observed",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/download.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-4",
+      "story": 12,
+      "scenario": 4,
+      "summary": "**Given** a completed download, **When** the app relaunches or a newer stable",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/download.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-5",
+      "story": 12,
+      "scenario": 5,
+      "summary": "**Given** explicit confirmed Install, **When** any save, safety backup or",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/install.rs",
+        "tests/update/security.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-6",
+      "story": 12,
+      "scenario": 6,
+      "summary": "**Given** migration or installation failure, **When** recovery is presented,",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/helper.rs",
+        "tests/update/security.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-7",
+      "story": 12,
+      "scenario": 7,
+      "summary": "**Given** a matching stable version tag and verified zero-cost automation,",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/desktop/release_workflow.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US12-8",
+      "story": 12,
+      "scenario": 8,
+      "summary": "**Given** an unavailable operating-system credential service, **When** update",
+      "fixtures": [
+        "tests/update/fixtures/manifest.json",
+        "tests/update/fixtures/manifest.json.minisig",
+        "tests/update/fixtures/public.key"
+      ],
+      "tests": [
+        "tests/update/credentials.rs"
+      ],
+      "coverage": "scenario",
+      "evidence": "specs/001-reckless-desktop-chess/evidence/us12.md"
+    },
+    {
+      "id": "US13-1",
+      "story": 13,
+      "scenario": 1,
+      "summary": "**Given** an offline installation, **When** opening study or puzzles opens,",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/dataset_integrity.rs",
+        "tests/storage/dataset_package.rs",
+        "tests/storage/dataset_selection.rs",
+        "tests/storage/datasets.rs",
+        "tests/presentation/datasets.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US13-2",
+      "story": 13,
+      "scenario": 2,
+      "summary": "**Given** a personal PGN, Polyglot book or supported puzzle CSV, **When** it",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/dataset_integrity.rs",
+        "tests/storage/dataset_package.rs",
+        "tests/storage/dataset_selection.rs",
+        "tests/storage/datasets.rs",
+        "tests/presentation/datasets.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US13-3",
+      "story": 13,
+      "scenario": 3,
+      "summary": "**Given** a puzzle CSV's opponent setup move, **When** a puzzle opens,",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/dataset_integrity.rs",
+        "tests/storage/dataset_package.rs",
+        "tests/storage/dataset_selection.rs",
+        "tests/storage/datasets.rs",
+        "tests/presentation/datasets.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US13-4",
+      "story": 13,
+      "scenario": 4,
+      "summary": "**Given** a manual dataset replacement or deletion, **When** confirmed,",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/dataset_integrity.rs",
+        "tests/storage/dataset_package.rs",
+        "tests/storage/dataset_selection.rs",
+        "tests/storage/datasets.rs",
+        "tests/presentation/datasets.rs"
+      ],
+      "coverage": "story-level"
+    },
+    {
+      "id": "US13-5",
+      "story": 13,
+      "scenario": 5,
+      "summary": "**Given** the generated starter book, **When** inspected, **Then** it uses",
+      "fixtures": [],
+      "tests": [
+        "tests/storage/dataset_integrity.rs",
+        "tests/storage/dataset_package.rs",
+        "tests/storage/dataset_selection.rs",
+        "tests/storage/datasets.rs",
+        "tests/presentation/datasets.rs"
+      ],
+      "coverage": "story-level"
+    }
+  ]
+}

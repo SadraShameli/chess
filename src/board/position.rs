@@ -1,0 +1,182 @@
+use std::num::ParseIntError;
+
+use shakmaty::fen::{Fen, ParseFenError};
+use shakmaty::{
+    Bitboard, Board, Chess, Color, EnPassantMode, Position, PositionErrorKinds, Square,
+};
+use thiserror::Error;
+
+use crate::board::piece::BoardPiece;
+use crate::board::square::BoardSquare;
+
+use crate::board::enums::{BoardEnumColor, BoardEnumVariant};
+
+#[derive(Debug, Error)]
+pub enum BoardPositionError {
+    #[error("A FEN must contain six ASCII fields and at most 512 bytes")]
+    InvalidFenShape,
+    #[error("Invalid FEN syntax: {0}")]
+    Fen(#[from] ParseFenError),
+    #[error("Invalid move counter: {0}")]
+    Counter(#[from] ParseIntError),
+    #[error("Halfmove must be 0..1000000 and fullmove must be 1..1000000")]
+    CounterRange,
+    #[error("Structurally invalid position: {0:?}")]
+    IllegalPosition(PositionErrorKinds),
+    #[error("Polyglot keys are unavailable for variant {0:?}")]
+    UnsupportedPolyglotVariant(BoardEnumVariant),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BoardPositionPolyglotKey(u64);
+
+impl BoardPositionPolyglotKey {
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BoardPositionIdentity {
+    variant: BoardEnumVariant,
+    board: Board,
+    turn: Color,
+    castling_rights: Bitboard,
+    en_passant: Option<Square>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardPosition {
+    pub(super) chess: Chess,
+    variant: BoardEnumVariant,
+}
+
+impl BoardPosition {
+    pub const MAX_FEN_BYTES: usize = 512;
+    pub const MAX_COUNTER: u32 = 1_000_000;
+
+    pub fn standard() -> Self {
+        Self {
+            chess: Chess::default(),
+            variant: BoardEnumVariant::Standard,
+        }
+    }
+
+    pub fn from_fen(fen: &str, variant: BoardEnumVariant) -> Result<Self, BoardPositionError> {
+        if fen.len() > Self::MAX_FEN_BYTES || !fen.is_ascii() {
+            return Err(BoardPositionError::InvalidFenShape);
+        }
+        let mut fields = fen.split_ascii_whitespace();
+        for _ in 0..4 {
+            fields.next().ok_or(BoardPositionError::InvalidFenShape)?;
+        }
+        let halfmove: u32 = fields
+            .next()
+            .ok_or(BoardPositionError::InvalidFenShape)?
+            .parse()?;
+        let fullmove: u32 = fields
+            .next()
+            .ok_or(BoardPositionError::InvalidFenShape)?
+            .parse()?;
+        if fields.next().is_some() {
+            return Err(BoardPositionError::InvalidFenShape);
+        }
+        Self::validate_counters(halfmove, fullmove)?;
+        let parsed: Fen = fen.parse()?;
+        let chess: Chess = parsed
+            .into_position(variant.castling_mode())
+            .map_err(|error| BoardPositionError::IllegalPosition(error.kinds()))?;
+        Self::from_chess(chess, variant)
+    }
+
+    pub fn variant(&self) -> BoardEnumVariant {
+        self.variant
+    }
+
+    pub fn standard_polyglot_key(&self) -> Result<BoardPositionPolyglotKey, BoardPositionError> {
+        match self.variant {
+            BoardEnumVariant::Standard => Ok(BoardPositionPolyglotKey(
+                self.chess
+                    .zobrist_hash::<shakmaty::zobrist::Zobrist64>(EnPassantMode::PseudoLegal)
+                    .0,
+            )),
+            BoardEnumVariant::Chess960 => {
+                Err(BoardPositionError::UnsupportedPolyglotVariant(self.variant))
+            }
+        }
+    }
+
+    pub fn turn(&self) -> BoardEnumColor {
+        self.chess.turn().into()
+    }
+
+    pub fn fullmoves(&self) -> u32 {
+        self.chess.fullmoves().get()
+    }
+
+    pub fn fen(&self) -> String {
+        match self.variant {
+            BoardEnumVariant::Standard => {
+                Fen::from_position(&self.chess, EnPassantMode::Always).to_string()
+            }
+            BoardEnumVariant::Chess960 => self.shredder_fen(),
+        }
+    }
+
+    pub fn placement(&self) -> String {
+        self.chess.board().to_string()
+    }
+
+    pub fn pieces(&self) -> impl Iterator<Item = (BoardSquare, BoardPiece)> + '_ {
+        self.chess
+            .board()
+            .iter()
+            .map(|(square, piece)| (BoardSquare(square), piece.into()))
+    }
+
+    pub fn identity(&self) -> BoardPositionIdentity {
+        BoardPositionIdentity {
+            variant: self.variant,
+            board: self.chess.board().clone(),
+            turn: self.chess.turn(),
+            castling_rights: self.chess.castles().castling_rights(),
+            en_passant: self.chess.legal_ep_square(),
+        }
+    }
+
+    pub fn is_check(&self) -> bool {
+        self.chess.is_check()
+    }
+
+    pub fn has_insufficient_mating_material(&self, color: BoardEnumColor) -> bool {
+        self.chess.has_insufficient_material(color.into())
+    }
+
+    pub fn halfmoves(&self) -> u32 {
+        self.chess.halfmoves()
+    }
+
+    pub fn is_checkmate(&self) -> bool {
+        self.chess.is_checkmate()
+    }
+
+    pub fn is_stalemate(&self) -> bool {
+        self.chess.is_stalemate()
+    }
+
+    pub(super) fn from_chess(
+        chess: Chess,
+        variant: BoardEnumVariant,
+    ) -> Result<Self, BoardPositionError> {
+        Self::validate_counters(chess.halfmoves(), chess.fullmoves().get())?;
+        Ok(Self { chess, variant })
+    }
+
+    fn validate_counters(halfmove: u32, fullmove: u32) -> Result<(), BoardPositionError> {
+        if halfmove > Self::MAX_COUNTER || fullmove == 0 || fullmove > Self::MAX_COUNTER {
+            Err(BoardPositionError::CounterRange)
+        } else {
+            Ok(())
+        }
+    }
+}

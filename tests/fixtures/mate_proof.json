@@ -1,0 +1,13 @@
+[
+  { "name": "initial position", "moves": [], "expect_possible": true },
+  { "name": "king pawn", "moves": ["e2e4"], "expect_possible": true },
+  { "name": "open game", "moves": ["e2e4", "e7e5"], "expect_possible": true },
+  { "name": "queen pawn", "moves": ["d2d4"], "expect_possible": false },
+  { "name": "English opening", "moves": ["c2c4"], "expect_possible": false },
+  { "name": "Reti opening", "moves": ["g1f3"], "expect_possible": false },
+  {
+    "name": "developed Italian middlegame",
+    "moves": ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "d2d3", "f8c5", "e1g1", "d7d6", "b1c3", "e8g8"],
+    "expect_possible": false
+  }
+]

@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "title": "Reckless sculpted chess pieces",
+  "authorship": "Original parametric artwork authored for this project. No downloaded models, textures or paid assets.",
+  "rights": "Project owner retains rights. Private personal use; no separate application or artwork license is granted.",
+  "generator": {
+    "path": "tools/assets/pieces.rs",
+    "sha256": "40e919e54df49e437ddbedaec52cbf7d2e2243fffad60b892973fe90b9682722",
+    "command": "cargo run --locked --features asset-tools --bin chess-tools -- assets-generate resources/pieces"
+  },
+  "asset": {
+    "path": "resources/pieces/chess.glb",
+    "sha256": "f841223d2270426b26c8da913a175be6a4ee6f674e45fa63737973041efb969d",
+    "bytes": 1499440,
+    "format": "glTF 2.0 binary"
+  },
+  "coordinates": {
+    "up": "+Y",
+    "knightForward": "-Z",
+    "squareSize": 1,
+    "origin": "Base center at x=0,z=0; bottom at y=0",
+    "placement": "Clone a named group; all library nodes overlap at the origin by design"
+  },
+  "construction": {
+    "radialSegments": 64,
+    "curveSegments": 12,
+    "bevelSegments": 3,
+    "geometrySharing": "Six indexed geometries shared by twelve color variants",
+    "externalResources": 0,
+    "requiredExtensions": [],
+    "metallicFactor": 0
+  },
+  "materials": [
+    {
+      "color": "white",
+      "name": "IvorySatin",
+      "srgb": "#f2e6cb",
+      "roughness": 0.32
+    },
+    {
+      "color": "black",
+      "name": "EbonySatin",
+      "srgb": "#202328",
+      "roughness": 0.36
+    }
+  ],
+  "pieces": [
+    {
+      "kind": "pawn",
+      "silhouette": "Round finial and slim neck",
+      "nodes": [
+        "white_pawn",
+        "black_pawn"
+      ],
+      "vertices": 2083,
+      "triangles": 4160,
+      "bounds": {
+        "min": [
+          -0.255,
+          0.0,
+          -0.255
+        ],
+        "max": [
+          0.255,
+          0.67300004,
+          0.255
+        ]
+      }
+    },
+    {
+      "kind": "knight",
+      "silhouette": "Swept horse profile, ears, muzzle and raised mane",
+      "nodes": [
+        "white_knight",
+        "black_knight"
+      ],
+      "vertices": 7686,
+      "triangles": 8672,
+      "bounds": {
+        "min": [
+          -0.29,
+          0.0,
+          -0.30416697
+        ],
+        "max": [
+          0.29,
+          0.9906481,
+          0.29
+        ]
+      }
+    },
+    {
+      "kind": "bishop",
+      "silhouette": "Pointed mitre with a carved diagonal slit",
+      "nodes": [
+        "white_bishop",
+        "black_bishop"
+      ],
+      "vertices": 2337,
+      "triangles": 4202,
+      "bounds": {
+        "min": [
+          -0.285,
+          0.0,
+          -0.285
+        ],
+        "max": [
+          0.285,
+          0.99,
+          0.285
+        ]
+      }
+    },
+    {
+      "kind": "rook",
+      "silhouette": "Broad tower with six open crenellations",
+      "nodes": [
+        "white_rook",
+        "black_rook"
+      ],
+      "vertices": 14021,
+      "triangles": 7848,
+      "bounds": {
+        "min": [
+          -0.3,
+          0.0,
+          -0.3
+        ],
+        "max": [
+          0.3,
+          0.8035,
+          0.3
+        ]
+      }
+    },
+    {
+      "kind": "queen",
+      "silhouette": "Eight rising crown points with pearl tips",
+      "nodes": [
+        "white_queen",
+        "black_queen"
+      ],
+      "vertices": 10207,
+      "triangles": 18624,
+      "bounds": {
+        "min": [
+          -0.318,
+          0.0,
+          -0.318
+        ],
+        "max": [
+          0.318,
+          1.053,
+          0.318
+        ]
+      }
+    },
+    {
+      "kind": "king",
+      "silhouette": "Tall stem and beveled cross finial",
+      "nodes": [
+        "white_king",
+        "black_king"
+      ],
+      "vertices": 2208,
+      "triangles": 3772,
+      "bounds": {
+        "min": [
+          -0.33,
+          0.0,
+          -0.33
+        ],
+        "max": [
+          0.33,
+          1.199,
+          0.33
+        ]
+      }
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bevy",
+      "version": "0.20.0",
+      "license": "MIT OR Apache-2.0",
+      "role": "Parametric vector geometry and linear color conversion"
+    },
+    {
+      "name": "earcutr",
+      "version": "0.5.0",
+      "license": "ISC",
+      "role": "Beveled silhouette cap triangulation"
+    },
+    {
+      "name": "boolmesh",
+      "version": "0.2.1",
+      "license": "MPL-2.0",
+      "role": "Bishop mitre slit subtraction in offline asset tooling"
+    },
+    {
+      "name": "gltf-json",
+      "version": "1.4.1",
+      "license": "MIT OR Apache-2.0",
+      "role": "Typed validated glTF serialization"
+    }
+  ],
+  "visualAcceptance": "Native procedural generation retains the original construction. Replacement validation and platform limits are recorded in specs/001-reckless-desktop-chess/evidence/native-assets.md."
+}

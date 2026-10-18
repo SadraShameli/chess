@@ -1,0 +1,174 @@
+{
+  "outcomes": [
+    {
+      "name": "checkmate overrides seventy-five moves",
+      "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 150 76",
+      "proof": "possible",
+      "reason": "checkmate"
+    },
+    {
+      "name": "stalemate",
+      "fen": "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+      "proof": "possible",
+      "reason": "stalemate"
+    },
+    {
+      "name": "automatic seventy-five moves",
+      "fen": "7k/8/5K2/8/8/8/8/R7 w - - 150 76",
+      "proof": "possible",
+      "reason": "seventy_five_move"
+    },
+    {
+      "name": "proven dead position",
+      "fen": "7k/8/5K2/8/8/8/8/8 w - - 0 1",
+      "proof": "impossible",
+      "reason": "dead_position"
+    }
+  ],
+  "legal_moves": [
+    {
+      "name": "en passant removes the bypassed pawn",
+      "fen": "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "variant": "standard",
+      "movement": "e5d6",
+      "placement": "4k3/8/3P4/8/8/8/8/4K3"
+    },
+    {
+      "name": "standard king-side castling",
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "variant": "standard",
+      "movement": "e1g1",
+      "placement": "r3k2r/8/8/8/8/8/8/R4RK1"
+    },
+    {
+      "name": "standard queen-side castling",
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "variant": "standard",
+      "movement": "e1c1",
+      "placement": "r3k2r/8/8/8/8/8/8/2KR3R"
+    },
+    {
+      "name": "FRC king remains on its castled square",
+      "fen": "4k3/8/8/8/8/8/8/6KR w H - 0 1",
+      "variant": "chess960",
+      "movement": "g1h1",
+      "placement": "4k3/8/8/8/8/8/8/5RK1"
+    },
+    {
+      "name": "FRC rook remains on its castled square",
+      "fen": "4k3/8/8/8/8/8/8/4KR2 w F - 0 1",
+      "variant": "chess960",
+      "movement": "e1f1",
+      "placement": "4k3/8/8/8/8/8/8/5RK1"
+    },
+    {
+      "name": "FRC king and rook exchange their starting squares",
+      "fen": "4k3/8/8/8/8/8/8/5KR1 w G - 0 1",
+      "variant": "chess960",
+      "movement": "f1g1",
+      "placement": "4k3/8/8/8/8/8/8/5RK1"
+    },
+    {
+      "name": "DFRC independent black king-side rook-file rights",
+      "fen": "1r2k1r1/8/8/8/8/8/1P6/RK5R b HAgb - 0 1",
+      "variant": "chess960",
+      "movement": "e8g8",
+      "placement": "1r3rk1/8/8/8/8/8/1P6/RK5R"
+    },
+    {
+      "name": "DFRC independent black queen-side rook-file rights",
+      "fen": "1r2k1r1/8/8/8/8/8/1P6/RK5R b HAgb - 0 1",
+      "variant": "chess960",
+      "movement": "e8b8",
+      "placement": "2kr2r1/8/8/8/8/8/1P6/RK5R"
+    },
+    {
+      "name": "knight underpromotion",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "variant": "standard",
+      "movement": "a7a8n",
+      "placement": "N3k3/8/8/8/8/8/8/4K3"
+    },
+    {
+      "name": "bishop underpromotion",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "variant": "standard",
+      "movement": "a7a8b",
+      "placement": "B3k3/8/8/8/8/8/8/4K3"
+    },
+    {
+      "name": "rook underpromotion",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "variant": "standard",
+      "movement": "a7a8r",
+      "placement": "R3k3/8/8/8/8/8/8/4K3"
+    },
+    {
+      "name": "queen promotion",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "variant": "standard",
+      "movement": "a7a8q",
+      "placement": "Q3k3/8/8/8/8/8/8/4K3"
+    }
+  ],
+  "illegal_moves": [
+    {
+      "name": "en passant cannot expose a pinned king on its file",
+      "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "variant": "standard",
+      "movement": "e5d6"
+    },
+    {
+      "name": "en passant cannot expose a horizontal rook attack",
+      "fen": "k7/8/8/r4pPK/8/8/8/8 w - f6 0 1",
+      "variant": "standard",
+      "movement": "g5f6"
+    },
+    {
+      "name": "castling cannot cross an attacked square",
+      "fen": "k4r2/p7/8/8/8/8/8/R3K2R w KQ - 0 1",
+      "variant": "standard",
+      "movement": "e1g1"
+    },
+    {
+      "name": "castling cannot escape check",
+      "fen": "k3r3/p7/8/8/8/8/8/R3K2R w KQ - 0 1",
+      "variant": "standard",
+      "movement": "e1g1"
+    },
+    {
+      "name": "castling cannot finish on an attacked square",
+      "fen": "k5r1/p7/8/8/8/8/8/R3K2R w KQ - 0 1",
+      "variant": "standard",
+      "movement": "e1g1"
+    },
+    {
+      "name": "FRC castling cannot uncover an attack through the rook",
+      "fen": "4k3/8/8/8/8/8/8/rR4K1 w B - 0 1",
+      "variant": "chess960",
+      "movement": "g1b1"
+    }
+  ],
+  "flagfall": [
+    {
+      "name": "bare king cannot win on the opponents flagfall",
+      "fen": "7k/8/5K2/8/8/8/8/R7 w - - 0 1",
+      "flagged": "white",
+      "result": "draw"
+    },
+    {
+      "name": "same-color bishops cannot produce mate on flagfall",
+      "fen": "5b1k/8/5K2/8/8/8/8/B7 w - - 0 1",
+      "flagged": "white",
+      "result": "draw"
+    },
+    {
+      "name": "cooperative legal continuation permits a queen mate",
+      "fen": "7k/8/5K2/6Q1/8/8/8/8 b - - 0 1",
+      "flagged": "black",
+      "result": {
+        "victory": "white"
+      }
+    }
+  ]
+}

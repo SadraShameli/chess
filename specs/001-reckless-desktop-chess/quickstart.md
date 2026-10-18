@@ -1,233 +1,238 @@
 # Validation Guide: Reckless Desktop Chess
 
-**Status**: Design selected; this prospective validation guide awaits
-implementation. See [resolved decisions](decisions.md) and
-[release evidence](decisions.md#release-evidence-register).
-This guide does not claim that a desktop application currently exists.
+**Status**: Bevy + egui architecture selected under owner delegation. Native
+migration tasks are reconciled in [tasks.md](tasks.md); execution is in progress.
+This guide distinguishes existing implementation from future native acceptance.
+The [implemented study features](#implemented-study-features) section describes
+what the source provides today; none of it has native acceptance evidence yet.
 
-## Current repository
+## Current checkout
 
-The application is still the Rust starter binary. The existing `make run` launches
-it, and `make verify` owns the current Rust checks. The Vue frontend, bundled
-Reckless engine, and native installation artifacts have not been implemented.
-Read the actual [Makefile](../../Makefile) for available commands.
+The repository has partial native Rust/Bevy/egui implementation, including
+verified engine packaging/startup and original 3D assets. The obsolete Tauri/Vue
+shell, browser schemas and frontend toolchain have been removed following the
+current-host debug native lifecycle checks. Optimized performance and remaining
+platform gates are still open. Tasks T001 through T028 retain their recorded
+completion; [the reconciliation table](tasks.md#pending-task-reconciliation)
+maps their native replacement owners. Existing
+[evidence](evidence/) describes its specific previous-stack checks; it does not
+prove native-egui operation or the full product.
 
-## Confirmed validation targets
+Read [the actual Makefile](../../Makefile) before using commands. At this point
+`make run` now launches the optimized native Bevy/egui release build; `make debug`
+launches a debuggable build. Its
+current shell is an integration milestone, not a complete playable product.
+`make run ARGS="--help"` lists supported arguments; use
+`make run ARGS="--profile-directory /tmp/chess-development"` for an isolated
+profile. Invalid arguments and help return before opening application services.
 
-- Windows 11 x86-64.
-- macOS 14+ on Apple Silicon, excluding Intel Macs.
-- Ubuntu 22.04+ on x86-64 only, with a compatible updated WebView runtime.
-- Private personal use, offline engine play, analysis, and local two-player.
-- Owner-selected Tauri 2/Vue/Tailwind/shadcn/Bun/ESLint/Prettier stack.
-- All eight application feature groups, including both opening explorer and book.
-- Live clocks continue on focus loss; computer sleep pauses timed play until
-  explicit Resume. Both modes support takebacks, returning to the previous human
-  turn against Reckless or undoing one local move. Restore clock snapshots from before undone moves, reversing increments. Local opponent confirmation is configurable
-  per game and required by default.
-- Initial adjustable new-game time control: 10 minutes plus 5 seconds per move.
-  Untimed engine play defaults to a configurable 3 seconds per move. Include
-  untimed, sudden death, Fischer increment, staged/cyclic, simple delay, and
-  Bronstein delay. Detailed delay accounting and single-movetime engine allocation
-  follow the selected clock policy.
-- Retain removed takeback moves as alternative variations. Local consent requests
-  keep clocks running; acceptance restores snapshots.
-- Manual Pause in both modes stops clocks/engine search until explicit Resume.
-  Engine faults preserve the game and pause clocks; restart only on Retry, then
-  require explicit Resume after recovery.
-- Live history browsing leaves game/clocks/search running and offers Return to Live.
-- Bundled starter datasets plus personal-file imports, with up to 2 GB installed
-  starter data excluding application and engines.
-- SQLite indexed storage and PGN/FEN interchange; strict TypeScript with Vite.
-- Dark-first premium presentation with richer effects/animation, graphite surfaces,
-  emerald accents, green/cream board, and a warm light theme.
-- Real-time 3D board/pieces with camera rotation and zoom, ivory/ebony satin
-  piece materials, and a 1280x800 CSS-pixel minimum window. Renderer/backend,
-  models/assets, camera limits, and exact retry/quality policies remain
-  under review. The board is 3D-only. Default to a lightly tilted readable view;
-  drag pieces normally, right-drag to draw, and rotate/zoom with visible controls.
-  Remember the camera view across launches and provide Reset View. Default quality
-  is Automatic with Low/Medium/High overrides. Graphics failures preserve game
-  state, pause clocks, and offer Retry; recovery requires explicit game resume.
-- Bundled modern sans-serif UI/notation with tabular clock digits; families pending.
-- Configurable 180 ms piece moves/160 ms panel transitions and subtle elevation,
-  respecting reduced motion and responsiveness.
-- Chess.com-inspired collapsible navigation, large board/player bars/clocks,
-  and resizable right-side tabs.
-- Configurable legal-move dots, last-move/check highlights, captured pieces, and
-  user-drawn arrows/circles. Dots appear on selection; highlights/captured pieces
-  are initially enabled. Drawing behavior remains under review.
-- Command palette, keyboard shortcuts, and optional move/check/result sounds.
-  Sounds default to enabled during active play and silent in background.
-  Exact mappings/assets/audio controls remain under review.
-- Opening book for study only, never supplying opponent moves.
-- PGN opening games/studies, Polyglot .bin books, and puzzle CSV imports.
-- Puzzle theme/difficulty filters, hints, retries, solution review, saved progress,
-  and both whole-session and per-puzzle countdown modes, defaulting to configurable
-  5-minute sessions and 60-second puzzles. Each timed run selects one mode.
-  Manual pause and app focus loss hide the board/solution and pause the countdown.
-  Session expiry ends the run; per-puzzle expiry records a timeout and advances.
-  Hints progress through source/destination/next-move reveal and mark assistance.
-  Record failures before practice retries on the continuing countdown. Accept
-  listed solutions; label other legal moves unlisted without engine verification.
-  Shuffle filtered puzzles without repeats until exhausted. Save local attempt
-  history, outcomes, assistance, elapsed time, and session summaries. Preserve
-  paused runs and remaining time across sleep/relaunch; require explicit Resume.
-  After solving, show solution review and wait for Next without charging session
-  time during review. Active hints keep the countdown running.
-- Automatic reports after games played in the app complete: played main line, configurable
-  3 seconds per position by default, depth/node alternatives, and variation analysis
-  separately on demand. Reports pause during live games and resume afterward.
-  Imported completed games require explicit report requests.
-- Report move labels plus an app-calculated accuracy percentage; formulas pending.
-  Clickable findings navigate to the position, show analyzed alternatives, and
-  offer a separate analysis branch.
-- Evaluation bar in analysis/review only; preserve the selected board position
-  across move-list, opening explorer, and study-only book tabs.
-- White-positive displayed search evaluations, with engine-native raw diagnostics.
-- A dedicated Settings tab with common options and advanced engine/resources.
-  Appearance applies immediately; other settings require Save, with engine
-  changes deferred until a safe point when necessary.
+## Prerequisites after migration
 
-Later live-game validation must distinguish focus loss from computer sleep,
-verify explicit resume after sleep, and exercise history browsing while clocks
-and engine searches continue without mutating the live position. Verify the
-mode-specific takeback target, both restored clock snapshots, reversed increments,
-restored move/stage counters, and local consent enabled by default/configurable
-per game. Verify the initial 10+5 preset, distinct untimed 3-second move budget,
-and retained takeback variations. Validate serialized result/consent races,
-cancel-on-result and stable matching-variation reuse under the selected policy. Verify clocks run during pending local
-consent and restore only on acceptance; manual Pause freezes clocks/search in
-both modes. Inject engine exit/protocol failure/stop timeout, verify preserved
-state and paused clocks, confirm no automatic restarts, then exercise Retry and
-explicit Resume separately. Validate each clock family and delay/search
-allocation after the detailed stage/delay contracts are selected; do not claim
-engine-native delay support.
+- The pinned Rust toolchain and locked native UI/scene dependencies.
+- For schema-drift checks only, diesel_cli 2.3.14 built with `sqlite-bundled`.
+  It regenerates `src/storage/schema.rs` from the embedded migrations and is
+  never an application or package dependency.
+- Windows 11 x86-64, macOS 14+ Apple Silicon, or Ubuntu 22.04+ x86-64;
+  Linux validation includes X11 and Wayland.
+- Working hardware graphics using Bevy's selected native backend, a
+  1280x800 logical-point usable window and baseline 8 GiB RAM/four usable threads.
+- Packaged original GLB/font/audio/shader resources, matching verified Reckless
+  binary/embedded model and starter datasets. Test data and user data are separate.
+- Native desktop dependencies/dialog services and optional credential service
+  for private updates. Chess itself requires no network or update credential.
 
-Later report validation must exercise pause/resume across a new live game, preserve
-completed findings, and confirm that variations are not automatically traversed.
-Click findings and explore alternatives without changing the original game.
-Verify that importing completed games does not automatically queue reports;
-request their reports explicitly. Verify bar visibility by workspace and selected-position continuity across study
-tabs, including missing-data and incomplete-analysis states.
+## Build and run validation after migration
 
-Later UI validation must cover navigation collapse, panel resizing, configurable
-board aids/drawings, command discovery, keyboard conflicts, and optional sound
-behavior against the detailed decisions once approved. Validate sculpted-piece
-readability at display scales, offline bundled-font loading, tabular clock
-stability, configured transition durations, and reduced-motion behavior. Actual
-frame pacing and renderer resource usage require implementation measurements.
-Verify square selection/drawing and keyboard access through supported camera
-views and zoom ranges, minimum-window layout, and offline model/texture loading.
-Verify that piece dragging, right-drag drawing, and camera controls do not
-interfere, and that no 2D view is offered as a fallback.
-Verify camera persistence/Reset View and quality selection. Simulate graphics
-failure during a live game, verify preserved state and paused clocks, recover
-through Retry, and require explicit resume. GPU baseline, preset criteria, and
-exact fault-detection/retry details remain under review.
+The migration must implement the native definitions of these existing entry
+points before they establish native acceptance:
 
-Later settings validation must verify persistence across restart, rejection of
-invalid changes, immediate appearance application, Save-controlled changes, and
-agreement between displayed and effective runtime values when engine application
-is deferred.
-Both puzzle timer modes need deterministic clock checks for pause/time
-preservation, hidden paused content, session expiry, and per-puzzle timeout/advance.
-Verify progressive hints, assistance tracking, preserved failure records,
-practice retries without timer reset, and accepted/unlisted/illegal distinctions.
-Unlisted moves must not be reported as losing or trigger alternative engine
-verification. Verify no repeats before filtered-collection exhaustion, detailed
-local progress, and restoration after focus loss/sleep/relaunch with unchanged
-remaining time, hidden board/solution, and explicit Resume. Crash/checkpoint and
-retention details remain under review. Verify post-solve review waits for Next
-and excludes review time from the session countdown while active hint usage
-continues that countdown. Report label/accuracy
-validation requires the approved formulas.
+```sh
+make verify
+make run
+make run ARGS="--help"
+make native-tests
+```
 
-Later validation must prove starter data works offline, personal imports work,
-and book entries never choose an engine opponent move.
+`make verify` owns the ordered final checks. Native commands use Cargo/Rust
+instead of frontend toolchains. `make run` launches the optimized release build; no empty
+argument separator is appended without ARGS. The actual app argument surface
+must be documented when implemented, including the above help smoke check.
+The native test command must start the production Bevy renderer on the OS main
+thread with temporary storage and deterministic orchestration. Do not interpret
+headless widget tests as a substitute for native graphics/platform execution.
 
-## Before this becomes a runnable guide
+The planned `native` target at `tests/native.rs` has `harness = false` and
+`test = false`. Default Cargo tests run the hermetic suites and library
+doctests. Native lint/build checks select this target explicitly in a separate
+invocation, because `--all-targets` does not include it. After migration,
+`make native-test-build` compiles/links the debug harness without running it;
+`make native-tests` runs it on the OS main thread. Required native prerequisites
+missing from a test machine produce a failed check and an outstanding evidence
+gate. See [the target-selection decision](research.md#native-test-target-selection).
 
-The data, behavior, presentation and tooling decisions are selected in
-[the resolution document](decisions.md). During implementation add actual
-setup/run commands and fixed fixtures to this guide, then record measured
-results. The current Hello World executable is not a chess implementation.
+The existing engine-only tool remains separately useful where its verified
+resources exist:
 
-Implementation validation will exercise the approved game flows, every applicable
-[engine capability](contracts/reckless-capabilities.md), ordered IPC and process
-recovery, the selected visual/accessibility criteria, and native execution on
-each confirmed target. Library/import/editor/report/opening/puzzle acceptance is
-required; use [the study-tools contract](contracts/study-tools.md) and selected
-resolution policies to generate concrete deterministic fixtures.
+```sh
+cargo run --locked --bin chess-tools -- engine-check
+```
 
-No native installation, engine execution, GUI testing, or performance measurement
-has been performed by this planning workflow.
+Expect verified package/model identity, readiness and clean process shutdown.
+This checks an engine boundary, not playable native UI or complete capability
+coverage. Required real-engine scope remains in [the capability matrix](contracts/reckless-capabilities.md).
 
+## Required end-to-end scenarios
 
-Validate Windows NSIS .exe and macOS Apple Silicon .dmg packaging. The new
-no-payment constraint selects unsigned Windows installers and locally ad-hoc-
-signed macOS builds without Developer ID/notarization. Validate Windows warnings
-and manual macOS approval, keeping mandatory OTA signature checks. No paid
-services or setup are authorized. Verify the bundled offline Evergreen WebView2 installer.
-Linux is x86-64 only and may install missing dependencies using internet access;
-document offline preparation. Verify both .deb and AppImage; validate AppImage
-OTA separately. Verify .deb downloads and signature validation, confirmed
-pause/save/backup, opening the system installer, and OS approval where required.
-Before CI activation verify included standard-runner allowance and controls
-preventing paid overages; exhausted allowance must stop builds. The offline
-OTA signing-key backup uses passphrase-encrypted removable storage kept
-disconnected, with the exact procedure separately approved. These requirements
-do not establish tested platform behavior.
+| Area | Validation and expected result |
+| --- | --- |
+| Native startup | Offline app opens at selected logical size with original 3D pieces, correct font/theme and actual adapter/backend shown in diagnostics |
+| Complete play | Standard/Chess960/DFRC against Reckless and local two-player; special moves, every clock family, draw claims/results, premoves and exact takebacks match [the spec](spec.md) |
+| Concurrent games | All games' clocks/turns stay visible in overview; admission, equal shares, rebalance and hash cap obey [capacity decisions](decisions.md#capacity-and-memory) |
+| Lifecycle | Pause/resume, focus loss, sleep, engine/renderer/save faults, close/quit and crash recovery preserve state and explicit-resume rules |
+| Profile ownership | Simultaneous/second launches activate the existing owner without duplicate writers, clocks or engine allocations; unreachable owners refuse takeover under [the profile policy](decisions.md#local-profile-ownership-and-activation) |
+| Analysis/workbench | Every usable matrix capability, bounded streams, stale-result rejection, stop/cancel, tablebase setup and isolated diagnostics |
+| Library/study | PGN/FEN round trips, invalid imports, duplicate preview, notes/variations/markings, folder/tags/Trash, positions and editor-save prompts |
+| Reports | Three-second default/mainline-only automatic reports; pause for live games; versioned scoring, incomplete results and clickable alternatives |
+| Opening data | Accurate corpus filters/denominators/deduplication; book weights and study branches; never chooses opponent moves |
+| Puzzles | Both timer modes, board-ready start, pause hiding, hints, failed/practice/unlisted/illegal distinctions, skip/timeouts, no-repeat exhaustion and persisted histories |
+| Settings/backups | Immediate appearance versus saved settings, safe engine boundaries, JSON merge/migration, no paths/credentials in exports, daily/manual backups and confirmed cross-platform recovery |
+| Native graphics | Full camera range, picking/drawing/drag/promotion, resize/DPI/clipping, lighting/shadows/materials, quality adaptation, on-demand idle and retry without game resume |
+| Accessibility | 64 semantic keyboard squares, modal focus return, palette/remapping, reduced motion, both themes and real VoiceOver/NVDA/Orca |
 
-OTA validation is now required under [the packaging contract](contracts/packaging.md#desktop-ota-and-github-actions).
-Its runnable scenarios depend on remaining recovery policies and platform support.
-Private binaries, version-tag-triggered publication, startup/manual checks,
-repository-scoped Contents-read token storage in the OS credential store, and
-automatic downloads with explicit confirmed installation are owner approved.
-Verify that installation pauses and successfully saves every live game, aborts
-on save failure, and restores games paused. Verify a fresh safety backup at the
-configured destination includes user data/settings and excludes datasets and
-credentials; backup failure must block installation and offer Retry. Verify
-vMAJOR.MINOR.PATCH tags match the application version and only stable releases
-are offered. Verify an OS-detected metered connection requires download approval;
-unknown or unavailable status also requires approval. Platform detection remains
-unvalidated. With controlled time and transport, verify the 15-second total
-check deadline across discovery/metadata, excluding binary download. Verify
-download timeout at 60 seconds without received bytes or 30 minutes total,
-whichever occurs first, and visible manual Retry without automatic retry.
-Verify Cancel stops transfer, discards partial bytes, and waits for explicit
-Retry. A completed download must survive relaunch and be revalidated before
-installation. Verify every metered/unknown attempt, including manual Retry,
-requires approval. Verify no Remove Download action exists and completed
-downloads remain until installation/replacement. Discovery of a newer stable
-release must keep the cached version and offer explicit Download Newer Version
-under the same approval rules. Inject a detected connection change to metered
-or unknown: stop, discard partial bytes, and ask before a fresh attempt.
-Review that published private releases/assets have no automatic cleanup and OTA
-signing secrets stay in GitHub Actions encrypted secrets with an owner-controlled
-offline backup. No secrets are created or inspected during this planning task.
-Verify missing/expired/rejected
-tokens produce a persistent Settings notice and credential controls without
-blocking offline play. Failed downloads must stop with visible Retry and no
-automatic retries. Verify automatic relaunch after success where supported and
-manual-reopening explanations where needed; games remain paused.
-Verify pre-update retention keeps the latest five successful snapshots and
-protects any needed for unresolved recovery without affecting daily/manual
-retention. Inject migration failures: normal startup must stop, data must be
-preserved, and backup recovery must require preview and confirmation. Verify
-compatible-version guidance without claiming automatic binary rollback. Inject
-installation failures and verify explicit Retry only where safe, otherwise
-manual-recovery guidance, with no automatic retries.
-Verify signed update provenance, invalid
-signature rejection, supported target matching, offline behavior, and user-data
-preservation on installed application versions. No updater implementation or
-GitHub workflow has been run by this planning task.
+Use [desktop messages](contracts/desktop-ipc.md), [UI experience](contracts/ui-experience.md),
+[study tools](contracts/study-tools.md) and [the data model](data-model.md) as the
+owning contracts. These scenarios retain all FR-001 through FR-026 and SC-001
+through SC-014; this guide does not shorten the approved scope.
 
-## Selected starter-data direction
+## Repeated-launch and handoff validation
 
-Follow [starter provenance/selection](decisions.md#starter-datasets-and-provenance),
-[puzzle interchange](decisions.md#puzzle-interchange-and-lifecycle), and
-[book generation](decisions.md#book-generation-and-explorer-semantics). Standard
-starters, two selectable CC0 online collections including a titled-master subset,
-broad puzzle difficulty, manual updates and the 2 GB installed cap are selected.
-Exact file checksums and measured collection sizes are preparation outputs,
-not unanswered preferences or already acquired data.
+Use isolated temporary local data and controlled process barriers in the native
+harness. Launch the production executable twice against the same fixture;
+its test-only profile selection must not become a new shipping profile feature.
+Record writer/engine admission counts and state revisions, not just window count.
+
+1. Race first launches before owner metadata exists. Exactly one obtains the
+   lease; the other activates or reports Starting/Busy within the selected bound
+   without opening storage or initializing a full worker topology.
+2. Repeat with the owner starting, migrating, restoring, minimizing or holding a
+   quit confirmation. A failed save or canceled quit retains the same lease and
+   newest in-memory state. Replacing database files must not replace the lock.
+3. Make the live owner unreachable and leave stale/invalid endpoint metadata.
+   The second process refuses ownership after timeout. Then terminate the owner
+   and launch again: only actual exclusive acquisition admits paused recovery.
+4. Exercise wrong-user peers, malformed/oversized frames, stale generations,
+   unknown versions, Windows server substitution and connection floods. Reject them within documented bounds
+   without mutation or extra unbounded connection/flush workers.
+5. Request activation on macOS, Windows, X11 and Wayland. Separate observed
+   native focus from attention requested; test OS/compositor denial or missing
+   activation support and visible manual-selection guidance. No activation
+   resumes a game/puzzle or dismisses its pending confirmation.
+6. Stop at the parent-exit/helper-acquisition boundary and launch another copy.
+   The durable intent blocks ordinary initialization. Repeat with helper failure,
+   interrupted replacement, delayed system-installer completion and failed
+   relaunch migration; preserve one coordinator and explicit safe recovery.
+7. Lose the helper-ready acknowledgment, cancel preparation and later quit
+   normally. The Prepared/revoked generation must never install. Crash before
+   and after durable commit, and terminate the helper while its installer keeps
+   running; no timeout, free lock or stale PID permits intent clearance or Retry
+   before confirmed installer quiescence/outcome.
+
+These validate Story 9.8, FR-004 and SC-006. They are required future native
+scenarios, not checks executed by this documentation workflow. The
+[activation](contracts/desktop-ipc.md#local-activation-interface) and
+[installation](contracts/packaging.md#profile-ownership-during-installation)
+contracts own detailed behavior and limits.
+
+## Native performance and packaging
+
+Record optimized target measurements against specification budgets, with fixed
+fixtures, actual hardware/backend/driver, one-worker and maximum-budget searches,
+whole-process/child/GPU memory and active versus idle frame scheduling. No
+throughput or smoothness claim follows from screenshots or framework selection.
+Verify the phase-based CPU policy at four usable threads and at detected maximum;
+there must be no unowned Bevy asset/pipeline work during engine-reserved phases.
+
+Test clean offline installation and resource resolution for unsigned Windows
+NSIS, ad-hoc-signed ARM macOS .app/.dmg and Linux .deb/AppImage. Validate actual
+native dependencies rather than bundling obsolete WebView prerequisites.
+AppImage's maintained stable tooling and reproducibility remain an explicit
+release gate. Installer sizes must meet GitHub's per-asset limit independently
+of the client's download cap. [Packaging](contracts/packaging.md) owns details.
+
+## Install and uninstall validation
+
+Follow [docs/install.md](../../docs/install.md) on each supported operating system.
+Windows is unsigned and needs the SmartScreen More info, Run anyway step. macOS needs
+the manual Open Anyway approval. Ubuntu needs the documented graphics, portal and
+desktop packages prepared offline. Record every result, including failures, in
+[evidence/us5.md](evidence/us5.md). Staged packages are checked with
+`chess-tools package-verify` and the notices with `chess-tools notices-check`.
+
+## Implemented study features
+
+These behaviors exist in source with automated tests written against them. They
+are not native acceptance results.
+
+- **Reports**: a finished game can be turned into a report job using the
+  captured engine configuration and a three-second default budget. Reports are
+  created only for completed played games and explicit analysis requests, never
+  on reopen, import or metadata edits. Reanalysis shows a replacement preview and
+  keeps the existing report until you confirm. Outdated and partial reports are
+  labelled, and accuracy is unavailable until a side has scored moves.
+- **Opening explorer**: continuation counts come from the opening index. The
+  index records no results or ratings, so those are shown as unavailable rather
+  than zero. The reference book panel is study-only and never plays a move for an
+  opponent. The explorer and the report share one selected position.
+- **Puzzles**: saved runs list under Puzzles. Delete Run and Delete All History
+  ask for confirmation, a run in progress cannot be deleted, and the puzzle
+  datasets are kept. Deleted attempts are excluded from recomputed summaries.
+- **Data settings**: Settings, Data lists packaged starter sources and installed
+  datasets with license and record counts. Imports show a preview and need
+  confirmation. Replacement keeps the previous version until active runs and
+  queries release it. An integrity failure disables only the affected feature.
+- **No automatic downloads**: nothing fetches or updates datasets.
+
+Developer commands for data preparation and measurement:
+
+```sh
+cargo run --locked --bin chess-tools -- data-verify resources/datasets/sources.json <cache>
+cargo run --locked --bin chess-tools -- data-select-games <pgn> <output>
+cargo run --locked --bin chess-tools -- data-select-puzzles <csv> <output> <source> <version>
+cargo run --locked --bin chess-tools -- data-build <selection-directory> <output>
+cargo run --locked --bin chess-tools -- benchmark-evaluate <measurements.json>
+cargo bench --bench opening
+CHESS_BENCH_ENGINE_DIRECTORY=<engine package> cargo bench --bench engine
+```
+
+The selection tools read uncompressed input; decompress `.zst` downloads first.
+`data-verify` refuses until every source's SHA-256 is recorded.
+
+## Starter preparation validation
+
+Use frozen local miniature source fixtures before preparing the large starter
+exports. Follow [subset selection v1](decisions.md#starter-subset-selection-v1)
+and the [study acceptance cases](contracts/study-tools.md#starter-preparation-reproducibility).
+Permute candidate arrival order and compare one-worker versus maximum-worker
+selection: identities, stratum order, prefix lengths and selection digests must
+agree. Cover rating/time/theme boundaries and deterministic cap reductions;
+invalid or impossible preparation must fail explicitly. Large-source checksums,
+actual collection counts and installed bytes are later preparation evidence.
+
+## Private update validation
+
+Use a deterministic local transport fixture for missing/expired credentials,
+signed-manifest verification, asset identity/digests, wrong target/version,
+credential-safe redirects, deadlines/cancel/network-cost approval, durable cache,
+manual Retry, save/backup prerequisites and native helper handoff. Completed
+payloads are revalidated before installation. Failures preserve data and expose
+selected recovery actions; no automatic binary rollback is promised. Native
+installed-target tests then verify actual installer/relaunch behavior.
+
+No workflow activation, payment, signing key, secret, version tag or release is
+created by this planning revision. Hard no-overage controls and all outstanding
+[release gates](decisions.md#release-evidence-register) must pass before release
+support is claimed. The reconciled [tasks](tasks.md) retain historical IDs and
+include the native migration. Implement them and record actual results here.
+Use Bevy ScreenshotCaptured for native image completion, matching
+egui_kittest 0.36.0 for semantic checks and explicit OS accessibility actions
+through the plugin adapter. Eframe and WDIO are not the native test host.

@@ -1,0 +1,19 @@
+[
+  { "name": "standard", "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "valid": true },
+  { "name": "structural study", "fen": "4k3/8/8/8/8/8/8/4K3 w - - 0 1", "valid": true },
+  { "name": "maximum counters", "fen": "4k3/8/8/8/8/8/8/4K3 w - - 1000000 1000000", "valid": true },
+  { "name": "missing king", "fen": "8/8/8/8/8/8/8/4K3 w - - 0 1", "valid": false },
+  { "name": "extra king", "fen": "4k3/8/8/8/8/8/8/3KK3 w - - 0 1", "valid": false },
+  { "name": "adjacent kings", "fen": "8/8/8/8/8/8/4k3/4K3 w - - 0 1", "valid": false },
+  { "name": "opposite check", "fen": "4k3/8/8/8/8/8/8/K3R3 w - - 0 1", "valid": false },
+  { "name": "backrank pawn", "fen": "4k3/8/8/8/8/8/8/P3K3 w - - 0 1", "valid": false },
+  { "name": "missing castling rook", "fen": "4k3/8/8/8/8/8/8/4K3 w K - 0 1", "valid": false },
+  { "name": "invalid en passant rank", "fen": "4k3/8/8/8/8/8/8/4K3 w - e3 0 1", "valid": false },
+  { "name": "missing en passant pawn", "fen": "4k3/8/8/8/8/8/8/4K3 w - d6 0 1", "valid": false },
+  { "name": "negative counter", "fen": "4k3/8/8/8/8/8/8/4K3 w - - -1 1", "valid": false },
+  { "name": "zero fullmove", "fen": "4k3/8/8/8/8/8/8/4K3 w - - 0 0", "valid": false },
+  { "name": "halfmove overflow", "fen": "4k3/8/8/8/8/8/8/4K3 w - - 1000001 1", "valid": false },
+  { "name": "fullmove overflow", "fen": "4k3/8/8/8/8/8/8/4K3 w - - 0 1000001", "valid": false },
+  { "name": "missing counters", "fen": "4k3/8/8/8/8/8/8/4K3 w - -", "valid": false },
+  { "name": "trailing fields", "fen": "4k3/8/8/8/8/8/8/4K3 w - - 0 1 extra", "valid": false }
+]

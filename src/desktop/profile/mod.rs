@@ -1,0 +1,21 @@
+pub mod activation;
+mod admission;
+mod control_record;
+mod directory;
+mod error;
+mod filesystem;
+mod identity;
+pub mod installation;
+mod lease;
+mod lock;
+mod native;
+pub mod owner_record;
+mod paths;
+mod security;
+
+pub use admission::{DesktopProfileAdmission, DesktopProfileEnumAdmission};
+pub use error::DesktopProfileError;
+pub use identity::{DesktopProfileId, DesktopProfileIdentity};
+pub use lease::DesktopProfileLease;
+pub use lock::{DesktopProfileLockProvider, DesktopProfileOsLock};
+pub use security::DesktopProfileSecurity;

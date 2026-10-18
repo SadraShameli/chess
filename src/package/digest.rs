@@ -1,0 +1,88 @@
+use std::fmt::{Display, Formatter};
+use std::io::Read;
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum PackageDigestError {
+    #[error("SHA-256 identities must contain exactly 64 lowercase hexadecimal characters")]
+    Invalid,
+    #[error("Cannot read the package artifact: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct PackageDigest([u8; 32]);
+
+impl PackageDigest {
+    pub fn hash_slice(bytes: &[u8]) -> Self {
+        Self::from_bytes(Sha256::digest(bytes).into())
+    }
+
+    pub const fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    pub(crate) const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn read(mut reader: impl Read) -> Result<Self, PackageDigestError> {
+        let mut digest = Sha256::new();
+        let mut buffer = vec![0; 64 * 1024];
+        loop {
+            let count = reader.read(&mut buffer)?;
+            if count == 0 {
+                return Ok(Self(digest.finalize().into()));
+            }
+            digest.update(&buffer[..count]);
+        }
+    }
+}
+
+impl FromStr for PackageDigest {
+    type Err = PackageDigestError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(PackageDigestError::Invalid);
+        }
+        let mut digest = [0; 32];
+        for (index, byte) in digest.iter_mut().enumerate() {
+            let start = index * 2;
+            *byte = u8::from_str_radix(&value[start..start + 2], 16)
+                .map_err(|_error| PackageDigestError::Invalid)?;
+        }
+        Ok(Self(digest))
+    }
+}
+
+impl TryFrom<String> for PackageDigest {
+    type Error = PackageDigestError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<PackageDigest> for String {
+    fn from(value: PackageDigest) -> Self {
+        value.to_string()
+    }
+}
+
+impl Display for PackageDigest {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}

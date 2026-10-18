@@ -5,7 +5,7 @@ Use [the resolved decisions](../decisions.md) for exact defaults and algorithms;
 [the review](../review.md) records owner inputs. Acceptance evidence remains unperformed.
 
 This contract extends the [game and engine model](../data-model.md),
-[desktop IPC](desktop-ipc.md), and [UI contract](ui-experience.md).
+[desktop messages](desktop-ipc.md), and [UI contract](ui-experience.md).
 Reckless supplies position searches, not a game database, opening book, puzzle
 collection, or report-classification system.
 
@@ -190,6 +190,29 @@ Indexing must validate legal move sequences and preserve source provenance.
 The selected storage design must support the owner's approved corpus scale;
 do not commit to scanning every PGN file for each position query.
 
+### Starter preparation reproducibility
+
+Both opening collections and the puzzle starter follow
+[starter subset selection v1](../decisions.md#starter-subset-selection-v1).
+Preparation validates candidate identity, retains source metadata and records
+policy/source/selection digests plus measured component bytes. Identical frozen
+inputs produce identical selected membership and order even when normalized
+candidates arrive in a different order or use different worker counts.
+The preparation-only primary puzzle theme never replaces the full filterable
+theme set; game rating bands do not change explorer rating averages or filters.
+
+Boundary fixtures cover one missing player rating, half-point means around
+every band edge, 179/180/479/480/1499/1500 estimated seconds, zero-base positive
+increments, explicit days-per-move and unknown/unsupported controls; puzzle
+fixtures cover 249/250 and u32::MAX ratings, missing fields, exact whitespace
+semantics and reordered theme tokens.
+Selection fixtures cover digest collisions, duplicate source identities,
+partial final cycles, exhausted/empty strata, prefix stability and repeated cap
+reduction. Conflicting puzzle IDs, required-empty subsets, unclassified files
+and nonreducible metadata overflow fail preparation with explicit findings.
+Successful validation records actual source hashes/counts/sizes; this contract
+does not claim that starter data has already been acquired or prepared.
+
 ## Opening book
 
 The approved book exposes prepared legal moves for a position. Reckless v0.9.0
@@ -232,8 +255,12 @@ the app loses focus; hide the puzzle board and solution while paused. Preserve
 the paused run and remaining time across computer sleep and application relaunch.
 Always require explicit Resume, including after focus returns; never resume the
 countdown merely because the window regained focus. These puzzle pause rules
-do not alter live chess clocks. Save each input/transition and active remaining time once per second; a crash
-restores the last durable checkpoint paused. Save failure pauses with Retry Save.
+do not alter live chess clocks. Minimizing or hiding the puzzle window also
+pauses and hides the run, even while another app-owned window retains focus.
+Save each input/transition and follow the
+[canonical puzzle checkpoint cadence and durable-lag policy](../decisions.md#puzzle-interchange-and-lifecycle).
+A crash restores the last durable checkpoint paused. Save failure pauses with
+Retry Save; visibility or save recovery never substitutes for explicit Resume.
 
 After solving a puzzle, show solution review and wait for an explicit Next
 action. Do not charge the session countdown during this between-puzzle review.
@@ -346,14 +373,16 @@ optional data gets a truthful setup state, not fabricated statistics or puzzles.
 
 ## Selected interface extension points
 
-Extend the generated Rust-owned IPC schema with the selected operation families:
+Extend the typed Rust desktop command/event families with these operations:
 editor draft/validate/open, annotation
 and variation edits, report start/cancel/read, opening corpus import/query,
 book inspect/configure, and puzzle collection/session/attempt.
 
 Concrete operation families and ID/revision/preview contracts are selected in
 [interface completion](../decisions.md#supporting-libraries-and-interface-completion).
-Generate schemas from Rust-owned DTOs during implementation. Requests and events retain the existing ID/revision/cancellation model.
+Presentation and application share concrete Rust payloads; external file
+schemas derive from their owning validated interchange DTOs. Requests and events
+retain the existing ID/revision/cancellation model.
 
 ## Acceptance evidence
 

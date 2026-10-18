@@ -1,1 +1,17 @@
+.DS_Store
+.env*
+.idea/
+.vscode/
+*.log
+*.profdata
+*.profraw
+*.rlib
+*.rs.bk
+*.swp
+*.tmp
+/.claude/worktrees/
+/resources/.cache/
+/resources/datasets/generated/
+/resources/engine/bin/
 /target
+Thumbs.db

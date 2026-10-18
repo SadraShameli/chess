@@ -1,0 +1,22 @@
+--- schema.rs
++++ schema.rs
+@@ -59,17 +59,17 @@
+         opening_key -> Nullable<Text>,
+         opening_code -> Nullable<Text>,
+         plies -> Integer,
+         identity_initial_fen -> Text,
+         identity_mainline_uci -> Text,
+         content_sha256 -> Binary,
+-        modified_ms -> Nullable<Integer>,
++        modified_ms -> Nullable<BigInt>,
+         favorite -> Integer,
+         folder_id -> Nullable<Text>,
+         location -> Text,
+-        trashed_ms -> Nullable<Integer>,
++        trashed_ms -> Nullable<BigInt>,
+     }
+ }
+ 
+ diesel::table! {
+     library_entry_tags (game_id, tag_id) {
+         game_id -> Text,

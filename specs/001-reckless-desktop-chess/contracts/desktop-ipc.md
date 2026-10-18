@@ -1,35 +1,127 @@
-# Desktop IPC Contract
+# Native Desktop Message Contract
 
-**Status**: Design selected under owner delegation; implementation and release evidence remain unperformed.
+**Status**: Native-egui design revision. Existing browser bridge implementation
+is preserved as migration input; this contract defines its Rust replacement.
+The filename is retained to preserve feature-document references.
 
-Use [the resolved decisions](../decisions.md) for concrete defaults, algorithms
-and former draft questions; [the review](../review.md) records owner choices.
+Use [resolved decisions](../decisions.md), [the data model](../data-model.md) and
+[the current plan](../plan.md). The application is authoritative. egui submits
+typed intents through injected ports and renders immutable snapshots. This is
+an in-process Rust interface, without Tauri IPC, HTTP or UI JSON serialization.
+Operation labels below document closed Rust enum variants, not dynamic dispatch
+by string name. External files and UCI remain separately validated boundaries.
 
-The Rust application is authoritative. Vue components send typed intents and
-render validated snapshots. This interface is local Tauri IPC, not an HTTP API.
+## Local activation interface
 
-## Schema ownership and envelopes
+Repeated-launch activation is a separate OS-local interface, not access to the
+in-process command table below. The
+[profile ownership decision](../decisions.md#local-profile-ownership-and-activation)
+owns exclusion, authentication, endpoint selection and all connection limits.
+No listener is an HTTP server, public API or generic command executor.
 
-Rust DTOs own one versioned wire schema. Generate TypeScript declarations and
-runtime validators from it; do not maintain handwritten copies. Generate schemas
-and types deterministically without authored comment banners. Reject generation
-drift in the lint workflow. Serialization adapters validate all external fields
-before creating domain types.
+Use a version-2, length-prefixed UTF-8 JSON frame: unsigned 32-bit big-endian
+byte length, then a bounded validated object. External decoding uses existing
+Serde boundary types; it introduces no UI serialization. Reject unknown fields,
+unknown operations/versions, invalid lengths and extra frames. One connection
+has one request, response, consumption receipt and receipt acknowledgment under the selected
+deadlines, without subscription or arbitrary launch-argument replay.
 
-Every request carries protocol version, request ID, operation tag, typed payload,
-and expected game revision when mutating a game. Responses are success with
-typed value/revision, or failure with a discriminated error. IDs and large
-counters follow [the data model](../data-model.md).
+| Message | Typed fields and semantics |
+| --- | --- |
+| Request | Protocol version, destination-local profile ID, current owner generation, request ID, closed Activate variant |
+| Response | Matching version/profile/generation/request ID and closed result: OwnerStarting, Focused, ActivationRequested, Busy or Rejected |
+| Receipt | Matching request/profile/generation identity confirming the response was consumed; no second operation or ownership grant |
+| ReceiptAcknowledged | Matching request/profile/generation identity confirming the owner consumed the receipt; no second operation or ownership grant |
+| Native delivery | At most one coalesced pending window-activation notification, followed by a native event-loop wake; no application mutation command |
 
-Do not expose shell execution, arbitrary engine commands, unrestricted filesystem
-access, or executable paths to the browser. Native dialogs issue opaque file
-selection handles; Rust validates and consumes those handles.
+Authenticate the local peer before accepting the request, and authenticate the
+server before sending a client request or trusting its response. Unix verifies
+both effective users; the Windows client verifies the kernel pipe peer's token
+SID as specified by the ownership decision. Verify profile and
+generation against the record bound by the exclusive owner. Focused requires
+actual native focus acknowledgment; calling a focus/attention method alone can
+only produce ActivationRequested. OwnerStarting retains one activation request
+for the forthcoming main window. Busy/Rejected and expired connections convey
+no ownership grant. Do not expose a Resume, migration, backup, update-install,
+file-open, shell or credential operation through this protocol.
+
+The second launch exits after the matching ReceiptAcknowledged frame, showing manual window-selection
+guidance if activation is unconfirmed. On unreachable-owner failure it shows
+Busy/recovery guidance without another writable session. A later explicit
+launch retries arbitration; neither timeout nor stale endpoint permits takeover.
+Application lifecycle and install barriers remain in effect while activating.
+On Windows the concrete pipe adapter's owned stream suppresses drop-time linger;
+the receipt confirms response consumption before server closure. The owner
+consumes and validates Receipt, writes ReceiptAcknowledged, and keeps the stream
+open until the client closes; the client validates that acknowledgment before
+closing. This preserves both final frames without an underlying pipe flush,
+write half-close, or drop-time linger. Every step retains the same absolute
+exchange deadline. A missing, mismatched, unexpected or late acknowledgment
+cannot confirm activation. Version 1 is rejected before requesting window
+activation. Missing receipt/acknowledgment or timeout permits closure and a later
+explicit activation attempt, without replaying an app mutation or claiming
+focus/ownership. Unix and Windows share this wire format, not necessarily the
+same transport constructor.
+
+## Type ownership and envelopes
+
+Desktop owns `DesktopCommand`, `DesktopResponse`, `DesktopEvent` and their
+component-prefixed payloads, identifiers and errors. Both presentation and the
+application compile against these types. Revisions and counters retain native
+checked integer/newtype values. Serde/schemars belong only to persisted or
+external exchange formats; no generated TypeScript or runtime browser validators
+are required for in-process messages.
+
+Every request carries an operation/request identity, typed payload and expected
+entity revision for mutation. Responses contain a typed value/revision or an
+owned error. A request ID is created once per input action and retained through
+confirmation/retry; repeated egui passes never mint or resubmit actions.
+Mutations are serialized by the authoritative actor. Cancellation and shutdown
+are explicit commands with observed completion.
+
+Presentation receives narrow application ports, not direct database/process/file
+clients. Native dialogs return opaque selection handles; adapters validate and
+consume them. Engine selection is package-owned. Credential-entry buffers go
+only to the credential adapter, never general snapshots, logs or saved state.
+
+## Runtime ownership
+
+Profile arbitration precedes application runtime services and Bevy pool creation;
+a secondary activation client uses only a bounded short-lived runtime. In the
+admitted owner, one root-owned Tokio runtime serves application actors, UCI pipes
+and network I/O. One native Bevy App owns the event loop/window and graphics device; egui
+integration consumes injected presentation state. ECS entity IDs are private
+to the outer scene adapter, never game identifiers.
+UI callbacks use bounded nonblocking admission. Full queues return a typed busy
+state and retain action identity for explicit retry; do not drop a command or
+spawn an unbounded waiter. Background state changes send a coalesced native event-loop wake notification.
+The adapter drains bounded control/snapshot work before egui presentation;
+widget systems never block_on a future. Bevy update scheduling and egui repaint
+requests are coordinated rather than assuming repaint alone wakes every state.
+Snapshot delivery cannot delay engine stop, clock adjudication or durable saves.
+
+The ordinary application command queue holds at most 256 admitted requests;
+an entity's presentation owner keeps at most one unapplied mutation for that
+entity. Acquire admission before allocating waiting tasks. When that queue is
+full, reserved urgent-control slots still accept one coalesced Stop/cancel and
+Pause intent per admitted entity, plus one global shutdown intent. Repeated
+urgent requests share the pending outcome; they do not create extra waiters.
+At the application-port receipt boundary, attach the absolute stop deadline so
+queue waiting cannot reset or escape it. Busy/rejected admission is explicit.
+
+Application-owned CPU batches check cancellation/yield between bounded chunks
+of at most 50 ms on the reference workload; framework or engine work that cannot
+cooperate uses the selected preparation barrier or isolated process lifecycle.
+Cancellation is complete only when owned work has stopped and cannot later
+commit staging or mutate state. Keep partial progress/staging separate from
+accepted data. A timed-out mutation has an unresolved outcome until its owner
+reconciles it; neither timeout nor Cancel permits blind replay or detached writes.
 
 ## Commands
 
 | Operation | Payload | Result and behavior |
 | --- | --- | --- |
-| `app.bootstrap` | Supported protocol version | Application identity, settings, package/capabilities, current snapshot |
+| `app.bootstrap` | Typed startup context | Application identity, settings, package/capabilities, current snapshot |
 | `game.create` | Mode, seats, variant/start, time control | Validated game and initial revision |
 | `game.start` | Game ID, expected revision | Active game after prerequisites succeed |
 | `game.play_move` | Game/revision, from/to, promotion if required | Accepted move and authoritative snapshot, or typed rejection |
@@ -84,22 +176,25 @@ facilities add interface requirements recorded in
 [the study-tools contract](study-tools.md). Their detailed commands remain
 selected in [interface completion](../decisions.md#supporting-libraries-and-interface-completion).
 
-Every event includes subscription ID, monotonic sequence, protocol version,
+Every event includes subscription ID, monotonic sequence and schema identity,
 event kind, and relevant game/revision/session/search/job identifiers.
 
 Event kinds: game changed, clock snapshot, analysis snapshot, search completed,
 engine state changed, workbench progress/completed, settings changed, and failure.
 
-Use Tauri channels. The engine contract owns native queue/telemetry bounds.
-Allow at most 64 unacknowledged events per subscription; pause replaceable
-snapshots until acknowledged. A control event that cannot be delivered safely
+Use bounded Rust channels with one subscription owner. The engine contract owns
+engine queue/telemetry bounds. Allow at most 64 unacknowledged lifecycle events
+per subscription; pause replaceable snapshots until acknowledged. Analysis and
+clock presentation use a latest-value slot keyed by entity and generation, with
+sequence boundaries that distinguish intentional coalescing from control-event loss. A control event that cannot be delivered safely
 closes the subscription with a resync requirement. The authoritative application
 state persists, so reconnecting with a snapshot recovers the terminal state.
-Do not rely on the WebView channel itself to supply backpressure.
+Repaint wakeups are notifications only; the bounded channel and latest-value
+slots own backpressure. Admission must bound waiting work as well as queued work.
 
-The frontend checks sequence and generation before applying an event. A gap
-triggers resync. Presentation interpolation of clocks uses a Rust timestamp and
-remaining duration; browser timers never adjudicate flag fall.
+Presentation checks sequence and generation before applying an event. An
+unexplained control-event gap triggers resync. Clock interpolation uses native
+monotonic snapshots; the game clock owner alone adjudicates flag fall.
 
 ## Typed failures and concurrency
 
@@ -115,21 +210,46 @@ Duplicate request IDs for mutation return the retained result within a bounded
 idempotency window; after expiry, clients must resync before retrying. A command
 timeout is not proof of failure, so the UI queries state before replaying it.
 
-## Frontend tooling and privileges
+## Native presentation and lifecycle
 
-Use Vue 3 SFCs for thin views, typed owning models/controllers for interaction,
-and the generated bridge for every native call. Use shadcn-vue components backed
-by Reka UI for dialogs, menus, forms, and tooltips; tailor their theme centrally
-through Tailwind tokens. No second chess rules implementation in JavaScript.
+Use centrally styled egui widgets and component-owned view models through
+bevy_egui. Enable its optional AccessKit feature and native platform support;
+bridge native ActionRequest events into egui before presentation. The scene
+does not supply accessible square actions automatically. Separate
+headless widget/input tests from real native GPU scene tests. AccessKit semantics,
+keyboard navigation and actual VoiceOver/NVDA/Orca acceptance accompany the 3D
+board; a rendered mesh supplies no accessibility by itself.
 
-Bun owns frontend dependency installation and scripts, with a committed text
-`bun.lock` and a pinned Bun runtime. ESLint flat configuration covers Vue SFCs,
-TypeScript, generated-contract drift checks, and zero-warning validation.
-Prettier owns formatting; its Tailwind plugin owns deterministic class ordering.
-Keep lint and formatting responsibilities distinct, without disabling findings
-to hide implementation errors.
+The `native` production-host test target uses `harness = false` and
+`test = false`; default Cargo test execution remains hermetic. Explicit named
+target selection provides its separate lint, nonexecuting build and required
+native execution checks under the
+[test-selection decision](../research.md#native-test-target-selection).
+No release application command, activation request or packaged listener can
+enable harness controls.
 
-Only the main local WebView receives the minimal Tauri permissions it needs.
-Use a restrictive CSP, local bundled assets, no remote executable content, and
-Rust-owned process/file access. Test automation capabilities and plugins are
-excluded from release artifacts.
+Disable Bevy automatic main-window close. Close/menu/quit/update intents enter
+the same application shutdown state machine while confirmation/save is pending.
+Pause/save/reap asynchronously; only a successful completion permits exit.
+Resolve notes, editor and Settings Save/Discard/Stay prompts through their
+existing policies before beginning irreversible shutdown. Stay, canceled quit
+and failed saves retain all current edits, games and ownership.
+Save failure leaves the window and newest in-memory state available. An update
+handoff follows the same save barrier plus its fresh-backup requirement. The
+composition root observes all task outcomes and shuts down its runtime after
+the Bevy runner exits, with an idempotent bounded cleanup fallback for OS
+termination paths and a tested native quit adapter. Bevy AppExit is final
+shutdown, not the trigger for beginning an unawaited save. No widget creates a
+nested runtime.
+After required saves succeed, use one shared three-second graceful worker/child
+shutdown window; do not restart it for each child or drain stage. Stop new
+admission and cancel noncritical work, then terminate/reap remaining children
+at expiry. Observe termination before releasing their leases. An unresolved
+critical save or unconfirmed owned-worker exit keeps shutdown incomplete, the
+application available and the profile lease held, with actionable pending/error
+status. OS-blocked writes cannot be claimed canceled merely because a timer
+elapsed; the storage owner reconciles completion before any retry or exit.
+The root retains its profile lease until mutable owners, children and runtimes
+have stopped, including nonreturning native-exit cleanup. Quit cancellation,
+failed saves and graphics recovery never drop it. Installer handoff uses the
+[durable installation barrier](packaging.md#profile-ownership-during-installation).

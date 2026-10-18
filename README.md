@@ -1,7 +1,8 @@
 # Chess
 
-A Rust edition 2024 project. The application currently contains the Cargo starter
-binary; feature design begins with a specification.
+A Rust edition 2024 desktop chess application in development, using Bevy and
+egui with the Reckless engine. The native shell and 3D board are being integrated;
+the complete play, study and library features remain in the implementation plan.
 
 The [Spec Kit constitution](.specify/memory/constitution.md) incorporates the
 [canonical Rust rules](.specify/rules/README.md) by reference. [AGENTS.md](AGENTS.md)
@@ -14,8 +15,16 @@ thresholds, and [verification workflows](.specify/rules/verification.md) are
 configured. Run `make verify` for the complete verification sequence or
 `make profile-build` for an optimized build with full debug information.
 
-Run the application with `make run`. Pass application arguments with
-`make run ARGS="your arguments"`.
+Run the optimized release build with `make run`, or a debuggable build with
+`make debug`. Use `make run ARGS="--help"`
+for supported arguments. For isolated development data, use
+`make run ARGS="--profile-directory /tmp/chess-development"`.
+
+The application and its asset tools use Cargo only. Development checks use the
+debug profile and select the affected Cargo target. The full optimized build
+belongs to the final verification command.
+
+Setup, study data and support limits are described in [docs/install.md](docs/install.md).
 
 ## Spec Kit
 
