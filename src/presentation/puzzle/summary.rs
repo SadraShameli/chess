@@ -1,5 +1,8 @@
 use bevy_egui::egui::Ui;
 
+use crate::presentation::puzzle::style::PresentationPuzzleStyle;
+use crate::presentation::theme::components::PresentationThemeComponents;
+use crate::presentation::theme::tokens::PresentationThemeColors;
 use crate::puzzle::enums::{
     PuzzleEnumAssistance, PuzzleEnumCountdownMode, PuzzleEnumPrimaryOutcome,
 };
@@ -9,8 +12,35 @@ pub struct PresentationPuzzleSummary;
 
 impl PresentationPuzzleSummary {
     pub fn show(ui: &mut Ui, summary: &PuzzleSummary) {
-        ui.heading("Run summary");
-        ui.label(format!("Finalized puzzles: {}", summary.finalized()));
+        let colors = PresentationThemeColors::of(ui.ctx());
+        PresentationThemeComponents::subhead(ui, "Run summary");
+        let solved = summary
+            .primary_count(PuzzleEnumPrimaryOutcome::Solved(
+                PuzzleEnumAssistance::Unassisted,
+            ))
+            .saturating_add(summary.primary_count(PuzzleEnumPrimaryOutcome::Solved(
+                PuzzleEnumAssistance::Assisted,
+            )));
+        let missed = summary
+            .primary_count(PuzzleEnumPrimaryOutcome::Failed)
+            .saturating_add(summary.primary_count(PuzzleEnumPrimaryOutcome::TimedOut));
+        PresentationPuzzleStyle::stats(
+            ui,
+            &[
+                ("Solved", solved.to_string()),
+                ("Missed", missed.to_string()),
+                (
+                    "Skipped",
+                    summary
+                        .primary_count(PuzzleEnumPrimaryOutcome::Skipped)
+                        .to_string(),
+                ),
+            ],
+            colors.surface_2,
+            PresentationPuzzleStyle::STAT_POINTS,
+        );
+        PresentationThemeComponents::eyebrow(ui, "Details");
+        PresentationPuzzleStyle::note(ui, format!("Finalized puzzles: {}", summary.finalized()));
         for (label, outcome) in [
             (
                 "Unassisted solves",
@@ -24,37 +54,58 @@ impl PresentationPuzzleSummary {
             ("Timeouts", PuzzleEnumPrimaryOutcome::TimedOut),
             ("Skips", PuzzleEnumPrimaryOutcome::Skipped),
         ] {
-            ui.label(format!("{label}: {}", summary.primary_count(outcome)));
+            PresentationPuzzleStyle::note(
+                ui,
+                format!("{label}: {}", summary.primary_count(outcome)),
+            );
         }
-        ui.label(Self::rate_text(
-            "Unassisted solve rate",
-            summary.solve_rate(PuzzleEnumAssistance::Unassisted),
-        ));
-        ui.label(Self::rate_text(
-            "Assisted solve rate",
-            summary.solve_rate(PuzzleEnumAssistance::Assisted),
-        ));
-        ui.label(format!("Active time: {:?}", summary.elapsed_active()));
-        ui.label(format!(
-            "Attempts with hints: {}",
-            summary.assisted_attempts()
-        ));
-        ui.label(format!("Hints: {}", summary.hints()));
-        ui.label(format!("Practice retries: {}", summary.practice_retries()));
-        ui.label(format!(
-            "Practice completions: {}",
-            summary.practice_completions()
-        ));
-        ui.label(format!("Skip events: {}", summary.skip_events()));
-        ui.label(format!(
-            "Session expiry events: {}",
-            summary.timeout_events(PuzzleEnumCountdownMode::Session)
-        ));
-        ui.label(format!(
-            "Puzzle expiry events: {}",
-            summary.timeout_events(PuzzleEnumCountdownMode::PerPuzzle)
-        ));
-        ui.small("Practice completion does not change a recorded failure. Rates use all finalized puzzles.");
+        PresentationPuzzleStyle::note(
+            ui,
+            Self::rate_text(
+                "Unassisted solve rate",
+                summary.solve_rate(PuzzleEnumAssistance::Unassisted),
+            ),
+        );
+        PresentationPuzzleStyle::note(
+            ui,
+            Self::rate_text(
+                "Assisted solve rate",
+                summary.solve_rate(PuzzleEnumAssistance::Assisted),
+            ),
+        );
+        PresentationPuzzleStyle::note(ui, format!("Active time: {:?}", summary.elapsed_active()));
+        PresentationPuzzleStyle::note(
+            ui,
+            format!("Attempts with hints: {}", summary.assisted_attempts()),
+        );
+        PresentationPuzzleStyle::note(ui, format!("Hints: {}", summary.hints()));
+        PresentationPuzzleStyle::note(
+            ui,
+            format!("Practice retries: {}", summary.practice_retries()),
+        );
+        PresentationPuzzleStyle::note(
+            ui,
+            format!("Practice completions: {}", summary.practice_completions()),
+        );
+        PresentationPuzzleStyle::note(ui, format!("Skip events: {}", summary.skip_events()));
+        PresentationPuzzleStyle::note(
+            ui,
+            format!(
+                "Session expiry events: {}",
+                summary.timeout_events(PuzzleEnumCountdownMode::Session)
+            ),
+        );
+        PresentationPuzzleStyle::note(
+            ui,
+            format!(
+                "Puzzle expiry events: {}",
+                summary.timeout_events(PuzzleEnumCountdownMode::PerPuzzle)
+            ),
+        );
+        PresentationThemeComponents::caption(
+            ui,
+            "Practice completion does not change a recorded failure. Rates use all finalized puzzles.",
+        );
     }
 
     fn rate_text(label: &str, rate: Option<PuzzleSummaryRate>) -> String {

@@ -10,6 +10,9 @@ use crate::presentation::app::{PresentationApp, PresentationAppError};
 use crate::presentation::editor::application_port::PresentationEditorApplicationPort;
 use crate::presentation::editor::draft_list::PresentationEditorDraftListEnumAction;
 use crate::presentation::editor::view::PresentationEditorViewEnumAction;
+use crate::presentation::theme::components::{
+    PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 
 impl PresentationApp {
     pub(in crate::presentation::app) fn show_editor<
@@ -37,7 +40,11 @@ impl PresentationApp {
         }
         if editor.controller.pending_request().is_some() && editor.controller.receipt().is_none() {
             ui.label("Editor action is waiting for capacity");
-            if ui.button("Retry Editor Action").clicked() && !ui.is_sizing_pass() {
+            if PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Editor Action")
+                .clicked()
+                && !ui.is_sizing_pass()
+            {
                 let port =
                     PresentationEditorApplicationPort::new(editor.connection.owner, application);
                 match editor.controller.retry(&port) {
@@ -46,7 +53,9 @@ impl PresentationApp {
                 }
             }
         }
-        if ui.button("Refresh Editor Snapshot").clicked()
+        if PresentationThemeEnumButton::Secondary
+            .show(ui, "Refresh Editor Snapshot")
+            .clicked()
             && !editor.controller.is_pending()
             && !ui.is_sizing_pass()
         {
@@ -59,7 +68,11 @@ impl PresentationApp {
                     !editor.controller.is_pending()
                         && editor.refresh == PresentationAppEditorEnumRefresh::Ready
                         && !editor.view.is_confirming_setup(),
-                    bevy_egui::egui::Button::new("Retry Retained Editor Write"),
+                    PresentationThemeEnumButton::Secondary.widget(
+                        ui,
+                        "Retry Retained Editor Write",
+                        PresentationThemeEnumSize::Small,
+                    ),
                 )
                 .clicked()
             && !ui.is_sizing_pass()

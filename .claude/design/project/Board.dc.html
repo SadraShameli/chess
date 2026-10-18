@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Board</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>body{margin:0}</style>
+</helmet>
+<div role="img" aria-label="{{label}}" style="width: {{outer}}; height: {{outer}}; perspective: 1800px; display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif">
+<div style="padding: {{rim}}; border-radius: {{rimRadius}}; background: var(--rim, #2A2621); box-shadow: {{boardShadow}}; transform: {{plane}}; transform-style: preserve-3d">
+<div style="width: {{inner}}; height: {{inner}}; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr)); transform-style: preserve-3d">
+<sc-for list="{{squares}}" as="s" hint-placeholder-count="64">
+<div style="position: relative; background: {{s.bg}}; transform-style: preserve-3d">
+<sc-if value="{{s.tint}}" hint-placeholder-val="{{ false }}"><div style="position: absolute; inset: 0; background: {{s.tint}}"></div></sc-if>
+<sc-if value="{{s.fileLabel}}" hint-placeholder-val="{{ false }}"><span style="position: absolute; right: 3px; bottom: 1px; font-size: {{coordSize}}; font-weight: 600; color: {{s.coordColor}}">{{s.fileLabel}}</span></sc-if>
+<sc-if value="{{s.rankLabel}}" hint-placeholder-val="{{ false }}"><span style="position: absolute; left: 3px; top: 1px; font-size: {{coordSize}}; font-weight: 600; color: {{s.coordColor}}">{{s.rankLabel}}</span></sc-if>
+<sc-if value="{{s.dot}}" hint-placeholder-val="{{ false }}"><div style="position: absolute; left: 50%; top: 50%; width: 28%; height: 28%; margin: -14% 0 0 -14%; border-radius: 50%; background: rgba(20, 18, 15, 0.28)"></div></sc-if>
+<sc-if value="{{s.glyph}}" hint-placeholder-val="{{ false }}"><span class="fig" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: {{glyphSize}}; line-height: 1; color: {{s.color}}; text-shadow: {{s.shadow}}; transform: {{stand}}; transform-origin: 50% 80%">{{s.glyph}}</span></sc-if>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"fen":{"editor":"text","default":"r1b2rk1/2q1bppp/p2p1n2/npp1p3/3PP3/2P2N1P/PPB2PPP/RNBQR1K1 w - - 1 12"},"size":{"editor":"int","default":640,"min":120,"max":1200},"tilt":{"editor":"range","default":14,"min":0,"max":30,"unit":"deg"},"last":{"editor":"text","default":"d8,c7"},"dots":{"editor":"text","default":""},"check":{"editor":"text","default":""},"selected":{"editor":"text","default":""},"flip":{"editor":"boolean","default":false},"coords":{"editor":"boolean","default":true},"$preview":{"width":640,"height":640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const size = Number(this.props.size ?? 640);
+    const tilt = Number(this.props.tilt ?? 14);
+    const flip = this.props.flip === true || this.props.flip === 'true';
+    const coords = !(this.props.coords === false || this.props.coords === 'false');
+    const list = (v) => String(v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    const last = list(this.props.last ?? 'd8,c7');
+    const dots = list(this.props.dots);
+    const check = String(this.props.check ?? '');
+    const selected = String(this.props.selected ?? '');
+    const fen = String(this.props.fen ?? 'r1b2rk1/2q1bppp/p2p1n2/npp1p3/3PP3/2P2N1P/PPB2PPP/RNBQR1K1 w - - 1 12').split(' ')[0];
+    const glyphs = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+    const grid = fen.split('/').map((row) => {
+      const out = [];
+      for (const ch of row) {
+        if (/\d/.test(ch)) { for (let i = 0; i < Number(ch); i++) out.push(''); }
+        else out.push(ch);
+      }
+      return out;
+    });
+    const rim = Math.max(4, Math.round(size * 0.022));
+    const inner = size - rim * 2;
+    const sq = inner / 8;
+    const files = 'abcdefgh';
+    const squares = [];
+    for (let vr = 0; vr < 8; vr++) {
+      for (let vf = 0; vf < 8; vf++) {
+        const r = flip ? 7 - vr : vr;
+        const f = flip ? 7 - vf : vf;
+        const name = files[f] + (8 - r);
+        const isLight = (r + f) % 2 === 0;
+        const p = (grid[r] && grid[r][f]) || '';
+        const white = p && p === p.toUpperCase();
+        let tint = '';
+        if (last.includes(name)) tint = 'rgba(214, 178, 74, 0.38)';
+        if (selected === name) tint = 'rgba(169, 188, 242, 0.55)';
+        if (check === name) tint = 'radial-gradient(circle, rgba(226, 70, 60, 0.85) 0%, rgba(226, 70, 60, 0.35) 45%, rgba(226, 70, 60, 0) 72%)';
+        squares.push({
+          bg: isLight ? 'var(--board-light, #DDCFB3)' : 'var(--board-dark, #937658)',
+          tint,
+          dot: dots.includes(name),
+          glyph: p ? glyphs[p.toLowerCase()] + '︎' : '',
+          color: white ? '#F7F2E7' : '#1C1916',
+          shadow: white
+            ? '0 0 1px #3A3128, 0 0 1px #3A3128, 0 1px 0 #3A3128, 0 ' + Math.max(2, sq * 0.06) + 'px ' + Math.max(3, sq * 0.1) + 'px rgba(0,0,0,0.45)'
+            : '0 0 1px rgba(255,248,235,0.35), 0 ' + Math.max(2, sq * 0.06) + 'px ' + Math.max(3, sq * 0.1) + 'px rgba(0,0,0,0.5)',
+          fileLabel: coords && vr === 7 ? files[f] : '',
+          rankLabel: coords && vf === 0 ? String(8 - r) : '',
+          coordColor: isLight ? 'rgba(80, 60, 40, 0.8)' : 'rgba(250, 240, 220, 0.8)',
+        });
+      }
+    }
+    return {
+      label: 'Chess board, position ' + fen,
+      outer: size + 'px',
+      inner: inner + 'px',
+      rim: rim + 'px',
+      rimRadius: Math.round(rim * 1.2) + 'px',
+      plane: tilt ? 'rotateX(' + tilt + 'deg) translateY(-' + Math.round(size * tilt * 0.0012) + 'px)' : 'none',
+      stand: tilt ? 'rotateX(-' + tilt + 'deg) translateY(-6%)' : 'none',
+      boardShadow: tilt
+        ? '0 ' + Math.round(size * 0.05) + 'px ' + Math.round(size * 0.09) + 'px rgba(0,0,0,0.5), 0 2px 0 rgba(255,255,255,0.04) inset'
+        : '0 2px 8px rgba(0,0,0,0.3)',
+      glyphSize: Math.round(sq * 0.8) + 'px',
+      coordSize: Math.max(8, Math.round(sq * 0.16)) + 'px',
+      squares,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -688,18 +688,23 @@ fn every_modal_in_the_presentation_layer_is_a_labelled_focus_trapping_dialog() {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
-        if !text.contains("Modal::new(") {
+        if !text.contains("Modal::new(") && !text.contains("PresentationThemeComponents::modal(") {
             continue;
         }
         audited += 1;
         assert!(
-            text.contains("Role::Dialog") || text.contains("PresentationAnalysisEditorModal"),
+            text.contains("Role::Dialog")
+                || text.contains("PresentationAnalysisEditorModal")
+                || text.contains("dialog_label(")
+                || text.contains("alert_dialog("),
             "{} opens a modal without exposing a dialog role",
             file.display()
         );
         assert!(
             text.contains("set_modal")
                 || text.contains("PresentationAnalysisEditorModal")
+                || text.contains("dialog_label(")
+                || text.contains("alert_dialog(")
                 || text.contains("is_above_modal_layer"),
             "{} opens a modal without containing focus",
             file.display()

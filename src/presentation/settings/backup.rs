@@ -81,22 +81,37 @@ impl PresentationSettingsBackup {
         let mut intent = None;
         if let Some(warning) = &status.warning {
             ui.colored_label(ui.visuals().warn_fg_color, warning);
-            if ui.button("Retry automatic backup").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry automatic backup")
+                .clicked()
+            {
                 intent = Some(PresentationSettingsBackupEnumIntent::RetryAutomatic);
             }
         }
         ui.label(&status.schedule);
         ui.horizontal(|ui| {
-            if ui.button("Backup Now").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Backup Now")
+                .clicked()
+            {
                 intent = Some(PresentationSettingsBackupEnumIntent::BackupNow);
             }
-            if ui.button("Choose backup folder").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Secondary
+                .show(ui, "Choose backup folder")
+                .clicked()
+            {
                 intent = Some(PresentationSettingsBackupEnumIntent::ChooseDestination);
             }
-            if ui.button("Restore from backup").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                .show(ui, "Restore from backup")
+                .clicked()
+            {
                 intent = Some(PresentationSettingsBackupEnumIntent::SelectArchive);
             }
-            if ui.button("Restore from a backup file").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Primary
+                .show(ui, "Restore from a backup file")
+                .clicked()
+            {
                 intent = Some(PresentationSettingsBackupEnumIntent::ImportArchive);
             }
         });

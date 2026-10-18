@@ -82,14 +82,14 @@ impl PresentationSettingsDatasets {
         if let Some(pending) = self.pending_delete {
             let mut confirm = false;
             let mut cancel = false;
-            let modal = egui::Modal::new(egui::Id::new("settings.datasets.delete")).show(
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("settings.datasets.delete")).show(
                 ui.ctx(),
                 |ui| {
                     PresentationAnalysisEditorModal::label(ui, "Delete this dataset");
                     ui.heading("Delete this dataset?");
                     ui.label("Saved history keeps its puzzle and game snapshots. Active work blocks deletion.");
-                    cancel = ui.button("Keep Dataset").clicked();
-                    confirm = ui.button("Confirm Delete Dataset").clicked();
+                    cancel = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost.show(ui, "Keep Dataset").clicked();
+                    confirm = crate::presentation::theme::components::PresentationThemeEnumButton::DangerSolid.show(ui, "Confirm Delete Dataset").clicked();
                 },
             );
             if cancel || modal.should_close() {

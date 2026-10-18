@@ -15,7 +15,12 @@ use crate::presentation::analysis::controller::{
 };
 use crate::presentation::analysis::line::PresentationAnalysisLineScore;
 use crate::presentation::board::figurines::PresentationBoardFigurines;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
+use crate::presentation::theme::typography::PresentationThemeTypography;
 use crate::presentation::workbench::status::PresentationWorkbenchStatusEnumState;
 
 #[derive(Debug, Error)]
@@ -35,6 +40,8 @@ pub struct PresentationAnalysisView {
 }
 
 impl PresentationAnalysisView {
+    const EVAL_BAR_THICKNESS: f32 = 14.0;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -61,7 +68,9 @@ impl PresentationAnalysisView {
         ui: &mut Ui,
         controller: &mut PresentationAnalysisController,
     ) -> Result<Option<PresentationAnalysisControllerIntent>, PresentationAnalysisViewError> {
+        PresentationThemeComponents::eyebrow(ui, "Engine analysis");
         ui.heading("Analysis");
+        Self::show_summary(ui, controller);
         Self::show_state(ui, controller)?;
         let mut intent = None;
         ui.add_enabled_ui(controller.can_start(), |ui| self.show_configuration(ui));
@@ -82,15 +91,20 @@ impl PresentationAnalysisView {
             start = ui
                 .add_enabled(
                     controller.can_start() && limit.is_ok(),
-                    egui::Button::new(start_label).min_size(size),
+                    PresentationThemeEnumButton::Primary
+                        .widget(ui, start_label, PresentationThemeEnumSize::Small)
+                        .min_size(size),
                 )
                 .clicked();
             stop = ui
                 .add_enabled(
                     controller.can_stop(),
-                    egui::Button::new("Stop Analysis").min_size(size),
+                    PresentationThemeEnumButton::Secondary
+                        .widget(ui, "Stop Analysis", PresentationThemeEnumSize::Small)
+                        .min_size(size),
                 )
                 .clicked();
+            PresentationThemeComponents::kbd(ui, "Space");
         });
         if self.submitted_frame != Some(frame) {
             if start && let Ok(limit) = limit {
@@ -110,11 +124,26 @@ impl PresentationAnalysisView {
         if controller.lines().is_empty() {
             ui.label("No candidates reported for this search.");
         }
+        let colors = PresentationThemeColors::of(ui.ctx());
         for candidate in controller.lines() {
-            ui.separator();
-            ui.strong(format!("Candidate {}", candidate.rank()));
-            if let Some(score) = candidate.source().score() {
-                let score = PresentationAnalysisLineScore::new(score);
+            PresentationThemeComponents::divider(ui);
+            let score = candidate
+                .source()
+                .score()
+                .map(PresentationAnalysisLineScore::new);
+            ui.horizontal(|ui| {
+                PresentationThemeComponents::mono(
+                    ui,
+                    score.as_ref().map_or_else(
+                        || "?".to_owned(),
+                        PresentationAnalysisLineScore::compact_label,
+                    ),
+                    colors.text,
+                    PresentationThemeTypography::UI_POINTS,
+                );
+                ui.strong(format!("Candidate {}", candidate.rank()));
+            });
+            if let Some(score) = &score {
                 ui.label(score.white_label());
                 ui.small(score.reported_label());
             } else {
@@ -264,6 +293,65 @@ impl PresentationAnalysisView {
         Ok(())
     }
 
+    fn show_summary(ui: &mut Ui, controller: &PresentationAnalysisController) {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let best = controller
+            .lines()
+            .first()
+            .filter(|candidate| candidate.rank() == 1)
+            .map(|candidate| candidate.source());
+        let score = best
+            .and_then(EngineAnalysisLine::score)
+            .map(PresentationAnalysisLineScore::new);
+        let tone = match controller.state() {
+            PresentationAnalysisControllerEnumState::Starting
+            | PresentationAnalysisControllerEnumState::Searching
+            | PresentationAnalysisControllerEnumState::Stopping => {
+                (PresentationThemeEnumTone::Run, "Running")
+            }
+            PresentationAnalysisControllerEnumState::Completed => {
+                (PresentationThemeEnumTone::Accent, "Done")
+            }
+            PresentationAnalysisControllerEnumState::Failed => {
+                (PresentationThemeEnumTone::Error, "Failed")
+            }
+            PresentationAnalysisControllerEnumState::Idle
+            | PresentationAnalysisControllerEnumState::Stopped
+            | PresentationAnalysisControllerEnumState::Cancelled => {
+                (PresentationThemeEnumTone::Neutral, "Idle")
+            }
+        };
+        ui.horizontal(|ui| {
+            PresentationThemeComponents::mono(
+                ui,
+                score.as_ref().map_or_else(
+                    || "0.00".to_owned(),
+                    PresentationAnalysisLineScore::compact_label,
+                ),
+                if score.is_some() {
+                    colors.text
+                } else {
+                    colors.text_3
+                },
+                PresentationThemeTypography::SUBHEAD_POINTS,
+            );
+            ui.vertical(|ui| {
+                ui.strong("Reckless engine");
+                PresentationThemeComponents::mono(
+                    ui,
+                    format!(
+                        "d {}/{}",
+                        Self::optional(best.and_then(EngineAnalysisLine::depth)),
+                        Self::optional(best.and_then(EngineAnalysisLine::selective_depth))
+                    ),
+                    colors.text_3,
+                    PresentationThemeTypography::CAPTION_POINTS,
+                );
+            });
+            PresentationThemeComponents::pill(ui, tone.1, tone.0);
+        });
+    }
+
     fn show_statistics(ui: &mut Ui, line: &EngineAnalysisLine) {
         ui.label(format!("Depth: {}", Self::optional(line.depth())));
         ui.label(format!(
@@ -318,10 +406,18 @@ impl PresentationAnalysisView {
             ),
             None => (0.5, "White evaluation: unavailable".to_owned(), true),
         };
-        let response = ui.add(
-            egui::ProgressBar::new(fraction)
-                .desired_height(PresentationThemeTokens::MIN_TARGET)
-                .text(label.clone()),
+        let width = ui.available_width();
+        let response = PresentationThemeComponents::eval_bar(
+            ui,
+            egui::vec2(width, Self::EVAL_BAR_THICKNESS),
+            fraction,
+        );
+        PresentationThemeComponents::caption(
+            ui,
+            label
+                .trim_start_matches("White evaluation: ")
+                .trim_start_matches("White: ")
+                .to_owned(),
         );
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, &label)
@@ -341,7 +437,7 @@ impl PresentationAnalysisView {
                     ],
                     stroke,
                 );
-                x += PresentationThemeTokens::MIN_TARGET / 2.0;
+                x += Self::EVAL_BAR_THICKNESS / 2.0;
             }
         }
         Ok(())

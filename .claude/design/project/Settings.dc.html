@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+Symbols+2&amp;display=swap">
+<style>
+body{margin:0}
+a{color:var(--acc)}a:hover{color:var(--acc-hover)}
+</style>
+</helmet>
+<div class="app" data-theme="{{theme}}" style="width: 100%; height: 100vh; min-height: 720px; display: flex; overflow: hidden; background: var(--bg)">
+<dc-import name="Rail" active="settings" hint-size="76px,100%"></dc-import>
+
+<nav aria-label="Settings sections" style="width: 232px; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 16px 10px; border-right: 1px solid var(--line); background: var(--s1)">
+<strong style="font-size: 16px; padding: 0 6px 12px">Settings</strong>
+<div class="row sel" aria-current="page">Appearance</div>
+<div class="row">Board and pieces</div>
+<div class="row">Motion</div>
+<div class="row">Engine</div>
+<div class="row">Shortcuts</div>
+<div class="row">Audio</div>
+<div class="row">Datasets</div>
+<div class="row">Backups and restore</div>
+<div class="row"><span style="flex: 1">Updates</span><span class="pill pill-acc" style="height: 18px">1.4.2</span></div>
+</nav>
+
+<main style="flex: 1; min-width: 0; overflow-y: auto">
+<div style="max-width: 760px; padding: 32px 40px 64px; display: flex; flex-direction: column; gap: 36px">
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600">Appearance</h2>
+<div class="card">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 500">Theme</span><span style="font-size: 12px; color: var(--tx3)">System follows your OS setting.</span></div>
+<div class="seg" role="group" aria-label="Theme"><button type="button" class="on">Dark</button><button type="button">Light</button><button type="button">System</button></div>
+</div>
+<hr class="divider">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 500">Interface scale</span><span style="font-size: 12px; color: var(--tx3)">Applies to all 2D panels. The board scales with the window.</span></div>
+<div class="seg" role="group" aria-label="Interface scale"><button type="button" class="on">100%</button><button type="button">125%</button><button type="button">150%</button><button type="button">200%</button></div>
+</div>
+<hr class="divider">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 500">Move notation</span><span style="font-size: 12px; color: var(--tx3)">Figurine <span class="fig">♘</span>f3 or letter Nf3.</span></div>
+<div class="seg" role="group" aria-label="Move notation"><button type="button" class="on">Figurine</button><button type="button">Letters</button></div>
+</div>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600">Motion</h2>
+<div class="card">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><label for="set-rm" style="font-weight: 500">Reduce motion</label><span style="font-size: 12px; color: var(--tx3)">Instant piece moves, no camera drift, no panel slides.</span></div>
+<input id="set-rm" type="checkbox" role="switch" style="width: 36px; height: 20px; accent-color: var(--acc)">
+</div>
+<hr class="divider">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><label for="set-tilt" style="font-weight: 500">Camera tilt</label><span style="font-size: 12px; color: var(--tx3)">0° is a flat, top-down board.</span></div>
+<input id="set-tilt" type="range" min="0" max="35" value="14" style="width: 200px; accent-color: var(--acc)">
+<span class="tnum" style="width: 32px; text-align: right; color: var(--tx2)">14°</span>
+</div>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600">Engine</h2>
+<div class="card">
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 500">Reckless</span><span class="mono" style="font-size: 11px; color: var(--tx3)">bundled · 12 logical cores detected</span></div>
+<span class="pill pill-run"><span class="dot"></span>Ready</span>
+</div>
+<hr class="divider">
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 14px 16px">
+<div class="field"><label class="label" for="set-thr">Threads</label><input class="input tnum" id="set-thr" value="8"><span style="font-size: 12px; color: var(--tx3)">Leave a few cores free for the board.</span></div>
+<div class="field"><label class="label" for="set-hash">Hash (MB)</label><input class="input tnum" id="set-hash" value="1024"><span style="font-size: 12px; color: var(--tx3)">Up to 4096 MB on this machine.</span></div>
+</div>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600">Backups and restore</h2>
+<div class="card">
+<div style="display: flex; align-items: center; gap: 12px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 500">Last backup</span><span class="tnum" style="font-size: 12px; color: var(--tx3)">Today 09:12 · 48.3 MB · library, studies, puzzle runs, settings</span></div>
+<button class="btn btn-sm" type="button">Back up now</button>
+<button class="btn btn-sm" type="button">Restore…</button>
+</div>
+<hr class="divider">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 16px">
+<div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 500">Automatic backups</span><span style="font-size: 12px; color: var(--tx3)">Before every update and once a day while the app is open.</span></div>
+<div class="seg" role="group" aria-label="Automatic backups"><button type="button" class="on">Daily</button><button type="button">Weekly</button><button type="button">Off</button></div>
+</div>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-size: 20px; line-height: 28px; font-weight: 600">Shortcuts</h2>
+<div class="card" style="padding: 6px 0">
+<sc-for list="{{shortcuts}}" as="k" hint-placeholder-count="6">
+<div style="display: flex; align-items: center; gap: 12px; padding: 8px 16px">
+<span style="flex: 1">{{k.name}}</span>
+<span class="kbd">{{k.key}}</span>
+<button class="btn btn-ghost btn-sm" type="button">Change</button>
+</div>
+</sc-for>
+</div>
+</section>
+
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const shortcuts = [
+      ['Command palette', '⌘K'],
+      ['New game', 'N'],
+      ['Flip board', 'F'],
+      ['Toggle inspector', 'I'],
+      ['Start or stop engine', 'Space'],
+      ['Return to live position', 'End'],
+    ].map(([name, key]) => ({ name, key }));
+    return { theme: this.props.theme ?? 'dark', shortcuts };
+  }
+}
+</script>
+</body>
+</html>

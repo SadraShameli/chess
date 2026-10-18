@@ -43,7 +43,15 @@ use crate::game::save_coordinator::{
     GameSaveCoordinator, GameSaveCoordinatorEnumBarrier, GameSaveCoordinatorError,
 };
 use crate::game::session::GameSessionEnumInterruption;
-use crate::presentation::action::registry::{PresentationActionEnumId, PresentationActionRegistry};
+use crate::presentation::action::palette_view::{
+    PresentationActionPaletteEnumChoice, PresentationActionPaletteView,
+};
+use crate::presentation::action::registry::{
+    PresentationActionContext, PresentationActionEnumId, PresentationActionEnumWorkspace,
+};
+use crate::presentation::action::shortcuts::{
+    PresentationShortcutEnumPlatform, PresentationShortcuts,
+};
 use crate::presentation::analysis::annotations::PresentationAnalysisAnnotationsEnumMarkingInput;
 use crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal;
 use crate::presentation::app::editor::{
@@ -74,8 +82,11 @@ use crate::presentation::engine_panels::{
 use crate::presentation::game::controller::{
     PresentationGameController, PresentationGameControllerError, PresentationGameControllerIntent,
 };
+use crate::presentation::game::edge::PresentationGameEdge;
 use crate::presentation::game::new_game::PresentationGameNewGame;
-use crate::presentation::game::overview::PresentationGameOverview;
+use crate::presentation::game::overview::{
+    PresentationGameOverview, PresentationGameOverviewAction,
+};
 use crate::presentation::game::play::{
     PresentationGamePlay, PresentationGamePlayClock, PresentationGamePlayEnumOperation,
     PresentationGamePlayError, PresentationGamePlayIntent,
@@ -88,9 +99,17 @@ use crate::presentation::puzzle::panel::{
 use crate::presentation::settings::controller::{
     PresentationSettingsConnection, PresentationSettingsController, PresentationSettingsOutcome,
 };
-use crate::presentation::settings::view::PresentationSettingsView;
+use crate::presentation::settings::view::{
+    PresentationSettingsEnumPage, PresentationSettingsNavigation, PresentationSettingsView,
+};
 use crate::presentation::study::PresentationStudy;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::icon::{PresentationThemeEnumIcon, PresentationThemeIcon};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
+use crate::presentation::theme::typography::PresentationThemeTypography;
 use crate::puzzle::timer::PuzzleTimerEnumReadiness;
 use crate::scene::camera::SceneCamera;
 use crate::scene::picking::ScenePickingViewport;
@@ -153,6 +172,27 @@ pub enum PresentationAppEnumWorkspace {
     Puzzles,
     Library,
     Editor,
+}
+
+impl PresentationAppEnumWorkspace {
+    pub const fn inspector_title(self) -> &'static str {
+        match self {
+            Self::Games => "Game inspector",
+            Self::Puzzles => "Puzzle inspector",
+            Self::Library => "Library inspector",
+            Self::Editor => "Editor inspector",
+        }
+    }
+}
+
+struct PresentationAppStageInput<'a> {
+    scene: Option<&'a PresentationBoardScene>,
+    now: ClockInstant,
+    pending_move: Option<crate::game::premove::GamePremoveIntent>,
+    promotion_owns_input: bool,
+    can_enter_moves: bool,
+    is_busy: bool,
+    editor_viewport: &'a mut Option<ScenePickingViewport>,
 }
 
 struct PresentationAppPending {
@@ -270,6 +310,7 @@ impl PresentationAppFrame {
 }
 
 pub struct PresentationApp {
+    overview_open: bool,
     snapshot: Option<DesktopBootstrapSnapshot>,
     board: PresentationBoardView,
     games: Vec<PresentationAppGame>,
@@ -323,10 +364,13 @@ pub struct PresentationApp {
     quality_mode_changed: bool,
     camera_queue: Vec<PresentationBoardEnumCameraAction>,
     navigation_frame: Option<u64>,
+    palette: PresentationActionPaletteView,
+    settings_navigation: PresentationSettingsNavigation,
 }
 
 impl PresentationApp {
     const MAX_GAME_REQUESTS: usize = 128;
+    const PALETTE_FIELD_WIDTH: f32 = 240.0;
 
     pub fn new(clock: Arc<dyn ClockTimeProvider>) -> Self {
         let settings = PresentationSettingsController::new(None);
@@ -336,6 +380,7 @@ impl PresentationApp {
         );
         board.rest_panel(true);
         Self {
+            overview_open: false,
             snapshot: None,
             board,
             games: Vec::new(),
@@ -389,6 +434,8 @@ impl PresentationApp {
             quality_mode_changed: false,
             camera_queue: Vec::new(),
             navigation_frame: None,
+            palette: PresentationActionPaletteView::default(),
+            settings_navigation: PresentationSettingsNavigation::default(),
         }
     }
 
@@ -826,6 +873,14 @@ impl PresentationApp {
         &mut self,
         port: &DesktopApplicationPort<C, W>,
     ) -> Result<(), PresentationAppError> {
+        self.pause_active_games(GamePauseEnumCause::ComputerSleep, port)
+    }
+
+    fn pause_active_games<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        cause: GamePauseEnumCause,
+        port: &DesktopApplicationPort<C, W>,
+    ) -> Result<(), PresentationAppError> {
         let targets: Vec<_> = self
             .games
             .iter()
@@ -837,9 +892,7 @@ impl PresentationApp {
             let operation = DesktopGameBridgeEnumOperation::Session {
                 game,
                 revision,
-                action: DesktopGameCommandsEnumAction::Pause {
-                    cause: GamePauseEnumCause::ComputerSleep,
-                },
+                action: DesktopGameCommandsEnumAction::Pause { cause },
             };
             if let Err(error) = self.activate_game(operation, DesktopRequestId::new(), port) {
                 first_failure.get_or_insert(error);
@@ -1598,36 +1651,109 @@ impl PresentationApp {
         ui: &mut Ui,
         port: &DesktopApplicationPort<C, W>,
     ) {
-        if ui.button("Reset Layout").clicked() {
-            self.layout.reset();
-            self.layout_reset_requested = true;
-        }
-        ui.label("Board quality");
-        let mut quality = self.quality_mode;
-        for (label, mode) in [
-            ("Automatic", SceneQualityEnumMode::Automatic),
-            (
-                "Low",
-                SceneQualityEnumMode::Manual(SceneQualityEnumTier::Low),
-            ),
-            (
-                "Medium",
-                SceneQualityEnumMode::Manual(SceneQualityEnumTier::Medium),
-            ),
-            (
-                "High",
-                SceneQualityEnumMode::Manual(SceneQualityEnumTier::High),
-            ),
-        ] {
-            ui.radio_value(&mut quality, mode, label);
-        }
-        if quality != self.quality_mode {
-            self.quality_mode = quality;
-            self.quality_mode_changed = true;
-        }
-        let outcome = PresentationSettingsView::show(ui, &mut self.settings);
-        ui.separator();
-        self.study.show_panels(ui);
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let update_badge = self
+            .settings
+            .update()
+            .and_then(|snapshot| snapshot.state().release())
+            .map(|release| release.version.to_string());
+        egui::Panel::left("chess.settings.navigation")
+            .exact_size(PresentationSettingsNavigation::NAVIGATION_WIDTH)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(colors.surface_1)
+                    .stroke(egui::Stroke::new(1.0, colors.line))
+                    .inner_margin(egui::Margin::symmetric(10, 16)),
+            )
+            .show(ui, |ui| {
+                self.settings_navigation.show(ui, update_badge.as_deref());
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(colors.bg))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("chess.settings.page")
+                    .show(ui, |ui| {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 40,
+                                right: 40,
+                                top: 32,
+                                bottom: 64,
+                            })
+                            .show(ui, |ui| {
+                                ui.set_max_width(PresentationSettingsNavigation::CONTENT_WIDTH);
+                                self.show_settings_content(ui, port);
+                            });
+                    });
+            });
+        self.submit_update(port);
+    }
+
+    fn show_settings_content<C: ClockTimeProvider, W: DesktopApplicationWakeProvider>(
+        &mut self,
+        ui: &mut Ui,
+        port: &DesktopApplicationPort<C, W>,
+    ) {
+        let layout = &mut self.layout;
+        let layout_reset_requested = &mut self.layout_reset_requested;
+        let quality_mode = &mut self.quality_mode;
+        let quality_mode_changed = &mut self.quality_mode_changed;
+        let outcome = PresentationSettingsView::show(
+            ui,
+            &mut self.settings,
+            &mut self.settings_navigation,
+            |ui| {
+                PresentationSettingsView::row(
+                    ui,
+                    "Board quality",
+                    Some("Automatic adapts rendering to this machine."),
+                    |ui| {
+                        let mut quality = *quality_mode;
+                        PresentationThemeComponents::segmented(
+                            ui,
+                            &mut quality,
+                            &[
+                                (SceneQualityEnumMode::Automatic, "Automatic"),
+                                (
+                                    SceneQualityEnumMode::Manual(SceneQualityEnumTier::Low),
+                                    "Low",
+                                ),
+                                (
+                                    SceneQualityEnumMode::Manual(SceneQualityEnumTier::Medium),
+                                    "Medium",
+                                ),
+                                (
+                                    SceneQualityEnumMode::Manual(SceneQualityEnumTier::High),
+                                    "High",
+                                ),
+                            ],
+                            false,
+                        );
+                        if quality != *quality_mode {
+                            *quality_mode = quality;
+                            *quality_mode_changed = true;
+                        }
+                    },
+                );
+                PresentationThemeComponents::divider(ui);
+                PresentationSettingsView::row(
+                    ui,
+                    "Workspace layout",
+                    Some("Restores the rail, inspector width and panels."),
+                    |ui| {
+                        if PresentationThemeEnumButton::Secondary
+                            .show_sized(ui, "Reset Layout", PresentationThemeEnumSize::Small)
+                            .clicked()
+                        {
+                            layout.reset();
+                            *layout_reset_requested = true;
+                        }
+                    },
+                );
+            },
+        );
         self.apply_settings_outcome(&ui.ctx().clone(), outcome);
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1645,7 +1771,226 @@ impl PresentationApp {
                 crate::desktop::update_commands::DesktopUpdateOperation::Install { prerequisites },
             );
         }
-        self.backup.show(ui, port, now_ms, prerequisites);
+        let backup = &mut self.backup;
+        self.settings_navigation
+            .page(ui, PresentationSettingsEnumPage::Backups, |ui| {
+                PresentationSettingsView::card(ui, |ui| {
+                    PresentationSettingsView::block(ui, |ui| {
+                        backup.show(ui, port, now_ms, prerequisites);
+                    });
+                });
+            });
+        let study = &mut self.study;
+        self.settings_navigation
+            .page(ui, PresentationSettingsEnumPage::Study, |ui| {
+                PresentationSettingsView::card(ui, |ui| {
+                    PresentationSettingsView::block(ui, |ui| study.show_panels(ui));
+                });
+            });
+    }
+
+    fn open_settings(&mut self, frame: u64) {
+        if self.settings_toggle_frame != Some(frame) {
+            if !self.settings_open {
+                self.settings_open = true;
+            } else if self.settings.request_close() {
+                self.settings_open = false;
+            }
+            self.settings_toggle_frame = Some(frame);
+            self.board.cancel_gesture();
+        }
+    }
+
+    fn paint_stage(painter: &egui::Painter, rect: egui::Rect, colors: &PresentationThemeColors) {
+        const SEGMENTS: u32 = 64;
+        const STOPS: [(f32, f32); 4] = [(0.0, 0.0), (0.3, 0.25), (0.55, 0.65), (0.72, 1.0)];
+        let center = egui::pos2(rect.center().x, rect.top() + rect.height() * 0.42);
+        let radius = egui::vec2(rect.width() * 0.75, rect.height() * 0.95);
+        painter.rect_filled(rect, 0.0, colors.bg);
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(center, colors.surface_2);
+        for (ring, (extent, blend)) in STOPS.iter().enumerate().skip(1) {
+            let color = colors.surface_2.lerp_to_gamma(colors.bg, *blend);
+            for step in 0..SEGMENTS {
+                let angle = std::f32::consts::TAU * f32::from(u16::try_from(step).unwrap_or(0))
+                    / f32::from(u16::try_from(SEGMENTS).unwrap_or(1));
+                let offset = egui::vec2(angle.cos() * radius.x, angle.sin() * radius.y) * *extent;
+                mesh.colored_vertex(center + offset, color);
+                let current = u32::try_from(ring - 1).unwrap_or(0) * SEGMENTS + 1 + step;
+                let next =
+                    u32::try_from(ring - 1).unwrap_or(0) * SEGMENTS + 1 + (step + 1) % SEGMENTS;
+                if ring == 1 {
+                    mesh.add_triangle(0, current, next);
+                } else {
+                    let inner = current - SEGMENTS;
+                    let inner_next = next - SEGMENTS;
+                    mesh.add_triangle(inner, current, next);
+                    mesh.add_triangle(inner, next, inner_next);
+                }
+            }
+        }
+        painter.with_clip_rect(rect).add(egui::Shape::mesh(mesh));
+    }
+
+    fn show_logo(ui: &mut Ui, colors: &PresentationThemeColors) {
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(36.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 9.0, colors.text);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "\u{265E}",
+            egui::FontId::proportional(PresentationThemeTypography::LOGO_POINTS),
+            colors.bg,
+        );
+    }
+
+    fn show_palette_shortcut(ui: &mut Ui, label: &str, keys: &[String]) -> egui::Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(60.0, 40.0), egui::Sense::click());
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, PresentationThemeTokens::RADIUS_LG, colors.surface_2);
+        }
+        let font = egui::FontId::monospace(PresentationThemeTypography::MICRO_POINTS);
+        let galleys: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                ui.painter()
+                    .layout_no_wrap(key.clone(), font.clone(), colors.text_2)
+            })
+            .collect();
+        let widths: Vec<f32> = galleys
+            .iter()
+            .map(|galley| galley.size().x.max(8.0) + 10.0)
+            .collect();
+        let gaps = u8::try_from(galleys.len().saturating_sub(1)).unwrap_or(0);
+        let total = widths.iter().sum::<f32>() + 2.0 * f32::from(gaps);
+        let mut x = rect.center().x - total / 2.0;
+        for (galley, width) in galleys.into_iter().zip(widths) {
+            let key_rect = egui::Rect::from_min_size(
+                egui::pos2(x, rect.center().y - 9.0),
+                egui::vec2(width, 18.0),
+            );
+            ui.painter().rect(
+                key_rect,
+                PresentationThemeTokens::RADIUS_SM,
+                colors.surface_1,
+                egui::Stroke::new(1.0, colors.line),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().galley(
+                key_rect.center() - galley.size() / 2.0,
+                galley,
+                colors.text_2,
+            );
+            x += width + 2.0;
+        }
+        let label = label.to_owned();
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone())
+        });
+        response.on_hover_text(label)
+    }
+
+    fn palette_chord_keys(preferences: DesktopPreferences) -> Vec<String> {
+        let chord = PresentationShortcuts::chord(
+            preferences,
+            crate::desktop::preferences::DesktopPreferencesEnumShortcutAction::Palette,
+        );
+        let mut keys = Vec::new();
+        if chord.alt() {
+            keys.push("Alt".to_owned());
+        }
+        if chord.shift() {
+            keys.push("Shift".to_owned());
+        }
+        if chord.command() {
+            keys.push(match PresentationShortcutEnumPlatform::current() {
+                PresentationShortcutEnumPlatform::Mac => "\u{2318}".to_owned(),
+                PresentationShortcutEnumPlatform::Other => "Ctrl".to_owned(),
+            });
+        }
+        keys.push(chord.key().to_ascii_uppercase().to_string());
+        keys
+    }
+
+    fn show_palette_field(ui: &mut Ui, width: f32, shortcut: &str) -> egui::Response {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let size = egui::vec2(width, PresentationThemeTokens::CONTROL_SM);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        let stroke = if response.hovered() {
+            colors.line_strong
+        } else {
+            colors.line
+        };
+        ui.painter().rect(
+            rect,
+            PresentationThemeTokens::RADIUS_MD,
+            colors.bg,
+            egui::Stroke::new(1.0, stroke),
+            egui::StrokeKind::Inside,
+        );
+        let icon = egui::Rect::from_center_size(
+            rect.left_center() + egui::vec2(18.0, 0.0),
+            egui::Vec2::splat(16.0),
+        );
+        PresentationThemeIcon::paint(
+            ui.painter(),
+            icon,
+            PresentationThemeEnumIcon::Search,
+            colors.text_3,
+        );
+        let label = "Search or run a command";
+        ui.painter().text(
+            rect.left_center() + egui::vec2(34.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(PresentationThemeTypography::UI_POINTS),
+            colors.text_3,
+        );
+        let font = egui::FontId::monospace(PresentationThemeTypography::MICRO_POINTS);
+        let galley = ui
+            .painter()
+            .layout_no_wrap(shortcut.to_owned(), font, colors.text_2);
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - galley.size().x - 18.0, rect.center().y - 9.0),
+            egui::vec2(galley.size().x + 10.0, 18.0),
+        );
+        ui.painter().rect(
+            key_rect,
+            PresentationThemeTokens::RADIUS_SM,
+            colors.surface_1,
+            egui::Stroke::new(1.0, colors.line),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().galley(
+            key_rect.center() - galley.size() / 2.0,
+            galley,
+            colors.text_2,
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        response
+    }
+
+    fn palette_shortcut_pressed(&self, ctx: &egui::Context) -> bool {
+        let chord = PresentationShortcuts::chord(
+            *self.settings.effective(),
+            crate::desktop::preferences::DesktopPreferencesEnumShortcutAction::Palette,
+        );
+        let Some(key) = egui::Key::from_name(&chord.key().to_ascii_uppercase().to_string()) else {
+            return false;
+        };
+        let mut modifiers = egui::Modifiers::NONE;
+        if chord.command() {
+            modifiers |= egui::Modifiers::COMMAND;
+        }
+        if chord.shift() {
+            modifiers |= egui::Modifiers::SHIFT;
+        }
+        if chord.alt() {
+            modifiers |= egui::Modifiers::ALT;
+        }
+        ctx.input_mut(|input| input.consume_shortcut(&egui::KeyboardShortcut::new(modifiers, key)))
     }
 
     pub fn show<C, W, P>(
@@ -1719,123 +2064,205 @@ impl PresentationApp {
         let mut navigation = None;
         let mut overview_rows = Vec::new();
         let mut close_click = None;
-        egui::Panel::top("chess.header").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(
-                    egui::RichText::new("CHESS")
-                        .strong()
-                        .color(ui.visuals().selection.stroke.color),
-                );
-                ui.label(
-                    egui::RichText::new("Offline study and play")
-                        .color(ui.visuals().weak_text_color()),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Quit").clicked() {
-                        navigation = Some(PresentationAppLibraryEnumNavigation::Quit);
+        let mut palette_camera = None;
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let palette_keys = Self::palette_chord_keys(*self.settings.effective());
+        let palette_text = palette_keys.concat();
+        let mut open_palette = false;
+        let mut open_settings = false;
+        egui::Panel::left("chess.rail")
+            .exact_size(PresentationThemeTokens::RAIL_WIDTH)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(colors.surface_1)
+                    .stroke(egui::Stroke::new(1.0, colors.line))
+                    .inner_margin(egui::Margin::symmetric(8, 12)),
+            )
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = PresentationThemeTokens::SPACE_1;
+                ui.vertical_centered(|ui| {
+                    Self::show_logo(ui, &colors);
+                    ui.add_space(14.0);
+                    for (target, icon, label, enabled) in [
+                        (
+                            PresentationAppEnumWorkspace::Games,
+                            PresentationThemeEnumIcon::Games,
+                            "Play",
+                            true,
+                        ),
+                        (
+                            PresentationAppEnumWorkspace::Puzzles,
+                            PresentationThemeEnumIcon::Puzzles,
+                            "Puzzles",
+                            self.puzzle_panel.is_some(),
+                        ),
+                        (
+                            PresentationAppEnumWorkspace::Library,
+                            PresentationThemeEnumIcon::Library,
+                            "Library",
+                            self.library.is_some(),
+                        ),
+                        (
+                            PresentationAppEnumWorkspace::Editor,
+                            PresentationThemeEnumIcon::Study,
+                            "Editor",
+                            self.editor.is_some(),
+                        ),
+                    ] {
+                        if PresentationThemeComponents::rail_item(
+                            ui,
+                            icon,
+                            label,
+                            self.workspace == target && !self.settings_open,
+                            enabled,
+                        )
+                        .clicked()
+                        {
+                            workspace = Some(target);
+                        }
                     }
-                    if ui.button("New Game").clicked() && self.new_game_toggle_frame != Some(frame)
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                        if PresentationThemeIcon::button(
+                            ui,
+                            PresentationThemeEnumIcon::Close,
+                            "Quit",
+                        )
+                        .clicked()
+                        {
+                            navigation = Some(PresentationAppLibraryEnumNavigation::Quit);
+                        }
+                        if PresentationThemeComponents::rail_item(
+                            ui,
+                            PresentationThemeEnumIcon::Settings,
+                            "Settings",
+                            self.settings_open,
+                            true,
+                        )
+                        .clicked()
+                        {
+                            open_settings = true;
+                        }
+                        if Self::show_palette_shortcut(ui, "Command palette", &palette_keys)
+                            .clicked()
+                        {
+                            open_palette = true;
+                        }
+                    });
+                });
+            });
+        egui::Panel::top("chess.header")
+            .exact_size(PresentationThemeTokens::HEADER_HEIGHT)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(colors.surface_1)
+                    .stroke(egui::Stroke::new(1.0, colors.line))
+                    .inner_margin(egui::Margin::symmetric(12, 8)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = PresentationThemeTokens::SPACE_1;
+                    match PresentationGameOverview::rows(
+                        self.games.iter().map(|game| &game.snapshot),
+                        now,
+                    ) {
+                        Ok(rows) => {
+                            let action = PresentationGameTabs::show(ui, &rows, self.selected_game);
+                            if let Some(chosen) = action.selected {
+                                navigation =
+                                    Some(PresentationAppLibraryEnumNavigation::Game(chosen));
+                            }
+                            close_click = action.close;
+                            if action.overview {
+                                self.overview_open = true;
+                            }
+                            if action.selected.is_some() {
+                                self.overview_open = false;
+                            }
+                            if action.new_game && self.new_game_toggle_frame != Some(frame) {
+                                self.new_game_toggle_frame = Some(frame);
+                                navigation = Some(PresentationAppLibraryEnumNavigation::NewGame);
+                            }
+                            overview_rows = rows;
+                        }
+                        Err(error) => self.failure = Some(error.to_string()),
+                    }
+                    if PresentationThemeIcon::button(
+                        ui,
+                        PresentationThemeEnumIcon::Plus,
+                        "New Game",
+                    )
+                    .clicked()
+                        && self.new_game_toggle_frame != Some(frame)
                     {
                         self.new_game_toggle_frame = Some(frame);
                         navigation = Some(PresentationAppLibraryEnumNavigation::NewGame);
                     }
-                    if ui
-                        .button(if self.inspector_open {
-                            "Hide inspector"
-                        } else {
-                            "Show inspector"
-                        })
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = PresentationThemeTokens::SPACE_2;
+                        if PresentationThemeIcon::button(
+                            ui,
+                            PresentationThemeEnumIcon::Panel,
+                            if self.inspector_open {
+                                "Hide inspector"
+                            } else {
+                                "Show inspector"
+                            },
+                        )
                         .clicked()
-                    {
-                        inspector_toggle = true;
-                    }
-                    if ui.button("Settings").clicked() && self.settings_toggle_frame != Some(frame)
-                    {
-                        if !self.settings_open {
-                            self.settings_open = true;
-                        } else if self.settings.request_close() {
-                            self.settings_open = false;
+                        {
+                            inspector_toggle = true;
                         }
-                        self.settings_toggle_frame = Some(frame);
-                        self.board.cancel_gesture();
-                    }
-                    for &action in PresentationActionRegistry::actions() {
-                        match action {
-                            PresentationActionEnumId::Refresh
-                            | PresentationActionEnumId::SelectFile => {
-                                if ui.button(action.label()).clicked() {
-                                    actions.push(action);
-                                }
-                            }
-                            PresentationActionEnumId::ConfirmQuit
-                            | PresentationActionEnumId::Subscribe => {}
+                        if Self::show_palette_field(ui, Self::PALETTE_FIELD_WIDTH, &palette_text)
+                            .clicked()
+                        {
+                            open_palette = true;
                         }
-                    }
+                    });
                 });
             });
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .selectable_label(
-                        self.workspace == PresentationAppEnumWorkspace::Games,
-                        "Play",
-                    )
-                    .clicked()
-                {
-                    workspace = Some(PresentationAppEnumWorkspace::Games);
-                }
-                if ui
-                    .add_enabled(
-                        self.library.is_some(),
-                        egui::Button::selectable(
-                            self.workspace == PresentationAppEnumWorkspace::Library,
-                            "Library",
-                        ),
-                    )
-                    .clicked()
-                {
-                    workspace = Some(PresentationAppEnumWorkspace::Library);
-                }
-                if ui
-                    .add_enabled(
-                        self.puzzle_panel.is_some(),
-                        egui::Button::selectable(
-                            self.workspace == PresentationAppEnumWorkspace::Puzzles,
-                            "Puzzles",
-                        ),
-                    )
-                    .clicked()
-                {
-                    workspace = Some(PresentationAppEnumWorkspace::Puzzles);
-                }
-                if ui
-                    .add_enabled(
-                        self.editor.is_some(),
-                        egui::Button::selectable(
-                            self.workspace == PresentationAppEnumWorkspace::Editor,
-                            "Editor",
-                        ),
-                    )
-                    .clicked()
-                {
-                    workspace = Some(PresentationAppEnumWorkspace::Editor);
-                }
-                match PresentationGameOverview::rows(
-                    self.games.iter().map(|game| &game.snapshot),
-                    now,
-                ) {
-                    Ok(rows) => {
-                        let action = PresentationGameTabs::show(ui, &rows, self.selected_game);
-                        if let Some(chosen) = action.selected {
-                            navigation = Some(PresentationAppLibraryEnumNavigation::Game(chosen));
-                        }
-                        close_click = action.close;
-                        overview_rows = rows;
+        if self.palette_shortcut_pressed(ui.ctx()) && !self.quit_confirmation {
+            open_palette = true;
+        }
+        if open_palette && !promotion_owns_input {
+            self.palette.open();
+        }
+        let palette_context = PresentationActionContext {
+            board_visible: !self.settings_open && self.board_snapshot().is_some(),
+            settings_open: self.settings_open,
+        };
+        match self
+            .palette
+            .show(ui.ctx(), palette_context, *self.settings.effective())
+        {
+            Some(PresentationActionPaletteEnumChoice::Workspace(action)) => match action {
+                PresentationActionEnumWorkspace::OpenPalette => {}
+                PresentationActionEnumWorkspace::NewGame => {
+                    if self.new_game_toggle_frame != Some(frame) {
+                        self.new_game_toggle_frame = Some(frame);
+                        navigation = Some(PresentationAppLibraryEnumNavigation::NewGame);
                     }
-                    Err(error) => self.failure = Some(error.to_string()),
                 }
-            });
-            PresentationGameTabs::show_overview(ui, &overview_rows);
-        });
+                PresentationActionEnumWorkspace::OpenSettings => open_settings = true,
+                PresentationActionEnumWorkspace::FlipBoard => {
+                    palette_camera = Some(PresentationBoardEnumCameraAction::Flip);
+                }
+                PresentationActionEnumWorkspace::Quit => {
+                    navigation = Some(PresentationAppLibraryEnumNavigation::Quit);
+                }
+            },
+            Some(PresentationActionPaletteEnumChoice::System(action)) => actions.push(action),
+            None => {}
+        }
+        if open_settings {
+            self.open_settings(frame);
+        }
+        if overview_rows.is_empty() {
+            self.overview_open = false;
+        }
+        let mut new_game_cancelled = false;
+        let mut overview_action = PresentationGameOverviewAction::default();
         if !ui.is_sizing_pass() && self.navigation_frame != Some(frame) {
             if let Some(target) = navigation {
                 self.navigation_frame = Some(frame);
@@ -1876,7 +2303,7 @@ impl PresentationApp {
                         DesktopEnumCommand::Game(DesktopGameBridgeEnumOperation::Create { .. })
                     )
             });
-        if self.workspace == PresentationAppEnumWorkspace::Library {
+        if self.workspace == PresentationAppEnumWorkspace::Library && !self.settings_open {
             egui::Panel::left("chess.library.query")
                 .default_size(PresentationThemeTokens::PANEL_WIDTH)
                 .show(ui, |ui| {
@@ -1922,15 +2349,19 @@ impl PresentationApp {
             }
         };
         self.board.request_repaint(ui.ctx());
-        if inspector_progress > 0.0 {
+        if self.settings_open {
+            self.show_settings(ui, port);
+        } else if inspector_progress > 0.0 {
             egui::Panel::right("chess.inspector")
             .exact_size(self.layout.panel_width() * inspector_progress)
+            .frame(
+                egui::Frame::new()
+                    .fill(colors.surface_1)
+                    .stroke(egui::Stroke::new(1.0, colors.line))
+                    .inner_margin(egui::Margin::same(16)),
+            )
             .show(ui, |ui| {
-                if self.settings_open {
-                    self.show_settings(ui, port);
-                    self.submit_update(port);
-                    return;
-                }
+                self.show_inspector_header(ui, &colors);
                 if self.workspace == PresentationAppEnumWorkspace::Editor {
                     ui.add_enabled_ui(!self.quit_confirmation, |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1954,6 +2385,7 @@ impl PresentationApp {
                 }
                 if let Some(new_game) = &mut self.new_game {
                     configuration = ui.add_enabled_ui(!is_create_busy, |ui| new_game.show(ui)).inner;
+                    new_game_cancelled = new_game.take_cancel();
                     if is_create_busy {
                         ui.weak("Waiting for the native game to start.");
                     }
@@ -1969,8 +2401,8 @@ impl PresentationApp {
                         Err(error) => self.failure = Some(error.to_string()),
                     }
                     if self.games.len() > 1 {
-                        ui.separator();
-                        ui.heading("Live games");
+                        PresentationThemeComponents::divider(ui);
+                        PresentationThemeComponents::subhead(ui, "Live games");
                         for (index, game) in self.games.iter().enumerate() {
                             match game.snapshot.clock().view(now) {
                                 Ok(clock) => {
@@ -1982,36 +2414,50 @@ impl PresentationApp {
                         }
                     }
                 } else {
-                    ui.heading("Position");
+                    PresentationThemeComponents::subhead(ui, "Position");
                     if let Some(snapshot) = self.board_snapshot() {
                         ui.label(format!("{} to move{}", PresentationBoardSemanticGrid::color_name(snapshot.turn()), if snapshot.is_check() { ", in check" } else { "" }));
                         ui.label(format!("{} legal moves", snapshot.legal_moves().len()));
                     }
                 }
                 if let Some(snapshot) = &self.snapshot {
-                    ui.separator();
-                    ui.heading("Reckless");
-                    match snapshot.engine() {
-                        DesktopEnumEngineSnapshot::Ready { identity } => {
-                            ui.label(identity.name());
-                            ui.label(egui::RichText::new(identity.author()).color(ui.visuals().weak_text_color()));
-                            ui.label(format!("{} supported engine options", identity.supported_options().len()));
+                    ui.add_space(PresentationThemeTokens::SPACE_3);
+                    PresentationThemeComponents::card(ui).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            PresentationThemeComponents::subhead(ui, "Reckless");
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                match snapshot.engine() {
+                                    DesktopEnumEngineSnapshot::Ready { .. } => {
+                                        PresentationThemeComponents::pill(ui, "Ready", PresentationThemeEnumTone::Run);
+                                    }
+                                    DesktopEnumEngineSnapshot::Unavailable { .. } => {
+                                        PresentationThemeComponents::pill(ui, "Engine unavailable", PresentationThemeEnumTone::Error);
+                                    }
+                                }
+                            });
+                        });
+                        match snapshot.engine() {
+                            DesktopEnumEngineSnapshot::Ready { identity } => {
+                                ui.label(identity.name());
+                                PresentationThemeComponents::caption(ui, identity.author());
+                                PresentationThemeComponents::caption(ui, format!("{} supported engine options", identity.supported_options().len()));
+                            }
+                            DesktopEnumEngineSnapshot::Unavailable { message } => {
+                                ui.label(message);
+                            }
                         }
-                        DesktopEnumEngineSnapshot::Unavailable { message } => {
-                            ui.colored_label(ui.visuals().warn_fg_color, "Engine unavailable");
-                            ui.label(message);
-                        }
-                    }
-                    ui.label(format!("{} usable hardware threads", snapshot.cpu_threads()));
+                        PresentationThemeComponents::caption(ui, format!("{} usable hardware threads", snapshot.cpu_threads()));
+                    });
                 } else {
-                    ui.label("Waiting for the local application");
+                    PresentationThemeComponents::caption(ui, "Waiting for the local application");
                 }
                 if let Some(panels) = &mut self.engine_panels
                     && let Err(error) = panels.show(ui, port) {
                     self.failure = Some(error.to_string());
                 }
-                ui.separator();
-                ui.label(egui::RichText::new("Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.").color(ui.visuals().weak_text_color()));
+                PresentationThemeComponents::divider(ui);
+                PresentationThemeComponents::caption(ui, "Use Tab to enter the board, arrow keys to move focus, and Enter or Space to select a square.");
             });
         }
         let retry_quit = self.failure.is_some()
@@ -2031,22 +2477,39 @@ impl PresentationApp {
             .stream
             .as_ref()
             .is_some_and(|stream| stream.state == PresentationAppEnumStreamState::RetryRequired);
-        egui::Panel::bottom("chess.status").show(ui, |ui| {
-            let response = ui.label(status);
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_role(egui::accesskit::Role::Status);
-                node.set_live(egui::accesskit::Live::Polite);
+        egui::Panel::bottom("chess.status")
+            .frame(
+                egui::Frame::new()
+                    .fill(colors.surface_1)
+                    .stroke(egui::Stroke::new(1.0, colors.line))
+                    .inner_margin(egui::Margin::symmetric(16, 6)),
+            )
+            .show(ui, |ui| {
+                let response = ui.label(
+                    egui::RichText::new(status)
+                        .size(PresentationThemeTypography::CAPTION_POINTS)
+                        .color(colors.text_2),
+                );
+                ui.ctx().accesskit_node_builder(response.id, |node| {
+                    node.set_role(egui::accesskit::Role::Status);
+                    node.set_live(egui::accesskit::Live::Polite);
+                });
+                if retry_quit {
+                    retry = PresentationThemeEnumButton::Secondary
+                        .show_sized(ui, "Retry quit", PresentationThemeEnumSize::Small)
+                        .clicked();
+                }
+                if has_refused_game {
+                    retry_game = PresentationThemeEnumButton::Secondary
+                        .show_sized(ui, "Retry action", PresentationThemeEnumSize::Small)
+                        .clicked();
+                }
+                if needs_stream_retry {
+                    retry_stream = PresentationThemeEnumButton::Secondary
+                        .show_sized(ui, "Retry sync", PresentationThemeEnumSize::Small)
+                        .clicked();
+                }
             });
-            if retry_quit {
-                retry = ui.button("Retry quit").clicked();
-            }
-            if has_refused_game {
-                retry_game = ui.button("Retry action").clicked();
-            }
-            if needs_stream_retry {
-                retry_stream = ui.button("Retry sync").clicked();
-            }
-        });
         if retry && self.quit_retry_frame != Some(frame) {
             if let Err(error) = port.retry_quit() {
                 self.failure = Some(error.to_string());
@@ -2094,96 +2557,78 @@ impl PresentationApp {
             })
             .and_then(DesktopGameSnapshot::premove);
         let mut editor_viewport = None;
-        let board_frame = egui::CentralPanel::default()
-            .show(ui, |ui| {
-                if let Some(intent) = PresentationBoardRecovery::show(ui, &self.renderer_commands) {
-                    self.recovery_intent = Some(intent);
-                }
-                if let Some(action) =
-                    PresentationBoardToolbar::show(ui, scene.is_some(), self.board.markings_mut())
-                {
-                    camera_action = Some(action);
-                    self.board.cancel_gesture();
-                }
-                if self.workspace == PresentationAppEnumWorkspace::Editor {
-                    if let Some(editor) = &mut self.editor {
-                        editor_viewport = Some(
-                            editor
-                                .show_board(
-                                    ui,
-                                    port,
-                                    PresentationAppEditorBoardInput::new(
-                                        scene,
-                                        picker,
-                                        self.board.markings_mut(),
-                                    )
-                                    .with_enabled(!self.quit_confirmation && !self.settings_open),
-                                )
-                                .map_err(PresentationAppError::from)?,
-                        );
-                    }
-                    return Ok::<_, PresentationAppError>(None);
-                }
-                ui.horizontal(|ui| {
-                    ui.strong("White");
-                    if self.selected_game.is_none()
-                        && self.workspace == PresentationAppEnumWorkspace::Games
+        if let Some(action) = palette_camera {
+            camera_action = Some(action);
+            self.board.cancel_gesture();
+        }
+        let board_frame = if self.settings_open {
+            None
+        } else {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(24, 12)))
+                .show(ui, |ui| {
+                    let stage = ui.max_rect().expand2(egui::vec2(24.0, 12.0));
+                    Self::paint_stage(ui.painter(), stage, &colors);
+                    if let Some(intent) =
+                        PresentationBoardRecovery::show(ui, &self.renderer_commands)
                     {
-                        ui.label(
-                            egui::RichText::new("No active game")
-                                .color(ui.visuals().weak_text_color()),
-                        );
+                        self.recovery_intent = Some(intent);
                     }
-                });
-                let board_snapshot = Self::board_for_workspace(
-                    self.workspace,
-                    Self::selected_game_snapshot(&self.games, self.selected_game),
-                    self.snapshot.as_ref(),
-                    self.puzzle_panel.as_ref(),
-                    self.library.as_ref(),
-                );
-                let result = match board_snapshot {
-                    Some(snapshot) => self
-                        .board
-                        .show(
-                            ui,
-                            PresentationBoardViewInput::new(snapshot, scene, picker)
-                                .with_pending_move(pending_move)
-                                .with_render_scale(self.render_scale)
-                                .with_marks_enabled(
-                                    !self.quit_confirmation
-                                        && !promotion_owns_input
-                                        && self.new_game.is_none()
-                                        && !self.settings_open,
-                                )
-                                .with_enabled(
-                                    !self.quit_confirmation
-                                        && !promotion_owns_input
-                                        && can_enter_moves
-                                        && !is_busy
-                                        && self.new_game.is_none()
-                                        && !self.settings_open,
-                                ),
-                        )
-                        .map(Some),
-                    None => {
-                        ui.label(match self.workspace {
-                            PresentationAppEnumWorkspace::Games => "Loading the saved position",
-                            PresentationAppEnumWorkspace::Library => {
-                                "Open a saved game to display its 3D board"
-                            }
-                            PresentationAppEnumWorkspace::Puzzles => {
-                                "The puzzle board is hidden until its run is ready and resumed"
-                            }
-                            PresentationAppEnumWorkspace::Editor => "Open a position draft",
+                    if self.overview_open && self.workspace == PresentationAppEnumWorkspace::Games {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            overview_action = PresentationGameOverview::show(ui, &overview_rows);
                         });
-                        Ok(None)
+                        return Ok::<_, PresentationAppError>(None);
                     }
-                };
-                ui.strong("Black");
-                result.map_err(PresentationAppError::from)
-            })
-            .inner?;
+                    let result = self.show_stage(
+                        ui,
+                        port,
+                        picker,
+                        PresentationAppStageInput {
+                            scene,
+                            now,
+                            pending_move,
+                            promotion_owns_input,
+                            can_enter_moves,
+                            is_busy,
+                            editor_viewport: &mut editor_viewport,
+                        },
+                    );
+                    if let Some(action) = PresentationBoardToolbar::show(
+                        ui,
+                        stage,
+                        scene.is_some(),
+                        self.board.markings_mut(),
+                    ) {
+                        camera_action = Some(action);
+                        self.board.cancel_gesture();
+                    }
+                    result
+                })
+                .inner?
+        };
+        if let Some(chosen) = overview_action.open
+            && self.navigation_frame != Some(frame)
+        {
+            self.overview_open = false;
+            self.navigation_frame = Some(frame);
+            if let Err(error) =
+                self.navigate(PresentationAppLibraryEnumNavigation::Game(chosen), port)
+            {
+                self.report_failure(error);
+            }
+        }
+        if overview_action.new_game && self.new_game_toggle_frame != Some(frame) {
+            self.new_game_toggle_frame = Some(frame);
+            if let Err(error) = self.navigate(PresentationAppLibraryEnumNavigation::NewGame, port) {
+                self.report_failure(error);
+            }
+        }
+        if overview_action.pause_all
+            && let Err(error) = self.pause_active_games(GamePauseEnumCause::Manual, port)
+        {
+            self.report_failure(error);
+        }
         if let Some(game) = close_click
             && self.close_confirmation.is_none()
             && !self.is_game_busy(game)
@@ -2202,12 +2647,12 @@ impl PresentationApp {
         if let Some(game) = self.close_confirmation {
             let mut keep = false;
             let mut confirm = false;
-            let modal = egui::Modal::new(Id::new("chess.game.close")).show(ui.ctx(), |ui| {
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(ui.ctx(), Id::new("chess.game.close")).show(ui.ctx(), |ui| {
                 ui.heading("Close this game?");
                 ui.label("Its unsaved moves are saved before the game closes.");
                 ui.horizontal(|ui| {
-                    keep = ui.button("Keep game open").clicked();
-                    confirm = ui.button("Save and close").clicked();
+                    keep = crate::presentation::theme::components::PresentationThemeEnumButton::Ghost.show(ui, "Keep game open").clicked();
+                    confirm = crate::presentation::theme::components::PresentationThemeEnumButton::Primary.show(ui, "Save and close").clicked();
                 });
             });
             if confirm {
@@ -2221,12 +2666,18 @@ impl PresentationApp {
             let mut cancel = false;
             let mut confirm = false;
             self.quit_modal.capture_invoker(ui.ctx());
-            let modal = egui::Modal::new(Id::new("chess.quit.confirmation")).show(ui.ctx(), |ui| {
+            let modal = crate::presentation::theme::components::PresentationThemeComponents::modal(
+                ui.ctx(),
+                Id::new("chess.quit.confirmation"),
+            )
+            .show(ui.ctx(), |ui| {
                 PresentationAnalysisEditorModal::label(ui, "Quit Chess?");
                 ui.heading("Quit Chess?");
                 ui.label("The application will finish its owned shutdown before closing.");
                 ui.horizontal(|ui| {
-                    let keep = ui.button("Keep open");
+                    let keep =
+                        crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                            .show(ui, "Keep open");
                     let quit = ui.button(PresentationActionEnumId::ConfirmQuit.label());
                     cancel = keep.clicked();
                     confirm = quit.clicked();
@@ -2273,6 +2724,9 @@ impl PresentationApp {
                     self.failure = Some(error.to_string());
                 }
             }
+        }
+        if new_game_cancelled {
+            self.new_game = None;
         }
         if let Some(configuration) = configuration {
             let input = self.input_identity(frame, PresentationAppEnumInput::Create);
@@ -2420,6 +2874,148 @@ impl PresentationApp {
             animation,
             recovery_intent: self.recovery_intent.take(),
         })
+    }
+
+    fn show_stage<C, W, P>(
+        &mut self,
+        ui: &mut Ui,
+        port: &DesktopApplicationPort<C, W>,
+        picker: &mut P,
+        input: PresentationAppStageInput<'_>,
+    ) -> Result<Option<PresentationBoardViewFrame>, PresentationAppError>
+    where
+        C: ClockTimeProvider,
+        W: DesktopApplicationWakeProvider,
+        P: PresentationBoardPickingProvider,
+    {
+        let PresentationAppStageInput {
+            scene,
+            now,
+            pending_move,
+            promotion_owns_input,
+            can_enter_moves,
+            is_busy,
+            editor_viewport,
+        } = input;
+        if self.workspace == PresentationAppEnumWorkspace::Editor {
+            if let Some(editor) = &mut self.editor {
+                *editor_viewport = Some(
+                    editor
+                        .show_board(
+                            ui,
+                            port,
+                            PresentationAppEditorBoardInput::new(
+                                scene,
+                                picker,
+                                self.board.markings_mut(),
+                            )
+                            .with_enabled(!self.quit_confirmation && !self.settings_open),
+                        )
+                        .map_err(PresentationAppError::from)?,
+                );
+            }
+            return Ok(None);
+        }
+        let edge_game = if self.workspace == PresentationAppEnumWorkspace::Games {
+            Self::selected_game_snapshot(&self.games, self.selected_game)
+        } else {
+            None
+        };
+        PresentationGameEdge::show(ui, BoardEnumColor::White, edge_game, now, |ui| {
+            if self.selected_game.is_none() && self.workspace == PresentationAppEnumWorkspace::Games
+            {
+                PresentationThemeComponents::caption(ui, "No active game");
+            }
+        });
+        let board_snapshot = Self::board_for_workspace(
+            self.workspace,
+            Self::selected_game_snapshot(&self.games, self.selected_game),
+            self.snapshot.as_ref(),
+            self.puzzle_panel.as_ref(),
+            self.library.as_ref(),
+        );
+        let result = match board_snapshot {
+            Some(snapshot) => self
+                .board
+                .show(
+                    ui,
+                    PresentationBoardViewInput::new(snapshot, scene, picker)
+                        .with_pending_move(pending_move)
+                        .with_render_scale(self.render_scale)
+                        .with_marks_enabled(
+                            !self.quit_confirmation
+                                && !promotion_owns_input
+                                && self.new_game.is_none()
+                                && !self.settings_open,
+                        )
+                        .with_enabled(
+                            !self.quit_confirmation
+                                && !promotion_owns_input
+                                && can_enter_moves
+                                && !is_busy
+                                && self.new_game.is_none()
+                                && !self.settings_open,
+                        ),
+                )
+                .map(Some),
+            None => {
+                ui.label(match self.workspace {
+                    PresentationAppEnumWorkspace::Games => "Loading the saved position",
+                    PresentationAppEnumWorkspace::Library => {
+                        "Open a saved game to display its 3D board"
+                    }
+                    PresentationAppEnumWorkspace::Puzzles => {
+                        "The puzzle board is hidden until its run is ready and resumed"
+                    }
+                    PresentationAppEnumWorkspace::Editor => "Open a position draft",
+                });
+                Ok(None)
+            }
+        };
+        PresentationGameEdge::show(ui, BoardEnumColor::Black, edge_game, now, |_ui| {});
+        result.map_err(PresentationAppError::from)
+    }
+
+    fn show_inspector_header(&self, ui: &mut Ui, colors: &PresentationThemeColors) {
+        ui.horizontal(|ui| {
+            PresentationThemeComponents::eyebrow(ui, self.workspace.inspector_title());
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match self.workspace {
+                    PresentationAppEnumWorkspace::Games => {
+                        if let Some(game) =
+                            Self::selected_game_snapshot(&self.games, self.selected_game)
+                        {
+                            if game.has_unsaved_changes() {
+                                PresentationThemeComponents::pill(
+                                    ui,
+                                    "Unsaved",
+                                    PresentationThemeEnumTone::Unsaved,
+                                );
+                            } else if game.phase() == GameEnumPhase::Active {
+                                PresentationThemeComponents::pill(
+                                    ui,
+                                    "Live",
+                                    PresentationThemeEnumTone::Run,
+                                );
+                            }
+                        }
+                    }
+                    PresentationAppEnumWorkspace::Puzzles
+                    | PresentationAppEnumWorkspace::Library
+                    | PresentationAppEnumWorkspace::Editor => {}
+                },
+            );
+        });
+        ui.add_space(PresentationThemeTokens::SPACE_2);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+        ui.painter().hline(
+            rect.x_range().expand(16.0),
+            rect.center().y,
+            egui::Stroke::new(1.0, colors.line),
+        );
+        ui.add_space(PresentationThemeTokens::SPACE_2);
     }
 
     fn synchronize_markings(&mut self, ctx: &egui::Context) {

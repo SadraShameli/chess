@@ -1,9 +1,12 @@
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::Ui;
 
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::library_organization::GameLibraryOrganizationGameTarget;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::view::{PresentationLibraryEnumEffect, PresentationLibraryPanel};
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::storage::library_query::StorageLibraryQueryEntry;
 use crate::storage::trash::{StorageTrashEnumLocation, StorageTrashPreviewRequest};
 
@@ -24,7 +27,11 @@ impl PresentationLibraryPanel {
         };
         let switch = ui.add_enabled(
             !self.controller.is_query_pending(),
-            egui::Button::new(label),
+            PresentationThemeEnumButton::Secondary.widget(
+                ui,
+                label,
+                PresentationThemeEnumSize::Small,
+            ),
         );
         if self.frame.clicked(ui, &switch) {
             let mut options = self.controller.options().clone();
@@ -67,7 +74,7 @@ impl PresentationLibraryPanel {
         let busy = self
             .controller
             .is_pending(PresentationLibraryEnumLane::Trash);
-        ui.group(|ui| {
+        PresentationThemeComponents::card(ui).show(ui, |ui| {
             if permanent {
                 ui.label(format!(
                     "Permanently delete game {}? This cannot be undone.",
@@ -84,12 +91,26 @@ impl PresentationLibraryPanel {
             } else {
                 "Confirm Move to Trash"
             };
-            let confirm = ui.add_enabled(!busy, egui::Button::new(label));
+            let confirm = ui.add_enabled(
+                !busy,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    label,
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.frame.clicked(ui, &confirm) {
                 let result = self.controller.confirm_game_trash(DesktopRequestId::new());
                 self.collect(result, effects);
             }
-            let cancel = ui.add_enabled(!busy, egui::Button::new("Keep game"));
+            let cancel = ui.add_enabled(
+                !busy,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Keep game",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.frame.clicked(ui, &cancel) {
                 self.controller.dismiss_trash_plan();
             }

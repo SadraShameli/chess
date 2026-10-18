@@ -1,9 +1,12 @@
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::Ui;
 
 use crate::notation::pgn_export::NotationPgnExportEnumSelection;
 use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::view::{
     PresentationLibraryEnumEffect, PresentationLibraryEnumFileRequest, PresentationLibraryPanel,
+};
+use crate::presentation::theme::components::{
+    PresentationThemeEnumButton, PresentationThemeEnumSize,
 };
 use crate::storage::library_query::StorageLibraryQueryEntry;
 
@@ -22,7 +25,14 @@ impl PresentationLibraryPanel {
                 NotationPgnExportEnumSelection::Mainline,
             ),
         ] {
-            let button = ui.add_enabled(enabled, egui::Button::new(label));
+            let button = ui.add_enabled(
+                enabled,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    label,
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if frame.clicked(ui, &button) {
                 chosen = Some(PresentationLibraryEnumFileRequest::ExportDestination {
                     game: row.id(),

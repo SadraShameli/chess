@@ -23,7 +23,12 @@ use crate::presentation::analysis::editor_intent::{
     PresentationAnalysisEditorPending,
 };
 use crate::presentation::board::figurines::PresentationBoardFigurines;
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
+use crate::presentation::theme::typography::PresentationThemeTypography;
 
 #[derive(Debug, Clone)]
 pub enum PresentationAnalysisVariationTreeEnumEffect {
@@ -447,6 +452,7 @@ impl PresentationAnalysisVariationTree {
     ) -> Result<Option<PresentationAnalysisVariationTreeEnumEffect>, PresentationAnalysisEditorError>
     {
         ui.set_min_width(PresentationThemeTokens::PANEL_WIDTH);
+        PresentationThemeComponents::eyebrow(ui, "Variation tree");
         ui.heading("Moves and Variations");
         let Some(publication) = &self.publication else {
             ui.label("Open a game to browse its moves.");
@@ -520,8 +526,8 @@ impl PresentationAnalysisVariationTree {
             ui.label("Load moves to browse this game.");
         }
         if let Some(page) = &self.children {
-            ui.separator();
-            ui.label("Continuations in saved order");
+            PresentationThemeComponents::divider(ui);
+            PresentationThemeComponents::subhead(ui, "Continuations in saved order");
             if page.nodes().is_empty() {
                 ui.label("There are no continuations from this position.");
             }
@@ -554,12 +560,14 @@ impl PresentationAnalysisVariationTree {
                 });
             }
         }
-        ui.label("Use the board to add a study move.");
+        PresentationThemeComponents::caption(ui, "Use the board to add a study move.");
         if self
             .pending
             .as_ref()
             .is_some_and(PresentationAnalysisEditorPending::has_failure)
-            && ui.button("Retry Action").clicked()
+            && PresentationThemeEnumButton::Secondary
+                .show(ui, "Retry Action")
+                .clicked()
             && !ui.is_sizing_pass()
         {
             return self
@@ -570,7 +578,9 @@ impl PresentationAnalysisVariationTree {
             .pending
             .as_ref()
             .is_some_and(|pending| pending.failure().is_some())
-            && ui.button("Dismiss Error").clicked()
+            && PresentationThemeEnumButton::Ghost
+                .show(ui, "Dismiss Error")
+                .clicked()
             && !ui.is_sizing_pass()
         {
             self.dismiss_failure()?;
@@ -579,7 +589,7 @@ impl PresentationAnalysisVariationTree {
         let mut modal_focus = std::mem::take(&mut self.modal);
         if let Some(preview) = &self.preview {
             modal_focus.capture_invoker(ui.ctx());
-            let modal = egui::Modal::new(egui::Id::new("chess.analysis.variation_confirmation"))
+            let modal = PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("chess.analysis.variation_confirmation"))
                 .show(ui.ctx(), |ui| {
                     PresentationAnalysisEditorModal::label(ui, "Variation Review");
                     ui.heading(match preview.request() {
@@ -733,27 +743,64 @@ impl PresentationAnalysisVariationTree {
                     node.san().unwrap_or("Start"),
                     None,
                 );
+                let colors = PresentationThemeColors::of(ui.ctx());
+                let current = node.id() == expected.selected();
+                let text = egui::RichText::new(label)
+                    .size(PresentationThemeTypography::UI_POINTS)
+                    .color(if current { colors.accent } else { colors.text });
+                let text = if current { text.strong() } else { text };
                 if ui
                     .add_enabled(
                         enabled,
-                        egui::Button::selectable(node.id() == expected.selected(), label),
+                        egui::Button::selectable(current, text)
+                            .fill(if current {
+                                colors.accent_soft
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            })
+                            .corner_radius(egui::CornerRadius::same(
+                                PresentationThemeTokens::RADIUS_SM,
+                            ))
+                            .min_size(egui::vec2(0.0, PresentationThemeTokens::CONTROL_SM)),
                     )
                     .clicked()
                 {
                     *effects.navigate = Some(node.id());
                 }
-                ui.label(format!("{} continuations", node.child_count()));
+                PresentationThemeComponents::caption(
+                    ui,
+                    format!("{} continuations", node.child_count()),
+                );
                 if node.has_notes() {
-                    ui.label("Notes");
+                    PresentationThemeComponents::pill(
+                        ui,
+                        "Notes",
+                        PresentationThemeEnumTone::Accent,
+                    );
                 }
                 if node.has_nags() {
-                    ui.label("NAGs");
+                    PresentationThemeComponents::pill(
+                        ui,
+                        "NAGs",
+                        PresentationThemeEnumTone::Neutral,
+                    );
                 }
                 if node.has_markings() {
-                    ui.label("Drawings");
+                    PresentationThemeComponents::pill(
+                        ui,
+                        "Drawings",
+                        PresentationThemeEnumTone::Neutral,
+                    );
                 }
                 if ui
-                    .add_enabled(enabled, egui::Button::new("Show Continuations"))
+                    .add_enabled(
+                        enabled,
+                        PresentationThemeEnumButton::Ghost.widget(
+                            ui,
+                            "Show Continuations",
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    )
                     .clicked()
                 {
                     *effects.action = Some(DesktopAnnotationCommandsEnumAction::ChildrenPage {
@@ -771,8 +818,14 @@ impl PresentationAnalysisVariationTree {
                         GameAnnotationsEnumVariationRequest::Delete { root: node.id() },
                     ),
                 ] {
-                    let response = ui
-                        .add_enabled(enabled && node.parent().is_some(), egui::Button::new(label));
+                    let response = ui.add_enabled(
+                        enabled && node.parent().is_some(),
+                        PresentationThemeEnumButton::Ghost.widget(
+                            ui,
+                            label,
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    );
                     if response.clicked() {
                         *effects.action = Some(
                             DesktopAnnotationCommandsEnumAction::PreviewVariation(request),

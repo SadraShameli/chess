@@ -1,4 +1,4 @@
-use bevy_egui::egui::{self, Ui};
+use bevy_egui::egui::Ui;
 
 use crate::desktop::identity::DesktopRequestId;
 use crate::game::library_organization::{
@@ -12,6 +12,9 @@ use crate::presentation::library::enums::PresentationLibraryEnumLane;
 use crate::presentation::library::error::PresentationLibraryError;
 use crate::presentation::library::view::{
     PresentationLibraryEnumEffect, PresentationLibraryFrame, PresentationLibraryPanel,
+};
+use crate::presentation::theme::components::{
+    PresentationThemeEnumButton, PresentationThemeEnumSize,
 };
 use crate::storage::library_query::StorageLibraryQueryEntry;
 
@@ -32,7 +35,14 @@ impl PresentationLibraryPanel {
             };
             ui.label(label);
             ui.text_edit_singleline(&mut self.new_folder_name);
-            let create = ui.add_enabled(!busy, egui::Button::new("Create folder"));
+            let create = ui.add_enabled(
+                !busy,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Create folder",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.frame.clicked(ui, &create) {
                 let result = self
                     .folder_parent_target()
@@ -49,7 +59,14 @@ impl PresentationLibraryPanel {
         ui.horizontal(|ui| {
             ui.label("New tag");
             ui.text_edit_singleline(&mut self.new_tag_name);
-            let create = ui.add_enabled(!busy, egui::Button::new("Create tag"));
+            let create = ui.add_enabled(
+                !busy,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Create tag",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if self.frame.clicked(ui, &create) {
                 let result = Self::tag_mutation(&self.new_tag_name).and_then(|mutation| {
                     self.controller.organize(DesktopRequestId::new(), mutation)
@@ -125,7 +142,14 @@ impl PresentationLibraryPanel {
                     } else {
                         format!("Move to folder {}", folder.name().as_str())
                     };
-                    let button = ui.add_enabled(enabled && !current, egui::Button::new(label));
+                    let button = ui.add_enabled(
+                        enabled && !current,
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            label,
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    );
                     if frame.clicked(ui, &button) {
                         chosen = Some(GameLibraryOrganizationEnumMutation::MoveToFolder(
                             target,
@@ -139,7 +163,14 @@ impl PresentationLibraryPanel {
             });
         }
         if row.organization().folder().is_some() {
-            let unfile = ui.add_enabled(enabled, egui::Button::new("Move to Unfiled"));
+            let unfile = ui.add_enabled(
+                enabled,
+                PresentationThemeEnumButton::Secondary.widget(
+                    ui,
+                    "Move to Unfiled",
+                    PresentationThemeEnumSize::Small,
+                ),
+            );
             if frame.clicked(ui, &unfile) {
                 chosen = Some(GameLibraryOrganizationEnumMutation::MoveToFolder(
                     target, None,
@@ -158,7 +189,14 @@ impl PresentationLibraryPanel {
                     } else {
                         format!("Add tag {}", tag.name().as_str())
                     };
-                    let button = ui.add_enabled(enabled, egui::Button::new(label));
+                    let button = ui.add_enabled(
+                        enabled,
+                        PresentationThemeEnumButton::Secondary.widget(
+                            ui,
+                            label,
+                            PresentationThemeEnumSize::Small,
+                        ),
+                    );
                     if frame.clicked(ui, &button) {
                         let mut ids: Vec<GameLibraryOrganizationTagId> = row
                             .organization()

@@ -6,7 +6,12 @@ use crate::presentation::cursor::PresentationStudyCursor;
 use crate::presentation::report::controller::{
     PresentationReportController, PresentationReportIntent,
 };
-use crate::presentation::theme::tokens::PresentationThemeTokens;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
+};
+use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
+use crate::presentation::theme::typography::PresentationThemeTypography;
 use crate::report::job::{ReportJobEnumFreshness, ReportJobEnumState};
 use crate::report::scoring::{ReportScoringEnumCoverage, ReportScoringEnumLabel};
 
@@ -25,6 +30,7 @@ impl PresentationReportView {
         controller: &PresentationReportController,
         cursor: &mut PresentationStudyCursor,
     ) -> Option<PresentationReportIntent> {
+        PresentationThemeComponents::eyebrow(ui, "Report");
         ui.heading("Game report");
         for failure in controller.failures() {
             ui.colored_label(ui.visuals().warn_fg_color, failure);
@@ -36,17 +42,21 @@ impl PresentationReportView {
         let mut intent = None;
         Self::show_status(ui, view);
         Self::show_accuracy(ui, view);
+        Self::show_tally(ui, view);
         Self::show_graph(ui, view, cursor);
         Self::show_findings(ui, view, cursor);
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(controller.can_cancel(), Self::button("Cancel Report"))
+                .add_enabled(controller.can_cancel(), Self::button(ui, "Cancel Report"))
                 .clicked()
             {
                 intent = Some(PresentationReportIntent::Cancel(view.id));
             }
             if ui
-                .add_enabled(controller.can_reanalyze(), Self::button("Reanalyze Game"))
+                .add_enabled(
+                    controller.can_reanalyze(),
+                    Self::button(ui, "Reanalyze Game"),
+                )
                 .clicked()
             {
                 intent = Some(PresentationReportIntent::PreviewReanalysis(view.id));
@@ -55,12 +65,12 @@ impl PresentationReportView {
         if controller.has_replacement_preview() {
             let mut confirm = false;
             let mut discard = false;
-            let modal = egui::Modal::new(egui::Id::new("report.replacement")).show(ui.ctx(), |ui| {
+            let modal = PresentationThemeComponents::modal(ui.ctx(), egui::Id::new("report.replacement")).show(ui.ctx(), |ui| {
                 crate::presentation::analysis::editor_intent::PresentationAnalysisEditorModal::label(ui, "Replace this report");
                 ui.heading("Replace this report?");
                 ui.label("The new analysis starts from scratch. The existing report is kept until you confirm.");
-                discard = ui.button("Keep Existing Report").clicked();
-                confirm = ui.button("Confirm Replacement").clicked();
+                discard = PresentationThemeEnumButton::Ghost.show(ui, "Keep Existing Report").clicked();
+                confirm = PresentationThemeEnumButton::Primary.show(ui, "Confirm Replacement").clicked();
             });
             if discard || modal.should_close() {
                 intent = Some(PresentationReportIntent::DiscardReplacement(view.id));
@@ -71,8 +81,40 @@ impl PresentationReportView {
         intent
     }
 
-    fn button(label: &str) -> egui::Button<'_> {
-        egui::Button::new(label).min_size(egui::vec2(0.0, PresentationThemeTokens::MIN_TARGET))
+    fn button(ui: &Ui, label: &str) -> egui::Button<'static> {
+        PresentationThemeEnumButton::Secondary
+            .widget(ui, label, PresentationThemeEnumSize::Small)
+            .min_size(egui::vec2(0.0, PresentationThemeTokens::MIN_TARGET))
+    }
+
+    const fn tone(label: Option<ReportScoringEnumLabel>) -> PresentationThemeEnumTone {
+        match label {
+            Some(ReportScoringEnumLabel::Blunder) => PresentationThemeEnumTone::Error,
+            Some(ReportScoringEnumLabel::Mistake) => PresentationThemeEnumTone::Low,
+            Some(ReportScoringEnumLabel::Inaccuracy) => PresentationThemeEnumTone::Unsaved,
+            Some(ReportScoringEnumLabel::Acceptable) | None => PresentationThemeEnumTone::Neutral,
+        }
+    }
+
+    fn show_tally(ui: &mut Ui, view: &DesktopReportView) {
+        ui.horizontal_wrapped(|ui| {
+            for label in [
+                ReportScoringEnumLabel::Inaccuracy,
+                ReportScoringEnumLabel::Mistake,
+                ReportScoringEnumLabel::Blunder,
+            ] {
+                let count = view
+                    .findings
+                    .iter()
+                    .filter(|finding| !finding.forced && finding.label == Some(label))
+                    .count();
+                PresentationThemeComponents::pill(
+                    ui,
+                    format!("{count} {}", Self::label_text(label)),
+                    Self::tone(Some(label)),
+                );
+            }
+        });
     }
 
     const fn state_text(state: ReportJobEnumState) -> &'static str {
@@ -115,6 +157,27 @@ impl PresentationReportView {
     }
 
     fn show_accuracy(ui: &mut Ui, view: &DesktopReportView) {
+        let colors = PresentationThemeColors::of(ui.ctx());
+        ui.horizontal(|ui| {
+            for player in &view.accuracy {
+                let side = match player.color {
+                    BoardEnumColor::White => "White",
+                    BoardEnumColor::Black => "Black",
+                };
+                PresentationThemeComponents::card(ui).show(ui, |ui| {
+                    PresentationThemeComponents::eyebrow(ui, side);
+                    PresentationThemeComponents::mono(
+                        ui,
+                        player
+                            .display
+                            .as_deref()
+                            .map_or_else(|| "?".to_owned(), |value| format!("{value}%")),
+                        colors.text,
+                        PresentationThemeTypography::TITLE_POINTS,
+                    );
+                });
+            }
+        });
         for player in &view.accuracy {
             let side = match player.color {
                 BoardEnumColor::White => "White",
@@ -132,7 +195,7 @@ impl PresentationReportView {
     }
 
     fn show_graph(ui: &mut Ui, view: &DesktopReportView, cursor: &mut PresentationStudyCursor) {
-        ui.label("Evaluation graph");
+        PresentationThemeComponents::subhead(ui, "Evaluation graph");
         let width = ui
             .available_width()
             .max(PresentationThemeTokens::MIN_TARGET);
@@ -140,8 +203,22 @@ impl PresentationReportView {
             ui.allocate_painter(egui::vec2(width, Self::GRAPH_HEIGHT), Sense::click());
         let rect = response.rect;
         let count = view.findings.len();
-        let stroke = egui::Stroke::new(1.0, ui.visuals().text_color());
-        painter.line_segment([rect.left_center(), rect.right_center()], stroke);
+        let colors = PresentationThemeColors::of(ui.ctx());
+        painter.rect_filled(
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.center().y)),
+            0.0,
+            colors.eval_white.gamma_multiply(0.18),
+        );
+        painter.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(rect.left(), rect.center().y), rect.max),
+            0.0,
+            colors.eval_black.gamma_multiply(0.5),
+        );
+        let stroke = egui::Stroke::new(1.5, colors.accent);
+        painter.line_segment(
+            [rect.left_center(), rect.right_center()],
+            egui::Stroke::new(1.0, colors.line),
+        );
         let point = |index: usize, value: DesktopReportEnumEvaluation| {
             let share = if count > 1 {
                 f32::from(u16::try_from(index).unwrap_or(u16::MAX))
@@ -180,7 +257,11 @@ impl PresentationReportView {
             painter.circle_filled(
                 current,
                 if selected { 5.0 } else { 3.0 },
-                ui.visuals().selection.bg_fill,
+                if selected {
+                    colors.accent
+                } else {
+                    colors.text_2
+                },
             );
             previous = Some(current);
         }
@@ -206,7 +287,7 @@ impl PresentationReportView {
     }
 
     fn show_findings(ui: &mut Ui, view: &DesktopReportView, cursor: &mut PresentationStudyCursor) {
-        ui.heading("Move findings");
+        PresentationThemeComponents::subhead(ui, "Move findings");
         if view.findings.is_empty() {
             ui.label("This game has no moves to analyze");
         }
@@ -219,10 +300,28 @@ impl PresentationReportView {
                 finding.label.map_or("Not scored", Self::label_text)
             };
             let text = format!("Move {}: {} {label}", finding.index + 1, finding.played_uci);
-            if ui
-                .add(Self::button(&text).selected(cursor.selected() == Some(finding.after_node)))
-                .clicked()
-            {
+            let tone = if finding.forced {
+                PresentationThemeEnumTone::Neutral
+            } else if finding.missed_mate {
+                PresentationThemeEnumTone::Error
+            } else {
+                Self::tone(finding.label)
+            };
+            let clicked = ui
+                .horizontal(|ui| {
+                    let clicked = ui
+                        .add(
+                            Self::button(ui, &text)
+                                .selected(cursor.selected() == Some(finding.after_node)),
+                        )
+                        .clicked();
+                    if tone != PresentationThemeEnumTone::Neutral {
+                        PresentationThemeComponents::pill(ui, label, tone);
+                    }
+                    clicked
+                })
+                .inner;
+            if clicked {
                 cursor.select(finding.after_node);
             }
         }

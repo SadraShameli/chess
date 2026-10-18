@@ -1,5 +1,8 @@
 use bevy_egui::egui::Ui;
 
+use crate::presentation::theme::components::{
+    PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::update::recovery::UpdateRecoveryEnumBlock;
 
 pub struct PresentationSettingsUpdateInstall;
@@ -33,11 +36,12 @@ impl PresentationSettingsUpdateInstall {
     pub fn show_confirmation(ui: &mut Ui, confirmed: &mut bool) -> bool {
         ui.label(Self::CONFIRMATION);
         ui.checkbox(confirmed, "I understand");
-        ui.add_enabled(
-            *confirmed,
-            bevy_egui::egui::Button::new("Install and relaunch"),
-        )
-        .clicked()
+        let button = PresentationThemeEnumButton::Primary.widget(
+            ui,
+            "Install and relaunch",
+            PresentationThemeEnumSize::Medium,
+        );
+        ui.add_enabled(*confirmed, button).clicked()
     }
 
     pub fn show_recovery(ui: &mut Ui, block: UpdateRecoveryEnumBlock) {

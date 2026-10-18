@@ -4,6 +4,10 @@ use crate::game::pause::{GamePauseEnumCause, GamePauseEnumFault};
 use crate::game::recovery::GameRecovery;
 use crate::game::save::GameSaveEnumStatus;
 use crate::game::save_coordinator::GameSaveCoordinator;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton,
+};
+use crate::presentation::theme::tokens::PresentationThemeColors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresentationGameRecoveryEnumIntent {
@@ -53,20 +57,32 @@ impl PresentationGameRecovery {
         let headline = Self::save_headline(coordinator)?;
         let failed = coordinator.failure().is_some();
         let mut intent = None;
-        ui.group(|ui| {
-            let response = ui.label(headline);
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_role(egui::accesskit::Role::Status);
-                node.set_live(if failed {
-                    egui::accesskit::Live::Assertive
-                } else {
-                    egui::accesskit::Live::Polite
+        let colors = PresentationThemeColors::of(ui.ctx());
+        let (fill, text) = if failed {
+            (colors.err_soft, colors.err)
+        } else {
+            (colors.unsaved_soft, colors.unsaved)
+        };
+        PresentationThemeComponents::card(ui)
+            .fill(fill)
+            .show(ui, |ui| {
+                let response = ui.label(egui::RichText::new(headline).color(text));
+                ui.ctx().accesskit_node_builder(response.id, |node| {
+                    node.set_role(egui::accesskit::Role::Status);
+                    node.set_live(if failed {
+                        egui::accesskit::Live::Assertive
+                    } else {
+                        egui::accesskit::Live::Polite
+                    });
                 });
+                if failed
+                    && PresentationThemeEnumButton::Secondary
+                        .show(ui, "Retry Save")
+                        .clicked()
+                {
+                    intent = Some(PresentationGameRecoveryEnumIntent::RetrySave);
+                }
             });
-            if failed && ui.button("Retry Save").clicked() {
-                intent = Some(PresentationGameRecoveryEnumIntent::RetrySave);
-            }
-        });
         intent
     }
 }

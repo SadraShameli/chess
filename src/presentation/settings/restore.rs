@@ -79,7 +79,10 @@ impl PresentationSettingsRestore {
             {
                 intent = Some(PresentationSettingsRestoreEnumIntent::Confirm(handle));
             }
-            if ui.button("Cancel").clicked() {
+            if crate::presentation::theme::components::PresentationThemeEnumButton::Ghost
+                .show(ui, "Cancel")
+                .clicked()
+            {
                 intent = Some(PresentationSettingsRestoreEnumIntent::Cancel);
             }
         });

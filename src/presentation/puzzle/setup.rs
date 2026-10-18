@@ -5,6 +5,10 @@ use thiserror::Error;
 
 use crate::desktop::error::DesktopFailure;
 use crate::desktop::identity::DesktopRequestId;
+use crate::presentation::puzzle::style::PresentationPuzzleStyle;
+use crate::presentation::theme::components::{
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+};
 use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::puzzle::enums::PuzzleEnumCountdownMode;
 use crate::puzzle::metadata::{PuzzleDefinitionMetadataError, PuzzleDefinitionTheme};
@@ -213,62 +217,89 @@ impl PresentationPuzzleSetup {
         collections: &[PresentationPuzzleSetupCollection],
         can_start: bool,
     ) -> Option<PresentationPuzzleSetupIntent> {
-        ui.heading("Puzzle setup");
-        ui.label("Filters and countdown settings apply to the next run");
+        PresentationThemeComponents::subhead(ui, "Puzzle setup");
+        PresentationThemeComponents::caption(
+            ui,
+            "Filters and countdown settings apply to the next run",
+        );
         if let Some(failure) = &self.failure {
-            ui.colored_label(ui.visuals().error_fg_color, failure.message());
+            PresentationPuzzleStyle::error(ui, failure.message());
         }
         if collections.is_empty() {
-            ui.label("No local puzzle collection is available");
+            PresentationPuzzleStyle::note(ui, "No local puzzle collection is available");
         }
         let enabled = can_start && self.pending.is_none();
         ui.add_enabled_ui(enabled, |ui| {
-            ui.strong("Collection");
+            ui.spacing_mut().item_spacing.y = PresentationThemeTokens::SPACE_2;
+            PresentationThemeComponents::field_label(ui, "Collection");
             for collection in collections {
-                if ui.radio(self.dataset.as_ref() == Some(&collection.dataset), &collection.label).clicked() {
+                if ui
+                    .radio(self.dataset.as_ref() == Some(&collection.dataset), &collection.label)
+                    .clicked()
+                {
                     self.select_dataset(collection.dataset.clone());
                 }
             }
-            let label = ui.label("Minimum difficulty");
-            ui.add(egui::TextEdit::singleline(&mut self.minimum).hint_text("Any")).labelled_by(label.id);
-            let label = ui.label("Maximum difficulty");
-            ui.add(egui::TextEdit::singleline(&mut self.maximum).hint_text("Any")).labelled_by(label.id);
-            ui.small("Leave both empty for any difficulty. Unknown ratings are unavailable to a difficulty filter");
-            if let Some(collection) = collections.iter().find(|collection| self.dataset.as_ref() == Some(&collection.dataset)) {
-                ui.strong("Themes (any selected theme)");
-                for theme in &collection.themes {
-                    let mut selected = self.themes.contains(theme);
-                    if ui.checkbox(&mut selected, theme.as_str()).changed() {
-                        if selected {
-                            self.themes.push(theme.clone());
-                        } else {
-                            self.themes.retain(|existing| existing != theme);
+            PresentationThemeComponents::eyebrow(ui, "Rating band");
+            ui.columns(2, |columns| {
+                if let [minimum, maximum] = columns {
+                    let label = PresentationThemeComponents::field_label(minimum, "Minimum difficulty");
+                    PresentationThemeComponents::input(minimum, &mut self.minimum, "Any")
+                        .labelled_by(label.id);
+                    let label = PresentationThemeComponents::field_label(maximum, "Maximum difficulty");
+                    PresentationThemeComponents::input(maximum, &mut self.maximum, "Any")
+                        .labelled_by(label.id);
+                }
+            });
+            PresentationThemeComponents::caption(ui, "Leave both empty for any difficulty. Unknown ratings are unavailable to a difficulty filter");
+            if let Some(collection) = collections
+                .iter()
+                .find(|collection| self.dataset.as_ref() == Some(&collection.dataset))
+            {
+                PresentationThemeComponents::field_label(ui, "Themes (any selected theme)");
+                ui.horizontal_wrapped(|ui| {
+                    for theme in &collection.themes {
+                        let mut selected = self.themes.contains(theme);
+                        if ui.checkbox(&mut selected, theme.as_str()).changed() {
+                            if selected {
+                                self.themes.push(theme.clone());
+                            } else {
+                                self.themes.retain(|existing| existing != theme);
+                            }
                         }
                     }
-                }
-                ui.small("Select no themes to include all themes, including unavailable theme metadata");
+                });
+                PresentationThemeComponents::caption(ui, "Select no themes to include all themes, including unavailable theme metadata");
             }
-            ui.strong("Countdown");
-            for (mode, label) in [(PuzzleEnumCountdownMode::Session, "Whole session"), (PuzzleEnumCountdownMode::PerPuzzle, "Per puzzle")] {
-                if ui.radio_value(&mut self.mode, mode, label).changed() {
-                    self.seconds = Self::default_seconds(mode);
-                }
+            PresentationThemeComponents::field_label(ui, "Countdown");
+            if PresentationThemeComponents::segmented(
+                ui,
+                &mut self.mode,
+                &[
+                    (PuzzleEnumCountdownMode::Session, "Whole session"),
+                    (PuzzleEnumCountdownMode::PerPuzzle, "Per puzzle"),
+                ],
+                true,
+            ) {
+                self.seconds = Self::default_seconds(self.mode);
             }
-            let label = ui.label("Countdown seconds");
-            ui.add(egui::TextEdit::singleline(&mut self.seconds)).labelled_by(label.id);
+            let label = PresentationThemeComponents::field_label(ui, "Countdown seconds");
+            PresentationThemeComponents::input(ui, &mut self.seconds, "")
+                .labelled_by(label.id);
         });
         let validated = self.validate(collections);
         if let Err(error) = &validated {
-            ui.colored_label(ui.visuals().error_fg_color, error.to_string());
+            PresentationPuzzleStyle::error(ui, error.to_string());
         }
+        let button = PresentationThemeEnumButton::Primary
+            .widget(ui, "Start Run", PresentationThemeEnumSize::Large)
+            .min_size(egui::vec2(
+                ui.available_width()
+                    .min(PresentationThemeTokens::PANEL_WIDTH),
+                PresentationThemeTokens::CONTROL_LG,
+            ));
         let clicked = ui
-            .add_enabled(
-                enabled && validated.is_ok(),
-                egui::Button::new("Start Run").min_size(egui::vec2(
-                    PresentationThemeTokens::PANEL_WIDTH,
-                    PresentationThemeTokens::MIN_TARGET,
-                )),
-            )
+            .add_enabled(enabled && validated.is_ok(), button)
             .clicked();
         let frame = ui.ctx().cumulative_frame_nr();
         if clicked

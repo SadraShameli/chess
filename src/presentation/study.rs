@@ -1,4 +1,4 @@
-use bevy_egui::egui::{CollapsingHeader, Ui};
+use bevy_egui::egui::Ui;
 
 use crate::desktop::dataset_commands::{DesktopDatasetRow, DesktopDatasetStarter};
 use crate::presentation::cursor::PresentationStudyCursor;
@@ -13,10 +13,23 @@ use crate::presentation::report::view::PresentationReportView;
 use crate::presentation::settings::datasets::{
     PresentationSettingsDatasets, PresentationSettingsDatasetsIntent,
 };
+use crate::presentation::theme::components::PresentationThemeComponents;
+use crate::presentation::theme::tokens::PresentationThemeTokens;
 use crate::storage::opening_repository::StorageOpeningLibraryGame;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PresentationStudyEnumInspector {
+    Analysis,
+    #[default]
+    Explorer,
+    Report,
+    Notes,
+    Data,
+}
 
 #[derive(Default)]
 pub struct PresentationStudy {
+    inspector: PresentationStudyEnumInspector,
     cursor: PresentationStudyCursor,
     report: PresentationReportController,
     opening: PresentationOpeningController,
@@ -32,6 +45,7 @@ pub struct PresentationStudy {
 impl PresentationStudy {
     pub const fn new() -> Self {
         Self {
+            inspector: PresentationStudyEnumInspector::Explorer,
             cursor: PresentationStudyCursor::new(),
             report: PresentationReportController::new(),
             opening: PresentationOpeningController::new(),
@@ -92,27 +106,50 @@ impl PresentationStudy {
     }
 
     pub fn show_panels(&mut self, ui: &mut Ui) {
-        CollapsingHeader::new("Game report")
-            .default_open(false)
-            .show(ui, |ui| {
-                if let Some(intent) = self.show_report(ui) {
-                    self.report_intents.push(intent);
-                }
-            });
-        CollapsingHeader::new("Opening explorer")
-            .default_open(false)
-            .show(ui, |ui| {
+        PresentationThemeComponents::segmented(
+            ui,
+            &mut self.inspector,
+            &[
+                (PresentationStudyEnumInspector::Analysis, "Analysis"),
+                (PresentationStudyEnumInspector::Explorer, "Explorer"),
+                (PresentationStudyEnumInspector::Report, "Report"),
+                (PresentationStudyEnumInspector::Notes, "Notes"),
+                (PresentationStudyEnumInspector::Data, "Data"),
+            ],
+            true,
+        );
+        ui.add_space(PresentationThemeTokens::SPACE_2);
+        match self.inspector {
+            PresentationStudyEnumInspector::Analysis => {
+                PresentationThemeComponents::eyebrow(ui, "Engine analysis");
+                PresentationThemeComponents::caption(
+                    ui,
+                    "Engine lines and the evaluation bar follow the selected position in the analysis panel.",
+                );
+            }
+            PresentationStudyEnumInspector::Explorer => {
                 if let Some(intent) = self.show_opening(ui) {
                     self.opening_intents.push(intent);
                 }
-            });
-        CollapsingHeader::new("Data")
-            .default_open(false)
-            .show(ui, |ui| {
+            }
+            PresentationStudyEnumInspector::Report => {
+                if let Some(intent) = self.show_report(ui) {
+                    self.report_intents.push(intent);
+                }
+            }
+            PresentationStudyEnumInspector::Notes => {
+                PresentationThemeComponents::eyebrow(ui, "Notes");
+                PresentationThemeComponents::caption(
+                    ui,
+                    "Notes, NAGs and board drawings are edited beside the variation tree.",
+                );
+            }
+            PresentationStudyEnumInspector::Data => {
                 if let Some(intent) = self.datasets.show(ui, &self.starters, &self.rows) {
                     self.dataset_intents.push(intent);
                 }
-            });
+            }
+        }
     }
 
     pub fn take_report_intents(&mut self) -> Vec<PresentationReportIntent> {

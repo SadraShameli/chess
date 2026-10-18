@@ -4,6 +4,8 @@ use crate::board::enums::BoardEnumVariant;
 use crate::game::enums::GameEnumMode;
 use crate::game::session::GameMetadataDate;
 use crate::presentation::library::controller::PresentationLibraryController;
+use crate::presentation::theme::icon::{PresentationThemeEnumIcon, PresentationThemeIcon};
+use crate::presentation::theme::tokens::PresentationThemeColors;
 use crate::storage::library_prepared::StorageLibraryEnumStartKind;
 use crate::storage::library_query::StorageLibraryQueryEntry;
 
@@ -15,13 +17,18 @@ impl PresentationLibraryRows {
         row: &StorageLibraryQueryEntry,
         controller: &PresentationLibraryController,
     ) {
-        ui.label(format!(
-            "{} vs {}",
-            row.white()
-                .map_or("Unknown White player", |name| name.as_str()),
-            row.black()
-                .map_or("Unknown Black player", |name| name.as_str())
-        ));
+        ui.horizontal(|ui| {
+            if row.organization().is_favorite() {
+                let colors = PresentationThemeColors::of(ui.ctx());
+                PresentationThemeIcon::show(
+                    ui,
+                    PresentationThemeEnumIcon::Star,
+                    14.0,
+                    colors.accent,
+                );
+            }
+            ui.strong(format!("{} vs {}", Self::white(row), Self::black(row)));
+        });
         ui.label(format!(
             "{} | {} | {} half-moves",
             Self::date(row.date()),
@@ -36,10 +43,8 @@ impl PresentationLibraryRows {
         ));
         ui.label(format!(
             "Opening: {} | Code: {}",
-            row.opening()
-                .map_or("Unavailable", |opening| opening.as_str()),
-            row.opening_code()
-                .map_or("Unavailable", |code| code.as_str())
+            Self::opening_name(row),
+            Self::opening_code(row)
         ));
         match row.modified() {
             Some(modified) => {
@@ -105,6 +110,52 @@ impl PresentationLibraryRows {
             row.id().as_uuid(),
             row.content_revision().value()
         ));
+    }
+
+    fn white(row: &StorageLibraryQueryEntry) -> &str {
+        row.white()
+            .map_or("Unknown White player", |name| name.as_str())
+    }
+
+    fn black(row: &StorageLibraryQueryEntry) -> &str {
+        row.black()
+            .map_or("Unknown Black player", |name| name.as_str())
+    }
+
+    fn opening_name(row: &StorageLibraryQueryEntry) -> &str {
+        row.opening()
+            .map_or("Unavailable", |opening| opening.as_str())
+    }
+
+    fn opening_code(row: &StorageLibraryQueryEntry) -> &str {
+        row.opening_code()
+            .map_or("Unavailable", |code| code.as_str())
+    }
+
+    pub(super) fn players(row: &StorageLibraryQueryEntry) -> String {
+        format!("{} \u{2013} {}", Self::white(row), Self::black(row))
+    }
+
+    pub(super) fn opening(row: &StorageLibraryQueryEntry) -> String {
+        match (row.opening_code(), row.opening()) {
+            (Some(code), Some(name)) => format!("{}  {}", code.as_str(), name.as_str()),
+            (None, Some(name)) => name.as_str().to_owned(),
+            (Some(code), None) => code.as_str().to_owned(),
+            (None, None) => "No opening".to_owned(),
+        }
+    }
+
+    pub(super) fn year(row: &StorageLibraryQueryEntry) -> String {
+        Self::date(row.date())
+    }
+
+    pub(super) fn summary(row: &StorageLibraryQueryEntry) -> String {
+        format!(
+            "{} \u{b7} {} \u{b7} {} half-moves",
+            Self::date(row.date()),
+            row.result().pgn_token(),
+            row.plies()
+        )
     }
 
     fn date(date: Option<GameMetadataDate>) -> String {
