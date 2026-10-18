@@ -74,6 +74,7 @@ use crate::presentation::engine_panels::{
 use crate::presentation::game::controller::{
     PresentationGameController, PresentationGameControllerError, PresentationGameControllerIntent,
 };
+use crate::presentation::game::edge::PresentationGameEdge;
 use crate::presentation::game::new_game::PresentationGameNewGame;
 use crate::presentation::game::overview::PresentationGameOverview;
 use crate::presentation::game::play::{
@@ -91,8 +92,8 @@ use crate::presentation::settings::controller::{
 use crate::presentation::settings::view::PresentationSettingsView;
 use crate::presentation::study::PresentationStudy;
 use crate::presentation::theme::components::{
-    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumClock,
-    PresentationThemeEnumSize, PresentationThemeEnumTone,
+    PresentationThemeComponents, PresentationThemeEnumButton, PresentationThemeEnumSize,
+    PresentationThemeEnumTone,
 };
 use crate::presentation::theme::icon::PresentationThemeEnumIcon;
 use crate::presentation::theme::tokens::{PresentationThemeColors, PresentationThemeTokens};
@@ -682,43 +683,6 @@ impl PresentationApp {
             return None;
         }
         Self::selected_game_snapshot(&self.games, self.selected_game)
-    }
-
-    fn show_board_edge(
-        ui: &mut Ui,
-        color: BoardEnumColor,
-        game: Option<&DesktopGameSnapshot>,
-        now: ClockInstant,
-        extra: impl FnOnce(&mut Ui),
-    ) {
-        ui.horizontal(|ui| {
-            ui.set_min_height(PresentationThemeTokens::CONTROL_LG);
-            PresentationThemeComponents::subhead(
-                ui,
-                PresentationBoardSemanticGrid::color_name(color),
-            );
-            extra(ui);
-            let Some(view) = game.and_then(|game| game.clock().view(now).ok()) else {
-                return;
-            };
-            let displayed = view.side(color).displayed();
-            let state =
-                if view.active() != color || !game.is_some_and(|game| game.clock().is_running()) {
-                    PresentationThemeEnumClock::Idle
-                } else if PresentationGamePlayClock::is_low_time(displayed) {
-                    PresentationThemeEnumClock::Low
-                } else {
-                    PresentationThemeEnumClock::Running
-                };
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                PresentationThemeComponents::clock(
-                    ui,
-                    &PresentationGamePlayClock::text(displayed),
-                    state,
-                    None,
-                );
-            });
-        });
     }
 
     fn selected_game_snapshot(
@@ -2247,7 +2211,7 @@ impl PresentationApp {
                 } else {
                     None
                 };
-                Self::show_board_edge(ui, BoardEnumColor::White, edge_game, now, |ui| {
+                PresentationGameEdge::show(ui, BoardEnumColor::White, edge_game, now, |ui| {
                     if self.selected_game.is_none()
                         && self.workspace == PresentationAppEnumWorkspace::Games
                     {
@@ -2299,7 +2263,7 @@ impl PresentationApp {
                         Ok(None)
                     }
                 };
-                Self::show_board_edge(ui, BoardEnumColor::Black, edge_game, now, |_ui| {});
+                PresentationGameEdge::show(ui, BoardEnumColor::Black, edge_game, now, |_ui| {});
                 result.map_err(PresentationAppError::from)
             })
             .inner?;
